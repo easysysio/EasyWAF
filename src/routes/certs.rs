@@ -5,7 +5,7 @@
 // no filesystem involvement.
 // =========================================================
 
-use crate::{auth::get_session, error::{AppError, Result}, AppState};
+use crate::{auth::get_session, error::Result, AppState};
 use axum::{
     extract::{Path, Query, State},
     response::{Html, IntoResponse, Redirect, Response},

@@ -20,6 +20,8 @@ use axum::http::{HeaderMap, Method};
 // ─── RequestContext ───────────────────────────────────────
 
 /// All information about an incoming request, shared across modules.
+/// Fields are read by GeoIP, WAF-rules, and other future modules.
+#[allow(dead_code)]
 pub struct RequestContext {
     pub site_id:    i64,
     pub site_name:  String,
@@ -37,7 +39,10 @@ pub struct RequestContext {
 // ─── ModuleDecision ──────────────────────────────────────
 
 /// Decision returned by a single module.
+/// Alert and Drop are not yet produced by any built-in module but will be
+/// used by the GeoIP and WAF-rules modules when they are implemented.
 #[derive(Debug)]
+#[allow(dead_code)]
 pub enum ModuleDecision {
     /// Request is clean — pass to the next module.
     Pass,
@@ -50,7 +55,9 @@ pub enum ModuleDecision {
 // ─── Alert ───────────────────────────────────────────────
 
 /// A non-blocking alert raised by a module.
+/// Will be written to traffic_events once the alerting pipeline is wired up.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct Alert {
     pub module: &'static str,
     pub reason: String,
@@ -59,7 +66,9 @@ pub struct Alert {
 // ─── PipelineVerdict ─────────────────────────────────────
 
 /// Final outcome after all modules have run.
+/// The `alerts` field is populated now but only read once alert-logging is implemented.
 #[derive(Debug)]
+#[allow(dead_code)]
 pub enum PipelineVerdict {
     /// Forward to upstream. May carry alerts from intermediate modules.
     Allow { alerts: Vec<Alert> },

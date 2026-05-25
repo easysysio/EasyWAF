@@ -14,13 +14,16 @@ use sqlx::SqlitePool;
 
 // ─── TrafficLogger ───────────────────────────────────────
 
-pub struct TrafficLogger {
-    db: SqlitePool,
-}
+/// Pipeline module that always returns Pass.
+/// Actual DB writes happen in the proxy handler via log_event(),
+/// not here, so no DB handle is needed on this struct.
+pub struct TrafficLogger;
 
 impl TrafficLogger {
-    pub fn new(db: SqlitePool) -> Self {
-        Self { db }
+    /// Create a new TrafficLogger. The `db` parameter is accepted for
+    /// API symmetry with other modules but is not stored here.
+    pub fn new(_db: SqlitePool) -> Self {
+        Self
     }
 }
 

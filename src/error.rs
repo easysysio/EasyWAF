@@ -22,12 +22,16 @@ pub enum AppError {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 
+    /// General internal error — not yet wired to any route, kept for future use.
+    #[allow(dead_code)]
     #[error("Internal error: {0}")]
     Internal(String),
 
     #[error("Not found: {0}")]
     NotFound(String),
 
+    /// Used by future auth middleware; not yet constructed in any route.
+    #[allow(dead_code)]
     #[error("Unauthorized")]
     Unauthorized,
 }

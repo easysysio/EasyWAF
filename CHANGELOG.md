@@ -8,6 +8,17 @@ Version bumps and tags are created only after explicit approval.
 
 ## [Unreleased]
 
+### Changed
+- Fixed all 8 compiler warnings — build is now warning-free:
+  - `certs.rs`: removed unused `AppError` import
+  - `error.rs`: added `#[allow(dead_code)]` to `Internal` and `Unauthorized`
+    variants (kept for future auth middleware / route error handling)
+  - `modules/mod.rs`: added `#[allow(dead_code)]` to `RequestContext`,
+    `ModuleDecision`, `Alert`, and `PipelineVerdict` — all are scaffolding
+    for the upcoming GeoIP and WAF-rules modules
+  - `modules/traffic.rs`: removed unused `db` field from `TrafficLogger`;
+    logging is done by the proxy via `log_event()`, not inside the module
+
 ### Fixed
 - `traffic.html` — `tojson` filter does not exist in Tera 1.20.1; replaced
   with the correct built-in filter name `json_encode` (caused "Failed to
