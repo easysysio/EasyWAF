@@ -1,0 +1,68 @@
+{% extends "layout_default.html" %}
+
+{% block content %}
+
+{% if result == "failed" %}
+<div class="alert alert-danger alert-dismissible">
+    <button type="button" class="close" data-dismiss="alert">&times;</button>
+    {{ msg }}
+</div>
+{% endif %}
+
+{% if result == "success" %}
+<div class="alert alert-success alert-dismissible">
+    <button type="button" class="close" data-dismiss="alert">&times;</button>
+    {{ msg }}
+</div>
+{% endif %}
+
+<div class="row">
+    <div class="col-lg-12">
+        <div class="table-responsive">
+            <table class="table table-striped table-bordered table-hover" id="dataTables-example">
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Domain</th>
+                        <th>Valid From</th>
+                        <th>Valid Until</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for cert in certs %}
+                    <tr>
+                        <td>{{ cert.name }}</td>
+                        <td>{{ cert.domain | default(value="-") }}</td>
+                        <td>{{ cert.not_before | default(value="-") }}</td>
+                        <td>{{ cert.not_after | default(value="-") }}</td>
+                        <td>
+                            <form method="post" action="/certs/{{ cert.name }}/delete"
+                                  onsubmit="return confirm('Delete certificate {{ cert.name }}?');"
+                                  style="display:inline">
+                                <button type="submit" class="btn btn-link" style="padding:0">
+                                    <i class="fa fa-trash fa-2x" title="Delete Certificate"></i>
+                                </button>
+                            </form>
+                        </td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<a href="/certs/new" class="btn btn-primary">
+    <i class="fa fa-plus"></i> Upload Certificate
+</a>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+$(document).ready(function () {
+    $('#dataTables-example').DataTable({ responsive: true });
+});
+</script>
+{% endblock %}

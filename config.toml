@@ -1,0 +1,14 @@
+# EasyWAF Configuration
+
+host = "0.0.0.0"
+port = 8080
+secret = "change-this-to-a-random-secret-before-production"
+database_url = "sqlite://easywaf.db"
+
+[nginx]
+site_dir    = "/etc/nginx/conf.d"
+cert_dir    = "/etc/nginx/certs"
+policy_dir  = "/etc/nginx/naxsi"
+rules_dir   = "/usr/share/owasp-modsecurity-crs/rules"
+log_dir     = "/var/log/nginx"
+reload_cmd  = "sudo systemctl restart nginx"

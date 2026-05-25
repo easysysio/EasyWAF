@@ -1,0 +1,56 @@
+{% extends "layout_default.html" %}
+
+{% block content %}
+<div class="row">
+    <div class="col-lg-8">
+        <div class="panel panel-default">
+            <div class="panel-heading"><h4>Policy Settings — {{ policy.name }}</h4></div>
+            <div class="panel-body">
+                <form method="post" action="/policy/{{ policy.name }}/update">
+
+                    <div class="form-group">
+                        <label>Policy Name</label>
+                        <input type="text" class="form-control" value="{{ policy.name }}" disabled>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Rule Engine Mode</label>
+                        <select class="form-control" name="rule_engine">
+                            <option value="DetectionOnly" {% if policy.rule_engine == "DetectionOnly" %}selected{% endif %}>DetectionOnly</option>
+                            <option value="On" {% if policy.rule_engine == "On" %}selected{% endif %}>On</option>
+                            <option value="Off" {% if policy.rule_engine == "Off" %}selected{% endif %}>Off</option>
+                        </select>
+                    </div>
+
+                    {% if rules %}
+                    <div class="panel panel-default">
+                        <div class="panel-heading">OWASP CRS Rules</div>
+                        <div class="panel-body" style="max-height:400px; overflow-y:auto;">
+                            {% for rule in rules %}
+                            <div class="checkbox">
+                                <label>
+                                    <input type="checkbox" name="{{ rule }}" value="1"
+                                        {% if rule in enabled_rules %}checked{% endif %}>
+                                    {{ rule }}
+                                </label>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </div>
+                    {% else %}
+                    <div class="alert alert-info">
+                        No OWASP CRS rule files found in the configured rules directory.
+                    </div>
+                    {% endif %}
+
+                    <button type="submit" class="btn btn-success">
+                        <i class="fa fa-save"></i> Update Policy
+                    </button>
+                    <a href="/policy" class="btn btn-default">Cancel</a>
+
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

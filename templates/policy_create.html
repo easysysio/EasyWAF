@@ -1,0 +1,55 @@
+{% extends "layout_default.html" %}
+
+{% block content %}
+<div class="row">
+    <div class="col-lg-8">
+        <div class="panel panel-default">
+            <div class="panel-heading"><h4>Create Security Policy</h4></div>
+            <div class="panel-body">
+                <form method="post" action="/policy/create">
+
+                    <div class="form-group">
+                        <label>Policy Name</label>
+                        <input type="text" class="form-control" name="name" placeholder="my-policy" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Rule Engine Mode</label>
+                        <select class="form-control" name="rule_engine">
+                            <option value="DetectionOnly">DetectionOnly (log but don't block)</option>
+                            <option value="On">On (detect and block)</option>
+                            <option value="Off">Off (disabled)</option>
+                        </select>
+                    </div>
+
+                    {% if rules %}
+                    <div class="panel panel-default">
+                        <div class="panel-heading">OWASP CRS Rules</div>
+                        <div class="panel-body" style="max-height:400px; overflow-y:auto;">
+                            {% for rule in rules %}
+                            <div class="checkbox">
+                                <label>
+                                    <input type="checkbox" name="{{ rule }}" value="1">
+                                    {{ rule }}
+                                </label>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </div>
+                    {% else %}
+                    <div class="alert alert-info">
+                        No OWASP CRS rule files found in the configured rules directory.
+                    </div>
+                    {% endif %}
+
+                    <button type="submit" class="btn btn-success">
+                        <i class="fa fa-save"></i> Create Policy
+                    </button>
+                    <a href="/policy" class="btn btn-default">Cancel</a>
+
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

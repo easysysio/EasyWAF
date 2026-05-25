@@ -1,0 +1,81 @@
+{% extends "layout_default.html" %}
+
+{% block content %}
+<div class="row">
+    <div class="col-lg-8">
+        <div class="panel panel-default">
+            <div class="panel-heading"><h4>Site Settings — {{ site.name }}</h4></div>
+            <div class="panel-body">
+                <form method="post" action="/sites/{{ site.name }}/update">
+
+                    <div class="form-group">
+                        <label>Site Name</label>
+                        <input type="text" class="form-control" value="{{ site.name }}" disabled>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Server Name</label>
+                        <input type="text" class="form-control" name="server" value="{{ site.server_name }}" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Target (proxy_pass)</label>
+                        <input type="text" class="form-control" name="target" value="{{ site.target }}" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Listen Port</label>
+                        <input type="number" class="form-control" name="port" value="{{ site.port }}" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label>WAF Policy</label>
+                        <select class="form-control" name="policy">
+                            <option value="">None</option>
+                            {% for p in policies %}
+                            <option value="{{ p }}" {% if site.waf_policy == p %}selected{% endif %}>{{ p }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <div class="panel panel-default">
+                        <div class="panel-heading">Security Headers</div>
+                        <div class="panel-body">
+                            <div class="checkbox">
+                                <label>
+                                    <input type="checkbox" name="hsts" value="1" {% if site.hsts %}checked{% endif %}>
+                                    <strong>HSTS</strong> — Strict-Transport-Security
+                                </label>
+                            </div>
+                            <div class="checkbox">
+                                <label>
+                                    <input type="checkbox" name="x_frame" value="1" {% if site.x_frame %}checked{% endif %}>
+                                    <strong>X-Frame-Options DENY</strong>
+                                </label>
+                            </div>
+                            <div class="checkbox">
+                                <label>
+                                    <input type="checkbox" name="x_content_type" value="1" {% if site.x_content_type %}checked{% endif %}>
+                                    <strong>X-Content-Type-Options nosniff</strong>
+                                </label>
+                            </div>
+                            <div class="checkbox">
+                                <label>
+                                    <input type="checkbox" name="xss_protection" value="1" {% if site.xss_protection %}checked{% endif %}>
+                                    <strong>X-XSS-Protection</strong>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <button type="submit" class="btn btn-success">
+                        <i class="fa fa-save"></i> Update Site
+                    </button>
+                    <a href="/sites" class="btn btn-default">Cancel</a>
+
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

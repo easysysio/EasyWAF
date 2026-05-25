@@ -1,0 +1,81 @@
+{% extends "layout_default.html" %}
+
+{% block content %}
+<div class="row">
+    <div class="col-lg-8">
+        <div class="panel panel-default">
+            <div class="panel-heading"><h4>Create New Site</h4></div>
+            <div class="panel-body">
+                <form method="post" action="/sites/create">
+
+                    <div class="form-group">
+                        <label>Site Name <small class="text-muted">(used as nginx conf filename)</small></label>
+                        <input type="text" class="form-control" name="name" placeholder="mysite" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Server Name <small class="text-muted">(hostname / virtual host)</small></label>
+                        <input type="text" class="form-control" name="server" placeholder="example.com" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Target (proxy_pass)</label>
+                        <input type="text" class="form-control" name="target" placeholder="http://127.0.0.1:3000" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Listen Port</label>
+                        <input type="number" class="form-control" name="port" value="80" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label>WAF Policy</label>
+                        <select class="form-control" name="policy">
+                            <option value="">None</option>
+                            {% for p in policies %}
+                            <option value="{{ p }}">{{ p }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <div class="panel panel-default">
+                        <div class="panel-heading">Security Headers</div>
+                        <div class="panel-body">
+                            <div class="checkbox">
+                                <label>
+                                    <input type="checkbox" name="hsts" value="1">
+                                    <strong>HSTS</strong> — Strict-Transport-Security
+                                </label>
+                            </div>
+                            <div class="checkbox">
+                                <label>
+                                    <input type="checkbox" name="x_frame" value="1">
+                                    <strong>X-Frame-Options DENY</strong>
+                                </label>
+                            </div>
+                            <div class="checkbox">
+                                <label>
+                                    <input type="checkbox" name="x_content_type" value="1">
+                                    <strong>X-Content-Type-Options nosniff</strong>
+                                </label>
+                            </div>
+                            <div class="checkbox">
+                                <label>
+                                    <input type="checkbox" name="xss_protection" value="1">
+                                    <strong>X-XSS-Protection</strong>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <button type="submit" class="btn btn-success">
+                        <i class="fa fa-save"></i> Save Site
+                    </button>
+                    <a href="/sites" class="btn btn-default">Cancel</a>
+
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
