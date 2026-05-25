@@ -2,11 +2,16 @@
 // proxy/mod.rs — EasyWAF
 // HTTP reverse proxy engine.
 //
-// Starts a single TCP listener on the configured http_port.
+// On startup, reads all distinct listen_port values from
+// enabled sites and binds one TCP listener per unique port.
 // Incoming requests are routed to a backend site by matching
 // the Host: header against sites.server_name in the database.
 // Every request is passed through the module pipeline before
 // being forwarded to the upstream.
+//
+// Note: adding a site with a new port or changing a site's
+// port requires a proxy restart to take effect, because TCP
+// listeners are bound once at startup.
 // =========================================================
 
 use crate::modules::{
@@ -20,7 +25,6 @@ use axum::{
     response::Response,
     Router,
 };
-
 use reqwest::Client;
 use sqlx::SqlitePool;
 use std::{net::SocketAddr, sync::Arc, time::Instant};
@@ -29,6 +33,7 @@ use tokio::net::TcpListener;
 // ─── Hop-by-hop headers ──────────────────────────────────
 
 /// Headers that must not be forwarded between proxy and upstream.
+/// These are connection-specific and are stripped before forwarding.
 const HOP_HEADERS: &[&str] = &[
     "connection",
     "keep-alive",
@@ -43,6 +48,7 @@ const HOP_HEADERS: &[&str] = &[
 // ─── ProxyState ──────────────────────────────────────────
 
 /// State shared across all proxy request handlers.
+/// Cloned cheaply for each spawned listener / request.
 #[derive(Clone)]
 pub struct ProxyState {
     pub db:       SqlitePool,
@@ -52,7 +58,7 @@ pub struct ProxyState {
 
 // ─── SiteRow ─────────────────────────────────────────────
 
-/// Minimal site data fetched per request.
+/// Minimal site data fetched per request from the database.
 struct SiteRow {
     id:             i64,
     name:           String,
@@ -65,9 +71,73 @@ struct SiteRow {
 
 // ─── start ───────────────────────────────────────────────
 
-/// Bind the proxy listener and start serving. Runs forever.
-pub async fn start(state: ProxyState, http_port: u16) {
-    let addr = format!("0.0.0.0:{}", http_port);
+/// Read all unique listen_port values from enabled sites and start one
+/// Axum TCP listener for each port. Runs until all listeners exit
+/// (which is never under normal operation).
+pub async fn start(state: ProxyState) {
+    // Collect distinct ports from every enabled site.
+    let ports = get_listen_ports(&state.db).await;
+
+    if ports.is_empty() {
+        tracing::warn!(
+            "No enabled sites found — proxy is not listening on any port. \
+             Add a site and restart to begin proxying."
+        );
+        return;
+    }
+
+    // Spawn a dedicated listener task for each unique port.
+    let mut handles = Vec::new();
+    for port in ports {
+        let state_clone = state.clone();
+        let handle = tokio::spawn(async move {
+            start_on_port(state_clone, port).await;
+        });
+        handles.push(handle);
+    }
+
+    // Wait for all listener tasks. In normal operation they run forever.
+    for handle in handles {
+        let _ = handle.await;
+    }
+}
+
+// ─── get_listen_ports ────────────────────────────────────
+
+/// Query the database for the distinct set of listen_port values across
+/// all enabled sites. Returns a sorted, deduplicated list of port numbers.
+async fn get_listen_ports(db: &SqlitePool) -> Vec<u16> {
+    let rows = sqlx::query!(
+        "SELECT DISTINCT listen_port as \"listen_port!\" FROM sites WHERE enabled = 1"
+    )
+    .fetch_all(db)
+    .await
+    .unwrap_or_default();
+
+    let mut ports: Vec<u16> = rows
+        .into_iter()
+        .filter_map(|r| {
+            // Clamp to valid port range — values outside 1-65535 are ignored.
+            if r.listen_port > 0 && r.listen_port <= 65535 {
+                Some(r.listen_port as u16)
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    ports.sort_unstable();
+    ports.dedup();
+    ports
+}
+
+// ─── start_on_port ───────────────────────────────────────
+
+/// Bind a TCP listener on the given port and serve requests forever.
+/// Each port gets its own Axum Router but shares the same ProxyState.
+async fn start_on_port(state: ProxyState, port: u16) {
+    let addr = format!("0.0.0.0:{}", port);
+
     let listener = TcpListener::bind(&addr)
         .await
         .unwrap_or_else(|e| panic!("Cannot bind proxy to {}: {}", addr, e));
@@ -86,7 +156,15 @@ pub async fn start(state: ProxyState, http_port: u16) {
 
 // ─── handle_request ──────────────────────────────────────
 
-/// Main proxy handler — called for every incoming request.
+/// Main proxy handler — called for every incoming request on every port.
+/// Flow:
+///   1. Extract and validate the Host: header.
+///   2. Look up the matching enabled site in the database.
+///   3. Buffer the request body (needed by WAF modules).
+///   4. Run the module pipeline — block if any module returns Block.
+///   5. Forward the request to the upstream via reqwest.
+///   6. Inject security headers and stream the response back.
+///   7. Log the completed request asynchronously.
 async fn handle_request(
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     State(state): State<ProxyState>,
@@ -94,13 +172,15 @@ async fn handle_request(
 ) -> Response<Body> {
     let started_at = Instant::now();
 
-    // ── Extract Host header ───────────────────────────────
+    // ── 1. Extract Host header ────────────────────────────
+    // Strip the port suffix (e.g. "example.com:8081" → "example.com")
+    // so routing works regardless of which port the client connected on.
     let host = req
         .headers()
         .get("host")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("")
-        .split(':')        // strip port if present
+        .split(':')
         .next()
         .unwrap_or("")
         .to_lowercase();
@@ -109,7 +189,7 @@ async fn handle_request(
         return error_response(StatusCode::BAD_REQUEST, "Missing Host header");
     }
 
-    // ── Look up site ──────────────────────────────────────
+    // ── 2. Look up site ───────────────────────────────────
     let site = match lookup_site(&state.db, &host).await {
         Some(s) => s,
         None => {
@@ -118,21 +198,21 @@ async fn handle_request(
         }
     };
 
-    // ── Decompose request ─────────────────────────────────
+    // ── 3. Decompose request ──────────────────────────────
     let (parts, body) = req.into_parts();
-    let method  = parts.method.clone();
-    let path    = parts.uri.path().to_string();
-    let query   = parts.uri.query().map(str::to_string);
-    let headers = parts.headers.clone();
+    let method    = parts.method.clone();
+    let path      = parts.uri.path().to_string();
+    let query     = parts.uri.query().map(str::to_string);
+    let headers   = parts.headers.clone();
     let client_ip = peer.ip();
 
-    // Buffer the body (needed by WAF modules later).
+    // Buffer the full body (up to 32 MB) — WAF modules need to inspect it.
     let body_bytes = match axum::body::to_bytes(body, 32 * 1024 * 1024).await {
         Ok(b)  => b,
         Err(_) => return error_response(StatusCode::BAD_REQUEST, "Failed to read request body"),
     };
 
-    // ── Build RequestContext ──────────────────────────────
+    // ── 4. Build RequestContext and run pipeline ──────────
     let ctx = RequestContext {
         site_id:    site.id,
         site_name:  site.name.clone(),
@@ -146,12 +226,12 @@ async fn handle_request(
         started_at,
     };
 
-    // ── Run module pipeline ───────────────────────────────
     let verdict = state.pipeline.run(&ctx).await;
 
     if let PipelineVerdict::Block { reason, status, .. } = verdict {
-        let elapsed = started_at.elapsed().as_millis() as i64;
-        let db = state.db.clone();
+        // Log the blocked request asynchronously so we don't delay the response.
+        let elapsed    = started_at.elapsed().as_millis() as i64;
+        let db         = state.db.clone();
         let method_str = method.to_string();
         let reason_log = reason.clone();
         tokio::spawn(async move {
@@ -172,7 +252,7 @@ async fn handle_request(
         return error_response(status, &reason);
     }
 
-    // ── Forward to upstream ───────────────────────────────
+    // ── 5. Forward to upstream ────────────────────────────
     let path_and_query = match &query {
         Some(q) => format!("{}?{}", path, q),
         None    => path.clone(),
@@ -183,7 +263,7 @@ async fn handle_request(
         path_and_query
     );
 
-    // Filter hop-by-hop headers before forwarding.
+    // Strip hop-by-hop headers before forwarding.
     let mut fwd_headers = headers.clone();
     for h in HOP_HEADERS {
         fwd_headers.remove(*h);
@@ -198,10 +278,11 @@ async fn handle_request(
         .await;
 
     match upstream_result {
+        // ── Upstream unreachable ──────────────────────────
         Err(e) => {
             tracing::warn!(upstream = %upstream_url, error = %e, "upstream unreachable");
-            let elapsed = started_at.elapsed().as_millis() as i64;
-            let db = state.db.clone();
+            let elapsed    = started_at.elapsed().as_millis() as i64;
+            let db         = state.db.clone();
             let method_str = method.to_string();
             tokio::spawn(async move {
                 log_event(db, TrafficRecord {
@@ -221,16 +302,17 @@ async fn handle_request(
             error_response(StatusCode::BAD_GATEWAY, "Upstream unreachable")
         }
 
+        // ── Upstream responded — stream back to client ────
         Ok(upstream_resp) => {
-            let status  = upstream_resp.status();
+            let status       = upstream_resp.status();
             let resp_headers = upstream_resp.headers().clone();
-            let elapsed = started_at.elapsed().as_millis() as i64;
+            let elapsed      = started_at.elapsed().as_millis() as i64;
 
-            // Stream the response body back to the client.
+            // Stream the response body back without buffering it.
             let body_stream = upstream_resp.bytes_stream();
-            let body = Body::from_stream(body_stream);
+            let body        = Body::from_stream(body_stream);
 
-            // Build response, copy upstream headers (minus hop-by-hop).
+            // Copy upstream response headers (minus hop-by-hop).
             let mut resp = Response::builder().status(status);
             if let Some(headers_mut) = resp.headers_mut() {
                 for (k, v) in &resp_headers {
@@ -238,12 +320,12 @@ async fn handle_request(
                         headers_mut.insert(k, v.clone());
                     }
                 }
-                // Inject configured security headers.
+                // Inject any security headers configured for this site.
                 inject_security_headers(headers_mut, &site);
             }
 
-            // Log asynchronously.
-            let db = state.db.clone();
+            // Log the completed request asynchronously.
+            let db         = state.db.clone();
             let method_str = method.to_string();
             tokio::spawn(async move {
                 log_event(db, TrafficRecord {
@@ -270,7 +352,8 @@ async fn handle_request(
 
 // ─── lookup_site ─────────────────────────────────────────
 
-/// Find an enabled site matching the given hostname.
+/// Find an enabled site by hostname (server_name column).
+/// Returns None if no enabled site matches, so the proxy returns 404.
 async fn lookup_site(db: &SqlitePool, host: &str) -> Option<SiteRow> {
     sqlx::query!(
         "SELECT id as \"id!\", name, target,
@@ -299,7 +382,8 @@ async fn lookup_site(db: &SqlitePool, host: &str) -> Option<SiteRow> {
 
 // ─── inject_security_headers ─────────────────────────────
 
-/// Add configured security response headers.
+/// Append configured security response headers to the outgoing response.
+/// Only headers that are enabled (set to true in the site row) are added.
 fn inject_security_headers(headers: &mut HeaderMap, site: &SiteRow) {
     if site.hsts {
         headers.insert(
@@ -329,6 +413,7 @@ fn inject_security_headers(headers: &mut HeaderMap, site: &SiteRow) {
 
 // ─── error_response ──────────────────────────────────────
 
+/// Build a plain-text error response with the given status code and message.
 fn error_response(status: StatusCode, msg: &str) -> Response<Body> {
     Response::builder()
         .status(status)
@@ -339,11 +424,13 @@ fn error_response(status: StatusCode, msg: &str) -> Response<Body> {
 
 // ─── Header conversion helpers ───────────────────────────
 
+/// Convert an axum Method to a reqwest Method for the upstream request.
 fn to_reqwest_method(m: &Method) -> reqwest::Method {
     reqwest::Method::from_bytes(m.as_str().as_bytes())
         .unwrap_or(reqwest::Method::GET)
 }
 
+/// Copy axum HeaderMap into a reqwest HeaderMap, skipping any malformed values.
 fn to_reqwest_headers(headers: &HeaderMap) -> reqwest::header::HeaderMap {
     let mut out = reqwest::header::HeaderMap::new();
     for (k, v) in headers {

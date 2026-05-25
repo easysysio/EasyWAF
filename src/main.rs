@@ -1,8 +1,9 @@
 // =========================================================
 // main.rs — EasyWAF
 // Entry point. Starts two servers in the same process:
-//   • Management GUI  — configured gui_port  (default 8080)
-//   • HTTP proxy      — configured http_port (default 80)
+//   • Management GUI — configured gui_port (default 8080)
+//   • HTTP proxy     — one listener per unique listen_port
+//                      found across all enabled sites in the DB
 // Both share the SQLite pool and module pipeline.
 // =========================================================
 
@@ -83,9 +84,10 @@ async fn main() {
         pipeline: pipeline.clone(),
         client,
     };
-    let http_port = cfg.proxy.http_port;
+    // Proxy reads listen_port from each enabled site's DB row at startup.
+    // To pick up a new port after adding/editing a site, restart the process.
     tokio::spawn(async move {
-        proxy::start(proxy_state, http_port).await;
+        proxy::start(proxy_state).await;
     });
 
     // ── Build management GUI ──────────────────────────────

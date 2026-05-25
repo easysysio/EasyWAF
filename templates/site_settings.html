@@ -24,6 +24,11 @@
                     </div>
 
                     <div class="form-group">
+                        <label>Listen Port <small class="text-muted">(port EasyWAF binds for this site — restart required after change)</small></label>
+                        <input type="number" class="form-control" name="listen_port" value="{{ site.listen_port }}" min="1" max="65535" required>
+                    </div>
+
+                    <div class="form-group">
                         <label>WAF Policy</label>
                         <select class="form-control" name="waf_policy_id">
                             <option value="">None</option>
