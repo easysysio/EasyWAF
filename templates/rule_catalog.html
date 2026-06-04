@@ -1,0 +1,176 @@
+{% extends "layout_default.html" %}
+
+{% block content %}
+
+<form method="post" action="/policy/{{ policy.name }}/rules/catalog" id="catalogForm"
+      onsubmit="collectIds()">
+    <!-- Hidden field populated with checked external_ids on submit -->
+    <input type="hidden" name="ids" id="catalogIds" value="">
+
+    <!-- ── Toolbar ────────────────────────────────────────── -->
+    <div class="panel panel-default">
+        <div class="panel-body" style="padding:10px 14px;display:flex;flex-wrap:wrap;align-items:center;gap:8px">
+            <div style="flex:1;min-width:200px">
+                <strong><i class="fa fa-book"></i> Rule Library — {{ policy.name }}</strong>
+                <span class="text-muted" style="margin-left:8px;font-size:12px">
+                    <span id="selCount">{{ total_added }}</span> of {{ total_available }} rules selected
+                </span>
+            </div>
+
+            <input type="text" class="form-control input-sm" id="ruleSearch"
+                   placeholder="Filter rules…" style="width:200px"
+                   oninput="filterRules()">
+
+            <button type="button" class="btn btn-default btn-sm" onclick="selectAll(true)">
+                <i class="fa fa-check-square-o"></i> Select all
+            </button>
+            <button type="button" class="btn btn-default btn-sm" onclick="selectAll(false)">
+                <i class="fa fa-square-o"></i> Clear all
+            </button>
+            <button type="submit" class="btn btn-success btn-sm">
+                <i class="fa fa-save"></i> Apply selection
+            </button>
+            <a href="/policy/{{ policy.name }}/rules" class="btn btn-link btn-sm">Cancel</a>
+        </div>
+    </div>
+
+    <!-- ── Category panels ────────────────────────────────── -->
+    {% for cat in catalog %}
+    <div class="panel panel-default rule-category">
+        <div class="panel-heading" style="display:flex;align-items:center;gap:8px">
+            <label style="margin:0;font-weight:bold;cursor:pointer">
+                <input type="checkbox" class="cat-master" data-cat="{{ cat.code }}"
+                       {% if cat.added_count == cat.total %}checked{% endif %}>
+                {{ cat.title }}
+            </label>
+            <span class="label label-default">{{ cat.code }}</span>
+            <span class="text-muted" style="font-size:12px;margin-left:auto">
+                <span class="cat-count" data-cat="{{ cat.code }}">{{ cat.added_count }}</span>
+                / {{ cat.total }} selected
+            </span>
+        </div>
+        <div class="table-responsive">
+            <table class="table table-condensed table-hover" style="font-size:12px;margin-bottom:0">
+                <tbody>
+                {% for r in cat.rules %}
+                    <tr class="rule-row"
+                        data-text="{{ r.name | lower }} {{ r.description | lower }} {{ r.zone | lower }}">
+                        <td style="width:34px;text-align:center;vertical-align:middle">
+                            <input type="checkbox" class="cat-chk"
+                                   data-cat="{{ cat.code }}"
+                                   data-id="{{ r.external_id }}"
+                                   {% if r.added %}checked{% endif %}>
+                        </td>
+                        <td>
+                            <strong>{{ r.name }}</strong>
+                            {% if r.description %}
+                            <br><small class="text-muted">{{ r.description }}</small>
+                            {% endif %}
+                        </td>
+                        <td style="width:80px;vertical-align:middle">
+                            <span class="label label-default">{{ r.zone }}</span>
+                        </td>
+                        <td style="width:90px;vertical-align:middle;text-align:center">
+                            {% if r.action == "block" %}
+                                <span class="label label-danger">BLOCK</span>
+                            {% else %}
+                                <span class="label label-warning">+{{ r.score }}</span>
+                            {% endif %}
+                        </td>
+                        <td style="vertical-align:middle">
+                            <code style="font-size:11px;word-break:break-all">{{ r.pattern }}</code>
+                        </td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endfor %}
+
+    {% if total_available == 0 %}
+    <div class="alert alert-info">
+        No rule files found in the <code>rules/</code> directory.
+    </div>
+    {% endif %}
+
+    <!-- ── Sticky bottom apply bar ────────────────────────── -->
+    {% if total_available > 0 %}
+    <div style="position:sticky;bottom:0;background:#fff;border-top:1px solid #ddd;
+                padding:10px 0;text-align:right">
+        <span class="text-muted" style="margin-right:10px;font-size:12px">
+            <span id="selCountBottom">{{ total_added }}</span> of {{ total_available }} selected
+        </span>
+        <button type="submit" class="btn btn-success">
+            <i class="fa fa-save"></i> Apply selection
+        </button>
+        <a href="/policy/{{ policy.name }}/rules" class="btn btn-default">Cancel</a>
+    </div>
+    {% endif %}
+</form>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+// ── Update all counters ───────────────────────────────────
+function updateCounts() {
+    var total = document.querySelectorAll('.cat-chk:checked').length;
+    document.getElementById('selCount').textContent = total;
+    document.getElementById('selCountBottom').textContent = total;
+
+    // Per-category counts + master checkbox state
+    document.querySelectorAll('.cat-master').forEach(function (master) {
+        var cat   = master.dataset.cat;
+        var boxes = document.querySelectorAll('.cat-chk[data-cat="' + cat + '"]');
+        var chkd  = document.querySelectorAll('.cat-chk[data-cat="' + cat + '"]:checked');
+        document.querySelector('.cat-count[data-cat="' + cat + '"]').textContent = chkd.length;
+        master.checked       = boxes.length > 0 && chkd.length === boxes.length;
+        master.indeterminate = chkd.length > 0 && chkd.length < boxes.length;
+    });
+}
+
+// ── Per-category master checkbox ──────────────────────────
+document.querySelectorAll('.cat-master').forEach(function (master) {
+    master.addEventListener('change', function () {
+        var cat = this.dataset.cat;
+        var on  = this.checked;
+        document.querySelectorAll('.cat-chk[data-cat="' + cat + '"]').forEach(function (c) {
+            c.checked = on;
+        });
+        updateCounts();
+    });
+});
+
+// ── Individual rule checkbox ──────────────────────────────
+document.querySelectorAll('.cat-chk').forEach(function (chk) {
+    chk.addEventListener('change', updateCounts);
+});
+
+// ── Select / clear all ────────────────────────────────────
+function selectAll(on) {
+    document.querySelectorAll('.cat-chk').forEach(function (c) { c.checked = on; });
+    updateCounts();
+}
+
+// ── Search filter ─────────────────────────────────────────
+function filterRules() {
+    var q = document.getElementById('ruleSearch').value.toLowerCase();
+    document.querySelectorAll('.rule-row').forEach(function (row) {
+        var hit = row.dataset.text.indexOf(q) !== -1;
+        row.style.display = hit ? '' : 'none';
+    });
+}
+
+// ── Collect checked IDs into the hidden field before submit ──
+function collectIds() {
+    var ids = Array.from(document.querySelectorAll('.cat-chk:checked'))
+                   .map(function (c) { return c.dataset.id; })
+                   .join(',');
+    document.getElementById('catalogIds').value = ids;
+}
+
+// Initial sync of counters/master states on load.
+updateCounts();
+</script>
+{% endblock %}

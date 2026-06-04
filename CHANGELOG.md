@@ -8,6 +8,21 @@ Version bumps and tags are created only after explicit approval.
 
 ## [Unreleased]
 
+### Added
+- **Rule Library selection GUI** (`/policy/{name}/rules/catalog`) — browse every
+  rule from the `rules/` directory and pick the ones applicable to you:
+  - Rules grouped into category panels (SQL Injection, XSS, LFI, RFI, RCE,
+    PHP, Protocol, Scanners) with a per-category "select all" checkbox
+  - Rules already in the policy are pre-checked, so the catalog reflects
+    your current selection
+  - Live "X of Y selected" counters (global and per-category) and a search
+    filter to narrow the list
+  - **Save = sync**: checked rules are added, unchecked catalog rules are
+    removed. Manually-created rules (no external_id) are never touched
+  - "Select from Rule Library" button added to the Rules Manager page
+  - `GET/POST /policy/{name}/rules/catalog` routes; selection submitted as a
+    single comma-separated field (same serde_urlencoded-safe pattern as bulk)
+
 ### Fixed
 - **2 OWASP rule files failed to import silently** — `932-rce.toml` and
   `933-php.toml` had `[''"]` regex char classes inside TOML single-quoted

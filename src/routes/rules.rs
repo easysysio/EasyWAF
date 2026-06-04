@@ -21,6 +21,7 @@ use axum::{
 };
 use axum_extra::extract::cookie::SignedCookieJar;
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 use tera::Context;
 
 // ─── Models ──────────────────────────────────────────────
@@ -689,6 +690,310 @@ pub async fn post_import_rules(
         imported,
         skipped,
         "OWASP rule import complete"
+    );
+
+    Ok(Redirect::to(&redirect).into_response())
+}
+
+// ─── Rule Library (catalog) ──────────────────────────────
+//
+// The catalog presents every rule found in the rules/ directory,
+// grouped by category, each with a checkbox. Rules already present
+// in the policy are pre-checked. Saving the form syncs the policy
+// to the selection: checked rules are added, unchecked catalog rules
+// are removed. This is the "pick the rules applicable to me" UI.
+
+/// One rule as shown in the catalog.
+#[derive(Serialize)]
+struct CatalogRule {
+    external_id: i64,
+    name:        String,
+    description: String,
+    zone:        String,
+    pattern:     String,
+    score:       i64,
+    action:      String,
+    added:       bool,   // already present in this policy
+}
+
+/// A group of catalog rules sharing a source file / CRS category.
+#[derive(Serialize)]
+struct CatalogCategory {
+    title:       String, // friendly name, e.g. "SQL Injection"
+    code:        String, // numeric CRS-style prefix, e.g. "942"
+    total:       usize,
+    added_count: usize,
+    rules:       Vec<CatalogRule>,
+}
+
+/// Derive a friendly (code, title) pair from a rule file stem like
+/// "942-sqli" → ("942", "SQL Injection").
+fn category_title(file_stem: &str) -> (String, String) {
+    let mut parts = file_stem.splitn(2, '-');
+    let code = parts.next().unwrap_or("").to_string();
+    let slug = parts.next().unwrap_or("");
+
+    let title = match slug {
+        "sqli"     => "SQL Injection",
+        "xss"      => "Cross-Site Scripting",
+        "lfi"      => "Local File Inclusion",
+        "rfi"      => "Remote File Inclusion",
+        "rce"      => "Remote Code Execution",
+        "php"      => "PHP Injection",
+        "protocol" => "Protocol Enforcement",
+        "scanners" => "Scanners & Bots",
+        other      => other,
+    };
+
+    (code, title.to_string())
+}
+
+/// Read all rule definitions from the rules/ directory into a flat map
+/// keyed by external_id. Used by the catalog POST handler for additions.
+fn read_rule_defs() -> HashMap<i64, RuleFileDef> {
+    let mut map = HashMap::new();
+    let dir = std::path::Path::new("rules");
+    if !dir.exists() {
+        return map;
+    }
+
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) != Some("toml") {
+                continue;
+            }
+            let content = match std::fs::read_to_string(&path) {
+                Ok(s)  => s,
+                Err(_) => continue,
+            };
+            let parsed: RuleFile = match toml::from_str(&content) {
+                Ok(f)  => f,
+                Err(_) => continue,
+            };
+            for rule in parsed.rules {
+                map.insert(rule.id, rule);
+            }
+        }
+    }
+    map
+}
+
+/// Build the grouped catalog for display, marking which rules are already
+/// present in the given policy.
+async fn load_catalog(state: &AppState, policy_id: i64) -> Result<Vec<CatalogCategory>> {
+    let dir = std::path::Path::new("rules");
+    let mut categories = Vec::new();
+    if !dir.exists() {
+        return Ok(categories);
+    }
+
+    // Which external_ids are already imported into this policy?
+    let existing_rows = sqlx::query_scalar!(
+        "SELECT external_id as \"external_id!\" FROM waf_rules
+         WHERE policy_id = ? AND external_id IS NOT NULL",
+        policy_id
+    )
+    .fetch_all(&state.db)
+    .await?;
+    let existing: HashSet<i64> = existing_rows.into_iter().collect();
+
+    // Collect and sort .toml files so categories appear in a stable order.
+    let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(dir)
+        .map_err(|e| AppError::Internal(format!("Cannot read rules dir: {}", e)))?
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("toml"))
+        .collect();
+    files.sort();
+
+    for path in files {
+        let stem = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_string();
+
+        let content = match std::fs::read_to_string(&path) {
+            Ok(s)  => s,
+            Err(_) => continue,
+        };
+        let parsed: RuleFile = match toml::from_str(&content) {
+            Ok(f)  => f,
+            Err(e) => {
+                tracing::warn!(file = %path.display(), "Cannot parse rule file: {}", e);
+                continue;
+            }
+        };
+
+        let (code, title) = category_title(&stem);
+
+        let mut rules = Vec::new();
+        let mut added_count = 0;
+        for r in parsed.rules {
+            let added = existing.contains(&r.id);
+            if added {
+                added_count += 1;
+            }
+            rules.push(CatalogRule {
+                external_id: r.id,
+                name:        r.name,
+                description: r.description.unwrap_or_default(),
+                zone:        r.zone,
+                pattern:     r.pattern,
+                score:       r.score,
+                action:      r.action,
+                added,
+            });
+        }
+
+        let total = rules.len();
+        categories.push(CatalogCategory { title, code, total, added_count, rules });
+    }
+
+    Ok(categories)
+}
+
+// ─── get_rules_catalog ───────────────────────────────────
+
+/// Render the rule-library selection page for a policy.
+pub async fn get_rules_catalog(
+    State(state): State<AppState>,
+    jar: SignedCookieJar,
+    Path(policy_name): Path<String>,
+) -> Result<Response> {
+    let session = match get_session(&jar) {
+        Some(s) => s,
+        None    => return Ok(Redirect::to("/login").into_response()),
+    };
+
+    let policy = fetch_policy_header(&state, &policy_name).await?;
+
+    let policy_id: i64 = sqlx::query_scalar!(
+        "SELECT id as \"id!\" FROM policies WHERE name = ?",
+        policy_name
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| AppError::NotFound(format!("Policy '{}' not found", policy_name)))?;
+
+    let catalog = load_catalog(&state, policy_id).await?;
+
+    let total_available: usize = catalog.iter().map(|c| c.total).sum();
+    let total_added:     usize = catalog.iter().map(|c| c.added_count).sum();
+
+    let mut ctx = Context::new();
+    ctx.insert("username",        &session.username);
+    ctx.insert("title",           "Rule Library");
+    ctx.insert("url",             "/policy");
+    ctx.insert("policy",          &policy);
+    ctx.insert("catalog",         &catalog);
+    ctx.insert("total_available", &total_available);
+    ctx.insert("total_added",     &total_added);
+
+    Ok((jar, Html(state.tera.render("rule_catalog.html", &ctx)?)).into_response())
+}
+
+// ─── post_rules_catalog ──────────────────────────────────
+
+/// Form submitted by the catalog: a comma-separated list of the
+/// external_ids that are currently checked.
+#[derive(Deserialize)]
+pub struct CatalogForm {
+    #[serde(default)]
+    pub ids: String,
+}
+
+/// Sync the policy's rules to the catalog selection.
+/// Checked rules not yet present are inserted; catalog rules that are
+/// present but no longer checked are removed. Manually-created rules
+/// (no external_id) are never touched.
+pub async fn post_rules_catalog(
+    State(state): State<AppState>,
+    jar: SignedCookieJar,
+    Path(policy_name): Path<String>,
+    Form(form): Form<CatalogForm>,
+) -> Result<Response> {
+    if get_session(&jar).is_none() {
+        return Ok(Redirect::to("/login").into_response());
+    }
+
+    let redirect = format!("/policy/{}/rules", policy_name);
+
+    let policy_id: i64 = sqlx::query_scalar!(
+        "SELECT id as \"id!\" FROM policies WHERE name = ?",
+        policy_name
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| AppError::NotFound(format!("Policy '{}' not found", policy_name)))?;
+
+    // Parse the checked external_ids.
+    let checked: HashSet<i64> = form.ids
+        .split(',')
+        .filter_map(|s| s.trim().parse::<i64>().ok())
+        .collect();
+
+    // All rule definitions available on disk, keyed by external_id.
+    let defs = read_rule_defs();
+    let catalog_ids: HashSet<i64> = defs.keys().copied().collect();
+
+    // external_ids already present in this policy.
+    let db_rows = sqlx::query_scalar!(
+        "SELECT external_id as \"external_id!\" FROM waf_rules
+         WHERE policy_id = ? AND external_id IS NOT NULL",
+        policy_id
+    )
+    .fetch_all(&state.db)
+    .await?;
+    let db_ids: HashSet<i64> = db_rows.into_iter().collect();
+
+    // ── Additions: checked rules not yet in the policy ────
+    let mut added = 0usize;
+    for id in &checked {
+        if db_ids.contains(id) {
+            continue;
+        }
+        if let Some(def) = defs.get(id) {
+            let desc = def.description.as_deref().unwrap_or("");
+            sqlx::query!(
+                "INSERT INTO waf_rules
+                 (policy_id, name, description, zone, pattern, score, action, external_id)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                policy_id,
+                def.name,
+                desc,
+                def.zone,
+                def.pattern,
+                def.score,
+                def.action,
+                def.id,
+            )
+            .execute(&state.db)
+            .await?;
+            added += 1;
+        }
+    }
+
+    // ── Removals: catalog rules present but no longer checked ──
+    let mut removed = 0usize;
+    for id in &db_ids {
+        if catalog_ids.contains(id) && !checked.contains(id) {
+            let rid = *id;
+            sqlx::query!(
+                "DELETE FROM waf_rules WHERE policy_id = ? AND external_id = ?",
+                policy_id, rid
+            )
+            .execute(&state.db)
+            .await?;
+            removed += 1;
+        }
+    }
+
+    tracing::info!(
+        policy = %policy_name,
+        added,
+        removed,
+        "Catalog selection synced"
     );
 
     Ok(Redirect::to(&redirect).into_response())
