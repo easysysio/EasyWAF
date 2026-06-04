@@ -69,7 +69,10 @@
 
 <!-- ── Bulk-action form wraps the table ───────────────────── -->
 <form method="post" action="/policy/{{ policy.name }}/rules/bulk" id="bulkForm">
-    <!-- Hidden action field — set by whichever bulk button is clicked -->
+    <!-- Single comma-separated IDs field populated by JS before submit.
+         We use one field (not repeated checkbox fields) because
+         serde_urlencoded does not map repeated keys into Vec<T>. -->
+    <input type="hidden" name="ids"         id="bulkIds"   value="">
     <input type="hidden" name="bulk_action" id="bulkAction" value="">
 
     <div class="panel panel-default">
@@ -117,7 +120,9 @@
                 {% for r in rules %}
                     <tr {% if not r.enabled %}class="text-muted"{% endif %}>
                         <td class="text-center">
-                            <input type="checkbox" name="ids" value="{{ r.id }}" class="rule-chk">
+                            <!-- data-id used by JS to build the ids field; no name= so it
+                                 is not submitted as a form field -->
+                            <input type="checkbox" class="rule-chk" data-id="{{ r.id }}">
                         </td>
                         <td class="text-muted">{{ r.id }}</td>
                         <td>
@@ -180,53 +185,66 @@
 
 {% block scripts %}
 <script>
-// ── Select-all checkbox ───────────────────────────────────
-document.getElementById('chkAll').addEventListener('change', function () {
-    var checked = this.checked;
-    document.querySelectorAll('.rule-chk').forEach(function (chk) {
-        chk.checked = checked;
-    });
-    updateBulkBar();
-});
-
-// ── Per-row checkbox ──────────────────────────────────────
-document.querySelectorAll('.rule-chk').forEach(function (chk) {
-    chk.addEventListener('change', function () {
-        // Sync select-all state
-        var all  = document.querySelectorAll('.rule-chk').length;
-        var chkd = document.querySelectorAll('.rule-chk:checked').length;
-        document.getElementById('chkAll').indeterminate = chkd > 0 && chkd < all;
-        document.getElementById('chkAll').checked = chkd === all;
-        updateBulkBar();
-    });
-});
-
-// ── Show/hide bulk action bar ─────────────────────────────
-function updateBulkBar() {
-    var n   = document.querySelectorAll('.rule-chk:checked').length;
-    var bar = document.getElementById('bulkBar');
-    bar.style.display = n > 0 ? 'block' : 'none';
-    document.getElementById('selCount').textContent = n + ' selected';
-}
-
-// ── Submit bulk form with chosen action ───────────────────
-function submitBulk(action) {
-    var n = document.querySelectorAll('.rule-chk:checked').length;
-    if (n === 0) return;
-    if (action === 'delete' && !confirm('Delete ' + n + ' rule(s)?')) return;
-    document.getElementById('bulkAction').value = action;
-    document.getElementById('bulkForm').submit();
-}
-
-// ── DataTables ────────────────────────────────────────────
 $(document).ready(function () {
-    // DataTables interferes with checkbox column — disable sorting on col 0.
-    $('#rulesTable').DataTable({
+
+    // ── DataTables — show all rows so every checkbox is in the DOM ──────
+    // Pagination would hide rows, making it impossible to submit checkboxes
+    // on non-visible pages.  We disable it and rely on DataTables search
+    // and sorting only.
+    var table = $('#rulesTable').DataTable({
         order:       [[1, 'asc']],
-        pageLength:  25,
+        paging:      false,          // all rows always in DOM
         responsive:  true,
         columnDefs:  [{ orderable: false, targets: [0, 7] }]
     });
+
+    // ── Select-all checkbox ─────────────────────────────────────────────
+    // Use event delegation on the thead so it works after DataTables draws.
+    $('#rulesTable thead').on('change', '#chkAll', function () {
+        var checked = this.checked;
+        // querySelectorAll works on ALL rows, even those filtered by search
+        // because paging is off — every row is in the DOM.
+        document.querySelectorAll('.rule-chk').forEach(function (c) {
+            c.checked = checked;
+        });
+        updateBulkBar();
+    });
+
+    // ── Per-row checkbox — event delegation on tbody ────────────────────
+    // Delegation means listeners survive DataTables redraws on sort/search.
+    $('#rulesTable tbody').on('change', '.rule-chk', function () {
+        var all  = document.querySelectorAll('.rule-chk').length;
+        var chkd = document.querySelectorAll('.rule-chk:checked').length;
+        var hdr  = document.getElementById('chkAll');
+        hdr.indeterminate = chkd > 0 && chkd < all;
+        hdr.checked       = chkd === all && all > 0;
+        updateBulkBar();
+    });
+
+    // ── Show / hide the bulk action bar ────────────────────────────────
+    function updateBulkBar() {
+        var n = document.querySelectorAll('.rule-chk:checked').length;
+        document.getElementById('bulkBar').style.display = n > 0 ? 'block' : 'none';
+        document.getElementById('selCount').textContent  = n + ' selected';
+    }
+
+    // ── Submit bulk form ────────────────────────────────────────────────
+    // Collect the data-id values of checked rows into a single
+    // comma-separated string and put it in the hidden #bulkIds field.
+    window.submitBulk = function (action) {
+        var checked = document.querySelectorAll('.rule-chk:checked');
+        if (checked.length === 0) return;
+        if (action === 'delete' && !confirm('Delete ' + checked.length + ' rule(s)?')) return;
+
+        var ids = Array.from(checked)
+                       .map(function (c) { return c.dataset.id; })
+                       .join(',');
+
+        document.getElementById('bulkIds').value    = ids;
+        document.getElementById('bulkAction').value = action;
+        document.getElementById('bulkForm').submit();
+    };
+
 });
 </script>
 {% endblock %}

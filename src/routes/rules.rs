@@ -57,12 +57,17 @@ pub struct RuleForm {
 }
 
 /// Form submitted by the bulk-action bar.
-/// `ids` is a list of rule IDs (one per checked checkbox).
+///
+/// `ids` is a comma-separated string of rule IDs built by JavaScript
+/// before form submission (e.g. "12,45,67").  We use a single field
+/// rather than repeated `ids=X` fields because serde_urlencoded (which
+/// axum's Form extractor uses) does not map repeated keys into Vec<T>.
+///
 /// `bulk_action` is one of: "enable", "disable", "delete".
 #[derive(Deserialize)]
 pub struct BulkForm {
     #[serde(default)]
-    pub ids:         Vec<i64>,
+    pub ids:         String,
     pub bulk_action: String,
 }
 
@@ -262,28 +267,35 @@ pub async fn post_bulk_rules(
 
     let redirect = format!("/policy/{}/rules", policy_name);
 
+    // Parse the comma-separated IDs string into a Vec<i64>.
+    // Skip empty strings and non-numeric tokens silently.
+    let ids: Vec<i64> = form.ids
+        .split(',')
+        .filter_map(|s| s.trim().parse::<i64>().ok())
+        .collect();
+
     // Nothing selected — just redirect back without doing anything.
-    if form.ids.is_empty() {
+    if ids.is_empty() {
         return Ok(Redirect::to(&redirect).into_response());
     }
 
     match form.bulk_action.as_str() {
         "enable" => {
-            for id in &form.ids {
+            for id in &ids {
                 sqlx::query!("UPDATE waf_rules SET enabled = 1 WHERE id = ?", id)
                     .execute(&state.db)
                     .await?;
             }
         }
         "disable" => {
-            for id in &form.ids {
+            for id in &ids {
                 sqlx::query!("UPDATE waf_rules SET enabled = 0 WHERE id = ?", id)
                     .execute(&state.db)
                     .await?;
             }
         }
         "delete" => {
-            for id in &form.ids {
+            for id in &ids {
                 sqlx::query!("DELETE FROM waf_rules WHERE id = ?", id)
                     .execute(&state.db)
                     .await?;

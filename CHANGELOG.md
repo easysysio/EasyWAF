@@ -8,6 +8,16 @@ Version bumps and tags are created only after explicit approval.
 
 ## [Unreleased]
 
+### Fixed
+- **Bulk rule selection not working** — two bugs:
+  1. `BulkForm.ids` was `Vec<i64>` but `serde_urlencoded` (used by axum's
+     `Form` extractor) does not map repeated keys into a Vec; changed to
+     a single comma-separated `String` populated by JS before submit
+  2. DataTables was reinitialising the DOM on sort/search, detaching the
+     event listeners attached before initialisation; fixed by using jQuery
+     event delegation on `tbody` and setting `paging: false` so all rows
+     are always in the DOM (no cross-page checkbox state issue)
+
 ### Added
 - **Bulk rule selection** on the Rules Manager page:
   - Checkbox column on every row + "select all" header checkbox
