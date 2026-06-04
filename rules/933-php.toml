@@ -42,7 +42,7 @@ id          = 933005
 name        = "PHP: include / require"
 description = "Dynamic file inclusion — path traversal or RFI enabler"
 zone        = "ANY"
-pattern     = '(?i)\b(include|require)(_once)?\s*[\(''"]'
+pattern     = '''(?i)\b(include|require)(_once)?\s*[\('"]'''
 score       = 7
 action      = "score"
 
@@ -60,7 +60,7 @@ id          = 933007
 name        = "PHP: preg_replace with /e modifier"
 description = "Deprecated /e modifier causes the replacement to be eval()'d"
 zone        = "ANY"
-pattern     = '(?i)preg_replace\s*\(\s*[''"].*\/e[imsxuADSUXJ]*[''"]'
+pattern     = '''(?i)preg_replace\s*\(\s*['"].*\/e[imsxuADSUXJ]*['"]'''
 score       = 9
 action      = "score"
 
@@ -87,7 +87,7 @@ id          = 933010
 name        = "PHP: assert() code injection"
 description = "PHP assert() evaluates its argument as PHP code when passed a string"
 zone        = "ANY"
-pattern     = '(?i)\bassert\s*\(\s*[''"]'
+pattern     = '''(?i)\bassert\s*\(\s*['"]'''
 score       = 8
 action      = "score"
 

@@ -9,6 +9,17 @@ Version bumps and tags are created only after explicit approval.
 ## [Unreleased]
 
 ### Fixed
+- **2 OWASP rule files failed to import silently** — `932-rce.toml` and
+  `933-php.toml` had `[''"]` regex char classes inside TOML single-quoted
+  literal strings, where `''` terminates the string early and causes a TOML
+  parse error. The importer logged a warning and skipped the whole file,
+  so 24 rules never loaded. Switched the 4 affected patterns to TOML
+  multi-line literal strings (`'''...'''`) which allow both quote types.
+- **Empty policy gave no guidance** — the rules page showed a bare empty
+  table when a policy had no rules, making it look like selection was broken.
+  Added an empty-state message pointing to Import / Seed / Add Rule.
+
+### Fixed
 - **Bulk rule selection not working** — two bugs:
   1. `BulkForm.ids` was `Vec<i64>` but `serde_urlencoded` (used by axum's
      `Form` extractor) does not map repeated keys into a Vec; changed to

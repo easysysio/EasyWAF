@@ -60,7 +60,7 @@ id          = 932006
 name        = "RCE: Python / Perl / Ruby exec"
 description = "Scripting language one-liners used for command execution"
 zone        = "ANY"
-pattern     = '(?i)(python|python3|perl|ruby)\s+(-[ce]\s+)?[''"]'
+pattern     = '''(?i)(python|python3|perl|ruby)\s+(-[ce]\s+)?['"]'''
 score       = 7
 action      = "score"
 

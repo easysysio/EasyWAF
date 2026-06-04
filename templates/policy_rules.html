@@ -178,6 +178,21 @@
                 </tbody>
             </table>
         </div>
+
+        {% if total_rules == 0 %}
+        <div class="panel-body text-center text-muted" style="padding:30px 16px">
+            <p style="font-size:15px">
+                <i class="fa fa-info-circle"></i>
+                This policy has no rules yet — there is nothing to select.
+            </p>
+            <p>
+                Click
+                <strong>Import OWASP rules</strong> to load the bundled rule set,
+                or <strong>Seed defaults</strong> for a smaller built-in set,
+                or <strong>Add Rule</strong> to write your own.
+            </p>
+        </div>
+        {% endif %}
     </div>
 </form>
 
