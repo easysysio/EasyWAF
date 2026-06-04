@@ -46,8 +46,34 @@ pub async fn init(database_url: &str) -> SqlitePool {
         .await
         .unwrap_or_else(|e| panic!("Migration 003 failed: {}", e));
 
+    // Migration 004 — external_id column + unique index on waf_rules.
+    // Uses column-exists check since ALTER TABLE fails if column already exists.
+    run_migration_004(&pool).await;
+
     info!("Database ready: {}", database_url);
     pool
+}
+
+// ─── run_migration_004 ───────────────────────────────────
+
+/// Add external_id to waf_rules if not already present.
+/// This column links imported rules back to their source file ID.
+async fn run_migration_004(pool: &SqlitePool) {
+    let exists: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM pragma_table_info('waf_rules') WHERE name = 'external_id'",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0);
+
+    if exists == 0 {
+        let sql_004 = include_str!("../migrations/004_rules_external_id.sql");
+        sqlx::raw_sql(sql_004)
+            .execute(pool)
+            .await
+            .unwrap_or_else(|e| panic!("Migration 004 failed: {}", e));
+        info!("Migration 004 applied: added external_id to waf_rules");
+    }
 }
 
 // ─── run_migration_002 ───────────────────────────────────

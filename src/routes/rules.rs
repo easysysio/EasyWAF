@@ -1,8 +1,12 @@
 // =========================================================
 // routes/rules.rs — EasyWAF
-// WAF rule management: list, create, toggle, delete, seed.
-// Rules are stored per-policy in the waf_rules table and
-// evaluated at request time by modules/waf.rs.
+// WAF rule management: list, create, toggle, delete, seed,
+// and import from TOML rule files in the rules/ directory.
+//
+// Rule files use TOML format. Each file contains an array of
+// [[rules]] tables with fields: id, name, description, zone,
+// pattern, score, action.  The id field becomes external_id
+// in the DB — used to prevent duplicate imports.
 // =========================================================
 
 use crate::{
@@ -483,4 +487,136 @@ pub async fn seed_default_rules(state: &AppState, policy_id: i64) -> Result<()> 
     }
 
     Ok(())
+}
+
+// ─── TOML rule file structs ───────────────────────────────
+
+/// Top-level structure of a TOML rule file.
+#[derive(Deserialize)]
+struct RuleFile {
+    rules: Vec<RuleFileDef>,
+}
+
+/// A single rule definition inside a TOML file.
+#[derive(Deserialize)]
+struct RuleFileDef {
+    id:          i64,
+    name:        String,
+    description: Option<String>,
+    zone:        String,
+    pattern:     String,
+    score:       i64,
+    action:      String,
+}
+
+// ─── post_import_rules ───────────────────────────────────
+
+/// Read every *.toml file from the rules/ directory and insert any rule
+/// whose external_id is not yet present for this policy.
+/// This makes repeated imports fully idempotent — safe to run many times.
+pub async fn post_import_rules(
+    State(state): State<AppState>,
+    jar: SignedCookieJar,
+    Path(policy_name): Path<String>,
+) -> Result<Response> {
+    if get_session(&jar).is_none() {
+        return Ok(Redirect::to("/login").into_response());
+    }
+
+    let redirect = format!("/policy/{}/rules", policy_name);
+
+    let policy_id: i64 = sqlx::query_scalar!(
+        "SELECT id as \"id!\" FROM policies WHERE name = ?",
+        policy_name
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| AppError::NotFound(format!("Policy '{}' not found", policy_name)))?;
+
+    // Read all .toml files from the rules/ directory.
+    let rules_dir = std::path::Path::new("rules");
+    if !rules_dir.exists() {
+        tracing::warn!("rules/ directory not found — nothing imported");
+        return Ok(Redirect::to(&redirect).into_response());
+    }
+
+    let mut imported = 0usize;
+    let mut skipped  = 0usize;
+
+    let entries = std::fs::read_dir(rules_dir)
+        .map_err(|e| AppError::Internal(format!("Cannot read rules dir: {}", e)))?;
+
+    for entry in entries {
+        let entry = match entry {
+            Ok(e)  => e,
+            Err(e) => { tracing::warn!("Skipping unreadable rules dir entry: {}", e); continue; }
+        };
+
+        let path = entry.path();
+
+        // Only process .toml files.
+        if path.extension().and_then(|s| s.to_str()) != Some("toml") {
+            continue;
+        }
+
+        let content = match std::fs::read_to_string(&path) {
+            Ok(s)  => s,
+            Err(e) => {
+                tracing::warn!(file = %path.display(), "Cannot read rule file: {}", e);
+                continue;
+            }
+        };
+
+        let file: RuleFile = match toml::from_str(&content) {
+            Ok(f)  => f,
+            Err(e) => {
+                tracing::warn!(file = %path.display(), "Cannot parse rule file: {}", e);
+                continue;
+            }
+        };
+
+        for rule in file.rules {
+            // Skip if this external_id already exists for this policy.
+            let exists: i64 = sqlx::query_scalar!(
+                "SELECT COUNT(*) FROM waf_rules WHERE policy_id = ? AND external_id = ?",
+                policy_id, rule.id
+            )
+            .fetch_one(&state.db)
+            .await?;
+
+            if exists > 0 {
+                skipped += 1;
+                continue;
+            }
+
+            let description = rule.description.unwrap_or_default();
+
+            sqlx::query!(
+                "INSERT INTO waf_rules
+                 (policy_id, name, description, zone, pattern, score, action, external_id)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                policy_id,
+                rule.name,
+                description,
+                rule.zone,
+                rule.pattern,
+                rule.score,
+                rule.action,
+                rule.id,
+            )
+            .execute(&state.db)
+            .await?;
+
+            imported += 1;
+        }
+    }
+
+    tracing::info!(
+        policy = %policy_name,
+        imported,
+        skipped,
+        "OWASP rule import complete"
+    );
+
+    Ok(Redirect::to(&redirect).into_response())
 }

@@ -1,0 +1,110 @@
+# OWASP CRS — PHP Injection Attacks (category 933)
+# Targets PHP-specific code injection vectors.
+
+[[rules]]
+id          = 933001
+name        = "PHP: opening tag"
+description = "<?php or <? opening tag injected into input"
+zone        = "ANY"
+pattern     = '(?i)<\?php|<\?='
+score       = 8
+action      = "score"
+
+[[rules]]
+id          = 933002
+name        = "PHP: eval()"
+description = "PHP eval() used to execute arbitrary code from a string"
+zone        = "ANY"
+pattern     = '(?i)\beval\s*\('
+score       = 9
+action      = "score"
+
+[[rules]]
+id          = 933003
+name        = "PHP: exec / system / shell_exec family"
+description = "PHP functions that execute OS commands"
+zone        = "ANY"
+pattern     = '(?i)\b(exec|system|shell_exec|passthru|popen|proc_open|pcntl_exec)\s*\('
+score       = 9
+action      = "score"
+
+[[rules]]
+id          = 933004
+name        = "PHP: file_get_contents / file_put_contents"
+description = "Arbitrary file read or write via PHP file functions"
+zone        = "ANY"
+pattern     = '(?i)\b(file_get_contents|file_put_contents|readfile|fopen|fwrite)\s*\('
+score       = 7
+action      = "score"
+
+[[rules]]
+id          = 933005
+name        = "PHP: include / require"
+description = "Dynamic file inclusion — path traversal or RFI enabler"
+zone        = "ANY"
+pattern     = '(?i)\b(include|require)(_once)?\s*[\(''"]'
+score       = 7
+action      = "score"
+
+[[rules]]
+id          = 933006
+name        = "PHP: base64_decode"
+description = "Decoding base64-encoded payloads at runtime — common obfuscation"
+zone        = "ANY"
+pattern     = '(?i)\bbase64_decode\s*\('
+score       = 6
+action      = "score"
+
+[[rules]]
+id          = 933007
+name        = "PHP: preg_replace with /e modifier"
+description = "Deprecated /e modifier causes the replacement to be eval()'d"
+zone        = "ANY"
+pattern     = '(?i)preg_replace\s*\(\s*[''"].*\/e[imsxuADSUXJ]*[''"]'
+score       = 9
+action      = "score"
+
+[[rules]]
+id          = 933008
+name        = "PHP: superglobals in input"
+description = "$_GET/$_POST/$_REQUEST/$_SERVER/$_ENV injected as values"
+zone        = "ANY"
+pattern     = '(?i)\$_(GET|POST|REQUEST|SERVER|ENV|COOKIE|FILES|SESSION)\s*[\[\(]'
+score       = 6
+action      = "score"
+
+[[rules]]
+id          = 933009
+name        = "PHP: create_function"
+description = "create_function() is equivalent to eval() — code injection"
+zone        = "ANY"
+pattern     = '(?i)\bcreate_function\s*\('
+score       = 9
+action      = "score"
+
+[[rules]]
+id          = 933010
+name        = "PHP: assert() code injection"
+description = "PHP assert() evaluates its argument as PHP code when passed a string"
+zone        = "ANY"
+pattern     = '(?i)\bassert\s*\(\s*[''"]'
+score       = 8
+action      = "score"
+
+[[rules]]
+id          = 933011
+name        = "PHP: serialize / unserialize"
+description = "PHP object deserialization — potential gadget chain exploitation"
+zone        = "ANY"
+pattern     = '(?i)\bunserialize\s*\('
+score       = 7
+action      = "score"
+
+[[rules]]
+id          = 933012
+name        = "PHP: call_user_func"
+description = "Dynamic function call — commonly abused to call dangerous functions"
+zone        = "ANY"
+pattern     = '(?i)\bcall_user_func(_array)?\s*\('
+score       = 7
+action      = "score"

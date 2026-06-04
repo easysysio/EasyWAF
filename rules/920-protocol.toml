@@ -1,0 +1,83 @@
+# OWASP CRS — Protocol Enforcement (category 920)
+# Detects malformed, abusive, or evasion-oriented HTTP requests.
+
+[[rules]]
+id          = 920001
+name        = "Protocol: HTTP method override header"
+description = "X-HTTP-Method-Override used to tunnel DELETE/PUT through POST"
+zone        = "HEADERS"
+pattern     = '(?i)x-http-method(-override)?:'
+score       = 4
+action      = "score"
+
+[[rules]]
+id          = 920002
+name        = "Protocol: double URL encoding"
+description = "%%XX or %25XX double-encoding used to bypass URL decoding filters"
+zone        = "URL"
+pattern     = '(%[0-9a-fA-F]{2}){2,}|%25[0-9a-fA-F]{2}'
+score       = 6
+action      = "score"
+
+[[rules]]
+id          = 920003
+name        = "Protocol: Unicode fullwidth bypass"
+description = "Unicode fullwidth characters used to represent ASCII characters"
+zone        = "ANY"
+pattern     = '[！-～]'
+score       = 5
+action      = "score"
+
+[[rules]]
+id          = 920004
+name        = "Protocol: HTTP request smuggling (CL.TE)"
+description = "Conflicting Content-Length and Transfer-Encoding headers"
+zone        = "HEADERS"
+pattern     = '(?i)(transfer-encoding\s*:\s*(chunked|identity))'
+score       = 5
+action      = "score"
+
+[[rules]]
+id          = 920005
+name        = "Protocol: host header injection"
+description = "Newline characters injected into Host header"
+zone        = "HEADERS"
+pattern     = '[\r\n\x0b\x0c]'
+score       = 8
+action      = "score"
+
+[[rules]]
+id          = 920006
+name        = "Protocol: CRLF injection"
+description = "Carriage-return / line-feed injection for header splitting"
+zone        = "ANY"
+pattern     = '(%0[aAdD]|%0[aA]%0[dD]|\r\n|\n\r)'
+score       = 7
+action      = "score"
+
+[[rules]]
+id          = 920007
+name        = "Protocol: XXE entity declaration"
+description = "DOCTYPE / ENTITY declaration used for XML External Entity injection"
+zone        = "BODY"
+pattern     = '(?i)<!(\s*DOCTYPE|\s*ENTITY)'
+score       = 8
+action      = "score"
+
+[[rules]]
+id          = 920008
+name        = "Protocol: SSRF via internal IP"
+description = "Request parameter containing RFC-1918 / loopback address"
+zone        = "ARGS"
+pattern     = '(?i)(https?://(127\.|10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.|localhost))'
+score       = 7
+action      = "score"
+
+[[rules]]
+id          = 920009
+name        = "Protocol: SSRF via cloud metadata"
+description = "AWS/GCP/Azure instance metadata endpoints — SSRF target"
+zone        = "ARGS"
+pattern     = '(?i)169\.254\.169\.254'
+score       = 9
+action      = "score"

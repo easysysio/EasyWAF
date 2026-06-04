@@ -10,9 +10,16 @@
         </a>
         <form method="post" action="/policy/{{ policy.name }}/rules/seed"
               style="display:inline;margin-left:6px"
-              onsubmit="return confirm('Seed default rules into this policy?');">
+              onsubmit="return confirm('Seed built-in default rules into this policy?');">
             <button type="submit" class="btn btn-default btn-sm">
-                <i class="fa fa-database"></i> Seed default rules
+                <i class="fa fa-database"></i> Seed defaults
+            </button>
+        </form>
+        <form method="post" action="/policy/{{ policy.name }}/rules/import"
+              style="display:inline;margin-left:6px"
+              onsubmit="return confirm('Import OWASP rules from rules/ directory?');">
+            <button type="submit" class="btn btn-warning btn-sm">
+                <i class="fa fa-upload"></i> Import OWASP rules
             </button>
         </form>
         <a href="/policy/{{ policy.name }}/edit" class="btn btn-default btn-sm" style="margin-left:6px">

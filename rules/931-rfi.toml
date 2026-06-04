@@ -1,0 +1,74 @@
+# OWASP CRS — Remote File Inclusion (category 931)
+# Detects attempts to make the server fetch and include a remote resource.
+
+[[rules]]
+id          = 931001
+name        = "RFI: HTTP URL in parameter"
+description = "http:// URL passed as a parameter value, classic RFI"
+zone        = "ARGS"
+pattern     = '(?i)https?://[a-z0-9\-\.]+\.[a-z]{2,}/'
+score       = 6
+action      = "score"
+
+[[rules]]
+id          = 931002
+name        = "RFI: FTP URL in parameter"
+description = "ftp:// URL as a value — used to probe internal FTP or RFI"
+zone        = "ARGS"
+pattern     = '(?i)ftp://[a-z0-9\-\.]'
+score       = 6
+action      = "score"
+
+[[rules]]
+id          = 931003
+name        = "RFI: php:// stream wrapper"
+description = "PHP stream wrappers used to read/write arbitrary streams"
+zone        = "ANY"
+pattern     = '(?i)php://(input|filter|data|expect|zip|phar)'
+score       = 9
+action      = "score"
+
+[[rules]]
+id          = 931004
+name        = "RFI: data: URI scheme"
+description = "data: URI used to include inline base64-encoded content"
+zone        = "ARGS"
+pattern     = '(?i)data://text/'
+score       = 7
+action      = "score"
+
+[[rules]]
+id          = 931005
+name        = "RFI: phar:// stream wrapper"
+description = "Phar archive stream — can trigger deserialization gadgets"
+zone        = "ANY"
+pattern     = '(?i)phar://'
+score       = 8
+action      = "score"
+
+[[rules]]
+id          = 931006
+name        = "RFI: zip:// stream wrapper"
+description = "zip:// stream wrapper used for file inclusion"
+zone        = "ANY"
+pattern     = '(?i)zip://'
+score       = 7
+action      = "score"
+
+[[rules]]
+id          = 931007
+name        = "RFI: expect:// command execution"
+description = "PHP expect:// wrapper executes OS commands directly"
+zone        = "ANY"
+pattern     = '(?i)expect://'
+score       = 10
+action      = "block"
+
+[[rules]]
+id          = 931008
+name        = "RFI: glob:// wrapper"
+description = "glob:// wrapper used to list files or bypass include restrictions"
+zone        = "ANY"
+pattern     = '(?i)glob://'
+score       = 6
+action      = "score"

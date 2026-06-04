@@ -137,6 +137,7 @@ async fn main() {
         .route("/policy/{name}/rules/new",            get(routes::rules::get_rule_new))
         .route("/policy/{name}/rules/create",         post(routes::rules::post_rule_create))
         .route("/policy/{name}/rules/seed",           post(routes::rules::post_seed_rules))
+        .route("/policy/{name}/rules/import",         post(routes::rules::post_import_rules))
         .route("/policy/{name}/rules/{id}/toggle",    post(routes::rules::post_rule_toggle))
         .route("/policy/{name}/rules/{id}/delete",    post(routes::rules::post_rule_delete))
         .route("/geoip",                 get(routes::geoip::get_geoip))

@@ -1,0 +1,165 @@
+# OWASP CRS — SQL Injection (category 942)
+# Based on OWASP ModSecurity Core Rule Set v3.x
+# Zone ANY covers URL path, query string, request body and headers.
+
+[[rules]]
+id          = 942001
+name        = "SQLi: UNION SELECT"
+description = "Union-based SQL injection — attempts to append a second SELECT"
+zone        = "ANY"
+pattern     = '(?i)union[\s/\*]{0,30}(all[\s/\*]{0,10})?select'
+score       = 8
+action      = "score"
+
+[[rules]]
+id          = 942002
+name        = "SQLi: SELECT FROM"
+description = "Basic data extraction via SELECT … FROM … WHERE"
+zone        = "ANY"
+pattern     = '(?i)select[\s\S]{0,50}from[\s\S]{0,50}where'
+score       = 6
+action      = "score"
+
+[[rules]]
+id          = 942003
+name        = "SQLi: INSERT INTO"
+description = "Attempt to insert rows via SQL"
+zone        = "ANY"
+pattern     = '(?i)insert\s+into\s+\w'
+score       = 5
+action      = "score"
+
+[[rules]]
+id          = 942004
+name        = "SQLi: UPDATE SET"
+description = "Attempt to modify rows via SQL"
+zone        = "ANY"
+pattern     = '(?i)update\s+\w[\s\S]{0,50}set\s+\w'
+score       = 5
+action      = "score"
+
+[[rules]]
+id          = 942005
+name        = "SQLi: DELETE FROM"
+description = "Attempt to delete rows via SQL"
+zone        = "ANY"
+pattern     = '(?i)delete\s+from\s+\w'
+score       = 6
+action      = "score"
+
+[[rules]]
+id          = 942006
+name        = "SQLi: DROP / TRUNCATE — instant block"
+description = "Destructive DDL command — no legitimate use in input"
+zone        = "ANY"
+pattern     = '(?i)(drop|truncate)\s+(table|database|schema|index|view)\s+\w'
+score       = 10
+action      = "block"
+
+[[rules]]
+id          = 942007
+name        = "SQLi: SQL comment stripping"
+description = "SQL comment used to truncate the rest of a query"
+zone        = "ANY"
+pattern     = '(?i)(--|#|/\*|\*/|;--)'
+score       = 3
+action      = "score"
+
+[[rules]]
+id          = 942008
+name        = "SQLi: Boolean-based blind"
+description = "Classic OR 1=1 / AND 1=1 payloads"
+zone        = "ANY"
+pattern     = "(?i)'\\s*(or|and)\\s+['\"]?\\d+['\"]?\\s*=\\s*['\"]?\\d+"
+score       = 7
+action      = "score"
+
+[[rules]]
+id          = 942009
+name        = "SQLi: Time-based blind (SLEEP/BENCHMARK)"
+description = "Time-delay injection to infer data without output"
+zone        = "ANY"
+pattern     = '(?i)(sleep|benchmark|pg_sleep|dbms_pipe\.receive_message)\s*\('
+score       = 8
+action      = "score"
+
+[[rules]]
+id          = 942010
+name        = "SQLi: WAITFOR DELAY (MSSQL)"
+description = "Microsoft SQL Server time-based blind injection"
+zone        = "ANY"
+pattern     = '(?i)waitfor\s+delay\s+'
+score       = 8
+action      = "score"
+
+[[rules]]
+id          = 942011
+name        = "SQLi: Stacked queries"
+description = "Semicolon used to append a second statement"
+zone        = "ANY"
+pattern     = '(?i);\s*(select|insert|update|delete|drop|exec|call)\s'
+score       = 7
+action      = "score"
+
+[[rules]]
+id          = 942012
+name        = "SQLi: INFORMATION_SCHEMA access"
+description = "Probing the database schema for table and column names"
+zone        = "ANY"
+pattern     = '(?i)information_schema\.(tables|columns|schemata)'
+score       = 7
+action      = "score"
+
+[[rules]]
+id          = 942013
+name        = "SQLi: INTO OUTFILE / DUMPFILE"
+description = "Attempt to write query output to the filesystem"
+zone        = "ANY"
+pattern     = '(?i)into\s+(outfile|dumpfile)\s+'
+score       = 9
+action      = "score"
+
+[[rules]]
+id          = 942014
+name        = "SQLi: LOAD_FILE"
+description = "Attempt to read a file from the server via SQL"
+zone        = "ANY"
+pattern     = '(?i)load_file\s*\('
+score       = 9
+action      = "score"
+
+[[rules]]
+id          = 942015
+name        = "SQLi: String encoding functions"
+description = "CHAR() / CHR() used to obfuscate SQL keywords"
+zone        = "ANY"
+pattern     = '(?i)(char|chr|nchar)\s*\(\s*\d'
+score       = 5
+action      = "score"
+
+[[rules]]
+id          = 942016
+name        = "SQLi: xp_cmdshell (MSSQL)"
+description = "MSSQL stored procedure used for OS command execution"
+zone        = "ANY"
+pattern     = '(?i)xp_cmdshell'
+score       = 10
+action      = "block"
+
+[[rules]]
+id          = 942017
+name        = "SQLi: SQL hex encoding"
+description = "0x hex-encoded strings used to bypass simple filters"
+zone        = "ANY"
+pattern     = '(?i)0x[0-9a-f]{4,}'
+score       = 4
+action      = "score"
+
+[[rules]]
+id          = 942018
+name        = "SQLi: sqlmap User-Agent"
+description = "sqlmap automated exploitation tool detected in User-Agent"
+zone        = "HEADERS"
+pattern     = '(?i)sqlmap'
+score       = 9
+action      = "score"

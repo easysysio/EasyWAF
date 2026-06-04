@@ -1,0 +1,137 @@
+# OWASP CRS — Cross-Site Scripting (category 941)
+# Based on OWASP ModSecurity Core Rule Set v3.x
+
+[[rules]]
+id          = 941001
+name        = "XSS: script tag"
+description = "Inline <script> tag injection"
+zone        = "ANY"
+pattern     = '(?i)<\s*script[\s>/]'
+score       = 8
+action      = "score"
+
+[[rules]]
+id          = 941002
+name        = "XSS: javascript: URI"
+description = "javascript: pseudo-protocol in href, src, action attributes"
+zone        = "ANY"
+pattern     = '(?i)javascript\s*:'
+score       = 8
+action      = "score"
+
+[[rules]]
+id          = 941003
+name        = "XSS: inline event handler"
+description = "DOM event handler attributes like onclick=, onload=, onerror="
+zone        = "ANY"
+pattern     = '(?i)\bon\w{2,20}\s*='
+score       = 7
+action      = "score"
+
+[[rules]]
+id          = 941004
+name        = "XSS: iframe / object / embed"
+description = "Tags used to load external content or execute scripts"
+zone        = "ANY"
+pattern     = '(?i)<\s*(iframe|object|embed|applet)[\s>/]'
+score       = 7
+action      = "score"
+
+[[rules]]
+id          = 941005
+name        = "XSS: SVG payload"
+description = "SVG element used as an XSS vector (supports inline scripts)"
+zone        = "ANY"
+pattern     = '(?i)<\s*svg[\s>/]'
+score       = 6
+action      = "score"
+
+[[rules]]
+id          = 941006
+name        = "XSS: VBScript"
+description = "VBScript URI or inline VBScript block"
+zone        = "ANY"
+pattern     = '(?i)vbscript\s*:'
+score       = 7
+action      = "score"
+
+[[rules]]
+id          = 941007
+name        = "XSS: data: URI"
+description = "data: URI scheme used to inject content or script"
+zone        = "ANY"
+pattern     = '(?i)data\s*:\s*\w+/\w+\s*[,;]'
+score       = 6
+action      = "score"
+
+[[rules]]
+id          = 941008
+name        = "XSS: alert / confirm / prompt"
+description = "Classic XSS proof-of-concept function calls"
+zone        = "ANY"
+pattern     = '(?i)(alert|confirm|prompt)\s*\('
+score       = 6
+action      = "score"
+
+[[rules]]
+id          = 941009
+name        = "XSS: document.cookie"
+description = "Attempt to steal session cookies via JavaScript"
+zone        = "ANY"
+pattern     = '(?i)document\s*\.\s*cookie'
+score       = 8
+action      = "score"
+
+[[rules]]
+id          = 941010
+name        = "XSS: document.write / innerHTML"
+description = "DOM manipulation methods used to inject HTML/script"
+zone        = "ANY"
+pattern     = '(?i)document\s*\.\s*(write|writeln|innerHTML|outerHTML)'
+score       = 7
+action      = "score"
+
+[[rules]]
+id          = 941011
+name        = "XSS: window.location / window.open"
+description = "JavaScript navigation used for open-redirect or phishing"
+zone        = "ANY"
+pattern     = '(?i)window\s*\.\s*(location|open|navigate)'
+score       = 5
+action      = "score"
+
+[[rules]]
+id          = 941012
+name        = "XSS: CSS expression()"
+description = "IE CSS expression() used for script injection in old browsers"
+zone        = "ANY"
+pattern     = '(?i)expression\s*\('
+score       = 6
+action      = "score"
+
+[[rules]]
+id          = 941013
+name        = "XSS: HTML entity obfuscation"
+description = "&#x or &#-encoded characters used to bypass simple filters"
+zone        = "ANY"
+pattern     = '&#[xX]?[0-9a-fA-F]{2,4};'
+score       = 3
+action      = "score"
+
+[[rules]]
+id          = 941014
+name        = "XSS: link tag"
+description = "<link> used to import external stylesheets containing script"
+zone        = "ANY"
+pattern     = '(?i)<\s*link[\s>]'
+score       = 4
+action      = "score"
+
+[[rules]]
+id          = 941015
+name        = "XSS: base tag hijack"
+description = "<base href=> used to rewrite all relative URLs on the page"
+zone        = "ANY"
+pattern     = '(?i)<\s*base[\s>]'
+score       = 5
+action      = "score"

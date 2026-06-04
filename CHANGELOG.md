@@ -9,6 +9,24 @@ Version bumps and tags are created only after explicit approval.
 ## [Unreleased]
 
 ### Added
+- **OWASP rule files** — `rules/` directory with 7 TOML files covering 93 rules
+  based on OWASP ModSecurity Core Rule Set v3.x patterns:
+  - `920-protocol.toml` — protocol enforcement (double encoding, CRLF, XXE, SSRF, cloud metadata)
+  - `930-lfi.toml` — local file inclusion (path traversal, /etc/passwd, null byte, SSH keys)
+  - `931-rfi.toml` — remote file inclusion (HTTP/FTP URL params, PHP stream wrappers)
+  - `932-rce.toml` — remote code execution (shell chaining, reverse shells, template injection)
+  - `933-php.toml` — PHP injection (eval, exec, include, unserialize, preg_replace /e)
+  - `941-xss.toml` — cross-site scripting (script tags, event handlers, VBScript, data URIs)
+  - `942-sqli.toml` — SQL injection (UNION, blind time/boolean, xp_cmdshell, INTO OUTFILE)
+  - `990-scanners.toml` — scanner/bot detection (sqlmap, Nikto, Burp, ZAP, Metasploit, etc.)
+- **Import route** `POST /policy/{name}/rules/import` — reads all `*.toml` files from
+  `rules/` at runtime, inserts unseen rules (idempotent via `external_id`); repeated
+  imports safely skip already-loaded rules
+- Migration 004 — `external_id INTEGER` column on `waf_rules` + unique index on
+  `(policy_id, external_id)` to enforce one copy per rule per policy
+- "Import OWASP rules" button on the Rules Manager page
+
+### Added
 - **WAF rules engine** — full per-policy pattern-based inspection:
   - `waf_rules` table (migration 003): id, policy_id, name, description,
     zone, pattern, score, action, enabled

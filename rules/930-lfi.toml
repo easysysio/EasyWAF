@@ -1,0 +1,92 @@
+# OWASP CRS — Local File Inclusion (category 930)
+# Detects attempts to read sensitive files from the server filesystem.
+
+[[rules]]
+id          = 930001
+name        = "LFI: directory traversal ../"
+description = "Classic dot-dot-slash path traversal"
+zone        = "ANY"
+pattern     = '\.\.[/\\]'
+score       = 6
+action      = "score"
+
+[[rules]]
+id          = 930002
+name        = "LFI: URL-encoded traversal"
+description = "Encoded ../ using %2e%2e or %2f to bypass simple filters"
+zone        = "ANY"
+pattern     = '(?i)(%2e%2e[%2f%5c]|\.\.%2f|\.\.%5c)'
+score       = 7
+action      = "score"
+
+[[rules]]
+id          = 930003
+name        = "LFI: double URL-encoded traversal"
+description = "Double-encoded traversal (%252e%252e) to evade single-decode checks"
+zone        = "ANY"
+pattern     = '(?i)%252e%252e'
+score       = 8
+action      = "score"
+
+[[rules]]
+id          = 930004
+name        = "LFI: /etc/passwd — instant block"
+description = "Attempt to read Unix user credentials"
+zone        = "ANY"
+pattern     = '(?i)/etc/(passwd|shadow|group|hosts|sudoers|crontab)'
+score       = 10
+action      = "block"
+
+[[rules]]
+id          = 930005
+name        = "LFI: /proc/self/environ"
+description = "Reading process environment may expose secrets or enable RCE"
+zone        = "ANY"
+pattern     = '(?i)/proc/(self|[0-9]+)/(environ|cmdline|maps|mem)'
+score       = 9
+action      = "score"
+
+[[rules]]
+id          = 930006
+name        = "LFI: Windows system files — instant block"
+description = "Attempt to read Windows credential or system configuration files"
+zone        = "ANY"
+pattern     = '(?i)(\\windows\\(system32|syswow64)|win\.ini|system\.ini|boot\.ini|ntldr)'
+score       = 10
+action      = "block"
+
+[[rules]]
+id          = 930007
+name        = "LFI: null byte injection"
+description = "Null byte (%00) used to truncate file extension checks"
+zone        = "ANY"
+pattern     = '%00'
+score       = 7
+action      = "score"
+
+[[rules]]
+id          = 930008
+name        = "LFI: SSH private keys"
+description = "Attempt to read SSH private key files"
+zone        = "ANY"
+pattern     = '(?i)(\.ssh/(id_rsa|id_dsa|id_ecdsa|id_ed25519)|authorized_keys)'
+score       = 9
+action      = "score"
+
+[[rules]]
+id          = 930009
+name        = "LFI: application config files"
+description = "Common configuration files containing credentials"
+zone        = "ANY"
+pattern     = '(?i)(wp-config\.php|\.env|config\.php|settings\.py|database\.yml|secrets\.yml)'
+score       = 7
+action      = "score"
+
+[[rules]]
+id          = 930010
+name        = "LFI: log file access"
+description = "Reading log files can enable log poisoning for RCE"
+zone        = "ANY"
+pattern     = '(?i)/var/log/(apache|nginx|syslog|auth|mail|kern)'
+score       = 6
+action      = "score"

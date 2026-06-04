@@ -1,0 +1,110 @@
+# OWASP CRS — Remote Code / Command Execution (category 932)
+# Detects attempts to execute OS commands through the application.
+
+[[rules]]
+id          = 931100
+name        = "RCE: pipe / semicolon command chaining"
+description = "Shell metacharacters used to chain OS commands"
+zone        = "ANY"
+pattern     = '[;|`]\s*(ls|cat|id|whoami|uname|wget|curl|bash|sh|python|perl|nc|netcat)'
+score       = 8
+action      = "score"
+
+[[rules]]
+id          = 932001
+name        = "RCE: Unix command injection keywords"
+description = "Common Unix reconnaissance and execution commands"
+zone        = "ANY"
+pattern     = '(?i)\b(whoami|id\b|uname|ifconfig|ipconfig|netstat|ps\s+aux|passwd\b|shadow)\b'
+score       = 6
+action      = "score"
+
+[[rules]]
+id          = 932002
+name        = "RCE: backtick command substitution"
+description = "Backtick used to substitute command output in a string"
+zone        = "ANY"
+pattern     = '`[^`]{1,100}`'
+score       = 7
+action      = "score"
+
+[[rules]]
+id          = 932003
+name        = "RCE: $() command substitution"
+description = "Bash $() subshell used to embed command output"
+zone        = "ANY"
+pattern     = '\$\([^)]{1,100}\)'
+score       = 6
+action      = "score"
+
+[[rules]]
+id          = 932004
+name        = "RCE: wget / curl remote fetch"
+description = "Downloading remote payloads via wget or curl"
+zone        = "ANY"
+pattern     = '(?i)\b(wget|curl)\s+(https?://|ftp://)'
+score       = 8
+action      = "score"
+
+[[rules]]
+id          = 932005
+name        = "RCE: /bin/sh or /bin/bash"
+description = "Direct shell execution paths"
+zone        = "ANY"
+pattern     = '(?i)/(bin|usr/bin)/(sh|bash|zsh|ksh|csh|dash)'
+score       = 8
+action      = "score"
+
+[[rules]]
+id          = 932006
+name        = "RCE: Python / Perl / Ruby exec"
+description = "Scripting language one-liners used for command execution"
+zone        = "ANY"
+pattern     = '(?i)(python|python3|perl|ruby)\s+(-[ce]\s+)?[''"]'
+score       = 7
+action      = "score"
+
+[[rules]]
+id          = 932007
+name        = "RCE: chmod / chown"
+description = "Permission changes often accompany post-exploitation activity"
+zone        = "ANY"
+pattern     = '(?i)\b(chmod|chown|chgrp)\s+[0-9+rwx-]'
+score       = 5
+action      = "score"
+
+[[rules]]
+id          = 932008
+name        = "RCE: reverse shell patterns"
+description = "Common reverse shell one-liners (nc, netcat, /dev/tcp)"
+zone        = "ANY"
+pattern     = '(?i)(nc\s+-[elvp]|netcat|/dev/tcp/|bash\s+-i\s+>&)'
+score       = 10
+action      = "block"
+
+[[rules]]
+id          = 932009
+name        = "RCE: nohup / disown / screen"
+description = "Commands used to detach a process — typical in post-exploitation"
+zone        = "ANY"
+pattern     = '(?i)\b(nohup|disown|screen\s+-dm|tmux\s+new)'
+score       = 5
+action      = "score"
+
+[[rules]]
+id          = 932010
+name        = "RCE: template injection ${...}"
+description = "Server-side template injection probe using ${} syntax"
+zone        = "ANY"
+pattern     = '\$\{[^}]{1,100}\}'
+score       = 6
+action      = "score"
+
+[[rules]]
+id          = 932011
+name        = "RCE: template injection {{...}}"
+description = "Jinja2 / Twig / Handlebars server-side template injection"
+zone        = "ANY"
+pattern     = '\{\{[^}]{1,100}\}\}'
+score       = 6
+action      = "score"
