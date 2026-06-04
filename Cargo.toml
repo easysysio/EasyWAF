@@ -58,3 +58,6 @@ urlencoding = "2.1"
 async-trait = "0.1"
 futures = "0.3"
 bytes = "1.6"
+
+# WAF pattern matching — uses a safe automata engine (no ReDoS risk)
+regex = "1"

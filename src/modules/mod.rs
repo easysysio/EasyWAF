@@ -11,6 +11,7 @@
 // =========================================================
 
 pub mod traffic;
+pub mod waf;
 
 use axum::http::StatusCode;
 use std::net::IpAddr;

@@ -1,0 +1,163 @@
+{% extends "layout_default.html" %}
+
+{% block content %}
+<div class="row">
+    <div class="col-lg-8">
+        <div class="panel panel-default">
+            <div class="panel-heading">
+                <h4><i class="fa fa-plus"></i> Add WAF Rule — {{ policy.name }}</h4>
+            </div>
+            <div class="panel-body">
+                <form method="post" action="/policy/{{ policy.name }}/rules/create">
+
+                    <div class="form-group">
+                        <label>Rule Name</label>
+                        <input type="text" class="form-control" name="name"
+                               placeholder="e.g. SQLi: UNION SELECT" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Description <small class="text-muted">(optional)</small></label>
+                        <input type="text" class="form-control" name="description"
+                               placeholder="Brief explanation of what this rule detects">
+                    </div>
+
+                    <div class="row">
+                        <div class="col-sm-4">
+                            <div class="form-group">
+                                <label>Zone <small class="text-muted">(where to inspect)</small></label>
+                                <select class="form-control" name="zone">
+                                    <option value="ANY">ANY — all zones</option>
+                                    <option value="URL">URL — path + query string</option>
+                                    <option value="ARGS">ARGS — query string only</option>
+                                    <option value="BODY">BODY — request body</option>
+                                    <option value="HEADERS">HEADERS — all header values</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="col-sm-4">
+                            <div class="form-group">
+                                <label>Score <small class="text-muted">(added when matched)</small></label>
+                                <input type="number" class="form-control" name="score"
+                                       value="5" min="1" max="100">
+                            </div>
+                        </div>
+                        <div class="col-sm-4">
+                            <div class="form-group">
+                                <label>Action</label>
+                                <select class="form-control" name="action">
+                                    <option value="score">score — add to total</option>
+                                    <option value="block">block — instant 403</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Regex Pattern</label>
+                        <input type="text" class="form-control" name="pattern" id="patternInput"
+                               placeholder="(?i)union[\s\S]{0,30}select" required
+                               oninput="testPattern()">
+                        <span class="help-block" id="patternHelp" style="color:#999;font-size:11px">
+                            Uses Rust regex syntax. Case-insensitive flag: <code>(?i)</code>
+                        </span>
+                    </div>
+
+                    <!-- Live pattern tester -->
+                    <div class="panel panel-default">
+                        <div class="panel-heading" style="padding:8px 12px">
+                            <strong><i class="fa fa-flask"></i> Pattern Tester</strong>
+                            <small class="text-muted" style="margin-left:8px">
+                                Paste a sample request value to test the regex locally
+                            </small>
+                        </div>
+                        <div class="panel-body" style="padding:10px 12px">
+                            <div class="form-group" style="margin-bottom:6px">
+                                <input type="text" class="form-control input-sm"
+                                       id="testInput" placeholder="e.g.  ' UNION SELECT * FROM users--"
+                                       oninput="testPattern()">
+                            </div>
+                            <div id="testResult" style="font-size:12px;min-height:18px"></div>
+                        </div>
+                    </div>
+
+                    <button type="submit" class="btn btn-success">
+                        <i class="fa fa-save"></i> Save Rule
+                    </button>
+                    <a href="/policy/{{ policy.name }}/rules" class="btn btn-default">Cancel</a>
+
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Quick-reference sidebar -->
+    <div class="col-lg-4">
+        <div class="panel panel-default">
+            <div class="panel-heading"><strong>Common patterns</strong></div>
+            <div class="panel-body" style="font-size:12px">
+                <p><strong>SQLi</strong></p>
+                <code>(?i)union[\s\S]{0,30}select</code><br>
+                <code>(?i)(sleep|benchmark)\s*\(</code><br>
+                <code>(?i)'\s*(or|and)\s+\d+=\d+</code>
+                <hr style="margin:8px 0">
+                <p><strong>XSS</strong></p>
+                <code>(?i)&lt;\s*script</code><br>
+                <code>(?i)\bon\w+\s*=</code><br>
+                <code>(?i)javascript\s*:</code>
+                <hr style="margin:8px 0">
+                <p><strong>Path traversal</strong></p>
+                <code>\.\.[/\\]</code><br>
+                <code>(?i)/etc/passwd</code>
+                <hr style="margin:8px 0">
+                <p><strong>RCE</strong></p>
+                <code>(?i)(eval|exec|system)\s*\(</code><br>
+                <code>[;|`]\s*\w+</code>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Client-side regex tester using JS regex as a proxy.
+// Not identical to Rust regex but good enough for quick iteration.
+function testPattern() {
+    var pattern = document.getElementById('patternInput').value;
+    var input   = document.getElementById('testInput').value;
+    var result  = document.getElementById('testResult');
+    var help    = document.getElementById('patternHelp');
+
+    if (!pattern) {
+        result.innerHTML = '';
+        help.style.color = '#999';
+        return;
+    }
+
+    try {
+        // Convert (?i) prefix to JS 'i' flag
+        var flags   = pattern.startsWith('(?i)') ? 'i' : '';
+        var cleaned = pattern.replace(/^\(\?i\)/, '');
+        var re      = new RegExp(cleaned, flags);
+
+        help.style.color = '#27ae60';
+        help.textContent = '✓ Valid pattern';
+
+        if (input) {
+            if (re.test(input)) {
+                result.innerHTML = '<span class="label label-danger">' +
+                    '<i class="fa fa-ban"></i> MATCH — rule would trigger</span>';
+            } else {
+                result.innerHTML = '<span class="label label-success">' +
+                    '<i class="fa fa-check"></i> No match</span>';
+            }
+        }
+    } catch (e) {
+        help.style.color = '#c0392b';
+        help.textContent = '✗ Invalid pattern: ' + e.message;
+        result.innerHTML = '';
+    }
+}
+</script>
+{% endblock %}

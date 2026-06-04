@@ -39,6 +39,13 @@ pub async fn init(database_url: &str) -> SqlitePool {
     // ALTER TABLE fails if the column already exists, so we check first.
     run_migration_002(&pool).await;
 
+    // Migration 003 — waf_rules table (CREATE TABLE IF NOT EXISTS, always safe).
+    let sql_003 = include_str!("../migrations/003_waf_rules.sql");
+    sqlx::raw_sql(sql_003)
+        .execute(&pool)
+        .await
+        .unwrap_or_else(|e| panic!("Migration 003 failed: {}", e));
+
     info!("Database ready: {}", database_url);
     pool
 }

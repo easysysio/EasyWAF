@@ -9,6 +9,40 @@ Version bumps and tags are created only after explicit approval.
 ## [Unreleased]
 
 ### Added
+- **WAF rules engine** — full per-policy pattern-based inspection:
+  - `waf_rules` table (migration 003): id, policy_id, name, description,
+    zone, pattern, score, action, enabled
+  - `modules/waf.rs`: new `WafModule` in the pipeline; evaluates every
+    enabled rule for the site's policy; instant-blocks on `action=block`;
+    accumulates scores and blocks when total ≥ `score_threshold`
+  - Respects `rule_engine` mode: `Off` skips all checks, `DetectionOnly`
+    raises Alert instead of Drop, `On` fully enforces
+  - Invalid regex patterns are logged and skipped — a broken rule cannot
+    crash the WAF
+- **Rules manager UI** (`/policy/{name}/rules`):
+  - List all rules with zone, pattern, score, action, and enabled status
+  - Enable / disable individual rules without deleting them
+  - Delete rules with confirmation
+  - Stats cards: total / enabled / disabled / threshold
+- **Add Rule form** (`/policy/{name}/rules/new`):
+  - Fields: name, description, zone, pattern (regex), score, action
+  - Client-side live pattern tester (JS regex preview)
+  - Common-patterns reference sidebar
+  - Server-side regex validation before saving
+- **Built-in default rule set** (24 rules across 5 categories):
+  - SQL Injection (7 rules): UNION SELECT, blind SLEEP, boolean injection,
+    stacked queries, DROP/TRUNCATE (instant block), comment stripping
+  - XSS (5 rules): script tag, javascript: URI, event handlers, iframe/embed, SVG
+  - Path Traversal (4 rules): `../`, encoded `%2e%2e`, /etc/passwd (instant block),
+    Windows system32 (instant block)
+  - Remote Code Execution (4 rules): PHP exec/eval family, shell pipe injection,
+    template injection `${}`, PHP stream wrappers
+  - Scanners (2 rules): known tool User-Agents (sqlmap/nikto/etc.), admin path brute-force
+  - Seeded via "Seed default rules" button or automatically on demand
+- **Policy settings** cleaned up: removed stale OWASP CRS file-based UI;
+  added "Manage WAF Rules" button; score_threshold now editable inline
+
+### Added
 - **Dynamic port binding** — adding or editing a site with a new `listen_port`
   now opens that TCP listener immediately without restarting EasyWAF.
   - `AppState` gains a `port_tx: mpsc::Sender<u16>` channel to the proxy

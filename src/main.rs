@@ -23,7 +23,7 @@ use axum::{
     Router,
 };
 use axum_extra::extract::cookie::Key;
-use modules::{traffic::TrafficLogger, Pipeline};
+use modules::{traffic::TrafficLogger, waf::WafModule, Pipeline};
 use sqlx::SqlitePool;
 use std::sync::Arc;
 use tera::Tera;
@@ -74,6 +74,9 @@ async fn main() {
     // writes the actual DB row via log_event().
     let mut pipeline = Pipeline::new();
     pipeline.add(TrafficLogger::new(db.clone()));
+    // WAF module runs after traffic logging so every request is counted
+    // even if it ends up being blocked.
+    pipeline.add(WafModule::new(db.clone()));
     let pipeline = Arc::new(pipeline);
 
     // ── Build reqwest client ──────────────────────────────
@@ -130,6 +133,12 @@ async fn main() {
         .route("/policy/{name}/edit",    get(routes::policy::get_policy_edit))
         .route("/policy/{name}/update",  post(routes::policy::post_policy_update))
         .route("/policy/{name}/delete",  post(routes::policy::post_policy_delete))
+        .route("/policy/{name}/rules",                get(routes::rules::get_rules))
+        .route("/policy/{name}/rules/new",            get(routes::rules::get_rule_new))
+        .route("/policy/{name}/rules/create",         post(routes::rules::post_rule_create))
+        .route("/policy/{name}/rules/seed",           post(routes::rules::post_seed_rules))
+        .route("/policy/{name}/rules/{id}/toggle",    post(routes::rules::post_rule_toggle))
+        .route("/policy/{name}/rules/{id}/delete",    post(routes::rules::post_rule_delete))
         .route("/geoip",                 get(routes::geoip::get_geoip))
         .route("/traffic",               get(routes::traffic::get_traffic))
         .nest_service("/static",         ServeDir::new("static"))
