@@ -8,6 +8,11 @@ Version bumps and tags are created only after explicit approval.
 
 ## [Unreleased]
 
+### Fixed
+- `policy_create.html` — removed stale "No OWASP CRS rule files found"
+  message left over from the Perl era; replaced with a clean form that
+  matches `policy_settings.html` (name, rule engine mode, score threshold)
+
 ### Added
 - **OWASP rule files** — `rules/` directory with 7 TOML files covering 93 rules
   based on OWASP ModSecurity Core Rule Set v3.x patterns:

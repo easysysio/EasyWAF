@@ -10,37 +10,28 @@
 
                     <div class="form-group">
                         <label>Policy Name</label>
-                        <input type="text" class="form-control" name="name" placeholder="my-policy" required>
+                        <input type="text" class="form-control" name="name"
+                               placeholder="my-policy" required>
                     </div>
 
                     <div class="form-group">
                         <label>Rule Engine Mode</label>
                         <select class="form-control" name="rule_engine">
-                            <option value="DetectionOnly">DetectionOnly (log but don't block)</option>
-                            <option value="On">On (detect and block)</option>
-                            <option value="Off">Off (disabled)</option>
+                            <option value="DetectionOnly">DetectionOnly — log alerts, never block</option>
+                            <option value="On">On — enforce rules, block when threshold exceeded</option>
+                            <option value="Off">Off — WAF disabled for this policy</option>
                         </select>
                     </div>
 
-                    {% if rules %}
-                    <div class="panel panel-default">
-                        <div class="panel-heading">OWASP CRS Rules</div>
-                        <div class="panel-body" style="max-height:400px; overflow-y:auto;">
-                            {% for rule in rules %}
-                            <div class="checkbox">
-                                <label>
-                                    <input type="checkbox" name="{{ rule }}" value="1">
-                                    {{ rule }}
-                                </label>
-                            </div>
-                            {% endfor %}
-                        </div>
+                    <div class="form-group">
+                        <label>Score Threshold
+                            <small class="text-muted">
+                                (block request when accumulated rule scores reach this value)
+                            </small>
+                        </label>
+                        <input type="number" class="form-control" name="score_threshold"
+                               value="10" min="1" max="1000" required>
                     </div>
-                    {% else %}
-                    <div class="alert alert-info">
-                        No OWASP CRS rule files found in the configured rules directory.
-                    </div>
-                    {% endif %}
 
                     <button type="submit" class="btn btn-success">
                         <i class="fa fa-save"></i> Create Policy
