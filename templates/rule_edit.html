@@ -1,0 +1,138 @@
+{% extends "layout_default.html" %}
+
+{% block content %}
+<div class="row">
+    <div class="col-lg-8">
+        <div class="panel panel-default">
+            <div class="panel-heading">
+                <h4><i class="fa fa-pencil"></i> Edit Rule
+                    <small class="text-muted">in policy {{ rule.policy_name }}</small>
+                </h4>
+            </div>
+            <div class="panel-body">
+                <form method="post" action="/rules/{{ rule.id }}/update">
+
+                    <div class="form-group">
+                        <label>Rule Name</label>
+                        <input type="text" class="form-control" name="name"
+                               value="{{ rule.name }}" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Description <small class="text-muted">(optional)</small></label>
+                        <input type="text" class="form-control" name="description"
+                               value="{{ rule.description }}">
+                    </div>
+
+                    <div class="row">
+                        <div class="col-sm-4">
+                            <div class="form-group">
+                                <label>Zone</label>
+                                <select class="form-control" name="zone">
+                                    <option value="ANY"     {% if rule.zone == "ANY" %}selected{% endif %}>ANY</option>
+                                    <option value="URL"     {% if rule.zone == "URL" %}selected{% endif %}>URL</option>
+                                    <option value="ARGS"    {% if rule.zone == "ARGS" %}selected{% endif %}>ARGS</option>
+                                    <option value="BODY"    {% if rule.zone == "BODY" %}selected{% endif %}>BODY</option>
+                                    <option value="HEADERS" {% if rule.zone == "HEADERS" %}selected{% endif %}>HEADERS</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="col-sm-4">
+                            <div class="form-group">
+                                <label>Score</label>
+                                <input type="number" class="form-control" name="score"
+                                       value="{{ rule.score }}" min="1" max="100">
+                            </div>
+                        </div>
+                        <div class="col-sm-4">
+                            <div class="form-group">
+                                <label>Action</label>
+                                <select class="form-control" name="action">
+                                    <option value="score" {% if rule.action == "score" %}selected{% endif %}>score — add to total</option>
+                                    <option value="block" {% if rule.action == "block" %}selected{% endif %}>block — instant 403</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Regex Pattern</label>
+                        <input type="text" class="form-control" name="pattern" id="patternInput"
+                               value="{{ rule.pattern }}" required oninput="testPattern()">
+                        <span class="help-block" id="patternHelp" style="color:#999;font-size:11px">
+                            Rust regex syntax. Case-insensitive flag: <code>(?i)</code>
+                        </span>
+                    </div>
+
+                    <div class="checkbox">
+                        <label>
+                            <input type="checkbox" name="enabled" value="1"
+                                {% if rule.enabled %}checked{% endif %}>
+                            <strong>Enabled</strong>
+                        </label>
+                    </div>
+
+                    <!-- Live pattern tester -->
+                    <div class="panel panel-default">
+                        <div class="panel-heading" style="padding:8px 12px">
+                            <strong><i class="fa fa-flask"></i> Pattern Tester</strong>
+                        </div>
+                        <div class="panel-body" style="padding:10px 12px">
+                            <input type="text" class="form-control input-sm" id="testInput"
+                                   placeholder="Paste a sample value to test the regex"
+                                   oninput="testPattern()" style="margin-bottom:6px">
+                            <div id="testResult" style="font-size:12px;min-height:18px"></div>
+                        </div>
+                    </div>
+
+                    <button type="submit" class="btn btn-success">
+                        <i class="fa fa-save"></i> Save Changes
+                    </button>
+                    <a href="/rules" class="btn btn-default">Cancel</a>
+                    <!-- formaction reuses this same form but posts to the delete route,
+                         avoiding an invalid nested <form> -->
+                    <button type="submit" formaction="/rules/{{ rule.id }}/delete"
+                            class="btn btn-danger" style="float:right"
+                            onclick="return confirm('Delete rule {{ rule.name }}?');">
+                        <i class="fa fa-trash"></i> Delete
+                    </button>
+
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Client-side regex tester (JS regex — approximate preview of Rust regex).
+function testPattern() {
+    var pattern = document.getElementById('patternInput').value;
+    var input   = document.getElementById('testInput').value;
+    var result  = document.getElementById('testResult');
+    var help    = document.getElementById('patternHelp');
+
+    if (!pattern) { result.innerHTML = ''; help.style.color = '#999'; return; }
+
+    try {
+        var flags   = pattern.startsWith('(?i)') ? 'i' : '';
+        var cleaned = pattern.replace(/^\(\?i\)/, '');
+        var re      = new RegExp(cleaned, flags);
+        help.style.color = '#27ae60';
+        help.textContent = '✓ Valid pattern';
+
+        if (input) {
+            result.innerHTML = re.test(input)
+                ? '<span class="label label-danger"><i class="fa fa-ban"></i> MATCH — rule would trigger</span>'
+                : '<span class="label label-success"><i class="fa fa-check"></i> No match</span>';
+        }
+    } catch (e) {
+        help.style.color = '#c0392b';
+        help.textContent = '✗ Invalid pattern: ' + e.message;
+        result.innerHTML = '';
+    }
+}
+testPattern();
+</script>
+{% endblock %}

@@ -55,6 +55,8 @@ pub struct RuleForm {
     pub pattern:     String,
     pub score:       Option<String>,
     pub action:      String,
+    /// Only sent by the edit form; absent on create (new rules default enabled).
+    pub enabled:     Option<String>,
 }
 
 /// Form submitted by the bulk-action bar.
@@ -1060,4 +1062,224 @@ pub async fn post_rules_catalog(
     );
 
     Ok(Redirect::to(&redirect).into_response())
+}
+
+// ─── Global Rule Editor ──────────────────────────────────
+//
+// A top-level view (sidebar: Security Policy → Rule Editor) that lists
+// every rule across all policies and lets each one be edited, toggled,
+// or deleted. Editing rule fields (pattern, score, etc.) is only
+// available here and via the per-policy pages share the same handlers.
+
+/// One row in the global rule list, including its owning policy.
+#[derive(Serialize)]
+pub struct AllRule {
+    pub id:          i64,
+    pub policy_name: String,
+    pub name:        String,
+    pub zone:        String,
+    pub pattern:     String,
+    pub score:       i64,
+    pub action:      String,
+    pub enabled:     bool,
+}
+
+/// Full detail of a single rule for the edit form.
+#[derive(Serialize)]
+pub struct RuleDetail {
+    pub id:          i64,
+    pub policy_name: String,
+    pub name:        String,
+    pub description: String,
+    pub zone:        String,
+    pub pattern:     String,
+    pub score:       i64,
+    pub action:      String,
+    pub enabled:     bool,
+}
+
+// ─── get_all_rules ───────────────────────────────────────
+
+/// Render the global rule list — every rule across every policy.
+pub async fn get_all_rules(
+    State(state): State<AppState>,
+    jar: SignedCookieJar,
+) -> Result<Response> {
+    let session = match get_session(&jar) {
+        Some(s) => s,
+        None    => return Ok(Redirect::to("/login").into_response()),
+    };
+
+    let rows = sqlx::query!(
+        "SELECT wr.id      as \"id!\",
+                p.name     as \"policy_name!\",
+                wr.name,
+                wr.zone,
+                wr.pattern,
+                wr.score   as \"score!\",
+                wr.action,
+                wr.enabled as \"enabled!: bool\"
+         FROM   waf_rules wr
+         JOIN   policies  p ON p.id = wr.policy_id
+         ORDER  BY p.name, wr.id"
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    let rules: Vec<AllRule> = rows.into_iter().map(|r| AllRule {
+        id:          r.id,
+        policy_name: r.policy_name,
+        name:        r.name,
+        zone:        r.zone,
+        pattern:     r.pattern,
+        score:       r.score,
+        action:      r.action,
+        enabled:     r.enabled,
+    }).collect();
+
+    let total    = rules.len();
+    let enabled  = rules.iter().filter(|r| r.enabled).count();
+
+    let mut ctx = Context::new();
+    ctx.insert("username",      &session.username);
+    ctx.insert("title",         "Rule Editor");
+    ctx.insert("url",           "/rules");
+    ctx.insert("rules",         &rules);
+    ctx.insert("total_rules",   &total);
+    ctx.insert("enabled_rules", &enabled);
+
+    Ok((jar, Html(state.tera.render("rules_all.html", &ctx)?)).into_response())
+}
+
+// ─── get_rule_edit_global ────────────────────────────────
+
+/// Render the edit form for a single rule (by global id).
+pub async fn get_rule_edit_global(
+    State(state): State<AppState>,
+    jar: SignedCookieJar,
+    Path(id): Path<i64>,
+) -> Result<Response> {
+    let session = match get_session(&jar) {
+        Some(s) => s,
+        None    => return Ok(Redirect::to("/login").into_response()),
+    };
+
+    let r = sqlx::query!(
+        "SELECT wr.id      as \"id!\",
+                p.name     as \"policy_name!\",
+                wr.name,
+                wr.description,
+                wr.zone,
+                wr.pattern,
+                wr.score   as \"score!\",
+                wr.action,
+                wr.enabled as \"enabled!: bool\"
+         FROM   waf_rules wr
+         JOIN   policies  p ON p.id = wr.policy_id
+         WHERE  wr.id = ?",
+        id
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| AppError::NotFound(format!("Rule {} not found", id)))?;
+
+    let rule = RuleDetail {
+        id:          r.id,
+        policy_name: r.policy_name,
+        name:        r.name,
+        description: r.description,
+        zone:        r.zone,
+        pattern:     r.pattern,
+        score:       r.score,
+        action:      r.action,
+        enabled:     r.enabled,
+    };
+
+    let mut ctx = Context::new();
+    ctx.insert("username", &session.username);
+    ctx.insert("title",    "Edit Rule");
+    ctx.insert("url",      "/rules");
+    ctx.insert("rule",     &rule);
+
+    Ok((jar, Html(state.tera.render("rule_edit.html", &ctx)?)).into_response())
+}
+
+// ─── post_rule_update_global ─────────────────────────────
+
+/// Save edits to a single rule. Validates the regex before saving.
+pub async fn post_rule_update_global(
+    State(state): State<AppState>,
+    jar: SignedCookieJar,
+    Path(id): Path<i64>,
+    Form(form): Form<RuleForm>,
+) -> Result<Response> {
+    if get_session(&jar).is_none() {
+        return Ok(Redirect::to("/login").into_response());
+    }
+
+    // Reject invalid regex so we never store a broken pattern.
+    if regex::Regex::new(&form.pattern).is_err() {
+        return Ok(Redirect::to(
+            &format!("/rules/{}/edit?error=Invalid+regex+pattern", id)
+        ).into_response());
+    }
+
+    let description = form.description.unwrap_or_default();
+    let score: i64  = form.score.as_deref().and_then(|s| s.parse().ok()).unwrap_or(5);
+    let enabled     = form.enabled.is_some();
+
+    sqlx::query!(
+        "UPDATE waf_rules
+         SET name = ?, description = ?, zone = ?, pattern = ?,
+             score = ?, action = ?, enabled = ?
+         WHERE id = ?",
+        form.name, description, form.zone, form.pattern,
+        score, form.action, enabled, id,
+    )
+    .execute(&state.db)
+    .await?;
+
+    Ok(Redirect::to("/rules").into_response())
+}
+
+// ─── post_rule_toggle_global ─────────────────────────────
+
+/// Toggle a rule's enabled flag, returning to the global list.
+pub async fn post_rule_toggle_global(
+    State(state): State<AppState>,
+    jar: SignedCookieJar,
+    Path(id): Path<i64>,
+) -> Result<Response> {
+    if get_session(&jar).is_none() {
+        return Ok(Redirect::to("/login").into_response());
+    }
+
+    sqlx::query!(
+        "UPDATE waf_rules SET enabled = CASE WHEN enabled = 1 THEN 0 ELSE 1 END
+         WHERE id = ?",
+        id
+    )
+    .execute(&state.db)
+    .await?;
+
+    Ok(Redirect::to("/rules").into_response())
+}
+
+// ─── post_rule_delete_global ─────────────────────────────
+
+/// Delete a rule, returning to the global list.
+pub async fn post_rule_delete_global(
+    State(state): State<AppState>,
+    jar: SignedCookieJar,
+    Path(id): Path<i64>,
+) -> Result<Response> {
+    if get_session(&jar).is_none() {
+        return Ok(Redirect::to("/login").into_response());
+    }
+
+    sqlx::query!("DELETE FROM waf_rules WHERE id = ?", id)
+        .execute(&state.db)
+        .await?;
+
+    Ok(Redirect::to("/rules").into_response())
 }

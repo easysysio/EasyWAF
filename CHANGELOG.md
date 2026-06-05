@@ -8,6 +8,17 @@ Version bumps and tags are created only after explicit approval.
 
 ## [Unreleased]
 
+### Added
+- **Rule Editor** — a new top-level page under Security Policy (sidebar:
+  Security Policy → Rule Editor, `/rules`) that lists every WAF rule across
+  all policies and lets each one be edited:
+  - Global table (DataTables) with policy, name, zone, pattern, score, status
+  - **Per-rule edit form** (`/rules/{id}/edit`) — the first place rule fields
+    (name, description, zone, pattern, score, action, enabled) can be changed;
+    includes a live regex tester and server-side regex validation on save
+  - Toggle enable/disable and delete directly from the list or the edit form
+  - `RuleForm` gained an optional `enabled` field (used only by the edit form)
+
 ### Changed
 - **Create Policy rule selection is now collapsible** — only the category
   groups are shown by default; clicking a group header expands its rules.
