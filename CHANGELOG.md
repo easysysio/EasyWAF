@@ -8,6 +8,14 @@ Version bumps and tags are created only after explicit approval.
 
 ## [Unreleased]
 
+### Changed
+- **Create Policy rule selection is now collapsible** — only the category
+  groups are shown by default; clicking a group header expands its rules.
+  - Chevron icon indicates open/closed state
+  - The category's master checkbox still works without toggling the panel
+  - Searching auto-expands all categories so matches are visible, and
+    collapses them again when the search box is cleared
+
 ### Added
 - **Select rules during policy creation** — the Create Policy form now embeds
   the full Rule Library below the policy fields:

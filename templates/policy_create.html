@@ -68,8 +68,13 @@
 
     {% for cat in catalog %}
     <div class="panel panel-default">
-        <div class="panel-heading" style="display:flex;align-items:center;gap:8px">
-            <label style="margin:0;font-weight:bold;cursor:pointer">
+        <!-- Clicking the header toggles the rule list open/closed -->
+        <div class="panel-heading cat-toggle"
+             style="display:flex;align-items:center;gap:8px;cursor:pointer">
+            <i class="fa fa-chevron-right cat-chevron" style="width:12px"></i>
+            <!-- stopPropagation so ticking the box does not also toggle the panel -->
+            <label style="margin:0;font-weight:bold;cursor:pointer"
+                   onclick="event.stopPropagation()">
                 <input type="checkbox" class="cat-master" data-cat="{{ cat.code }}">
                 {{ cat.title }}
             </label>
@@ -78,7 +83,8 @@
                 <span class="cat-count" data-cat="{{ cat.code }}">0</span> / {{ cat.total }} selected
             </span>
         </div>
-        <div class="table-responsive">
+        <!-- Collapsed by default; toggled by the header -->
+        <div class="table-responsive cat-body" style="display:none">
             <table class="table table-condensed table-hover" style="font-size:12px;margin-bottom:0">
                 <tbody>
                 {% for r in cat.rules %}
@@ -170,11 +176,34 @@ function selectAll(on) {
     updateCounts();
 }
 
-// ── Search filter ─────────────────────────────────────────
+// ── Expand / collapse a category panel ────────────────────
+function setCatOpen(toggle, open) {
+    var body = toggle.nextElementSibling;          // the .cat-body div
+    var chev = toggle.querySelector('.cat-chevron');
+    body.style.display = open ? '' : 'none';
+    chev.className = 'fa cat-chevron ' + (open ? 'fa-chevron-down' : 'fa-chevron-right');
+    chev.style.width = '12px';
+}
+
+document.querySelectorAll('.cat-toggle').forEach(function (toggle) {
+    toggle.addEventListener('click', function () {
+        var open = toggle.nextElementSibling.style.display !== 'none';
+        setCatOpen(toggle, !open);                 // flip current state
+    });
+});
+
+// ── Search filter — auto-expands categories while searching ──
 function filterRules() {
     var q = document.getElementById('ruleSearch').value.toLowerCase();
+
     document.querySelectorAll('.rule-row').forEach(function (row) {
         row.style.display = row.dataset.text.indexOf(q) !== -1 ? '' : 'none';
+    });
+
+    // While a query is active, open every panel so matches are visible.
+    // When the box is cleared, collapse them all again.
+    document.querySelectorAll('.cat-toggle').forEach(function (toggle) {
+        setCatOpen(toggle, q.length > 0);
     });
 }
 
