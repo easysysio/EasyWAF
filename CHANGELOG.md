@@ -9,6 +9,22 @@ Version bumps and tags are created only after explicit approval.
 ## [Unreleased]
 
 ### Added
+- **Light / Dark mode** — a theme toggle (sun/moon icon) in the navbar:
+  - Choice persisted in `localStorage`; applied before paint via an inline
+    `<head>` script so there is no flash of the wrong theme on load
+  - Works on both the app layout and the login page
+
+### Changed
+- **GUI stylesheet rewritten to be theme-driven** — all neutral surfaces,
+  borders, text, navbar/sidebar/dropdown/modal backgrounds, inputs, tables,
+  scrollbars and the page background now come from CSS variables that flip
+  between a light and a dark palette; accent colours stay constant
+  - Light theme: clean white glass surfaces on a soft slate-blue background
+  - Dark theme: the existing obsidian glassmorphism look
+  - Labels, badges, alerts and `code` get theme-appropriate text contrast
+  - Loads Inter/Outfit web fonts the stylesheet already referenced
+
+### Added
 - **Create custom rules from the Rule Editor** — an "Add Custom Rule" button
   on the Rule Editor page opens a form (`/rules/new`) to define a rule and
   choose which policy it belongs to:

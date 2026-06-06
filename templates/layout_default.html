@@ -6,6 +6,18 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>EasyWAF</title>
 
+    <!-- Apply saved theme before paint to avoid a flash of the wrong theme -->
+    <script>
+        (function () {
+            try {
+                var t = localStorage.getItem('easywaf-theme') || 'dark';
+                document.documentElement.setAttribute('data-theme', t);
+            } catch (e) {
+                document.documentElement.setAttribute('data-theme', 'dark');
+            }
+        })();
+    </script>
+
     <!-- Bootstrap 3 -->
     <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/css/bootstrap.min.css">
     <!-- Font Awesome -->
@@ -35,6 +47,16 @@
                 <span class="icon-bar"></span>
             </button>
         </div>
+
+        <!-- Right menu — theme toggle -->
+        <ul class="nav navbar-right navbar-top-links">
+            <li>
+                <button id="themeToggle" type="button" onclick="toggleTheme()"
+                        title="Toggle light / dark mode">
+                    <i id="themeToggleIcon" class="fa fa-sun-o"></i>
+                </button>
+            </li>
+        </ul>
 
         <!-- Right menu — user dropdown -->
         <ul class="nav navbar-right navbar-top-links">
