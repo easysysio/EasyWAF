@@ -28,7 +28,9 @@ use sqlx::SqlitePool;
 use std::sync::Arc;
 use tera::Tera;
 use tokio::sync::mpsc;
-use tower_http::services::ServeDir;
+use tower::ServiceBuilder;
+use tower_http::{services::ServeDir, set_header::SetResponseHeaderLayer};
+use axum::http::{header::CACHE_CONTROL, HeaderValue};
 use tracing::info;
 use tracing_subscriber::{fmt, EnvFilter};
 
@@ -152,7 +154,18 @@ async fn main() {
         .route("/rules/{id}/delete",     post(routes::rules::post_rule_delete_global))
         .route("/geoip",                 get(routes::geoip::get_geoip))
         .route("/traffic",               get(routes::traffic::get_traffic))
-        .nest_service("/static",         ServeDir::new("static"))
+        // Serve static assets with Cache-Control: no-cache so the browser
+        // always revalidates (cheap 304 when unchanged, fresh CSS/JS when
+        // they change) — prevents stale cached stylesheets/scripts.
+        .nest_service(
+            "/static",
+            ServiceBuilder::new()
+                .layer(SetResponseHeaderLayer::overriding(
+                    CACHE_CONTROL,
+                    HeaderValue::from_static("no-cache"),
+                ))
+                .service(ServeDir::new("static")),
+        )
         .with_state(gui_state);
 
     let gui_addr = format!("0.0.0.0:{}", cfg.proxy.gui_port);

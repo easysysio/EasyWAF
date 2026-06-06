@@ -42,8 +42,9 @@ time = { version = "0.3", features = ["serde"] }
 # Auth
 bcrypt = "0.17.0"
 
-# Static file serving
-tower-http = { version = "0.6", features = ["fs", "trace"] }
+# Static file serving (set-header lets us send Cache-Control on /static)
+tower-http = { version = "0.6", features = ["fs", "trace", "set-header"] }
+tower = "0.5"
 
 # Error handling
 anyhow = "1.0"

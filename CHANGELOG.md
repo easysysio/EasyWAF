@@ -8,6 +8,18 @@ Version bumps and tags are created only after explicit approval.
 
 ## [Unreleased]
 
+### Fixed
+- **Theme toggle appeared not to work due to stale browser cache** — the
+  `/static` files were served without a `Cache-Control` header, so browsers
+  heuristically cached the old dark-only `easywaf.css`/`easywaf.js` (which had
+  no `toggleTheme`), making the new toggle do nothing. Fixed by:
+  - Serving `/static` with `Cache-Control: no-cache` (always revalidate;
+    cheap 304 when unchanged, fresh assets when they change) via a
+    `SetResponseHeaderLayer` — prevents stale assets going forward
+  - Adding a `?v=2` cache-busting query to the CSS/JS includes so already-
+    cached copies are bypassed immediately
+  - Added `tower` dependency and the `set-header` tower-http feature
+
 ### Added
 - **Light / Dark mode** — a theme toggle (sun/moon icon) in the navbar:
   - Choice persisted in `localStorage`; applied before paint via an inline
