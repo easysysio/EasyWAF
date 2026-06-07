@@ -49,6 +49,8 @@ pub enum ModuleDecision {
     Pass,
     /// Request is suspicious — log the alert and continue.
     Alert { reason: String },
+    /// Request is suspicious-but-maybe-legit — show a CAPTCHA challenge.
+    Challenge { reason: String },
     /// Request is malicious — block it, stop the chain.
     Drop { reason: String, status: StatusCode },
 }
@@ -73,6 +75,11 @@ pub struct Alert {
 pub enum PipelineVerdict {
     /// Forward to upstream. May carry alerts from intermediate modules.
     Allow { alerts: Vec<Alert> },
+    /// Show a CAPTCHA challenge unless the client already has clearance.
+    Challenge {
+        reason:  String,
+        alerts:  Vec<Alert>,
+    },
     /// Block the request. The chain was stopped by one module.
     Block {
         reason:  String,
@@ -130,6 +137,15 @@ impl Pipeline {
                         "module alert"
                     );
                     alerts.push(Alert { module: module.name(), reason });
+                }
+
+                ModuleDecision::Challenge { reason } => {
+                    tracing::info!(
+                        module = module.name(),
+                        reason = %reason,
+                        "request challenged"
+                    );
+                    return PipelineVerdict::Challenge { reason, alerts };
                 }
 
                 ModuleDecision::Drop { reason, status } => {

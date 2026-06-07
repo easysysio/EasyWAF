@@ -9,6 +9,7 @@
 // =========================================================
 
 mod auth;
+mod challenge;
 mod config;
 mod db;
 mod error;
@@ -94,9 +95,11 @@ async fn main() {
 
     // ── Start proxy server (background task) ──────────────
     let proxy_state = proxy::ProxyState {
-        db:       db.clone(),
-        pipeline: pipeline.clone(),
+        db:         db.clone(),
+        pipeline:   pipeline.clone(),
         client,
+        secret:     cfg.secret.clone(),
+        challenges: challenge::ChallengeStore::new(),
     };
     tokio::spawn(async move {
         proxy::start(proxy_state, port_rx).await;

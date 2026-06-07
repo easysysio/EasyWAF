@@ -20,10 +20,12 @@ use tera::Context;
 
 #[derive(Debug, Serialize)]
 pub struct Policy {
-    pub id:              i64,
-    pub name:            String,
-    pub rule_engine:     String,
-    pub score_threshold: i64,
+    pub id:                  i64,
+    pub name:                String,
+    pub rule_engine:         String,
+    pub score_threshold:     i64,
+    /// Score at which a request is CAPTCHA-challenged (0 = disabled).
+    pub challenge_threshold: i64,
     /// Total rules attached to this policy (0 if none yet).
     pub rule_count:      i64,
     /// How many of those rules are enabled.
@@ -108,10 +110,14 @@ pub async fn post_policy_create(
     let score_threshold: i64 = raw.get("score_threshold")
         .and_then(|s| s.parse().ok())
         .unwrap_or(10);
+    let challenge_threshold: i64 = raw.get("challenge_threshold")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
 
     let insert = sqlx::query!(
-        "INSERT INTO policies (name, rule_engine, score_threshold) VALUES (?, ?, ?)",
-        name, rule_engine, score_threshold,
+        "INSERT INTO policies (name, rule_engine, score_threshold, challenge_threshold)
+         VALUES (?, ?, ?, ?)",
+        name, rule_engine, score_threshold, challenge_threshold,
     )
     .execute(&state.db)
     .await?;
@@ -171,10 +177,13 @@ pub async fn post_policy_update(
     let score_threshold: i64 = raw.get("score_threshold")
         .and_then(|s| s.parse().ok())
         .unwrap_or(10);
+    let challenge_threshold: i64 = raw.get("challenge_threshold")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
 
     sqlx::query!(
-        "UPDATE policies SET rule_engine=?, score_threshold=? WHERE name=?",
-        rule_engine, score_threshold, name,
+        "UPDATE policies SET rule_engine=?, score_threshold=?, challenge_threshold=? WHERE name=?",
+        rule_engine, score_threshold, challenge_threshold, name,
     )
     .execute(&state.db)
     .await?;
@@ -208,7 +217,8 @@ async fn fetch_policies(state: &AppState) -> Result<Vec<Policy>> {
         "SELECT p.id          as \"id!\",
                 p.name,
                 p.rule_engine,
-                p.score_threshold as \"score_threshold!\",
+                p.score_threshold     as \"score_threshold!\",
+                p.challenge_threshold as \"challenge_threshold!\",
                 COUNT(wr.id)   as \"rule_count!\",
                 COALESCE(SUM(wr.enabled), 0) as \"enabled_count!\"
          FROM   policies p
@@ -220,18 +230,21 @@ async fn fetch_policies(state: &AppState) -> Result<Vec<Policy>> {
     .await?;
 
     Ok(rows.into_iter().map(|r| Policy {
-        id:              r.id,
-        name:            r.name,
-        rule_engine:     r.rule_engine,
-        score_threshold: r.score_threshold,
-        rule_count:      r.rule_count,
-        enabled_count:   r.enabled_count,
+        id:                  r.id,
+        name:                r.name,
+        rule_engine:         r.rule_engine,
+        score_threshold:     r.score_threshold,
+        challenge_threshold: r.challenge_threshold,
+        rule_count:          r.rule_count,
+        enabled_count:       r.enabled_count,
     }).collect())
 }
 
 async fn fetch_policy(state: &AppState, name: &str) -> Result<Policy> {
     let r = sqlx::query!(
-        "SELECT id as \"id!\", name, rule_engine, score_threshold as \"score_threshold!\"
+        "SELECT id as \"id!\", name, rule_engine,
+                score_threshold     as \"score_threshold!\",
+                challenge_threshold as \"challenge_threshold!\"
          FROM policies WHERE name = ?",
         name
     )
@@ -240,13 +253,14 @@ async fn fetch_policy(state: &AppState, name: &str) -> Result<Policy> {
     .ok_or_else(|| AppError::NotFound(format!("Policy '{}' not found", name)))?;
 
     Ok(Policy {
-        id:              r.id,
-        name:            r.name,
-        rule_engine:     r.rule_engine,
-        score_threshold: r.score_threshold,
+        id:                  r.id,
+        name:                r.name,
+        rule_engine:         r.rule_engine,
+        score_threshold:     r.score_threshold,
+        challenge_threshold: r.challenge_threshold,
         // Counts are not shown on the single-policy edit page.
-        rule_count:      0,
-        enabled_count:   0,
+        rule_count:          0,
+        enabled_count:       0,
     })
 }
 

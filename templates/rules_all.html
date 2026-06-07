@@ -68,6 +68,8 @@
                     <td class="text-center">
                         {% if r.action == "block" %}
                             <span class="label label-danger">BLOCK</span>
+                        {% elif r.action == "challenge" %}
+                            <span class="label label-info">CAPTCHA</span>
                         {% else %}
                             <span class="label label-warning">+{{ r.score }}</span>
                         {% endif %}

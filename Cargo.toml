@@ -63,6 +63,13 @@ bytes = "1.6"
 # WAF pattern matching — uses a safe automata engine (no ReDoS risk)
 regex = "1"
 
+# CAPTCHA challenge (self-hosted, pure-Rust image generation) + helpers
+captcha = "0.0.9"
+base64 = "0.22"
+hmac = "0.12"
+sha2 = "0.10"
+rand = "0.8"
+
 # ─── Debian package (.deb) — cargo-deb ──────────────────────
 # Binary → /usr/bin; runtime assets → /opt/easywaf (the systemd unit sets
 # WorkingDirectory there). Asset source paths under target/release are

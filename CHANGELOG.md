@@ -8,6 +8,24 @@ Version bumps and tags are created only after explicit approval.
 
 ## [Unreleased]
 
+### Added
+- **CAPTCHA challenge** — suspicious-but-maybe-legit requests can now be shown
+  a self-hosted image CAPTCHA instead of being hard-blocked, cutting false
+  positives while still costing bots:
+  - New `challenge` rule action and a per-policy **`challenge_threshold`**
+    (migration 005): score ≥ challenge_threshold but < block_threshold ⇒
+    challenge; block_threshold still hard-blocks. `DetectionOnly` only alerts.
+  - New pipeline outcome `Challenge`; the proxy serves a standalone CAPTCHA
+    page (pure-Rust `captcha` crate, no third party) when challenged and the
+    visitor has no clearance.
+  - Solving it sets a short-lived (30 min), IP-bound, HMAC-signed
+    `easywaf_clearance` cookie; subsequent requests skip the challenge.
+    In-flight challenges are kept in memory (~3 min TTL); the cookie itself is
+    stateless. Verification handled at the internal `/__easywaf/verify` path.
+  - Challenges are recorded in `traffic_events`; rule lists show a CAPTCHA
+    badge; `challenge` added to the rule action dropdowns and a Challenge
+    Threshold field to policy create/settings.
+
 ## [0.2.0] — 2026-06-07
 
 ### Added

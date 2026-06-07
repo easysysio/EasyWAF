@@ -14,6 +14,9 @@
 // listeners are bound once at startup.
 // =========================================================
 
+use crate::challenge::{
+    self, ChallengeStore, CLEARANCE_COOKIE, VERIFY_PATH,
+};
 use crate::modules::{
     traffic::{log_event, TrafficRecord},
     Pipeline, PipelineVerdict, RequestContext,
@@ -27,7 +30,7 @@ use axum::{
 };
 use reqwest::Client;
 use sqlx::SqlitePool;
-use std::{collections::HashSet, net::SocketAddr, sync::Arc, time::Instant};
+use std::{collections::{HashMap, HashSet}, net::SocketAddr, sync::Arc, time::Instant};
 use tokio::{net::TcpListener, sync::mpsc};
 
 // ─── Hop-by-hop headers ──────────────────────────────────
@@ -51,9 +54,13 @@ const HOP_HEADERS: &[&str] = &[
 /// Cloned cheaply for each spawned listener / request.
 #[derive(Clone)]
 pub struct ProxyState {
-    pub db:       SqlitePool,
-    pub pipeline: Arc<Pipeline>,
-    pub client:   Client,
+    pub db:         SqlitePool,
+    pub pipeline:   Arc<Pipeline>,
+    pub client:     Client,
+    /// Secret used to sign CAPTCHA clearance cookies.
+    pub secret:     String,
+    /// In-memory store of in-flight CAPTCHA challenges.
+    pub challenges: ChallengeStore,
 }
 
 // ─── SiteRow ─────────────────────────────────────────────
@@ -232,6 +239,14 @@ async fn handle_request(
         Err(_) => return error_response(StatusCode::BAD_REQUEST, "Failed to read request body"),
     };
 
+    // ── 3b. CAPTCHA verify submissions — handled before the WAF ──
+    if method == Method::POST && path == VERIFY_PATH {
+        return handle_verify(&state, &client_ip.to_string(), &body_bytes);
+    }
+
+    // Does the visitor already hold a valid challenge clearance cookie?
+    let cleared = clearance_ok(&state, &headers, &client_ip.to_string());
+
     // ── 4. Build RequestContext and run pipeline ──────────
     let ctx = RequestContext {
         site_id:    site.id,
@@ -270,6 +285,44 @@ async fn handle_request(
             }).await;
         });
         return error_response(status, &reason);
+    }
+
+    // ── 4b. Challenge verdict: show CAPTCHA unless already cleared ──
+    if let PipelineVerdict::Challenge { reason, .. } = &verdict {
+        if !cleared {
+            let dest = match &query {
+                Some(q) => format!("{}?{}", path, q),
+                None    => path.clone(),
+            };
+            let (id, data_uri) = state.challenges.issue(&dest, &client_ip.to_string());
+
+            // Log the challenge asynchronously.
+            let elapsed    = started_at.elapsed().as_millis() as i64;
+            let db         = state.db.clone();
+            let method_str = method.to_string();
+            let reason_log = format!("challenge: {}", reason);
+            let host_l     = host.clone();
+            let path_l     = path.clone();
+            let ip_l       = client_ip.to_string();
+            tokio::spawn(async move {
+                log_event(db, TrafficRecord {
+                    site_id:      site.id,
+                    client_ip:    ip_l,
+                    method:       method_str,
+                    host:         host_l,
+                    path:         path_l,
+                    status_code:  200,
+                    response_ms:  elapsed,
+                    blocked:      false,
+                    block_reason: Some(reason_log),
+                    waf_score:    None,
+                    country:      None,
+                }).await;
+            });
+
+            return challenge_response(&id, &data_uri, false);
+        }
+        // Cleared visitor — fall through and forward normally.
     }
 
     // ── 5. Forward to upstream ────────────────────────────
@@ -440,6 +493,92 @@ fn error_response(status: StatusCode, msg: &str) -> Response<Body> {
         .header("content-type", "text/plain; charset=utf-8")
         .body(Body::from(msg.to_string()))
         .unwrap()
+}
+
+// ─── CAPTCHA challenge helpers ───────────────────────────
+
+/// Build the challenge-page response. Served with no-store so a cleared
+/// visitor never gets a cached challenge.
+fn challenge_response(id: &str, data_uri: &str, error: bool) -> Response<Body> {
+    let html = challenge::challenge_page(id, data_uri, error);
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("content-type", "text/html; charset=utf-8")
+        .header("cache-control", "no-store")
+        .body(Body::from(html))
+        .unwrap()
+}
+
+/// Handle a POST to the verify path: check the answer, set the clearance
+/// cookie and redirect on success, or re-serve the challenge on failure.
+fn handle_verify(state: &ProxyState, client_ip: &str, body: &[u8]) -> Response<Body> {
+    let form = parse_form(body);
+    let id     = form.get("id").map(String::as_str).unwrap_or("");
+    let answer = form.get("answer").map(String::as_str).unwrap_or("");
+
+    if let Some(dest) = state.challenges.verify(id, answer, client_ip) {
+        let cookie = challenge::make_clearance(&state.secret, client_ip);
+        let set_cookie = format!(
+            "{}={}; Path=/; Max-Age=1800; HttpOnly; SameSite=Lax",
+            CLEARANCE_COOKIE, cookie
+        );
+        // Only redirect to a same-site path, never an absolute URL.
+        let location = if dest.starts_with('/') { dest } else { "/".to_string() };
+        return Response::builder()
+            .status(StatusCode::SEE_OTHER)
+            .header("location", location)
+            .header("set-cookie", set_cookie)
+            .header("cache-control", "no-store")
+            .body(Body::empty())
+            .unwrap();
+    }
+
+    // Wrong or expired answer — re-issue a challenge to the same destination.
+    let dest = state.challenges.dest_of(id).unwrap_or_else(|| "/".to_string());
+    let (new_id, data_uri) = state.challenges.issue(&dest, client_ip);
+    challenge_response(&new_id, &data_uri, true)
+}
+
+/// True if the request carries a valid clearance cookie for this client IP.
+fn clearance_ok(state: &ProxyState, headers: &HeaderMap, client_ip: &str) -> bool {
+    match cookie_value(headers, CLEARANCE_COOKIE) {
+        Some(v) => challenge::check_clearance(&state.secret, client_ip, &v),
+        None    => false,
+    }
+}
+
+/// Extract a single cookie value from the Cookie request header.
+fn cookie_value(headers: &HeaderMap, name: &str) -> Option<String> {
+    let raw = headers.get("cookie")?.to_str().ok()?;
+    for pair in raw.split(';') {
+        if let Some((k, v)) = pair.trim().split_once('=') {
+            if k == name {
+                return Some(v.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// Parse an application/x-www-form-urlencoded body into a map.
+fn parse_form(body: &[u8]) -> HashMap<String, String> {
+    let s = String::from_utf8_lossy(body);
+    let mut map = HashMap::new();
+    for pair in s.split('&') {
+        let mut it = pair.splitn(2, '=');
+        let k = decode_component(it.next().unwrap_or(""));
+        let v = decode_component(it.next().unwrap_or(""));
+        if !k.is_empty() {
+            map.insert(k, v);
+        }
+    }
+    map
+}
+
+/// URL-decode one form component ('+' → space, then percent-decoding).
+fn decode_component(s: &str) -> String {
+    let plus = s.replace('+', " ");
+    urlencoding::decode(&plus).map(|c| c.into_owned()).unwrap_or(plus)
 }
 
 // ─── Header conversion helpers ───────────────────────────

@@ -49,6 +49,7 @@
                                 <label>Action</label>
                                 <select class="form-control" name="action">
                                     <option value="score" {% if rule.action == "score" %}selected{% endif %}>score — add to total</option>
+                                    <option value="challenge" {% if rule.action == "challenge" %}selected{% endif %}>challenge — show CAPTCHA</option>
                                     <option value="block" {% if rule.action == "block" %}selected{% endif %}>block — instant 403</option>
                                 </select>
                             </div>

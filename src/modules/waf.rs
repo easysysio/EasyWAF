@@ -42,9 +42,16 @@ impl WafModule {
 
 /// Policy configuration fetched per request.
 struct PolicyInfo {
-    id:              i64,
-    rule_engine:     String,
-    score_threshold: i64,
+    id:                  i64,
+    rule_engine:         String,
+    score_threshold:     i64,
+    challenge_threshold: i64,
+}
+
+/// Severity of a WAF decision before the rule_engine mode is applied.
+enum Level {
+    Challenge,
+    Block,
 }
 
 /// A single WAF rule loaded from the DB.
@@ -96,6 +103,7 @@ impl InspectionModule for WafModule {
 
         // Step 5 — evaluate each rule in order.
         let mut total_score: i64 = 0;
+        let mut challenge_reason: Option<String> = None;
 
         for rule in &rules {
             // Select the right content string for this rule's zone.
@@ -133,25 +141,47 @@ impl InspectionModule for WafModule {
                 "WAF rule matched"
             );
 
-            // action='block' → instant block regardless of score.
-            if rule.action == "block" {
-                return block_or_alert(
-                    &policy.rule_engine,
-                    format!("WAF block rule matched: {}", rule.name),
-                );
+            match rule.action.as_str() {
+                // Instant block regardless of score — block always wins, so
+                // we can decide right here.
+                "block" => {
+                    return decide(
+                        &policy,
+                        Level::Block,
+                        format!("WAF block rule matched: {}", rule.name),
+                    );
+                }
+                // Direct challenge request — remember it but keep scanning, so
+                // a later block rule can still take precedence.
+                "challenge" => {
+                    if challenge_reason.is_none() {
+                        challenge_reason =
+                            Some(format!("WAF challenge rule matched: {}", rule.name));
+                    }
+                }
+                // Default "score" — accumulate.
+                _ => { total_score += rule.score; }
             }
-
-            total_score += rule.score;
         }
 
-        // Step 6 — check accumulated score against the threshold.
+        // Step 6 — apply thresholds. Block takes precedence over challenge.
         if total_score >= policy.score_threshold {
-            return block_or_alert(
-                &policy.rule_engine,
-                format!(
-                    "WAF score {} exceeded threshold {}",
-                    total_score, policy.score_threshold
-                ),
+            return decide(
+                &policy,
+                Level::Block,
+                format!("WAF score {} ≥ block threshold {}", total_score, policy.score_threshold),
+            );
+        }
+
+        if let Some(reason) = challenge_reason {
+            return decide(&policy, Level::Challenge, reason);
+        }
+
+        if policy.challenge_threshold > 0 && total_score >= policy.challenge_threshold {
+            return decide(
+                &policy,
+                Level::Challenge,
+                format!("WAF score {} ≥ challenge threshold {}", total_score, policy.challenge_threshold),
             );
         }
 
@@ -159,18 +189,17 @@ impl InspectionModule for WafModule {
     }
 }
 
-// ─── block_or_alert ──────────────────────────────────────
+// ─── decide ──────────────────────────────────────────────
 
-/// In DetectionOnly mode return Alert; in On mode return Drop.
-/// This is how the rule_engine switch is applied.
-fn block_or_alert(rule_engine: &str, reason: String) -> ModuleDecision {
-    if rule_engine == "DetectionOnly" {
-        ModuleDecision::Alert { reason }
-    } else {
-        ModuleDecision::Drop {
-            reason,
-            status: StatusCode::FORBIDDEN,
-        }
+/// Map a decision Level to a ModuleDecision, applying the rule_engine mode.
+/// In DetectionOnly mode nothing is enforced — every decision becomes an Alert.
+fn decide(policy: &PolicyInfo, level: Level, reason: String) -> ModuleDecision {
+    if policy.rule_engine == "DetectionOnly" {
+        return ModuleDecision::Alert { reason };
+    }
+    match level {
+        Level::Challenge => ModuleDecision::Challenge { reason },
+        Level::Block     => ModuleDecision::Drop { reason, status: StatusCode::FORBIDDEN },
     }
 }
 
@@ -180,9 +209,10 @@ fn block_or_alert(rule_engine: &str, reason: String) -> ModuleDecision {
 /// Returns None if the site has no policy (waf_policy_id IS NULL).
 async fn get_site_policy(db: &SqlitePool, site_id: i64) -> Option<PolicyInfo> {
     sqlx::query!(
-        "SELECT p.id              as \"id!\",
+        "SELECT p.id                  as \"id!\",
                 p.rule_engine,
-                p.score_threshold as \"score_threshold!\"
+                p.score_threshold     as \"score_threshold!\",
+                p.challenge_threshold as \"challenge_threshold!\"
          FROM   policies p
          JOIN   sites    s ON s.waf_policy_id = p.id
          WHERE  s.id = ?",
@@ -193,9 +223,10 @@ async fn get_site_policy(db: &SqlitePool, site_id: i64) -> Option<PolicyInfo> {
     .ok()
     .flatten()
     .map(|r| PolicyInfo {
-        id:              r.id,
-        rule_engine:     r.rule_engine,
-        score_threshold: r.score_threshold,
+        id:                  r.id,
+        rule_engine:         r.rule_engine,
+        score_threshold:     r.score_threshold,
+        challenge_threshold: r.challenge_threshold,
     })
 }
 

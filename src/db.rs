@@ -50,6 +50,9 @@ pub async fn init(database_url: &str) -> SqlitePool {
     // Uses column-exists check since ALTER TABLE fails if column already exists.
     run_migration_004(&pool).await;
 
+    // Migration 005 — challenge_threshold column on policies.
+    run_migration_005(&pool).await;
+
     info!("Database ready: {}", database_url);
     pool
 }
@@ -96,5 +99,26 @@ async fn run_migration_002(pool: &SqlitePool) {
             .await
             .unwrap_or_else(|e| panic!("Migration 002 failed: {}", e));
         info!("Migration 002 applied: added listen_port to sites");
+    }
+}
+
+// ─── run_migration_005 ───────────────────────────────────
+
+/// Add challenge_threshold to the policies table if not already present.
+async fn run_migration_005(pool: &SqlitePool) {
+    let exists: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM pragma_table_info('policies') WHERE name = 'challenge_threshold'",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0);
+
+    if exists == 0 {
+        let sql_005 = include_str!("../migrations/005_challenge_threshold.sql");
+        sqlx::raw_sql(sql_005)
+            .execute(pool)
+            .await
+            .unwrap_or_else(|e| panic!("Migration 005 failed: {}", e));
+        info!("Migration 005 applied: added challenge_threshold to policies");
     }
 }

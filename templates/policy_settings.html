@@ -41,6 +41,17 @@
                                value="{{ policy.score_threshold }}" min="1" max="1000" required>
                     </div>
 
+                    <div class="form-group">
+                        <label>Challenge Threshold
+                            <small class="text-muted">
+                                (show a CAPTCHA when score reaches this — must be below the block
+                                threshold; 0 disables score-based challenges)
+                            </small>
+                        </label>
+                        <input type="number" class="form-control" name="challenge_threshold"
+                               value="{{ policy.challenge_threshold }}" min="0" max="1000">
+                    </div>
+
                     <button type="submit" class="btn btn-success">
                         <i class="fa fa-save"></i> Update Policy
                     </button>
