@@ -8,6 +8,8 @@ Version bumps and tags are created only after explicit approval.
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-06-07
+
 ### Added
 - **Release CI pipeline** (`.github/workflows/release.yml`) — triggered by
   pushing a `v*` tag:
