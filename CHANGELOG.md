@@ -12,6 +12,8 @@ Version bumps and tags are created only after explicit approval.
 - Repository moved to `https://github.com/easysysio/EasyWAF` (the easysysio
   org). Added `repository`/`homepage` to `Cargo.toml`; git remote updated.
   Author and package maintainer remain "Yariv Hakim".
+- About modal: website link now points to `https://easysys.io/easywaf`
+  (was easywaf.org); version updated to 0.2.0 and copyright to 2025–2026.
 
 ### Added
 - **CAPTCHA challenge** — suspicious-but-maybe-legit requests can now be shown
