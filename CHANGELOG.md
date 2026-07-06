@@ -8,6 +8,11 @@ Version bumps and tags are created only after explicit approval.
 
 ## [Unreleased]
 
+### Changed
+- Repository moved to `https://github.com/easysysio/EasyWAF` (the easysysio
+  org). Added `repository`/`homepage` to `Cargo.toml`; git remote updated.
+  Author and package maintainer remain "Yariv Hakim".
+
 ### Added
 - **CAPTCHA challenge** — suspicious-but-maybe-legit requests can now be shown
   a self-hosted image CAPTCHA instead of being hard-blocked, cutting false
