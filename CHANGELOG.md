@@ -8,6 +8,16 @@ Version bumps and tags are created only after explicit approval.
 
 ## [Unreleased]
 
+### Changed
+- **WAF rule patterns are compiled once instead of per request.** Every rule's
+  regex was rebuilt on every request — with the bundled rule set loaded, ~100
+  `Regex::new` calls per request, which dominated the cost of actually matching
+  them. Patterns are now compiled on first use and cached on the module. In a
+  local benchmark against a policy holding all 99 bundled rules, mean
+  proxy-request latency fell from **36.2 ms to 0.8 ms** (p95 39.0 ms → 0.8 ms).
+  A pattern that fails to compile is cached as a failure too, so a broken rule
+  logs once for the life of the process rather than on every request.
+
 ### Added
 - **Settings section** (`/settings`) — a new sidebar entry for installation-wide
   options that belong in the GUI rather than in `config.toml`, which is read

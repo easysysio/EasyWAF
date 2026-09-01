@@ -16,6 +16,11 @@
 //   On           — full enforcement, Drop when threshold exceeded
 //
 // The regex crate uses a safe automata engine — no ReDoS risk.
+//
+// Patterns are compiled once and cached on the module (see
+// compiled_pattern), not per request: the rule set is read
+// from the DB on every request, and compiling ~100 patterns
+// per request dominated the cost of matching them.
 // =========================================================
 
 use crate::modules::{InspectionModule, ModuleDecision, RequestContext};
@@ -23,18 +28,68 @@ use async_trait::async_trait;
 use axum::http::StatusCode;
 use regex::Regex;
 use sqlx::SqlitePool;
+use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
 
 // ─── WafModule ───────────────────────────────────────────
 
 /// Pipeline module that evaluates WAF rules for every request.
 pub struct WafModule {
     db: SqlitePool,
+    /// Compiled patterns, keyed by the pattern source text.
+    ///
+    /// `None` marks a pattern that failed to compile, so a broken rule is
+    /// reported once instead of on every request. Keying by the pattern rather
+    /// than the rule id means an edited rule compiles its new pattern on next
+    /// use with no explicit invalidation. The key space is admin-controlled
+    /// (rules come from the GUI, never from request data), so it stays small.
+    regex_cache: RwLock<HashMap<String, Option<Arc<Regex>>>>,
 }
 
 impl WafModule {
     /// Create a WafModule backed by the given connection pool.
     pub fn new(db: SqlitePool) -> Self {
-        Self { db }
+        Self {
+            db,
+            regex_cache: RwLock::new(HashMap::new()),
+        }
+    }
+
+    /// Return the compiled regex for a rule's pattern, compiling on first use.
+    ///
+    /// Returns None when the pattern is invalid; that outcome is cached too, so
+    /// an unusable rule costs one failed compile and one log line for the life
+    /// of the process rather than one per request.
+    ///
+    /// Two requests can race and compile the same pattern twice — harmless,
+    /// since both produce the same value and the second insert simply wins. No
+    /// lock is held across an await point.
+    fn compiled_pattern(&self, rule: &RuleRow) -> Option<Arc<Regex>> {
+        // Fast path — already compiled, or already known to be invalid.
+        if let Ok(cache) = self.regex_cache.read() {
+            if let Some(entry) = cache.get(&rule.pattern) {
+                return entry.clone();
+            }
+        }
+
+        // Slow path — compile once and remember the outcome either way.
+        let compiled = match Regex::new(&rule.pattern) {
+            Ok(re) => Some(Arc::new(re)),
+            Err(e) => {
+                tracing::warn!(
+                    rule_id = rule.id,
+                    pattern = %rule.pattern,
+                    "WAF rule has invalid regex, skipping: {}",
+                    e
+                );
+                None
+            }
+        };
+
+        if let Ok(mut cache) = self.regex_cache.write() {
+            cache.insert(rule.pattern.clone(), compiled.clone());
+        }
+        compiled
     }
 }
 
@@ -115,18 +170,11 @@ impl InspectionModule for WafModule {
                 _         => &any,  // "ANY" or unrecognised
             };
 
-            // Compile the regex — log and skip if the pattern is invalid.
-            let re = match Regex::new(&rule.pattern) {
-                Ok(r)  => r,
-                Err(e) => {
-                    tracing::warn!(
-                        rule_id  = rule.id,
-                        pattern  = %rule.pattern,
-                        "WAF rule has invalid regex, skipping: {}",
-                        e
-                    );
-                    continue;
-                }
+            // Compiled on first use and cached; skip a rule whose pattern
+            // could not be compiled.
+            let re = match self.compiled_pattern(rule) {
+                Some(r) => r,
+                None    => continue,
             };
 
             if !re.is_match(target) {
