@@ -8,6 +8,14 @@ Version bumps and tags are created only after explicit approval.
 
 ## [Unreleased]
 
+### Fixed
+- **About modal showed the wrong version.** The version was hard-coded in
+  `layout_default.html` alongside the real one in `Cargo.toml`, so the two had
+  to be bumped together — and they drifted: the `v0.2.0` tag was cut before the
+  template was corrected, so the released 0.2.0 packages ship a modal reading
+  0.1.0. The modal now renders `{{ version() }}`, a Tera function backed by
+  `CARGO_PKG_VERSION`, leaving `Cargo.toml` as the single source of truth.
+
 ### Added
 - **Dashboard: traffic per site.** A new table breaks the last 24 hours down by
   site — requests, passed, challenged, blocked, and blocked share — with each

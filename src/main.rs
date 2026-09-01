@@ -26,6 +26,7 @@ use axum::{
 use axum_extra::extract::cookie::Key;
 use modules::{traffic::TrafficLogger, waf::WafModule, Pipeline};
 use sqlx::SqlitePool;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tera::Tera;
 use tokio::sync::mpsc;
@@ -106,8 +107,10 @@ async fn main() {
     });
 
     // ── Build management GUI ──────────────────────────────
-    let tera = Tera::new("templates/**/*.html")
+    let mut tera = Tera::new("templates/**/*.html")
         .unwrap_or_else(|e| panic!("Template loading failed: {}", e));
+    // Exposes {{ version() }} to every template — see app_version().
+    tera.register_function("version", app_version);
     let key = make_key(&cfg.secret);
 
     let gui_state = AppState {
@@ -178,6 +181,19 @@ async fn main() {
         .unwrap_or_else(|e| panic!("Cannot bind GUI to {}: {}", gui_addr, e));
 
     axum::serve(listener, app).await.expect("GUI server error");
+}
+
+// ─── app_version ─────────────────────────────────────────
+
+/// Tera function returning the crate version, usable as `{{ version() }}` in
+/// any template.
+///
+/// The About modal used to hard-code the version, which meant Cargo.toml and
+/// the template had to be bumped together — they drifted for the 0.2.0 release,
+/// which shipped a modal still reading 0.1.0. Reading it from the binary keeps
+/// one source of truth.
+fn app_version(_args: &HashMap<String, tera::Value>) -> tera::Result<tera::Value> {
+    Ok(tera::Value::String(env!("CARGO_PKG_VERSION").to_string()))
 }
 
 // ─── seed_admin ──────────────────────────────────────────
