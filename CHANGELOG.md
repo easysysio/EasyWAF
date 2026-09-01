@@ -8,6 +8,8 @@ Version bumps and tags are created only after explicit approval.
 
 ## [Unreleased]
 
+## [0.2.1] — 2026-09-01
+
 ### Security
 - **`cargo audit` is clean.** Updated the advisory-affected dependencies in
   `Cargo.lock` — h2 0.4.14 → 0.4.19 (unbounded empty DATA frames,
