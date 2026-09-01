@@ -8,6 +8,20 @@ Version bumps and tags are created only after explicit approval.
 
 ## [Unreleased]
 
+### Security
+- **`cargo audit` is clean.** Updated the advisory-affected dependencies in
+  `Cargo.lock` — h2 0.4.14 → 0.4.19 (unbounded empty DATA frames,
+  RUSTSEC-2026-0258), crossbeam-epoch 0.9.18 → 0.9.20 (RUSTSEC-2026-0204),
+  quinn-proto 0.11.14 → 0.11.17 (RUSTSEC-2026-0185), plus anyhow, event-listener
+  and spin, which cleared the two unsoundness warnings and one yanked crate.
+  All are lockfile-only bumps; no version requirement in `Cargo.toml` changed.
+- Added `.cargo/audit.toml` ignoring RUSTSEC-2023-0071 (Marvin Attack in `rsa`),
+  which has had no fixed release since 2023. `rsa` is pulled in only by
+  `sqlx-mysql`: Cargo.lock lists every optional dependency regardless of the
+  features enabled, but EasyWAF builds sqlx with `sqlite` alone, so it is never
+  compiled. The reasoning is recorded in the file so the exemption can be
+  re-checked rather than inherited blindly.
+
 ### Fixed
 - **About modal showed the wrong version.** The version was hard-coded in
   `layout_default.html` alongside the real one in `Cargo.toml`, so the two had

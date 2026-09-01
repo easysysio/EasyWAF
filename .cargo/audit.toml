@@ -1,0 +1,19 @@
+# =========================================================
+# .cargo/audit.toml — EasyWAF
+# Configuration for `cargo audit`.
+# =========================================================
+
+[advisories]
+# RUSTSEC-2023-0071 — Marvin Attack (timing sidechannel) in `rsa`.
+#
+# There is no fixed version: the advisory has had no patched release since
+# 2023-11-22, so this cannot be resolved by upgrading.
+#
+# `rsa` reaches the lockfile through `sqlx-mysql`, and Cargo.lock records the
+# union of every optional dependency regardless of the features actually
+# enabled. EasyWAF builds sqlx with the `sqlite` feature only, so `sqlx-mysql`
+# is never compiled — `cargo tree -i sqlx-mysql --target all` returns nothing —
+# and no RSA code reaches the binary.
+#
+# Re-check when sqlx's dependency changes or a fixed `rsa` is published.
+ignore = ["RUSTSEC-2023-0071"]
