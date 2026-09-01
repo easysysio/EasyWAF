@@ -15,6 +15,9 @@ Version bumps and tags are created only after explicit approval.
   template was corrected, so the released 0.2.0 packages ship a modal reading
   0.1.0. The modal now renders `{{ version() }}`, a Tera function backed by
   `CARGO_PKG_VERSION`, leaving `Cargo.toml` as the single source of truth.
+- About modal: the website link now points at `https://easysys.io/easywaf/`.
+  Without the trailing slash the site answers 301 and downgrades the redirect to
+  plain `http://`, so the link left HTTPS on the way to the same page.
 
 ### Added
 - **Dashboard: traffic per site.** A new table breaks the last 24 hours down by
