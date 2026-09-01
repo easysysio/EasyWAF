@@ -8,6 +8,17 @@ Version bumps and tags are created only after explicit approval.
 
 ## [Unreleased]
 
+### Added
+- **Dashboard: traffic per site.** A new table breaks the last 24 hours down by
+  site — requests, passed, challenged, blocked, and blocked share — with each
+  site linking through to its filtered view in the Traffic Monitor. Sites with
+  no traffic are listed with zeros rather than omitted, so a configured but idle
+  site is visible. Challenges are counted in their own column and excluded from
+  "passed", since a visitor shown a CAPTCHA was neither cleanly allowed nor
+  blocked.
+- Dashboard: a fourth summary card showing total requests over the last 24
+  hours. The count was already being computed for the page but never displayed.
+
 ### Fixed
 - **Site hostname is now normalised on save.** The Hostname field is matched
   against the request's `Host:` header, which never carries a scheme, a path or
