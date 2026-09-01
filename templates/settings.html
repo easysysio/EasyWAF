@@ -1,0 +1,47 @@
+{% extends "layout_default.html" %}
+
+{% block content %}
+
+{% if result == "failed" %}
+<div class="alert alert-danger alert-dismissible">
+    <button type="button" class="close" data-dismiss="alert">&times;</button>
+    {{ msg }}
+</div>
+{% endif %}
+
+{% if result == "success" %}
+<div class="alert alert-success alert-dismissible">
+    <button type="button" class="close" data-dismiss="alert">&times;</button>
+    {{ msg }}
+</div>
+{% endif %}
+
+<div class="row">
+    <div class="col-lg-8">
+        <div class="panel panel-default">
+            <div class="panel-heading"><h4>Traffic</h4></div>
+            <div class="panel-body">
+                <form method="post" action="/settings/update">
+
+                    <div class="form-group">
+                        <label>Traffic Retention <small class="text-muted">(days of request history to keep — 0 keeps everything)</small></label>
+                        <input type="number" class="form-control" name="traffic_retention_days"
+                               value="{{ retention_days }}" min="0" max="3650" required>
+                        <p class="help-block">
+                            EasyWAF records one row per proxied request. With retention off the
+                            table grows for as long as the proxy runs; setting a window deletes
+                            anything older, at startup and hourly after that.
+                            <strong>{{ stored_events }}</strong> events are stored right now.
+                        </p>
+                    </div>
+
+                    <button type="submit" class="btn btn-success">
+                        <i class="fa fa-save"></i> Save Settings
+                    </button>
+
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

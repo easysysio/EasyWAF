@@ -106,6 +106,10 @@ async fn main() {
         proxy::start(proxy_state, port_rx).await;
     });
 
+    // ── Traffic retention ─────────────────────────────────
+    // Prunes traffic_events on the schedule set in Settings. Off by default.
+    modules::traffic::spawn_retention_task(db.clone());
+
     // ── Build management GUI ──────────────────────────────
     let mut tera = Tera::new("templates/**/*.html")
         .unwrap_or_else(|e| panic!("Template loading failed: {}", e));
@@ -131,6 +135,8 @@ async fn main() {
         .route("/sites/{name}/edit",     get(routes::sites::get_site_edit))
         .route("/sites/{name}/update",   post(routes::sites::post_site_update))
         .route("/sites/{name}/delete",   post(routes::sites::post_site_delete))
+        .route("/settings",              get(routes::settings::get_settings))
+        .route("/settings/update",       post(routes::settings::post_settings_update))
         .route("/certs",                 get(routes::certs::get_certs))
         .route("/certs/new",             get(routes::certs::get_cert_new))
         .route("/certs/create",          post(routes::certs::post_cert_create))

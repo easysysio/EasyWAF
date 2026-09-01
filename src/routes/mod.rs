@@ -9,5 +9,6 @@ pub mod geoip;
 pub mod login;
 pub mod policy;
 pub mod rules;
+pub mod settings;
 pub mod sites;
 pub mod traffic;

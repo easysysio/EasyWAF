@@ -8,6 +8,20 @@ Version bumps and tags are created only after explicit approval.
 
 ## [Unreleased]
 
+### Added
+- **Settings section** (`/settings`) — a new sidebar entry for installation-wide
+  options that belong in the GUI rather than in `config.toml`, which is read
+  before the database is open and cannot be edited from the web UI. Values live
+  in a new `settings` key/value table (migration 006), so adding a setting later
+  needs no schema change.
+- **Traffic retention.** EasyWAF writes one row per proxied request and, until
+  now, never deleted any of them — the table grew for as long as the proxy ran.
+  Settings now carries a retention window in days; events older than it are
+  deleted at startup and hourly after that, and the page shows how many events
+  are currently stored. The default is **0 — keep everything**, so existing
+  installations behave exactly as before until the setting is changed. The
+  window is re-read on every sweep, so a change applies without a restart.
+
 ## [0.2.1] — 2026-09-01
 
 ### Security

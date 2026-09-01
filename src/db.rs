@@ -52,6 +52,7 @@ pub async fn init(database_url: &str) -> SqlitePool {
 
     // Migration 005 — challenge_threshold column on policies.
     run_migration_005(&pool).await;
+    run_migration_006(&pool).await;
 
     info!("Database ready: {}", database_url);
     pool
@@ -120,5 +121,28 @@ async fn run_migration_005(pool: &SqlitePool) {
             .await
             .unwrap_or_else(|e| panic!("Migration 005 failed: {}", e));
         info!("Migration 005 applied: added challenge_threshold to policies");
+    }
+}
+
+// ─── run_migration_006 ───────────────────────────────────
+
+/// Create the settings table if it does not exist yet.
+/// Unlike the column migrations above this one is checked against
+/// sqlite_master, since the whole table is new rather than a single column.
+async fn run_migration_006(pool: &SqlitePool) {
+    let exists: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'settings'",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0);
+
+    if exists == 0 {
+        let sql_006 = include_str!("../migrations/006_settings.sql");
+        sqlx::raw_sql(sql_006)
+            .execute(pool)
+            .await
+            .unwrap_or_else(|e| panic!("Migration 006 failed: {}", e));
+        info!("Migration 006 applied: created settings table");
     }
 }
