@@ -131,7 +131,7 @@ pub async fn post_site_create(
     }
 
     let name        = form.name.as_deref().unwrap_or("").trim().to_string();
-    let server_name = form.server_name.trim().to_lowercase();
+    let server_name = normalize_server_name(&form.server_name);
     let listen_port = parse_port(&form.listen_port);
 
     if name.is_empty() {
@@ -205,8 +205,10 @@ pub async fn get_site_edit(
 // ─── post_site_update ────────────────────────────────────
 
 /// Handle site settings form submission.
-/// Note: changing listen_port takes effect only after a proxy restart,
-/// because the TCP listeners are bound at startup.
+/// The hostname is normalised to a bare host (see `normalize_server_name`) so it
+/// can match the request's `Host:` header.
+/// Note: a new listen_port is bound immediately, but the previously bound port
+/// keeps listening until the proxy restarts.
 pub async fn post_site_update(
     State(state): State<AppState>,
     jar: SignedCookieJar,
@@ -221,9 +223,15 @@ pub async fn post_site_update(
     let x_frame        = form.x_frame.is_some();
     let x_content_type = form.x_content_type.is_some();
     let xss_protection = form.xss_protection.is_some();
-    let server_name    = form.server_name.trim().to_lowercase();
+    let server_name    = normalize_server_name(&form.server_name);
     let listen_port    = parse_port(&form.listen_port);
     let waf_policy_id  = parse_policy_id(&form.waf_policy_id);
+
+    // Normalisation can empty the field (e.g. the user typed only "http://"),
+    // and a site with no hostname would never match a request.
+    if server_name.is_empty() {
+        return flash_redirect("/sites", "failed", "Hostname is required");
+    }
 
     sqlx::query!(
         "UPDATE sites SET
@@ -339,6 +347,45 @@ async fn fetch_policies(state: &AppState) -> Result<Vec<Policy>> {
 }
 
 // ─── Form parsing helpers ─────────────────────────────────
+
+/// Normalise the hostname a site is routed by.
+///
+/// The proxy matches this value against the request's `Host:` header, which
+/// carries a bare hostname — never a scheme, a path, or (after the proxy strips
+/// it) a port. Anything extra here would silently never match and the site
+/// would answer 404, so the common paste-a-URL mistakes are stripped instead:
+///
+///   `https://Example.com:8080/app/`  →  `example.com`
+///
+/// A trailing dot (the DNS root, valid in a Host header) is dropped too so
+/// `example.com.` and `example.com` are stored the same way.
+fn normalize_server_name(raw: &str) -> String {
+    let mut host = raw.trim().to_lowercase();
+
+    // Drop a scheme prefix: "http://example.com" → "example.com".
+    if let Some(pos) = host.find("://") {
+        host = host[pos + 3..].to_string();
+    }
+
+    // Drop anything from the first path separator: "example.com/app" → "example.com".
+    if let Some(pos) = host.find('/') {
+        host.truncate(pos);
+    }
+
+    // Drop a port suffix: "example.com:8080" → "example.com".
+    // The proxy strips the port from the Host header before matching, so a
+    // stored port could never match.
+    if let Some(pos) = host.find(':') {
+        host.truncate(pos);
+    }
+
+    // Drop the DNS root dot: "example.com." → "example.com".
+    while host.ends_with('.') {
+        host.pop();
+    }
+
+    host
+}
 
 /// Parse listen_port from the form string.
 /// Falls back to 80 if the field is missing or not a valid port number.

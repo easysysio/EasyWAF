@@ -8,7 +8,23 @@ Version bumps and tags are created only after explicit approval.
 
 ## [Unreleased]
 
+### Fixed
+- **Site hostname is now normalised on save.** The Hostname field is matched
+  against the request's `Host:` header, which never carries a scheme, a path or
+  (once the proxy has stripped it) a port — so pasting a URL such as
+  `http://example.com` silently matched nothing and the site answered
+  "No site configured for this host" with no hint as to why. Create and update
+  now reduce the value to a bare host: `https://Example.com:8080/app/` is stored
+  as `example.com`. A trailing DNS root dot is dropped too, and a hostname that
+  normalises to empty is rejected on update as it already was on create.
+
 ### Changed
+- Site forms: the Hostname and Upstream Target fields now say what shape they
+  expect (bare host vs. full URL) and the settings form carries the same hints
+  and placeholders as the create form, which previously had them alone.
+- Site forms: corrected the Listen Port hint. A new port is bound immediately
+  without a restart; it is the *previously* bound port that keeps listening
+  until the proxy restarts.
 - Repository moved to `https://github.com/easysysio/EasyWAF` (the easysysio
   org). Added `repository`/`homepage` to `Cargo.toml`; git remote updated.
   Author and package maintainer remain "Yariv Hakim".
