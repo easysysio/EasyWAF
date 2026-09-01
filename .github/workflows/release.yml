@@ -1,10 +1,17 @@
 name: Release
 
-# Triggered by pushing a version tag, e.g.  git tag v0.1.0 && git push origin v0.1.0
+# Two ways in:
+#   tag push      git tag v0.1.0 && git push origin v0.1.0
+#                 -> builds packages AND publishes a GitHub Release (stable channel)
+#   manual run    Actions -> Release -> Run workflow, on any branch
+#                 -> builds packages only, left as run artifacts (testing channel)
+# github2repo.sh in the EasyWAF-repo project consumes both: --stable pulls the
+# release assets, --testing pulls the packages-* artifacts of a workflow run.
 on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
 
 permissions:
   contents: write   # needed to create the GitHub Release
@@ -73,13 +80,45 @@ jobs:
           mkdir -p target/release
           cp "target/${{ matrix.target }}/release/easywaf" target/release/easywaf
 
+      - name: Compute testing-build version
+        # A manual run publishes to the testing channel, where every build must
+        # outrank both the last testing build and the released version — the
+        # version in Cargo.toml doesn't change between releases, so without a
+        # suffix apt/dnf see an already-installed NVR and refuse to upgrade.
+        # run_number orders the builds; the short SHA says what was built.
+        # '+' sorts ABOVE the plain release in both dpkg and rpm version
+        # comparison, which is what a testing channel wants ('~' would sort
+        # below and make testing look older than stable). Tag builds set
+        # nothing here and keep the clean version from Cargo.toml.
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          VER=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+          SUFFIX="ci${{ github.run_number }}.git$(git rev-parse --short HEAD)"
+          # Keep the "-1" revision so the .deb stays a non-native package,
+          # same shape as the stable one.
+          echo "DEB_VERSION=${VER}+${SUFFIX}-1" >> "$GITHUB_ENV"
+          echo "RPM_RELEASE=1+${SUFFIX}"        >> "$GITHUB_ENV"
+          echo "Testing build version: ${VER}+${SUFFIX}"
+
       - name: Build .deb
-        run: cargo deb --no-build --no-strip --target ${{ matrix.target }}
+        run: |
+          if [ -n "${DEB_VERSION:-}" ]; then
+            cargo deb --no-build --no-strip --target ${{ matrix.target }} \
+                      --deb-version "$DEB_VERSION"
+          else
+            cargo deb --no-build --no-strip --target ${{ matrix.target }}
+          fi
 
       - name: Build .rpm
         # auto-req disabled: dependency scanning on a cross-built binary is
         # unreliable on the host; the binary only needs glibc which is ubiquitous.
-        run: cargo generate-rpm --target ${{ matrix.target }} --auto-req disabled
+        run: |
+          if [ -n "${RPM_RELEASE:-}" ]; then
+            cargo generate-rpm --target ${{ matrix.target }} --auto-req disabled \
+                               -s "release = \"$RPM_RELEASE\""
+          else
+            cargo generate-rpm --target ${{ matrix.target }} --auto-req disabled
+          fi
 
       - name: Collect packages
         run: |
@@ -99,6 +138,9 @@ jobs:
     name: Publish release
     needs: build
     runs-on: ubuntu-latest
+    # Only a tag carries a version to release under — a manual run stops after
+    # the build job and leaves the packages as downloadable artifacts.
+    if: startsWith(github.ref, 'refs/tags/v')
     steps:
       - name: Checkout
         uses: actions/checkout@v4
