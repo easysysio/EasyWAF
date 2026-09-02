@@ -8,6 +8,16 @@ Version bumps and tags are created only after explicit approval.
 
 ## [Unreleased]
 
+### Added
+- **README.** The repository had none. Covers what EasyWAF is and how requests
+  flow through it, installation from the EasySYS repositories, first-run setup,
+  configuring sites and policies, the `config.toml` keys that are actually read,
+  the project layout, and how releases are cut. Includes a "Not implemented yet"
+  section — TLS termination, GeoIP, ACME, WebSocket upgrades, password change —
+  so the gaps are stated up front rather than discovered in production, and
+  documents the `DATABASE_URL` a source build needs for sqlx's compile-time
+  query macros.
+
 ## [0.2.2] — 2026-09-01
 
 ### Added
