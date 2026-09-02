@@ -8,6 +8,8 @@ Version bumps and tags are created only after explicit approval.
 
 ## [Unreleased]
 
+## [0.2.3] — 2026-09-02
+
 ### Fixed
 - **Percent-encoded payloads bypassed most WAF rules.** Rules were matched
   against the raw request, so `?q=DROP%20TABLE%20users` — or the `+` form a
@@ -19,12 +21,6 @@ Version bumps and tags are created only after explicit approval.
   itself (`%252e%252e`, `%00`, the double-URL-encoding rule); text containing no
   encoding is passed through untouched, so an ordinary request pays only the
   scan for `%`.
-
-### Added
-- `scripts/waf-test.sh` — fires representative attacks at a site and reports
-  what the WAF did with each: instant-block rules, score accumulation, scanner
-  User-Agents, encoded payloads, and benign traffic that must *not* be blocked.
-
 - **Upgrading the package left the old service running.** Neither the `.deb`
   nor the `.rpm` carried a post-install step, so an upgrade replaced
   `/usr/bin/easywaf` and the systemd unit on disk while the running service kept
@@ -40,6 +36,10 @@ Version bumps and tags are created only after explicit approval.
   guarded so an upgrade does not stop the service the post-install step is about
   to restart.
 
+### Added
+- `scripts/waf-test.sh` — fires representative attacks at a site and reports
+  what the WAF did with each: instant-block rules, score accumulation, scanner
+  User-Agents, encoded payloads, and benign traffic that must *not* be blocked.
 - **README.** The repository had none. Covers what EasyWAF is and how requests
   flow through it, installation from the EasySYS repositories, first-run setup,
   configuring sites and policies, the `config.toml` keys that are actually read,
