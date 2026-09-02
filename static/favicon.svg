@@ -1,0 +1,18 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="EasyWAF">
+  <!-- Hexagon badge in the EasySYS family's deep indigo, rounded via the stroke
+       trick. Scaled to nearly fill the canvas: at 16px the default padding left
+       the shield too small to read, and a favicon is judged at 16px. -->
+  <polygon points="49,256 152,77 360,77 463,256 360,435 152,435"
+           fill="#232A5C" stroke="#232A5C" stroke-width="41" stroke-linejoin="round"/>
+
+  <!-- Shield in the GUI's accent blue. One solid shape, no fine detail, so the
+       silhouette survives downscaling. -->
+  <path d="M135 152 H377 V272 C377 344 323 383 256 407 C189 383 135 344 135 272 Z"
+        fill="#38bdf8"/>
+
+  <!-- Check mark in the page's near-black, thick and round-capped so it stays a
+       distinct notch rather than a grey smudge when small. -->
+  <path d="M197 267 L239 308 L318 229"
+        fill="none" stroke="#0B1020" stroke-width="46"
+        stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

@@ -30,6 +30,14 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <!-- Custom -->
+
+    <!-- SVG first for browsers that take it, PNG for those that do not.
+         Versioned like the other static assets so a change is picked up
+         rather than served from cache. -->
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg?v=1">
+    <link rel="alternate icon" type="image/png" href="/static/favicon.png?v=1">
+    <link rel="apple-touch-icon" href="/static/apple-touch-icon.png?v=1">
+
     <link rel="stylesheet" href="/static/css/easywaf.css?v=3">
 
     <style>

@@ -9,6 +9,11 @@ Version bumps and tags are created only after explicit approval.
 ## [Unreleased]
 
 ### Added
+- **Favicon.** The GUI had none, so browsers showed a blank tab icon. Adds a
+  mark in the EasySYS family style — the same rounded hexagon badge and indigo
+  as the EasySYS logo, carrying a shield in the GUI's accent blue. Shipped as an
+  SVG with a 32px PNG fallback and a 180px apple-touch icon, declared on both
+  the application and login layouts.
 - **Enable / disable a site from Site Management.** The status column is now the
   control: clicking it stops or starts proxying for that hostname, with a
   confirmation before taking a live site down. Disabling leaves everything else
