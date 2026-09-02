@@ -111,6 +111,16 @@ post_install_script = """
 systemctl daemon-reload >/dev/null 2>&1 || :
 systemctl try-restart easywaf.service >/dev/null 2>&1 || :
 """
+# Mirrors packaging/deb/prerm. rpm passes the number of remaining copies of the
+# package: 0 on a real removal, 1 during an upgrade — so the guard is what keeps
+# an upgrade from stopping the service the post-install step is about to
+# restart.
+pre_uninstall_script = """
+if [ "$1" = 0 ]; then
+    systemctl --no-reload disable easywaf.service >/dev/null 2>&1 || :
+    systemctl stop easywaf.service >/dev/null 2>&1 || :
+fi
+"""
 assets = [
     { source = "target/release/easywaf",     dest = "/usr/bin/easywaf",                    mode = "755" },
     { source = "templates/*.html",           dest = "/opt/easywaf/templates/",             mode = "644" },

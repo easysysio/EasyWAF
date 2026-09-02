@@ -17,6 +17,12 @@ Version bumps and tags are created only after explicit approval.
   `systemctl daemon-reload` and `systemctl try-restart easywaf.service` after
   install. `try-restart` leaves a stopped service stopped, so a first install
   still does not start EasyWAF before any site is configured.
+- **Removing the package left the service running.** With no `prerm`/`preun`,
+  uninstalling removed the binary but left EasyWAF running and enabled — still
+  holding port 80, and set to start again at the next boot from a unit whose
+  binary was gone. Both packages now stop and disable the service on removal,
+  guarded so an upgrade does not stop the service the post-install step is about
+  to restart.
 
 ### Added
 - **README.** The repository had none. Covers what EasyWAF is and how requests

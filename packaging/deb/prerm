@@ -1,0 +1,25 @@
+#!/bin/sh
+# =========================================================
+# prerm — EasyWAF (Debian/Ubuntu)
+# Runs before the package is removed.
+#
+# Stops and disables the service on removal, so uninstalling
+# does not leave a proxy listening on port 80 and starting
+# again at the next boot from a unit whose binary is gone.
+#
+# The "upgrade" case must do nothing: postinst restarts the
+# service after the new version is unpacked, and stopping it
+# here would add a needless outage to every upgrade.
+# =========================================================
+set -e
+
+case "$1" in
+    remove|deconfigure)
+        systemctl --no-reload disable easywaf.service >/dev/null 2>&1 || true
+        systemctl stop easywaf.service >/dev/null 2>&1 || true
+        ;;
+    upgrade|failed-upgrade)
+        ;;
+esac
+
+exit 0
