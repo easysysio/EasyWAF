@@ -8,6 +8,11 @@ them. Everything — virtual hosts, WAF policies, rules, traffic history — is 
 built-in web GUI and stored in one SQLite file. There is no separate database server, no
 runtime dependency beyond glibc, and nothing to wire together.
 
+![The EasyWAF dashboard](docs/screenshots/dashboard.png)
+
+*The dashboard: request volume over the last 24 hours split into passed, challenged and
+blocked, with a per-site breakdown.*
+
 ---
 
 ## Status

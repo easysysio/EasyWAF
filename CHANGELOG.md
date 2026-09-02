@@ -8,6 +8,10 @@ Version bumps and tags are created only after explicit approval.
 
 ## [Unreleased]
 
+### Added
+- README: a screenshot of the dashboard, so the project shows what it looks like
+  rather than only describing it.
+
 ## [0.2.3] — 2026-09-02
 
 ### Fixed
