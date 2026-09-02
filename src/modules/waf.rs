@@ -146,15 +146,20 @@ impl InspectionModule for WafModule {
         }
 
         // Step 4 — build zone content strings from the request.
-        let url     = format!("{}{}", ctx.path, ctx.query.as_deref().unwrap_or(""));
-        let args    = ctx.query.as_deref().unwrap_or("").to_string();
-        let body    = String::from_utf8_lossy(&ctx.body).to_string();
-        let headers = ctx.headers
-            .values()
-            .filter_map(|v| v.to_str().ok())
-            .collect::<Vec<_>>()
-            .join(" ");
-        let any     = format!("{} {} {} {}", url, args, body, headers);
+        // Each carries both the encoded and decoded forms — see zone_text.
+        let raw_url = format!("{}{}", ctx.path, ctx.query.as_deref().unwrap_or(""));
+        let url     = zone_text(&raw_url, true);
+        let args    = zone_text(ctx.query.as_deref().unwrap_or(""), true);
+        let body    = zone_text(&String::from_utf8_lossy(&ctx.body), true);
+        let headers = zone_text(
+            &ctx.headers
+                .values()
+                .filter_map(|v| v.to_str().ok())
+                .collect::<Vec<_>>()
+                .join(" "),
+            false,
+        );
+        let any     = format!("{}\n{}\n{}\n{}", url, args, body, headers);
 
         // Step 5 — evaluate each rule in order.
         let mut total_score: i64 = 0;
@@ -235,6 +240,67 @@ impl InspectionModule for WafModule {
 
         ModuleDecision::Pass
     }
+}
+
+// ─── Zone text ───────────────────────────────────────────
+
+/// Build the text a rule is matched against, carrying both the encoded and the
+/// decoded form of the request data.
+///
+/// Attack payloads arrive percent-encoded far more often than not — a browser
+/// encodes the spaces in `DROP TABLE users` without being asked — and matching
+/// the raw text alone meant every pattern containing `\s` missed them: the same
+/// payload that blocked instantly in a request body sailed through in a query
+/// string.
+///
+/// The raw form is kept rather than replaced. Several rules deliberately look
+/// for the encoding itself — `%252e%252e`, `%00`, the double-URL-encoding
+/// protocol rule — so decoding in place would trade one blind spot for another.
+/// Decoding runs twice so double-encoded payloads reduce to plain text as well.
+///
+/// `plus_is_space` suits query strings and form bodies, where `+` encodes a
+/// space. It is wrong for a path, where `+` is a literal character.
+///
+/// Text containing no encoding is returned untouched, so the ordinary request
+/// costs only the scan for `%` — this runs per request, and bodies reach 32 MB.
+fn zone_text(raw: &str, plus_is_space: bool) -> String {
+    let has_pct  = raw.contains('%');
+    let has_plus = plus_is_space && raw.contains('+');
+    if !has_pct && !has_plus {
+        return raw.to_string();
+    }
+
+    let mut forms = vec![raw.to_string()];
+
+    // '+' means space in a query string, and must be substituted before
+    // percent-decoding rather than after, or "%2B" would become a space too.
+    let base = if has_plus { raw.replace('+', " ") } else { raw.to_string() };
+    if base != raw {
+        forms.push(base.clone());
+    }
+
+    let once = percent_decode(&base);
+    if once != base {
+        forms.push(once.clone());
+    }
+
+    let twice = percent_decode(&once);
+    if twice != once {
+        forms.push(twice);
+    }
+
+    // Separated by a newline so two forms do not run together into text that
+    // appears in neither of them.
+    forms.join("\n")
+}
+
+/// Percent-decode one string, returning it unchanged when it is not valid
+/// encoding or does not decode to UTF-8. A malformed payload is still matched
+/// in its raw form by the caller.
+fn percent_decode(s: &str) -> String {
+    urlencoding::decode(s)
+        .map(|c| c.into_owned())
+        .unwrap_or_else(|_| s.to_string())
 }
 
 // ─── decide ──────────────────────────────────────────────
