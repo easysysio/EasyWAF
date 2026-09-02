@@ -8,6 +8,16 @@ Version bumps and tags are created only after explicit approval.
 
 ## [Unreleased]
 
+### Fixed
+- **Upgrading the package left the old service running.** Neither the `.deb`
+  nor the `.rpm` carried a post-install step, so an upgrade replaced
+  `/usr/bin/easywaf` and the systemd unit on disk while the running service kept
+  the old binary — the GUI went on reporting the previous version, and systemd
+  warned that the unit file had changed on disk. Both packages now run
+  `systemctl daemon-reload` and `systemctl try-restart easywaf.service` after
+  install. `try-restart` leaves a stopped service stopped, so a first install
+  still does not start EasyWAF before any site is configured.
+
 ### Added
 - **README.** The repository had none. Covers what EasyWAF is and how requests
   flow through it, installation from the EasySYS repositories, first-run setup,

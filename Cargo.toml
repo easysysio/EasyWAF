@@ -78,6 +78,9 @@ rand = "0.8"
 # auto-rewritten to the per-target dir when building with --target.
 [package.metadata.deb]
 maintainer = "Yariv Hakim"
+# Reloads systemd and restarts a running service on upgrade — see
+# packaging/deb/postinst for why.
+maintainer-scripts = "packaging/deb"
 copyright = "2025, Yariv Hakim"
 section = "net"
 priority = "optional"
@@ -100,6 +103,14 @@ assets = [
 # ─── RPM package (.rpm) — cargo-generate-rpm ────────────────
 [package.metadata.generate-rpm]
 summary = "Self-contained Web Application Firewall and reverse proxy"
+# Same as the Debian postinst: an upgrade replaces the binary and the unit file
+# on disk, but the running service keeps the old image until it is restarted,
+# so the GUI would go on reporting the previous version.
+# try-restart leaves a stopped service stopped, so a first install is unaffected.
+post_install_script = """
+systemctl daemon-reload >/dev/null 2>&1 || :
+systemctl try-restart easywaf.service >/dev/null 2>&1 || :
+"""
 assets = [
     { source = "target/release/easywaf",     dest = "/usr/bin/easywaf",                    mode = "755" },
     { source = "templates/*.html",           dest = "/opt/easywaf/templates/",             mode = "644" },

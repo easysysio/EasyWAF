@@ -1,0 +1,25 @@
+#!/bin/sh
+# =========================================================
+# postinst — EasyWAF (Debian/Ubuntu)
+# Runs after the package is unpacked and configured.
+#
+# Without this, an upgrade replaces /usr/bin/easywaf and
+# /lib/systemd/system/easywaf.service on disk but leaves the
+# running service on the old binary, so the GUI keeps
+# reporting the previous version and the new unit file is
+# ignored until someone notices.
+# =========================================================
+set -e
+
+case "$1" in
+    configure)
+        # The unit file ships with the package and may have changed.
+        systemctl daemon-reload >/dev/null 2>&1 || true
+
+        # try-restart restarts the service only if it is already running, so a
+        # first install does not start a service before any site is configured.
+        systemctl try-restart easywaf.service >/dev/null 2>&1 || true
+        ;;
+esac
+
+exit 0
