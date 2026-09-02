@@ -8,6 +8,8 @@ Version bumps and tags are created only after explicit approval.
 
 ## [Unreleased]
 
+## [0.2.2] — 2026-09-01
+
 ### Added
 - **Dashboard charts.** A stacked *Requests per Hour* bar chart covering the
   last 24 hours — passed, challenged and blocked — beside a *Verdicts* doughnut
@@ -15,29 +17,6 @@ Version bumps and tags are created only after explicit approval.
   the mix is readable at a glance rather than only as numbers. Hours with no
   traffic are drawn as empty buckets, so a quiet night is visible instead of
   being compressed out of the axis.
-
-### Fixed
-- **The Traffic Monitor's per-hour chart never rendered.** Its data was
-  interpolated with `{{ chart | json_encode }}`, and Tera autoescapes `.html`
-  templates, so the JSON reached the browser as `[{&quot;hour&quot;:...}]` —
-  a syntax error inside `<script>`. Both that chart and the new dashboard ones
-  now pipe through `| safe`.
-- Dashboard panels shared no time window: the summary counted a rolling 24
-  hours while the chart bucketed 23, so the card, the doughnut and the bar chart
-  could disagree. All panels now derive from one window truncated to the top of
-  the hour, and the totals match by construction.
-
-### Changed
-- **WAF rule patterns are compiled once instead of per request.** Every rule's
-  regex was rebuilt on every request — with the bundled rule set loaded, ~100
-  `Regex::new` calls per request, which dominated the cost of actually matching
-  them. Patterns are now compiled on first use and cached on the module. In a
-  local benchmark against a policy holding all 99 bundled rules, mean
-  proxy-request latency fell from **36.2 ms to 0.8 ms** (p95 39.0 ms → 0.8 ms).
-  A pattern that fails to compile is cached as a failure too, so a broken rule
-  logs once for the life of the process rather than on every request.
-
-### Added
 - **Settings section** (`/settings`) — a new sidebar entry for installation-wide
   options that belong in the GUI rather than in `config.toml`, which is read
   before the database is open and cannot be edited from the web UI. Values live
@@ -51,6 +30,26 @@ Version bumps and tags are created only after explicit approval.
   installations behave exactly as before until the setting is changed. The
   window is re-read on every sweep, so a change applies without a restart.
 
+### Changed
+- **WAF rule patterns are compiled once instead of per request.** Every rule's
+  regex was rebuilt on every request — with the bundled rule set loaded, ~100
+  `Regex::new` calls per request, which dominated the cost of actually matching
+  them. Patterns are now compiled on first use and cached on the module. In a
+  local benchmark against a policy holding all 99 bundled rules, mean
+  proxy-request latency fell from **36.2 ms to 0.8 ms** (p95 39.0 ms → 0.8 ms).
+  A pattern that fails to compile is cached as a failure too, so a broken rule
+  logs once for the life of the process rather than on every request.
+
+### Fixed
+- **The Traffic Monitor's per-hour chart never rendered.** Its data was
+  interpolated with `{{ chart | json_encode }}`, and Tera autoescapes `.html`
+  templates, so the JSON reached the browser as `[{&quot;hour&quot;:...}]` —
+  a syntax error inside `<script>`. Both that chart and the new dashboard ones
+  now pipe through `| safe`.
+- Dashboard panels shared no time window: the summary counted a rolling 24
+  hours while the chart bucketed 23, so the card, the doughnut and the bar chart
+  could disagree. All panels now derive from one window truncated to the top of
+  the hour, and the totals match by construction.
 ## [0.2.1] — 2026-09-01
 
 ### Security
