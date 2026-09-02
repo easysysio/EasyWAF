@@ -253,6 +253,54 @@ pub async fn post_site_update(
     flash_redirect("/sites", "success", &format!("Site {} updated successfully", name))
 }
 
+// ─── post_site_toggle ────────────────────────────────────
+
+/// POST /sites/{name}/toggle — enable or disable a site.
+///
+/// Disabling stops the proxy serving that hostname: `lookup_site` only matches
+/// enabled rows, so requests for it get the same 404 as a hostname with no site
+/// at all. Nothing else about the site is touched, so re-enabling restores it
+/// exactly as it was.
+///
+/// Enabling signals the proxy to bind the site's port. That matters when this is
+/// the only site on that port — listeners are bound from the *enabled* sites at
+/// startup, so the port may not be listening at all. The proxy ignores the
+/// signal for a port it already holds.
+///
+/// Disabling deliberately does not unbind anything: a port is shared by every
+/// site that listens on it, and closing the listener would take those down too.
+pub async fn post_site_toggle(
+    State(state): State<AppState>,
+    jar: SignedCookieJar,
+    Path(name): Path<String>,
+) -> Result<Response> {
+    if get_session(&jar).is_none() {
+        return Ok(Redirect::to("/login").into_response());
+    }
+
+    let site    = fetch_site(&state, &name).await?;
+    let enabled = !site.enabled;
+
+    sqlx::query!(
+        "UPDATE sites SET enabled = ?, updated_at = datetime('now') WHERE name = ?",
+        enabled,
+        name
+    )
+    .execute(&state.db)
+    .await?;
+
+    if enabled {
+        let _ = state.port_tx.send(site.listen_port as u16).await;
+    }
+
+    let msg = if enabled {
+        format!("Site {} enabled — now proxying on port {}", name, site.listen_port)
+    } else {
+        format!("Site {} disabled — requests for {} are no longer proxied", name, site.server_name)
+    };
+    flash_redirect("/sites", "success", &msg)
+}
+
 // ─── post_site_delete ────────────────────────────────────
 
 /// Delete a site by name. Traffic events are cascade-deleted by the DB.

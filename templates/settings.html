@@ -18,11 +18,15 @@
 
 <div class="row">
     <div class="col-lg-8">
-        <div class="panel panel-default">
-            <div class="panel-heading"><h4>Traffic</h4></div>
-            <div class="panel-body">
-                <form method="post" action="/settings/update">
 
+        {# One form across both panels: the handler writes every setting on each
+           save, so splitting it would mean each panel had to carry the other's
+           value in a hidden field to avoid clearing it. #}
+        <form method="post" action="/settings/update">
+
+            <div class="panel panel-default">
+                <div class="panel-heading"><h4>Traffic</h4></div>
+                <div class="panel-body">
                     <div class="form-group">
                         <label>Traffic Retention <small class="text-muted">(days of request history to keep — 0 keeps everything)</small></label>
                         <input type="number" class="form-control" name="traffic_retention_days"
@@ -34,14 +38,32 @@
                             <strong>{{ stored_events }}</strong> events are stored right now.
                         </p>
                     </div>
-
-                    <button type="submit" class="btn btn-success">
-                        <i class="fa fa-save"></i> Save Settings
-                    </button>
-
-                </form>
+                </div>
             </div>
-        </div>
+
+            <div class="panel panel-default">
+                <div class="panel-heading"><h4>Maintenance</h4></div>
+                <div class="panel-body">
+                    <div class="form-group">
+                        <label>Maintenance Message <small class="text-muted">(shown to visitors of a disabled site)</small></label>
+                        <textarea class="form-control" name="maintenance_message" rows="3"
+                                  maxlength="500">{{ maintenance_message }}</textarea>
+                        <p class="help-block">
+                            Disabling a site under <a href="/sites">Sites</a> stops EasyWAF
+                            proxying it. Visitors then get this message with a
+                            <code>503 Service Unavailable</code>, rather than a 404 that reads
+                            as though the site is gone for good. Leave it empty for the default
+                            wording.
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            <button type="submit" class="btn btn-success">
+                <i class="fa fa-save"></i> Save Settings
+            </button>
+
+        </form>
     </div>
 </div>
 {% endblock %}

@@ -27,12 +27,24 @@ use tera::Context;
 /// Days of traffic history to keep. "0" keeps everything.
 pub const KEY_RETENTION_DAYS: &str = "traffic_retention_days";
 
+/// Text shown to visitors of a site that has been disabled.
+pub const KEY_MAINTENANCE_MESSAGE: &str = "maintenance_message";
+
 /// Used when the row is missing or cannot be parsed.
 const DEFAULT_RETENTION_DAYS: i64 = 0;
 
 /// Upper bound offered in the GUI — ten years, enough for any sane policy
 /// while keeping an accidental extra digit from meaning "forever".
 const MAX_RETENTION_DAYS: i64 = 3650;
+
+/// Used when no maintenance text has been set, so a disabled site always says
+/// something sensible rather than nothing.
+pub const DEFAULT_MAINTENANCE_MESSAGE: &str =
+    "This site is temporarily unavailable for maintenance. Please check back shortly.";
+
+/// Enough for a sentence or two plus a contact address. The text is rendered
+/// into a page served to the public, so it is not a place for a document.
+const MAX_MAINTENANCE_LEN: usize = 500;
 
 // ─── FlashQuery ──────────────────────────────────────────
 
@@ -48,6 +60,7 @@ pub struct FlashQuery {
 #[derive(Debug, Deserialize)]
 pub struct SettingsForm {
     pub traffic_retention_days: Option<String>,
+    pub maintenance_message:    Option<String>,
 }
 
 // ─── get_settings ────────────────────────────────────────
@@ -63,7 +76,8 @@ pub async fn get_settings(
         None    => return Ok(Redirect::to("/login").into_response()),
     };
 
-    let retention_days = get_retention_days(&state.db).await;
+    let retention_days      = get_retention_days(&state.db).await;
+    let maintenance_message = get_maintenance_message(&state.db).await;
 
     // Shown alongside the field so the setting's effect is concrete.
     let stored_events: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM traffic_events")
@@ -74,7 +88,8 @@ pub async fn get_settings(
     ctx.insert("username",       &session.username);
     ctx.insert("title",          "Settings");
     ctx.insert("url",            "/settings");
-    ctx.insert("retention_days", &retention_days);
+    ctx.insert("retention_days",      &retention_days);
+    ctx.insert("maintenance_message",  &maintenance_message);
     ctx.insert("stored_events",  &stored_events);
     ctx.insert("result",         &flash.result.unwrap_or_default());
     ctx.insert("msg",            &flash.msg.unwrap_or_default());
@@ -113,7 +128,17 @@ pub async fn post_settings_update(
         );
     }
 
+    let maintenance = form.maintenance_message.as_deref().unwrap_or("").trim();
+    if maintenance.chars().count() > MAX_MAINTENANCE_LEN {
+        return flash_redirect(
+            "/settings",
+            "failed",
+            &format!("Maintenance message must be {} characters or fewer", MAX_MAINTENANCE_LEN),
+        );
+    }
+
     set_setting(&state.db, KEY_RETENTION_DAYS, &days.to_string()).await?;
+    set_setting(&state.db, KEY_MAINTENANCE_MESSAGE, maintenance).await?;
 
     let msg = if days == 0 {
         "Settings saved — traffic history is kept indefinitely".to_string()
@@ -131,6 +156,16 @@ pub async fn get_retention_days(db: &SqlitePool) -> i64 {
     match get_setting(db, KEY_RETENTION_DAYS).await {
         Some(v) => v.trim().parse().unwrap_or(DEFAULT_RETENTION_DAYS),
         None    => DEFAULT_RETENTION_DAYS,
+    }
+}
+
+/// Read the maintenance text shown for a disabled site, falling back to the
+/// default when it has never been set or was cleared. A visitor always gets a
+/// sentence, never a blank page.
+pub async fn get_maintenance_message(db: &SqlitePool) -> String {
+    match get_setting(db, KEY_MAINTENANCE_MESSAGE).await {
+        Some(v) if !v.trim().is_empty() => v,
+        _                              => DEFAULT_MAINTENANCE_MESSAGE.to_string(),
     }
 }
 

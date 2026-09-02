@@ -134,6 +134,7 @@ async fn main() {
         .route("/sites/create",          post(routes::sites::post_site_create))
         .route("/sites/{name}/edit",     get(routes::sites::get_site_edit))
         .route("/sites/{name}/update",   post(routes::sites::post_site_update))
+        .route("/sites/{name}/toggle",   post(routes::sites::post_site_toggle))
         .route("/sites/{name}/delete",   post(routes::sites::post_site_delete))
         .route("/settings",              get(routes::settings::get_settings))
         .route("/settings/update",       post(routes::settings::post_settings_update))

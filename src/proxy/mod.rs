@@ -220,6 +220,15 @@ async fn handle_request(
     let site = match lookup_site(&state.db, &host).await {
         Some(s) => s,
         None => {
+            // A site that exists but is switched off is a different situation
+            // from a hostname nobody configured: the first is the operator
+            // taking it down on purpose, and its visitors deserve to be told
+            // that rather than being shown a 404 that reads like a mistake.
+            if site_is_disabled(&state.db, &host).await {
+                let message = crate::routes::settings::get_maintenance_message(&state.db).await;
+                tracing::debug!(host = %host, "site is disabled — serving maintenance page");
+                return maintenance_response(&message);
+            }
             tracing::debug!(host = %host, "no site matched");
             return error_response(StatusCode::NOT_FOUND, "No site configured for this host");
         }
@@ -451,6 +460,81 @@ async fn lookup_site(db: &SqlitePool, host: &str) -> Option<SiteRow> {
         x_content_type: r.x_content_type,
         xss_protection: r.xss_protection,
     })
+}
+
+// ─── site_is_disabled ────────────────────────────────────
+
+/// True when a site exists for this hostname but is switched off.
+///
+/// Only reached when `lookup_site` found nothing, so this runs on the miss path
+/// and never on a served request.
+async fn site_is_disabled(db: &SqlitePool, host: &str) -> bool {
+    sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM sites WHERE server_name = ? AND enabled = 0",
+        host
+    )
+    .fetch_one(db)
+    .await
+    .map(|n| n > 0)
+    .unwrap_or(false)
+}
+
+// ─── maintenance_response ────────────────────────────────
+
+/// Build the page shown for a disabled site.
+///
+/// 503 rather than 404 or 200: the hostname is configured and expected back, so
+/// this is "unavailable right now", which is also what a crawler should take
+/// from it. Retry-After gives that a concrete meaning without committing to a
+/// return time the operator has not promised.
+///
+/// The page is self-contained — no CSS or images fetched from anywhere — since
+/// it is served to the public while the site behind it is deliberately down.
+fn maintenance_response(message: &str) -> Response<Body> {
+    let html = format!(
+        r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Temporarily unavailable</title>
+<style>
+  body {{ margin:0; min-height:100vh; display:flex; align-items:center;
+         justify-content:center; background:#0f172a; color:#e2e8f0;
+         font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }}
+  .card {{ max-width:32rem; padding:2.5rem; text-align:center; }}
+  h1 {{ font-size:1.4rem; font-weight:600; margin:0 0 .75rem; }}
+  p  {{ margin:0; line-height:1.6; color:#94a3b8; }}
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>Temporarily unavailable</h1>
+    <p>{}</p>
+  </div>
+</body>
+</html>"#,
+        escape_html(message)
+    );
+
+    Response::builder()
+        .status(StatusCode::SERVICE_UNAVAILABLE)
+        .header("content-type", "text/html; charset=utf-8")
+        .header("cache-control", "no-store")
+        .header("retry-after", "3600")
+        .body(Body::from(html))
+        .unwrap()
+}
+
+/// Escape the five characters that would otherwise let the configured text
+/// break out of the page. The text comes from an authenticated administrator
+/// rather than from a request, but it is still data being placed into markup.
+fn escape_html(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
 }
 
 // ─── inject_security_headers ─────────────────────────────

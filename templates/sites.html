@@ -52,11 +52,25 @@
                             {% endif %}
                         </td>
                         <td>
-                            {% if site.enabled %}
-                                <span class="label label-success">Active</span>
-                            {% else %}
-                                <span class="label label-default">Disabled</span>
-                            {% endif %}
+                            <form method="post" action="/sites/{{ site.name }}/toggle"
+                                  {% if site.enabled %}onsubmit="return confirm('Disable {{ site.name }}? Requests for {{ site.server_name }} will stop being proxied.');"{% endif %}
+                                  style="display:inline">
+                                {% if site.enabled %}
+                                    <button type="submit" class="btn btn-link" style="padding:0; border:none"
+                                            title="Click to disable — stops proxying this hostname">
+                                        <span class="label label-success">
+                                            <i class="fa fa-play"></i> Active
+                                        </span>
+                                    </button>
+                                {% else %}
+                                    <button type="submit" class="btn btn-link" style="padding:0; border:none"
+                                            title="Click to enable — starts proxying this hostname">
+                                        <span class="label label-default">
+                                            <i class="fa fa-pause"></i> Disabled
+                                        </span>
+                                    </button>
+                                {% endif %}
+                            </form>
                         </td>
                         <td>
                             <form method="post" action="/sites/{{ site.name }}/delete"

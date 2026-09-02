@@ -9,6 +9,19 @@ Version bumps and tags are created only after explicit approval.
 ## [Unreleased]
 
 ### Added
+- **Enable / disable a site from Site Management.** The status column is now the
+  control: clicking it stops or starts proxying for that hostname, with a
+  confirmation before taking a live site down. Disabling leaves everything else
+  about the site untouched, so re-enabling restores it as it was, and it does
+  not close the TCP listener — ports are shared between sites and closing one
+  would take the others down with it. Enabling signals the proxy to bind the
+  port, which matters when the site is the only one using it: listeners are
+  bound from the enabled sites at startup, so the port may not be listening yet.
+- **Maintenance message** (Settings). A disabled site used to answer 404, the
+  same as a hostname nobody had configured — indistinguishable from a mistake.
+  It now serves a self-contained page carrying this text with
+  `503 Service Unavailable` and a `Retry-After`, so visitors and crawlers alike
+  are told the site is expected back. Unknown hostnames still get the 404.
 - README: a screenshot of the dashboard, so the project shows what it looks like
   rather than only describing it.
 
