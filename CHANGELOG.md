@@ -8,6 +8,25 @@ Version bumps and tags are created only after explicit approval.
 
 ## [Unreleased]
 
+### Added
+- **Dashboard charts.** A stacked *Requests per Hour* bar chart covering the
+  last 24 hours — passed, challenged and blocked — beside a *Verdicts* doughnut
+  of the same totals, and a proportion bar in each row of the per-site table so
+  the mix is readable at a glance rather than only as numbers. Hours with no
+  traffic are drawn as empty buckets, so a quiet night is visible instead of
+  being compressed out of the axis.
+
+### Fixed
+- **The Traffic Monitor's per-hour chart never rendered.** Its data was
+  interpolated with `{{ chart | json_encode }}`, and Tera autoescapes `.html`
+  templates, so the JSON reached the browser as `[{&quot;hour&quot;:...}]` —
+  a syntax error inside `<script>`. Both that chart and the new dashboard ones
+  now pipe through `| safe`.
+- Dashboard panels shared no time window: the summary counted a rolling 24
+  hours while the chart bucketed 23, so the card, the doughnut and the bar chart
+  could disagree. All panels now derive from one window truncated to the top of
+  the hour, and the totals match by construction.
+
 ### Changed
 - **WAF rule patterns are compiled once instead of per request.** Every rule's
   regex was rebuilt on every request — with the bundled rule set loaded, ~100

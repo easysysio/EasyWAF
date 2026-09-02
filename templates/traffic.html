@@ -200,7 +200,7 @@ $(document).ready(function () {
 // ── Chart.js bar chart ───────────────────────────────────
 {% if chart %}
 (function () {
-    const raw = {{ chart | json_encode }};
+    const raw = {{ chart | json_encode | safe }};
     if (!raw || raw.length === 0) return;
 
     const labels   = raw.map(function(b) { return b.hour.slice(11, 16); }); // HH:MM
