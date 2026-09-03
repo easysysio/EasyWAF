@@ -11,6 +11,7 @@ next minor, so a release's notes stay about its feature.
 | 0.6.0 | ACME / Let's Encrypt |
 | 0.7.0 | Updating the rule sets and the country database (see [rule-repository.md](rule-repository.md)) |
 | 0.8.0 | Flow logs over syslog, audit log on disk |
+| 0.9.0 | IP allow/block lists, addable with one click from Traffic Monitor (see [ip-lists.md](ip-lists.md)) |
 
 ## Why this order
 
@@ -54,6 +55,12 @@ their groundwork — the replaceable country-database reader and the rule import
 provenance — and that lineage is fresher than the logging work, which has a
 cross-repository dependency (see [logging.md](logging.md)) that can proceed in
 parallel meanwhile.
+
+**IP lists come last of what is currently planned** because they are the most
+self-contained: no dependency on TLS, roles, ACME, updates, or logging, and
+nothing later depends on them either. That also makes them the easiest slot to
+pull forward if an urgent need shows up before 0.9.0 — the design does not
+assume anything from the releases ahead of it.
 
 ## What 0.1.0 already left in place
 
