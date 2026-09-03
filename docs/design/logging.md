@@ -1,7 +1,8 @@
 # Design note — flow logs over syslog, audit log on disk
 
-Status: planned. Target 0.4.0 or 0.5.0, after the rule / country-database
-update work.
+Status: planned for **0.7.0** — see [roadmap.md](roadmap.md). It follows TLS
+(0.4.0), ACME (0.5.0) and the update work (0.6.0). The EasyLog parser question
+below is cross-repository and can be settled in parallel, well before then.
 
 ## What EasyWAF does today
 
