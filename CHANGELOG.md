@@ -8,6 +8,8 @@ Version bumps and tags are created only after explicit approval.
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-09-03
+
 ### Added
 - **Country rules on the policy.** A policy can now block a list of countries,
   or allow only that list and deny everything else. The rules follow the
