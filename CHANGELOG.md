@@ -8,6 +8,31 @@ Version bumps and tags are created only after explicit approval.
 
 ## [Unreleased]
 
+### Added
+- **Country rules on the policy.** A policy can now block a list of countries,
+  or allow only that list and deny everything else. The rules follow the
+  policy's Rule Engine setting, so `DetectionOnly` records what an allow list
+  would have cost before it is enforced, and they run before the pattern rules —
+  a denied country needs no payload scoring. Configured under Policy settings;
+  `/geoip` now lists what each policy does instead of being a placeholder.
+- **IP geolocation, offline.** The DB-IP Lite country database is compiled into
+  the binary, so country rules work on a fresh install with nothing to download
+  and no lookup leaving the host. `geoip_db` in `config.toml`, previously an
+  unread placeholder, now points at another MaxMind-format `.mmdb` to override
+  it. Every proxied request also records its country, filling the
+  `traffic_events.country` column that has existed unused since 0.1.0.
+- **Container image** — `easysysio/easywaf`, multi-arch amd64 and arm64,
+  published to Docker Hub by the release workflow on a version tag. Built from
+  the binaries the release matrix already produces, so the image contains
+  exactly the binary that was released and arm64 needs no emulation. The
+  database lives in `/data`, declared as a volume.
+
+### Safety
+- A country rule never fires on an address with no country — a private range,
+  or one the database does not cover — so an allow list cannot deny traffic on
+  a failed lookup. An empty country list matches nothing in either mode, so
+  turning a mode on before choosing countries cannot lock a site out.
+
 ## [0.2.4] — 2026-09-03
 
 ### Added

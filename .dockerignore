@@ -1,0 +1,17 @@
+# Only the binaries in dist/ and the runtime assets are needed; everything else
+# just slows the build and busts the layer cache.
+target/
+.git/
+docs/
+scripts/
+packaging/
+assets/
+migrations/
+src/
+*.db
+*.deb
+*.rpm
+CHANGELOG.md
+README.md
+Cargo.lock
+Cargo.toml

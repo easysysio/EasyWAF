@@ -17,9 +17,9 @@ blocked, with a per-site breakdown.*
 
 ## Status
 
-Working today: reverse proxying, the rule engine, the CAPTCHA challenge, traffic logging and
-retention, and the management GUI. Not yet implemented: **TLS termination** (the proxy serves
-plain HTTP), **GeoIP rules** (the page is a stub) and **ACME**. See
+Working today: reverse proxying, the rule engine, country rules, the CAPTCHA challenge,
+traffic logging and retention, and the management GUI. Not yet implemented: **TLS
+termination** (the proxy serves plain HTTP) and **ACME**. See
 [Not implemented yet](#not-implemented-yet) before deploying.
 
 ---
@@ -57,6 +57,10 @@ and the per-site security headers still apply, but nothing is inspected.
   `HEADERS`, or `ANY`) and either add to a score or block outright.
 * **Three enforcement modes per policy** — `Off`, `DetectionOnly` (log what would happen,
   block nothing) and `On`.
+* **Country rules** — block listed countries, or allow only listed ones, per policy. Uses the
+  DB-IP Lite database compiled into the binary, so lookups are offline and there is nothing to
+  download. Addresses with no country are never matched, so an allow list cannot lock out
+  private-network traffic.
 * **CAPTCHA challenge** — a middle ground between allow and block: suspicious-but-plausible
   traffic gets a self-hosted image CAPTCHA. Solving it sets a short-lived, IP-bound,
   HMAC-signed clearance cookie. No third-party service.
@@ -69,7 +73,8 @@ and the per-site security headers still apply, but nothing is inspected.
 * **Per-site security headers** — HSTS, `X-Frame-Options`, `X-Content-Type-Options`,
   `X-XSS-Protection`, toggled individually.
 * **Light / dark / auto theme.**
-* **Packaged** — `.deb` and `.rpm` for x86_64 and arm64, with a systemd unit.
+* **Packaged** — `.deb` and `.rpm` for x86_64 and arm64, with a systemd unit, and a
+  multi-arch container image.
 
 ---
 
@@ -117,6 +122,25 @@ The package installs the binary to `/usr/bin/easywaf` and its runtime files — 
 static assets, bundled rule sets and `config.toml` — under `/opt/easywaf`, plus a systemd
 unit. The database is created at `/opt/easywaf/easywaf.db` on first start. The service runs as
 root so a site can bind a privileged port such as 80.
+
+### Docker
+
+```bash
+docker run -d --name easywaf \
+  -p 8080:8080 -p 80:80 \
+  -v easywaf-data:/data \
+  easysysio/easywaf:latest
+```
+
+Multi-arch (amd64 and arm64). The database lives in `/data`, so mount a volume there or it
+goes with the container. Publish whichever ports your sites listen on — 8080 is the GUI.
+
+The image ships a config with the same placeholder secret as the packages, which is published
+for anyone to read, so replace it before production by mounting your own:
+
+```bash
+docker run -d -v ./config.toml:/opt/easywaf/config.toml ... easysysio/easywaf:latest
+```
 
 ---
 
@@ -178,9 +202,12 @@ production. Restart to apply any edit.
 Everything else — sites, their ports, policies, rules and retention — lives in the database
 and is managed from the GUI, so adding a site never means editing a file.
 
-The shipped file also carries `http_port`, `geoip_db` and `acme_webroot`. These are
-placeholders for features that are not wired up and are ignored; the ports EasyWAF listens on
-come from the sites you define.
+`geoip_db` optionally points at a MaxMind-format `.mmdb` to use instead of the bundled DB-IP
+Lite database — a fresher DB-IP file, or MaxMind GeoLite2. Leave it empty for the bundled one.
+
+The shipped file also carries `http_port` and `acme_webroot`. These are placeholders for
+features that are not wired up and are ignored; the ports EasyWAF listens on come from the
+sites you define.
 
 ---
 
@@ -238,7 +265,6 @@ Called out so nothing here is a surprise in production:
 
 * **TLS / HTTPS** — the proxy serves plain HTTP. Certificates can be stored in the GUI but are
   not used to terminate TLS. Put EasyWAF behind a TLS terminator if you need HTTPS.
-* **GeoIP rules** — the page is a placeholder; the `country` column is never populated.
 * **ACME** — no automatic certificate issuance.
 * **WebSockets** — the `Upgrade` header is stripped as hop-by-hop, so upgrades do not proxy.
 * **Password change** — the admin password can only be changed in the database.
@@ -256,6 +282,13 @@ architectures and publishes a GitHub Release with the notes from the matching `C
 section. Running the workflow manually builds packages only, versioned
 `X.Y.Z+ci<run>.git<sha>` for the testing channel. Packages are pulled into the public
 repositories by `github2repo.sh` in the EasyWAF-repo project.
+
+---
+
+## Bundled data
+
+IP geolocation by [DB-IP](https://db-ip.com) — the DB-IP Lite country database, licensed
+[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
 
 ---
 

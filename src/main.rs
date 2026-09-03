@@ -13,6 +13,7 @@ mod challenge;
 mod config;
 mod db;
 mod error;
+mod geo;
 mod modules;
 mod proxy;
 mod routes;
@@ -24,7 +25,7 @@ use axum::{
     Router,
 };
 use axum_extra::extract::cookie::Key;
-use modules::{traffic::TrafficLogger, waf::WafModule, Pipeline};
+use modules::{geoip::GeoIpModule, traffic::TrafficLogger, waf::WafModule, Pipeline};
 use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -70,6 +71,9 @@ async fn main() {
     let cfg = config::load("config.toml");
     let db  = db::init(&cfg.database_url).await;
 
+    // Country lookups are done per request, so the database is opened once here.
+    geo::init(cfg.proxy.geoip_db.as_deref().unwrap_or(""));
+
     seed_admin(&db).await;
 
     // ── Build module pipeline ─────────────────────────────
@@ -78,6 +82,9 @@ async fn main() {
     // writes the actual DB row via log_event().
     let mut pipeline = Pipeline::new();
     pipeline.add(TrafficLogger::new(db.clone()));
+    // Country rules run before the pattern rules: if a whole country is denied
+    // there is nothing to gain from scoring its payloads first.
+    pipeline.add(GeoIpModule::new(db.clone()));
     // WAF module runs after traffic logging so every request is counted
     // even if it ends up being blocked.
     pipeline.add(WafModule::new(db.clone()));

@@ -1,0 +1,21 @@
+# EasyWAF Configuration — container image
+#
+# Differs from the packaged config.toml in one way: the database lives in
+# /data, which the image declares as a volume, so it survives the container
+# rather than being written into the working directory and lost.
+#
+# Override this file to change anything here:
+#   docker run -v ./config.toml:/opt/easywaf/config.toml ...
+#
+# The secret below MUST be replaced before production — it signs the GUI's
+# session cookies and the CAPTCHA clearance cookies, and it is published in
+# this image for everyone to read.
+
+secret       = "change-this-to-a-random-secret-before-production"
+database_url = "sqlite:///data/easywaf.db"
+
+[proxy]
+http_port    = 8081      # placeholder, not read
+gui_port     = 8080      # management GUI
+geoip_db     = ""        # external .mmdb; empty = bundled DB-IP Lite
+acme_webroot = ""        # placeholder, not read

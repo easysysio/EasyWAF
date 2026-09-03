@@ -26,6 +26,11 @@ pub struct Policy {
     pub score_threshold:     i64,
     /// Score at which a request is CAPTCHA-challenged (0 = disabled).
     pub challenge_threshold: i64,
+    /// Country filtering: "off", "block" (deny the list) or "allow" (deny all
+    /// but the list).
+    pub geoip_mode:          String,
+    /// Comma-separated ISO 3166-1 alpha-2 codes the mode applies to.
+    pub geoip_countries:     String,
     /// Total rules attached to this policy (0 if none yet).
     pub rule_count:      i64,
     /// How many of those rules are enabled.
@@ -181,9 +186,21 @@ pub async fn post_policy_update(
         .and_then(|s| s.parse().ok())
         .unwrap_or(0);
 
+    let geoip_mode = match raw.get("geoip_mode").map(String::as_str) {
+        Some("block") => "block",
+        Some("allow") => "allow",
+        _             => "off",
+    };
+    // Stored normalised, so the module never has to guess at the formatting a
+    // person typed and the field reads back tidily in the form.
+    let geoip_countries =
+        normalize_countries(raw.get("geoip_countries").map(String::as_str).unwrap_or(""));
+
     sqlx::query!(
-        "UPDATE policies SET rule_engine=?, score_threshold=?, challenge_threshold=? WHERE name=?",
-        rule_engine, score_threshold, challenge_threshold, name,
+        "UPDATE policies SET rule_engine=?, score_threshold=?, challenge_threshold=?,
+                             geoip_mode=?, geoip_countries=? WHERE name=?",
+        rule_engine, score_threshold, challenge_threshold,
+        geoip_mode, geoip_countries, name,
     )
     .execute(&state.db)
     .await?;
@@ -209,7 +226,32 @@ pub async fn post_policy_delete(
     flash_redirect("/policy", "success", &format!("Policy {} deleted successfully", name))
 }
 
+// ─── normalize_countries ─────────────────────────────────
+
+/// Tidy a typed country list into comma-separated upper-case ISO codes.
+///
+/// Commas, spaces and newlines all separate, since that is how a list actually
+/// gets pasted. Entries that are not two letters are dropped rather than
+/// stored: a code that can never match would look like a working rule that
+/// silently does nothing. Duplicates are removed so the field reads back clean.
+fn normalize_countries(raw: &str) -> String {
+    let mut out: Vec<String> = Vec::new();
+    for part in raw.split(|c: char| c == ',' || c.is_whitespace()) {
+        let code = part.trim().to_uppercase();
+        if code.len() == 2 && code.chars().all(|c| c.is_ascii_alphabetic()) && !out.contains(&code) {
+            out.push(code);
+        }
+    }
+    out.join(",")
+}
+
 // ─── Helpers ─────────────────────────────────────────────
+
+/// Every policy with its rule counts and country settings.
+/// Public so the country-rules overview page can list them too.
+pub async fn list_policies(state: &AppState) -> Result<Vec<Policy>> {
+    fetch_policies(state).await
+}
 
 async fn fetch_policies(state: &AppState) -> Result<Vec<Policy>> {
     // LEFT JOIN so policies with no rules still appear, with counts of 0.
@@ -219,6 +261,8 @@ async fn fetch_policies(state: &AppState) -> Result<Vec<Policy>> {
                 p.rule_engine,
                 p.score_threshold     as \"score_threshold!\",
                 p.challenge_threshold as \"challenge_threshold!\",
+                p.geoip_mode          as \"geoip_mode!\",
+                p.geoip_countries     as \"geoip_countries!\",
                 COUNT(wr.id)   as \"rule_count!\",
                 COALESCE(SUM(wr.enabled), 0) as \"enabled_count!\"
          FROM   policies p
@@ -235,6 +279,8 @@ async fn fetch_policies(state: &AppState) -> Result<Vec<Policy>> {
         rule_engine:         r.rule_engine,
         score_threshold:     r.score_threshold,
         challenge_threshold: r.challenge_threshold,
+        geoip_mode:          r.geoip_mode,
+        geoip_countries:     r.geoip_countries,
         rule_count:          r.rule_count,
         enabled_count:       r.enabled_count,
     }).collect())
@@ -244,7 +290,9 @@ async fn fetch_policy(state: &AppState, name: &str) -> Result<Policy> {
     let r = sqlx::query!(
         "SELECT id as \"id!\", name, rule_engine,
                 score_threshold     as \"score_threshold!\",
-                challenge_threshold as \"challenge_threshold!\"
+                challenge_threshold as \"challenge_threshold!\",
+                geoip_mode          as \"geoip_mode!\",
+                geoip_countries     as \"geoip_countries!\"
          FROM policies WHERE name = ?",
         name
     )
@@ -258,6 +306,8 @@ async fn fetch_policy(state: &AppState, name: &str) -> Result<Policy> {
         rule_engine:         r.rule_engine,
         score_threshold:     r.score_threshold,
         challenge_threshold: r.challenge_threshold,
+        geoip_mode:          r.geoip_mode,
+        geoip_countries:     r.geoip_countries,
         // Counts are not shown on the single-policy edit page.
         rule_count:          0,
         enabled_count:       0,

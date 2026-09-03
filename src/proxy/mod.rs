@@ -241,6 +241,9 @@ async fn handle_request(
     let query     = parts.uri.query().map(str::to_string);
     let headers   = parts.headers.clone();
     let client_ip = peer.ip();
+    // Resolved once and reused: the traffic log records it, and the country
+    // rules in the pipeline read it from the same lookup.
+    let country   = crate::geo::country_of(client_ip);
 
     // Buffer the full body (up to 32 MB) — WAF modules need to inspect it.
     let body_bytes = match axum::body::to_bytes(body, 32 * 1024 * 1024).await {
@@ -290,7 +293,7 @@ async fn handle_request(
                 blocked:      true,
                 block_reason: Some(reason_log),
                 waf_score:    None,
-                country:      None,
+                country:      country.clone(),
             }).await;
         });
         return error_response(status, &reason);
@@ -325,7 +328,7 @@ async fn handle_request(
                     blocked:      false,
                     block_reason: Some(reason_log),
                     waf_score:    None,
-                    country:      None,
+                    country:      country.clone(),
                 }).await;
             });
 
@@ -378,7 +381,7 @@ async fn handle_request(
                     blocked:      false,
                     block_reason: None,
                     waf_score:    None,
-                    country:      None,
+                    country:      country.clone(),
                 }).await;
             });
             error_response(StatusCode::BAD_GATEWAY, "Upstream unreachable")
@@ -421,7 +424,7 @@ async fn handle_request(
                     blocked:      false,
                     block_reason: None,
                     waf_score:    None,
-                    country:      None,
+                    country:      country.clone(),
                 }).await;
             });
 

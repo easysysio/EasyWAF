@@ -44,6 +44,9 @@ time = { version = "0.3", features = ["serde"] }
 # Auth
 bcrypt = "0.17.0"
 
+# IP geolocation — reads the bundled DB-IP Lite country database
+maxminddb = "0.30"
+
 # Static file serving (set-header lets us send Cache-Control on /static)
 tower-http = { version = "0.6", features = ["fs", "trace", "set-header"] }
 tower = "0.5"

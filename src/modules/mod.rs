@@ -10,6 +10,7 @@
 // The pipeline runs modules in order; the first Drop wins.
 // =========================================================
 
+pub mod geoip;
 pub mod traffic;
 pub mod waf;
 

@@ -53,6 +53,7 @@ pub async fn init(database_url: &str) -> SqlitePool {
     // Migration 005 — challenge_threshold column on policies.
     run_migration_005(&pool).await;
     run_migration_006(&pool).await;
+    run_migration_007(&pool).await;
 
     info!("Database ready: {}", database_url);
     pool
@@ -144,5 +145,26 @@ async fn run_migration_006(pool: &SqlitePool) {
             .await
             .unwrap_or_else(|e| panic!("Migration 006 failed: {}", e));
         info!("Migration 006 applied: created settings table");
+    }
+}
+
+// ─── run_migration_007 ───────────────────────────────────
+
+/// Add the per-policy country rule columns if not already present.
+async fn run_migration_007(pool: &SqlitePool) {
+    let exists: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM pragma_table_info('policies') WHERE name = 'geoip_mode'",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0);
+
+    if exists == 0 {
+        let sql_007 = include_str!("../migrations/007_policy_geoip.sql");
+        sqlx::raw_sql(sql_007)
+            .execute(pool)
+            .await
+            .unwrap_or_else(|e| panic!("Migration 007 failed: {}", e));
+        info!("Migration 007 applied: added country rules to policies");
     }
 }

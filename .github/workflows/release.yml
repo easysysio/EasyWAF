@@ -133,6 +133,78 @@ jobs:
           name: packages-${{ matrix.arch }}
           path: out/*
 
+      # Kept separate from the packages artifact, which github2repo.sh consumes
+      # by extension — the container image needs the bare binary.
+      - name: Upload binary for the container image
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.arch }}
+          path: target/${{ matrix.target }}/release/easywaf
+
+  # ─── Build and push the container image ─────────────────────
+  # Uses the binaries from the build matrix rather than compiling again, so the
+  # image ships exactly what was released and arm64 needs no QEMU emulation.
+  docker:
+    name: Publish container image
+    needs: build
+    runs-on: ubuntu-latest
+    # Only a tag names a version to publish under; a manual run stops after the
+    # build job, same as the release job below.
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download binaries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: binary-*
+          path: binaries
+
+      - name: Stage binaries for the image
+        # The Dockerfile picks by Docker's architecture names, which differ from
+        # the ones used for the packages: x86_64 -> amd64.
+        run: |
+          mkdir -p dist
+          cp binaries/binary-x86_64/easywaf dist/easywaf-amd64
+          cp binaries/binary-arm64/easywaf  dist/easywaf-arm64
+          chmod +x dist/easywaf-*
+          ls -l dist/
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Derive image tags
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"     # v0.3.0 -> 0.3.0
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "Publishing easysysio/easywaf:$VERSION and :latest"
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            easysysio/easywaf:${{ env.VERSION }}
+            easysysio/easywaf:latest
+          labels: |
+            org.opencontainers.image.title=EasyWAF
+            org.opencontainers.image.description=Self-contained Web Application Firewall and reverse proxy
+            org.opencontainers.image.version=${{ env.VERSION }}
+            org.opencontainers.image.source=https://github.com/easysysio/EasyWAF
+            org.opencontainers.image.licenses=GPL-3.0
+
   # ─── Create the GitHub Release ──────────────────────────────
   release:
     name: Publish release
