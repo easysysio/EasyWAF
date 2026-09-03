@@ -60,6 +60,54 @@ device: **no change to the unique index, no compound keys.** It exists so that
 "the SQLi set has an update, here are its rules in this policy" can be answered
 without encoding a range table in SQL.
 
+## Imported rules are immutable; customizing means cloning
+
+An imported rule (`external_id IS NOT NULL`) cannot have its `pattern`,
+`score`, `action`, `zone` or `description` edited. Today it can:
+[`post_rule_update_global`](../../src/routes/rules.rs) writes those fields to
+any rule by id with no check on where it came from — a real gap independent of
+whether update-checking ever ships, since the thing an update would need to
+protect (a deliberate customization) already has no protection today.
+
+Wanting to change an imported rule means **cloning** it: a new row is created
+with the same content, `external_id` cleared, and the rule free to edit from
+that point on exactly like a hand-written custom rule. The two are then
+indistinguishable in the editor — a clone is not a special kind of rule, it is
+an ordinary custom rule that happened to start from an imported one.
+
+This makes drift structurally impossible instead of something to detect at
+update time. There is no comparison to run, no "was this touched" question,
+and no case where the detection itself could be wrong: an imported row cannot
+diverge from what was imported, because nothing can write to its content but
+the importer.
+
+**`enabled` stays a free toggle regardless.** Turning a rule off is a
+subscription decision, not a content edit —
+[`post_rule_toggle_global`](../../src/routes/rules.rs) already touches only
+that column and needs no change. An administrator who dislikes an imported
+rule can disable it, clone and edit it, or both: disable the original and
+enable their own version. All three are ordinary uses of controls that already
+exist.
+
+**A clone remembers where it came from, informationally.** Two columns record
+the fork point:
+
+```sql
+ALTER TABLE waf_rules ADD COLUMN cloned_from_external_id INTEGER;
+ALTER TABLE waf_rules ADD COLUMN cloned_from_version     INTEGER;
+```
+
+set only on a clone, to the source rule's `external_id` and the rule set's
+version at the moment of cloning. `rule_set` (below) is copied onto the clone
+too, so a custom rule still shows which set it descends from. None of this
+feeds a merge — it exists only so an update notification can also say "your
+custom rule was forked from SQLi v2; the set is now on v4", a nudge for a
+human to look at, never an automatic action.
+
+**Open question, not a blocker:** what happens to an imported rule a later set
+version removes entirely — left in place as a harmless orphan, or flagged
+retired in the UI. Worth deciding at implementation time.
+
 ## Rule set files
 
 Each file gains a header the current parser ignores, so it can be added before
@@ -105,10 +153,12 @@ version the repository offers, and the version each policy holds. Policy A may
 be on 2 while policy B is on 3.
 
 The notification is therefore not "an update is available" but "SQLi 3 is
-available; Policy A has 2". Applying it reconciles one policy at a time,
-honouring the provenance columns added in 0.3.0: refresh rules nobody has
-touched, leave edited ones alone and report them rather than reverting somebody's
-deliberate change.
+available; Policy A has 2". Applying it reconciles one policy at a time: every
+imported rule in that policy is overwritten with the new version — `pattern`,
+`score`, `action`, `zone`, `description` — while `id`, `enabled` and
+`policy_id` are preserved. This is safe unconditionally, not just usually: an
+imported row cannot hold a customization, since making one means cloning the
+rule into a separate, no-longer-imported row the update never touches.
 
 ## Applying updates
 
@@ -142,3 +192,11 @@ swapped in without restarting.
 `.toml` files and carry no `external_id`. With a managed repository that is a
 second source of truth which can never be updated; it should become "import the
 base set" instead.
+
+The `imported_pattern`, `imported_score` and `imported_action` columns added in
+migration 008 (0.3.0/0.3.1) supported an earlier design: diffing a rule's
+current values against what was imported, to detect that it had been edited.
+Immutability makes that comparison unnecessary — an imported row cannot be
+edited, so there is nothing to diff. They are left in place unused rather than
+dropped; three nullable columns cost nothing, and removing a column in SQLite
+means rebuilding the table, not worth it for this.
