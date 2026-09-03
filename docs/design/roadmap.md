@@ -12,6 +12,7 @@ next minor, so a release's notes stay about its feature.
 | 0.7.0 | Updating the rule sets and the country database (see [rule-repository.md](rule-repository.md)) |
 | 0.8.0 | Flow logs over syslog, audit log on disk |
 | 0.9.0 | IP allow/block lists, addable with one click from Traffic Monitor (see [ip-lists.md](ip-lists.md)) |
+| 0.10.0 | Per-site rate limiting (see [rate-limiting.md](rate-limiting.md)) |
 
 ## Why this order
 
@@ -56,11 +57,14 @@ provenance — and that lineage is fresher than the logging work, which has a
 cross-repository dependency (see [logging.md](logging.md)) that can proceed in
 parallel meanwhile.
 
-**IP lists come last of what is currently planned** because they are the most
-self-contained: no dependency on TLS, roles, ACME, updates, or logging, and
-nothing later depends on them either. That also makes them the easiest slot to
-pull forward if an urgent need shows up before 0.9.0 — the design does not
-assume anything from the releases ahead of it.
+**IP lists and rate limiting sit last, adjacent to each other, and each still
+self-contained.** Both are identity/volume signals rather than payload
+inspection, both share a pipeline position — checked early, before GeoIP and
+WAF, and both must respect the allowlist override from 0.9.0 — and both are
+easy slots to pull forward if an urgent need shows up, since neither assumes
+anything from the releases ahead of it. They stay two releases rather than one
+because they differ enough in shape: an IP list is a set lookup, rate limiting
+is a counter with a time window and its own state-management questions.
 
 ## What 0.1.0 already left in place
 
