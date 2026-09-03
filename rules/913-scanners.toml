@@ -1,8 +1,8 @@
-# OWASP CRS — Scanner and Automated Tool Detection (category 990)
+# OWASP CRS — Scanner and Automated Tool Detection (category 913)
 # Identifies well-known attack and reconnaissance tools by their signatures.
 
 [[rules]]
-id          = 990001
+id          = 913001
 name        = "Scanner: sqlmap"
 description = "sqlmap automated SQL injection tool"
 zone        = "HEADERS"
@@ -11,7 +11,7 @@ score       = 9
 action      = "score"
 
 [[rules]]
-id          = 990002
+id          = 913002
 name        = "Scanner: Nikto"
 description = "Nikto web server vulnerability scanner"
 zone        = "HEADERS"
@@ -20,7 +20,7 @@ score       = 8
 action      = "score"
 
 [[rules]]
-id          = 990003
+id          = 913003
 name        = "Scanner: Nmap / Masscan"
 description = "Port and service scanner"
 zone        = "HEADERS"
@@ -29,7 +29,7 @@ score       = 7
 action      = "score"
 
 [[rules]]
-id          = 990004
+id          = 913004
 name        = "Scanner: DirBuster / GoBuster / Wfuzz"
 description = "Directory and file brute-force scanner"
 zone        = "HEADERS"
@@ -38,7 +38,7 @@ score       = 8
 action      = "score"
 
 [[rules]]
-id          = 990005
+id          = 913005
 name        = "Scanner: Burp Suite"
 description = "Burp Suite web application security testing platform"
 zone        = "HEADERS"
@@ -47,7 +47,7 @@ score       = 7
 action      = "score"
 
 [[rules]]
-id          = 990006
+id          = 913006
 name        = "Scanner: Acunetix"
 description = "Acunetix web vulnerability scanner"
 zone        = "HEADERS"
@@ -56,7 +56,7 @@ score       = 8
 action      = "score"
 
 [[rules]]
-id          = 990007
+id          = 913007
 name        = "Scanner: Nessus / OpenVAS"
 description = "Network vulnerability scanner"
 zone        = "HEADERS"
@@ -65,7 +65,7 @@ score       = 7
 action      = "score"
 
 [[rules]]
-id          = 990008
+id          = 913008
 name        = "Scanner: w3af"
 description = "w3af web application attack and audit framework"
 zone        = "HEADERS"
@@ -74,7 +74,7 @@ score       = 8
 action      = "score"
 
 [[rules]]
-id          = 990009
+id          = 913009
 name        = "Scanner: Arachni"
 description = "Arachni web application security framework"
 zone        = "HEADERS"
@@ -83,7 +83,7 @@ score       = 8
 action      = "score"
 
 [[rules]]
-id          = 990010
+id          = 913010
 name        = "Scanner: ZAP (OWASP Zed Attack Proxy)"
 description = "OWASP ZAP active scanning header"
 zone        = "HEADERS"
@@ -92,7 +92,7 @@ score       = 8
 action      = "score"
 
 [[rules]]
-id          = 990011
+id          = 913011
 name        = "Scanner: Metasploit"
 description = "Metasploit framework User-Agent or payload signature"
 zone        = "HEADERS"
@@ -101,7 +101,7 @@ score       = 9
 action      = "score"
 
 [[rules]]
-id          = 990012
+id          = 913012
 name        = "Scanner: Python requests / urllib"
 description = "Raw Python HTTP library — often used in automated scanning"
 zone        = "HEADERS"
@@ -110,7 +110,7 @@ score       = 3
 action      = "score"
 
 [[rules]]
-id          = 990013
+id          = 913013
 name        = "Scanner: curl / wget automated"
 description = "curl and wget without a custom User-Agent — common in scripts"
 zone        = "HEADERS"
@@ -119,7 +119,7 @@ score       = 2
 action      = "score"
 
 [[rules]]
-id          = 990014
+id          = 913014
 name        = "Scanner: empty User-Agent"
 description = "Missing or empty User-Agent header — typical of bots and scripts"
 zone        = "HEADERS"
@@ -128,7 +128,7 @@ score       = 2
 action      = "score"
 
 [[rules]]
-id          = 990015
+id          = 913015
 name        = "Scanner: admin path brute-force"
 description = "Common admin, debug, and management paths probed by scanners"
 zone        = "URL"

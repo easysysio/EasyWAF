@@ -2,15 +2,6 @@
 # Detects attempts to execute OS commands through the application.
 
 [[rules]]
-id          = 931100
-name        = "RCE: pipe / semicolon command chaining"
-description = "Shell metacharacters used to chain OS commands"
-zone        = "ANY"
-pattern     = '[;|`]\s*(ls|cat|id|whoami|uname|wget|curl|bash|sh|python|perl|nc|netcat)'
-score       = 8
-action      = "score"
-
-[[rules]]
 id          = 932001
 name        = "RCE: Unix command injection keywords"
 description = "Common Unix reconnaissance and execution commands"
@@ -108,3 +99,12 @@ zone        = "ANY"
 pattern     = '\{\{[^}]{1,100}\}\}'
 score       = 6
 action      = "score"
+[[rules]]
+id          = 932012
+name        = "RCE: pipe / semicolon command chaining"
+description = "Shell metacharacters used to chain OS commands"
+zone        = "ANY"
+pattern     = '[;|`]\s*(ls|cat|id|whoami|uname|wget|curl|bash|sh|python|perl|nc|netcat)'
+score       = 8
+action      = "score"
+

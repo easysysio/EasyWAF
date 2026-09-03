@@ -8,6 +8,16 @@ Version bumps and tags are created only after explicit approval.
 
 ## [Unreleased]
 
+### Changed
+- **Rule ids now match their OWASP CRS category.** Scanner detection moved from
+  `990xxx` to `913xxx`, CRS's actual category for it, and the file was renamed
+  to `913-scanners.toml`; one RCE rule carrying an RFI id (`931100`) became
+  `932012`. Rule ids are how an update identifies the rule it replaces, so they
+  become public identifiers once sets are published — corrected now, while this
+  repository is the only place the data exists. A policy that already imported
+  the old ids keeps them as orphaned rules; re-importing adds the corrected
+  ones.
+
 ## [0.3.0] — 2026-09-03
 
 ### Added

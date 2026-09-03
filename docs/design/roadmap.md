@@ -9,7 +9,7 @@ next minor, so a release's notes stay about its feature.
 | 0.4.0 | TLS termination, certificate management, self-service password change |
 | 0.5.0 | User management and roles |
 | 0.6.0 | ACME / Let's Encrypt |
-| 0.7.0 | Updating the rule sets and the country database |
+| 0.7.0 | Updating the rule sets and the country database (see [rule-repository.md](rule-repository.md)) |
 | 0.8.0 | Flow logs over syslog, audit log on disk |
 
 ## Why this order
