@@ -15,6 +15,51 @@ next minor, so a release's notes stay about its feature.
 | 0.10.0 | Per-site rate limiting (see [rate-limiting.md](rate-limiting.md)) |
 | 0.11.0 | Learning and hardening modes — URL allowlisting (see [url-learning.md](url-learning.md)) |
 
+## Candidates, not yet scheduled
+
+Recorded so they are not lost. No version assigned — these are worth doing,
+not yet ordered against each other.
+
+**Rule attribution on the traffic event — "why was this blocked?"** The GUI
+cannot currently answer that. Diagnosing the 0.3.1 false positives took SSH, a
+systemd environment change, two restarts and `journalctl`, to learn something
+the WAF knew at the moment it decided. Much of the plumbing already exists and
+is inert: `traffic_events.waf_score` is threaded through `TrafficRecord` and
+the INSERT but passed `None` at all four call sites in
+[proxy/mod.rs](../../src/proxy/mod.rs), the same way `country` was before
+0.3.0; and `PipelineVerdict` already collects `alerts: Vec<Alert>` and then
+discards them. Recording the score and the matching rules, then showing them
+when a Traffic Monitor row is opened, turns the product's most common failure
+mode from an hour of shell work into a click — and leads naturally into
+disabling the rule, cloning it to tune (0.7.0), or allowlisting the client
+(0.9.0).
+
+**Backup, restore, and configuration export.** Sites, policies, rules,
+certificates, users and settings all live in one SQLite file with no export.
+Losing the host loses all of it, there is no way to clone a working
+configuration onto a staging instance, and none of it can be kept under
+version control. An export/import as TOML or JSON, plus a consistent database
+snapshot to download, also makes support easier: one exported file beats
+twenty screenshots.
+
+**Response inspection.** Everything today inspects requests; the other half of
+a WAF catches what leaks out — stack traces, SQL errors, directory listings,
+card numbers — which is what CRS reserves the 950xxx band for. The cost is
+real and worth deciding deliberately rather than discovering: the proxy
+currently streams responses back to the client (`Body::from_stream`), so
+inspecting them means buffering, trading away the streaming behaviour it has
+today.
+
+**Rule dry-run — cheaper-sounding than it is.** "This pattern would have
+matched N of the last 10,000 requests" would be an excellent guard against
+shipping a rule like 0.3.1's. But `traffic_events` stores only method, host,
+path and country — **no headers and no body** — and both 0.3.1 false positives
+were header-zone matches, so a replay over stored history would have caught
+neither. It would work for `URL` and `ARGS` zone rules only, unless a bounded
+sample of complete requests is also retained for testing, which is a
+substantially larger feature. Recorded here mainly so nobody later assumes it
+is a small one.
+
 ## Why this order
 
 **TLS is first because everything about the management plane is currently
