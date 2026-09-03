@@ -145,8 +145,14 @@ impl InspectionModule for WafModule {
             return ModuleDecision::Pass;
         }
 
-        // Step 4 — build zone content strings from the request.
-        // Each carries both the encoded and decoded forms — see zone_text.
+        // Step 4 — build zone content forms from the request.
+        // Each zone is a small list of candidate strings — raw, then
+        // percent-decoded — matched independently rather than concatenated.
+        // Concatenating would need a separator character, and a separator is
+        // exactly the kind of thing a rule can accidentally match: an earlier
+        // version joined forms with '\n' and a CRLF-detection rule matched
+        // that '\n' on any request carrying a percent-encoded header, having
+        // nothing to do with anything the client sent. See zone_text.
         let raw_url = format!("{}{}", ctx.path, ctx.query.as_deref().unwrap_or(""));
         let url     = zone_text(&raw_url, true);
         let args    = zone_text(ctx.query.as_deref().unwrap_or(""), true);
@@ -159,20 +165,25 @@ impl InspectionModule for WafModule {
                 .join(" "),
             false,
         );
-        let any     = format!("{}\n{}\n{}\n{}", url, args, body, headers);
+        // "ANY" is every form from every zone — still no concatenation, so a
+        // zone boundary can never masquerade as content either.
+        let any: Vec<&str> = url.iter().chain(&args).chain(&body).chain(&headers)
+            .map(String::as_str)
+            .collect();
 
         // Step 5 — evaluate each rule in order.
         let mut total_score: i64 = 0;
         let mut challenge_reason: Option<String> = None;
 
         for rule in &rules {
-            // Select the right content string for this rule's zone.
-            let target: &str = match rule.zone.as_str() {
-                "URL"     => &url,
-                "ARGS"    => &args,
-                "BODY"    => &body,
-                "HEADERS" => &headers,
-                _         => &any,  // "ANY" or unrecognised
+            // Select the candidate forms for this rule's zone. A rule matches
+            // if it matches ANY one form — never a concatenation of them.
+            let targets: Vec<&str> = match rule.zone.as_str() {
+                "URL"     => url.iter().map(String::as_str).collect(),
+                "ARGS"    => args.iter().map(String::as_str).collect(),
+                "BODY"    => body.iter().map(String::as_str).collect(),
+                "HEADERS" => headers.iter().map(String::as_str).collect(),
+                _         => any.clone(),  // "ANY" or unrecognised
             };
 
             // Compiled on first use and cached; skip a rule whose pattern
@@ -182,7 +193,7 @@ impl InspectionModule for WafModule {
                 None    => continue,
             };
 
-            if !re.is_match(target) {
+            if !targets.iter().any(|t| re.is_match(t)) {
                 continue;
             }
 
@@ -244,8 +255,8 @@ impl InspectionModule for WafModule {
 
 // ─── Zone text ───────────────────────────────────────────
 
-/// Build the text a rule is matched against, carrying both the encoded and the
-/// decoded form of the request data.
+/// Build the candidate forms a rule is matched against: the request text as
+/// received, and its percent-decoded equivalents.
 ///
 /// Attack payloads arrive percent-encoded far more often than not — a browser
 /// encodes the spaces in `DROP TABLE users` without being asked — and matching
@@ -253,21 +264,30 @@ impl InspectionModule for WafModule {
 /// payload that blocked instantly in a request body sailed through in a query
 /// string.
 ///
-/// The raw form is kept rather than replaced. Several rules deliberately look
-/// for the encoding itself — `%252e%252e`, `%00`, the double-URL-encoding
-/// protocol rule — so decoding in place would trade one blind spot for another.
-/// Decoding runs twice so double-encoded payloads reduce to plain text as well.
+/// The forms are matched independently by the caller rather than concatenated
+/// into one string. Concatenation needs a separator, and a separator is
+/// exactly the kind of text a rule can accidentally match — a CRLF-detection
+/// rule once matched the '\n' this function used to join forms with, on any
+/// request carrying a percent-encoded header, which had nothing to do with
+/// what the client sent. Returning the forms separately makes that whole class
+/// of bug impossible rather than relocating it to a different separator.
+///
+/// The raw form is kept alongside the decoded ones rather than replaced.
+/// Several rules deliberately look for the encoding itself — `%252e%252e`,
+/// `%00`, the double-URL-encoding protocol rule — so decoding in place would
+/// trade one blind spot for another. Decoding runs twice so double-encoded
+/// payloads reduce to plain text as well.
 ///
 /// `plus_is_space` suits query strings and form bodies, where `+` encodes a
 /// space. It is wrong for a path, where `+` is a literal character.
 ///
-/// Text containing no encoding is returned untouched, so the ordinary request
-/// costs only the scan for `%` — this runs per request, and bodies reach 32 MB.
-fn zone_text(raw: &str, plus_is_space: bool) -> String {
+/// A single-element result costs only the scan for `%` — this runs per
+/// request, and bodies reach 32 MB — when the text carries no encoding.
+fn zone_text(raw: &str, plus_is_space: bool) -> Vec<String> {
     let has_pct  = raw.contains('%');
     let has_plus = plus_is_space && raw.contains('+');
     if !has_pct && !has_plus {
-        return raw.to_string();
+        return vec![raw.to_string()];
     }
 
     let mut forms = vec![raw.to_string()];
@@ -289,9 +309,7 @@ fn zone_text(raw: &str, plus_is_space: bool) -> String {
         forms.push(twice);
     }
 
-    // Separated by a newline so two forms do not run together into text that
-    // appears in neither of them.
-    forms.join("\n")
+    forms
 }
 
 /// Percent-decode one string, returning it unchanged when it is not valid

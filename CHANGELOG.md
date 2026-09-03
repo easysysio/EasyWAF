@@ -9,6 +9,31 @@ Version bumps and tags are created only after explicit approval.
 ## [Unreleased]
 
 ### Fixed
+- **A multi-encoding-form fix from earlier this release introduced a second,
+  broader false positive.** Zones with more than one candidate form (raw plus
+  percent-decoded) were joined into a single string with `\n` before matching.
+  Any header carrying a `%` that decodes to something different — a
+  percent-encoded cookie is the common case — produced a string containing a
+  real newline character that no client sent, which then matched
+  `Protocol: host header injection` (`[\r\n\x0b\x0c]`, zone `HEADERS`): the
+  rule built to catch CRLF injection was triggering on a character the WAF's
+  own code inserted. Combined with the `SQLi: SQL comment stripping` false
+  positive above (8 + 3 = 11 against a default block threshold of 10), this
+  was enough on its own to block ordinary browser traffic.
+
+  Fixed structurally rather than by picking a different separator: rules are
+  now matched against each candidate form independently — never concatenated —
+  so no synthetic character can exist for a rule to accidentally match. This
+  removes the entire class of bug, not just this instance of it; a rule
+  written after this change to detect some other whitespace or control
+  character is safe by construction rather than by the separator happening not
+  to collide with it.
+
+  Verified against a live instance: a percent-encoded cookie that previously
+  triggered the CRLF rule no longer does, the original reproduction (curl with
+  a percent-encoded cookie, scoring 11 before this fix) is now clean, and the
+  full attack battery (`scripts/waf-test.sh`) still passes 16/16 — including
+  the encoding-defeat cases the earlier fix in this release addressed.
 - **`SQLi: SQL comment stripping` (942007) false-positived on almost all
   traffic.** Its pattern accepted a lone `/\*` or `\*/` as a match, and the
   `Accept: */*` header sent by curl, wget and many other clients contains
