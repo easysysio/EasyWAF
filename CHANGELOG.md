@@ -8,6 +8,8 @@ Version bumps and tags are created only after explicit approval.
 
 ## [Unreleased]
 
+## [0.3.1] — 2026-09-03
+
 ### Fixed
 - **A multi-encoding-form fix from earlier this release introduced a second,
   broader false positive.** Zones with more than one candidate form (raw plus
