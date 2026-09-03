@@ -9,9 +9,12 @@
 // .mmdb — a fresher DB-IP file, or MaxMind GeoLite2 — and
 // falls back to the bundled one if that file cannot be read.
 //
-// The reader is built once at startup and shared: it is read
-// on every proxied request, so it must not touch the disk
-// per lookup.
+// The reader is built at startup and shared: it is read on
+// every proxied request, so it must not touch the disk per
+// lookup. It is held behind a lock rather than written once,
+// so `init` can be called again to swap in a newer database
+// without restarting the process — the hook a future
+// "update the country database" feature needs.
 //
 // Attribution: the bundled database is "IP Geolocation by
 // DB-IP" (https://db-ip.com), licensed CC BY 4.0.
@@ -19,7 +22,7 @@
 
 use maxminddb::{geoip2, Reader};
 use std::net::IpAddr;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock, RwLock};
 
 /// The bundled DB-IP Lite country database (CC BY 4.0).
 static EMBEDDED_DB: &[u8] = include_bytes!("../assets/geo/dbip-country-lite.mmdb");
@@ -27,11 +30,28 @@ static EMBEDDED_DB: &[u8] = include_bytes!("../assets/geo/dbip-country-lite.mmdb
 /// The loaded reader, or None when no database could be opened at all — in
 /// which case every lookup returns "no country" and country rules stop
 /// matching rather than blocking traffic on bad data.
-static READER: OnceLock<Option<Reader<Vec<u8>>>> = OnceLock::new();
+///
+/// Behind an RwLock so a newer database can replace it in place: lookups take
+/// the read lock, a swap takes the write lock. The Arc lets a lookup clone the
+/// handle and release the lock immediately, so a swap is never queued behind
+/// in-flight requests.
+static READER: OnceLock<ReaderCell> = OnceLock::new();
+
+/// The shared, replaceable reader slot.
+type ReaderCell = RwLock<Option<Arc<Reader<Vec<u8>>>>>;
+
+/// The reader cell, created empty on first use.
+fn cell() -> &'static ReaderCell {
+    READER.get_or_init(|| RwLock::new(None))
+}
 
 // ─── init ────────────────────────────────────────────────
 
-/// Load the database once at startup.
+/// Load the database, replacing whatever is loaded now.
+///
+/// Called once at startup, and safe to call again to swap in a database
+/// downloaded later — in-flight lookups finish against the old reader and
+/// subsequent ones use the new one.
 ///
 /// `geoip_db` empty means "use the bundled database". A configured path that
 /// cannot be read is a warning rather than a failure: a typo in config.toml
@@ -62,7 +82,10 @@ pub fn init(geoip_db: &str) {
     if reader.is_some() && path.is_empty() {
         tracing::info!("GeoIP: using the bundled DB-IP Lite country database");
     }
-    let _ = READER.set(reader);
+
+    if let Ok(mut slot) = cell().write() {
+        *slot = reader.map(Arc::new);
+    }
 }
 
 /// Open the compiled-in database.
@@ -90,7 +113,12 @@ pub fn country_of(addr: IpAddr) -> Option<String> {
         return None;
     }
 
-    let reader = READER.get()?.as_ref()?;
+    // Clone the handle and drop the lock before decoding, so a database swap
+    // never waits on lookups.
+    let reader = {
+        let slot = cell().read().ok()?;
+        slot.as_ref()?.clone()
+    };
 
     // maxminddb returns a handle first and decodes on demand; an address
     // outside the database decodes to None.
@@ -133,10 +161,18 @@ mod tests {
 
     /// The bundled database must actually resolve well-known public addresses —
     /// this is what catches the file going missing or being replaced by a stub.
+    /// Calling init twice also proves the reader can be replaced in place,
+    /// which is what lets a downloaded database be swapped in without a
+    /// restart.
     #[test]
     fn bundled_database_resolves_public_addresses() {
         init("");
         assert_eq!(country_of("8.8.8.8".parse().unwrap()).as_deref(), Some("US"));
         assert_eq!(country_of("1.1.1.1".parse().unwrap()).as_deref(), Some("AU"));
+
+        // A second load must take effect rather than being ignored the way a
+        // write-once cell would ignore it.
+        init("");
+        assert_eq!(country_of("8.8.8.8".parse().unwrap()).as_deref(), Some("US"));
     }
 }

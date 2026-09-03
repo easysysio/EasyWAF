@@ -669,8 +669,9 @@ pub async fn post_import_rules(
 
             sqlx::query!(
                 "INSERT INTO waf_rules
-                 (policy_id, name, description, zone, pattern, score, action, external_id)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                 (policy_id, name, description, zone, pattern, score, action, external_id,
+                  imported_pattern, imported_score, imported_action)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 policy_id,
                 rule.name,
                 description,
@@ -679,6 +680,11 @@ pub async fn post_import_rules(
                 rule.score,
                 rule.action,
                 rule.id,
+                // What the rule looked like on import, so a later update can
+                // tell an untouched rule from one an administrator changed.
+                rule.pattern,
+                rule.score,
+                rule.action,
             )
             .execute(&state.db)
             .await?;
@@ -899,8 +905,9 @@ pub async fn add_rules_by_external_ids(
         let desc = def.description.as_deref().unwrap_or("");
         sqlx::query!(
             "INSERT INTO waf_rules
-             (policy_id, name, description, zone, pattern, score, action, external_id)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+             (policy_id, name, description, zone, pattern, score, action, external_id,
+              imported_pattern, imported_score, imported_action)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             policy_id,
             def.name,
             desc,
@@ -909,6 +916,10 @@ pub async fn add_rules_by_external_ids(
             def.score,
             def.action,
             def.id,
+            // What the rule looked like on import — see migration 008.
+            def.pattern,
+            def.score,
+            def.action,
         )
         .execute(&state.db)
         .await?;
@@ -1022,8 +1033,9 @@ pub async fn post_rules_catalog(
             let desc = def.description.as_deref().unwrap_or("");
             sqlx::query!(
                 "INSERT INTO waf_rules
-                 (policy_id, name, description, zone, pattern, score, action, external_id)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                 (policy_id, name, description, zone, pattern, score, action, external_id,
+                  imported_pattern, imported_score, imported_action)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 policy_id,
                 def.name,
                 desc,
@@ -1032,6 +1044,10 @@ pub async fn post_rules_catalog(
                 def.score,
                 def.action,
                 def.id,
+                // What the rule looked like on import — see migration 008.
+                def.pattern,
+                def.score,
+                def.action,
             )
             .execute(&state.db)
             .await?;

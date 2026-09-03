@@ -11,6 +11,18 @@ Version bumps and tags are created only after explicit approval.
 ## [0.3.0] — 2026-09-03
 
 ### Added
+- **Groundwork for updating rules and the country database** (the feature
+  itself comes later). Two pieces that are far cheaper to put in now:
+  - The country database is held behind a lock rather than written once, so
+    `geo::init` can be called again to swap in a newer file without restarting.
+  - Rules imported from the bundled files now record what they looked like on
+    import (`imported_pattern`, `imported_score`, `imported_action`, migration
+    008). A rule update has to tell an untouched rule from one an administrator
+    deliberately changed, and that comparison needs the imported values — which
+    cannot be recovered afterwards, because the row itself is what changed.
+    Recording them from 0.3.0 means every rule imported from now on can be
+    reconciled safely. Hand-written rules keep NULL: they are owned by their
+    author and are never candidates for automatic updates.
 - **Country rules on the policy.** A policy can now block a list of countries,
   or allow only that list and deny everything else. The rules follow the
   policy's Rule Engine setting, so `DetectionOnly` records what an allow list

@@ -54,6 +54,7 @@ pub async fn init(database_url: &str) -> SqlitePool {
     run_migration_005(&pool).await;
     run_migration_006(&pool).await;
     run_migration_007(&pool).await;
+    run_migration_008(&pool).await;
 
     info!("Database ready: {}", database_url);
     pool
@@ -166,5 +167,26 @@ async fn run_migration_007(pool: &SqlitePool) {
             .await
             .unwrap_or_else(|e| panic!("Migration 007 failed: {}", e));
         info!("Migration 007 applied: added country rules to policies");
+    }
+}
+
+// ─── run_migration_008 ───────────────────────────────────
+
+/// Add the import-provenance columns to waf_rules if not already present.
+async fn run_migration_008(pool: &SqlitePool) {
+    let exists: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM pragma_table_info('waf_rules') WHERE name = 'imported_pattern'",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0);
+
+    if exists == 0 {
+        let sql_008 = include_str!("../migrations/008_rule_provenance.sql");
+        sqlx::raw_sql(sql_008)
+            .execute(pool)
+            .await
+            .unwrap_or_else(|e| panic!("Migration 008 failed: {}", e));
+        info!("Migration 008 applied: added import provenance to waf_rules");
     }
 }
