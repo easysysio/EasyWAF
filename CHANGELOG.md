@@ -8,6 +8,19 @@ Version bumps and tags are created only after explicit approval.
 
 ## [Unreleased]
 
+### Fixed
+- **`SQLi: SQL comment stripping` (942007) false-positived on almost all
+  traffic.** Its pattern accepted a lone `/\*` or `\*/` as a match, and the
+  `Accept: */*` header sent by curl, wget and many other clients contains
+  exactly that — so the rule scored 3 points against essentially every request
+  regardless of what a client actually sent, silently pushing otherwise benign
+  traffic toward the block threshold. The pattern now requires the markers as a
+  pair (`/\*.*?\*/`), which still catches real SQL comments — including the
+  empty-comment whitespace bypass `UNION/**/SELECT` — without matching a MIME
+  wildcard. Confirmed against a live instance: a plain `curl` request and a
+  realistic Chrome `Accept` header both pass clean; `UNION/**/SELECT` still
+  blocks.
+
 ### Changed
 - **Rule ids now match their OWASP CRS category.** Scanner detection moved from
   `990xxx` to `913xxx`, CRS's actual category for it, and the file was renamed

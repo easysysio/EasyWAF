@@ -61,7 +61,13 @@ id          = 942007
 name        = "SQLi: SQL comment stripping"
 description = "SQL comment used to truncate the rest of a query"
 zone        = "ANY"
-pattern     = '(?i)(--|#|/\*|\*/|;--)'
+# /\*|\*/ as standalone alternatives matched a lone "*/" or "/*" — and every
+# HTTP client's default "Accept: */*" header contains exactly that, scoring
+# every single request regardless of what an attacker sent. Requiring the
+# markers as a pair still catches real SQL comments, including the empty-
+# comment whitespace bypass (UNION/**/SELECT), without matching a MIME
+# wildcard.
+pattern     = '(?i)(--|#|/\*.*?\*/|;--)'
 score       = 3
 action      = "score"
 
