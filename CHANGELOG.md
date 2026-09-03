@@ -8,6 +8,8 @@ Version bumps and tags are created only after explicit approval.
 
 ## [Unreleased]
 
+## [0.2.4] — 2026-09-03
+
 ### Added
 - **Favicon.** The GUI had none, so browsers showed a blank tab icon. Adds a
   mark in the EasySYS family style — the same rounded hexagon badge and indigo
