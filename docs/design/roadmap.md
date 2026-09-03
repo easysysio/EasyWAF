@@ -13,6 +13,7 @@ next minor, so a release's notes stay about its feature.
 | 0.8.0 | Flow logs over syslog, audit log on disk |
 | 0.9.0 | IP allow/block lists, addable with one click from Traffic Monitor (see [ip-lists.md](ip-lists.md)) |
 | 0.10.0 | Per-site rate limiting (see [rate-limiting.md](rate-limiting.md)) |
+| 0.11.0 | Learning and hardening modes — URL allowlisting (see [url-learning.md](url-learning.md)) |
 
 ## Why this order
 
@@ -57,8 +58,18 @@ provenance — and that lineage is fresher than the logging work, which has a
 cross-repository dependency (see [logging.md](logging.md)) that can proceed in
 parallel meanwhile.
 
-**IP lists and rate limiting sit last, adjacent to each other, and each still
-self-contained.** Both are identity/volume signals rather than payload
+**Learning and hardening come last** because they are the one feature that
+inverts the model everything else follows — describing what the application
+legitimately exposes rather than what an attack looks like — and because they
+lean on almost everything before them: the traffic history that seeds a
+learned set, the verdict pipeline that decides which requests are safe to
+learn from, and the detect-before-enforce pattern that by then has been built
+three times over. It is also the feature most able to cause an outage, which
+is a reason to build it when the surrounding machinery is settled rather than
+while it is still moving.
+
+**IP lists and rate limiting sit before it, adjacent to each other, and each
+still self-contained.** Both are identity/volume signals rather than payload
 inspection, both share a pipeline position — checked early, before GeoIP and
 WAF, and both must respect the allowlist override from 0.9.0 — and both are
 easy slots to pull forward if an urgent need shows up, since neither assumes
