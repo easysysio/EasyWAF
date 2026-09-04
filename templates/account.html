@@ -19,9 +19,10 @@
 {% if using_default %}
 <div class="alert alert-warning">
     <i class="fa fa-exclamation-triangle"></i>
-    <strong>This account is still using the default password.</strong>
-    It ships with every copy of EasyWAF, so anyone who can reach this port already
-    knows it. Change it below.
+    <strong>This account is still using the password EasyWAF seeded before 0.4.2.</strong>
+    Versions up to 0.4.1 created it with a password published in the documentation,
+    and upgrading deliberately left existing accounts alone — so anyone who can reach
+    this port already knows it. Change it below.
 </div>
 {% endif %}
 

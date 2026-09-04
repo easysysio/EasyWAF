@@ -29,6 +29,14 @@ Two things worth doing:
 Existing sessions survive the upgrade: the signing key is generated only when
 none is stored, and an installation that had one keeps it.
 
+### Fixed
+- The account page's default-password banner claimed the password "ships with
+  every copy of EasyWAF". That stopped being true in this release. It only ever
+  appears on an installation upgraded from 0.4.0 or 0.4.1 — nothing seeds that
+  password now, and the GUI will not accept one that short — so it says that
+  instead. The banner is kept rather than removed: the installations that can
+  still see it are exactly the ones that need the warning.
+
 ### Changed
 - **The administrator account is created at first run instead of being seeded
   as `admin`/`admin`.** The first start serves a setup form asking for a

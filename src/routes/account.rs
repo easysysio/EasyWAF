@@ -164,7 +164,12 @@ async fn password_hash(db: &SqlitePool, username: &str) -> Option<String> {
         .flatten()
 }
 
-/// Whether an account still has the seeded `admin` password.
+/// Whether an account still has the password 0.4.0 and 0.4.1 seeded.
+///
+/// Only ever true on an installation upgraded from one of those: nothing seeds
+/// it any more, and the GUI will not accept a password that short, so it cannot
+/// be reached by choice. That is why the warning it drives talks about an
+/// upgrade rather than about a default EasyWAF ships.
 ///
 /// One bcrypt verify, on a page that is not on any hot path. Checking the hash
 /// rather than a stored flag means it cannot drift out of step with reality —
