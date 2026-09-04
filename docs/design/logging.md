@@ -1,8 +1,11 @@
 # Design note — flow logs over syslog, audit log on disk
 
-Status: planned for **0.7.0** — see [roadmap.md](roadmap.md). It follows TLS
-(0.4.0), ACME (0.5.0) and the update work (0.6.0). The EasyLog parser question
-below is cross-repository and can be settled in parallel, well before then.
+Status: planned for **0.9.0** — see [roadmap.md](roadmap.md). It follows TLS
+(0.4.0), users and roles (0.5.0), ACME (0.6.0), the update work (0.7.0) and
+backup/export (0.8.0) — the audit log deliberately comes after roles, since a
+trail recording that "admin did X" says little when every operator is `admin`.
+The EasyLog parser question below is cross-repository and can be settled in
+parallel, well before then.
 
 ## What EasyWAF does today
 

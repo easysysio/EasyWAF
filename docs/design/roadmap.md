@@ -10,10 +10,11 @@ next minor, so a release's notes stay about its feature.
 | 0.5.0 | User management and roles |
 | 0.6.0 | ACME / Let's Encrypt |
 | 0.7.0 | Updating the rule sets and the country database (see [rule-repository.md](rule-repository.md)) |
-| 0.8.0 | Flow logs over syslog, audit log on disk |
-| 0.9.0 | IP allow/block lists, addable with one click from Traffic Monitor (see [ip-lists.md](ip-lists.md)) |
-| 0.10.0 | Per-site rate limiting (see [rate-limiting.md](rate-limiting.md)) |
-| 0.11.0 | Learning and hardening modes — URL allowlisting (see [url-learning.md](url-learning.md)) |
+| 0.8.0 | Backup, restore and configuration export (see [backup-restore.md](backup-restore.md)) |
+| 0.9.0 | Flow logs over syslog, audit log on disk |
+| 0.10.0 | IP allow/block lists, addable with one click from Traffic Monitor (see [ip-lists.md](ip-lists.md)) |
+| 0.11.0 | Per-site rate limiting (see [rate-limiting.md](rate-limiting.md)) |
+| 0.12.0 | Learning and hardening modes — URL allowlisting (see [url-learning.md](url-learning.md)) |
 
 ## Candidates, not yet scheduled
 
@@ -33,14 +34,6 @@ when a Traffic Monitor row is opened, turns the product's most common failure
 mode from an hour of shell work into a click — and leads naturally into
 disabling the rule, cloning it to tune (0.7.0), or allowlisting the client
 (0.9.0).
-
-**Backup, restore, and configuration export.** Sites, policies, rules,
-certificates, users and settings all live in one SQLite file with no export.
-Losing the host loses all of it, there is no way to clone a working
-configuration onto a staging instance, and none of it can be kept under
-version control. An export/import as TOML or JSON, plus a consistent database
-snapshot to download, also makes support easier: one exported file beats
-twenty screenshots.
 
 **Response inspection.** Everything today inspects requests; the other half of
 a WAF catches what leaks out — stack traces, SQL errors, directory listings,
@@ -103,6 +96,23 @@ provenance — and that lineage is fresher than the logging work, which has a
 cross-repository dependency (see [logging.md](logging.md)) that can proceed in
 parallel meanwhile.
 
+**Backup and export follow rule updates, because 0.7.0 decides what a rule
+is.** That release makes vendor rules immutable and turns an edit into a clone
+held as a custom rule. An export written before it would encode the present
+model — every rule equally editable — and need reworking immediately; written
+after, it can record the distinction that matters, so only an installation's
+own rules travel in full while vendor sets travel as a reference to a version.
+Putting it before IP lists, rate limiting and learning then means those three
+are designed with a format already in place rather than retrofitted into one,
+since each adds exportable state. It displaces flow logs by a release, which is
+the cheapest thing to displace for the reason given above.
+
+The counter-argument is recorded rather than dismissed: every release it waits
+is another release in which losing the host loses the configuration. If that
+becomes urgent, the **snapshot** half can be pulled forward on its own — it is
+schema-agnostic, so it neither depends on the rule model nor churns as the
+schema grows. Only the structured export has to wait.
+
 **Learning and hardening come last** because they are the one feature that
 inverts the model everything else follows — describing what the application
 legitimately exposes rather than what an attack looks like — and because they
@@ -116,7 +126,7 @@ while it is still moving.
 **IP lists and rate limiting sit before it, adjacent to each other, and each
 still self-contained.** Both are identity/volume signals rather than payload
 inspection, both share a pipeline position — checked early, before GeoIP and
-WAF, and both must respect the allowlist override from 0.9.0 — and both are
+WAF, and both must respect the allowlist override from 0.10.0 — and both are
 easy slots to pull forward if an urgent need shows up, since neither assumes
 anything from the releases ahead of it. They stay two releases rather than one
 because they differ enough in shape: an IP list is a set lookup, rate limiting
