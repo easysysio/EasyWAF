@@ -238,16 +238,22 @@ sites you define.
 Requires a stable Rust toolchain and `sqlite3`.
 
 `sqlx`'s `query!` macros validate SQL against a real schema **at compile time**, so a database
-must exist before you build. Apply the migrations first:
+must exist, and must be current, before you build. `.env` points `DATABASE_URL` at
+`./easywaf.db`; bring it up to date with:
 
 ```bash
-rm -f easywaf.db
-for f in migrations/*.sql; do sqlite3 easywaf.db < "$f"; done
-DATABASE_URL=sqlite://easywaf.db cargo build --release
+./scripts/dev-db.sh
 ```
 
-Without `DATABASE_URL` the build fails with `unable to open database file` from inside the
-macro expansion — that is a missing schema, not a broken source tree.
+That applies any migrations the database is missing, keeping whatever data is already in it.
+It is safe to run repeatedly, and creates the database if it does not exist yet.
+
+**This is the usual cause of a confusing build failure.** Migrations are applied by the
+*running* binary, so a development database that has not been run against a recent build
+falls behind, and `cargo build` then fails with a wall of `no such column: …` errors that
+look like faults in the code but are not — they are the compile-time query checks hitting an
+old schema. Run the script and build again. Without any database at all the failure is
+different: `unable to open database file` from inside the macro expansion.
 
 Run it from the repository root, since templates, static assets and rules are resolved
 relative to the working directory:

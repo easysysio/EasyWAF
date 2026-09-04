@@ -1,3 +1,6 @@
 /target
 *.db
+*.db-shm
+*.db-wal
+*.db.backup-*
 .env
