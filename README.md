@@ -141,8 +141,9 @@ Multi-arch (amd64 and arm64). The database lives in `/data`, so mount a volume t
 goes with the container. Publish whichever ports your sites listen on — 8443 is the GUI,
 8080 redirects to it.
 
-The image ships a config with the same placeholder secret as the packages, which is published
-for anyone to read, so replace it before production by mounting your own:
+The image no longer carries a published signing key — that was removed in 0.4.2, and the key
+is now generated into the database on first run. To change ports or point the database
+elsewhere, mount your own config or set the environment variable:
 
 ```bash
 docker run -d -v ./config.toml:/opt/easywaf/config.toml ... easysysio/easywaf:latest
@@ -152,22 +153,26 @@ docker run -d -v ./config.toml:/opt/easywaf/config.toml ... easysysio/easywaf:la
 
 ## First run
 
-Open `https://<host>:8443/` and sign in with **admin** / **admin**. Plain HTTP on 8080
-redirects there.
+Open `https://<host>:8443/`. On the first start EasyWAF has no account yet, so it asks
+you to create one — pick a username and password there. Plain HTTP on 8080 redirects to
+the TLS port, so the password is never typed over a cleartext connection.
+
+There is nothing to recover that password with: EasyWAF has no mailer and no second
+account to reset it from. Keep it somewhere safe.
 
 Your browser will warn about the certificate. On first run EasyWAF generates a self-signed
 one named `easywaf` and stores it under **Certificates** — it exists so the management
 interface is never served over plain HTTP, not because it is trustworthy. Replace it with
 your own certificate to make the warning go away.
 
-> **Change the password first.** The seeded `admin`/`admin` account ships with every copy,
-> so anyone who can reach the management port already knows it. **Account → Change Password**
-> (also under Settings). Until you do, EasyWAF says so on every start in the log and on the
-> account page itself.
+> **Upgrading from 0.4.0 or 0.4.1?** Those versions seeded an `admin`/`admin` account. It
+> is untouched by the upgrade, so if you never changed it, change it now under
+> **Account → Change Password**. EasyWAF says so on every start in the log and on the
+> account page until you do. New installations have no default account at all.
 
 Keeping the management ports off the public internet is still worth doing — bind them to a
-management network or firewall 8443 and 8080 — but it is now defence in depth rather than
-the only thing standing between a stranger and your appliance.
+management network or firewall 8443 and 8080 — but it is defence in depth rather than the
+only thing standing between a stranger and your appliance.
 
 ### Add a site
 
@@ -208,16 +213,20 @@ curl -i "http://your-site/?q=xp_cmdshell"
 package install — and holds only what is needed before the database is open:
 
 ```toml
-secret       = "change-this-to-a-random-secret-before-production"
-database_url = "sqlite://easywaf.db"
-
 [proxy]
 gui_port     = 8080      # plain HTTP; redirects to gui_tls_port
 gui_tls_port = 8443      # the GUI itself, over TLS
 ```
 
-`secret` signs GUI session cookies and CAPTCHA clearance cookies — change it before
-production. Restart to apply any edit.
+Nothing security-sensitive is configured here. The key that signs session and CAPTCHA
+clearance cookies is generated on first run and kept in the database, so no installation
+can be left using a default that was published in this repository, and the administrator
+account is created through the GUI at first start. Restart to apply any edit.
+
+The database defaults to `easywaf.db` in the working directory. Override it with the
+`DATABASE_URL` environment variable — an environment variable rather than a setting
+because the case that needs it is a container, where `config.toml` is baked into the image
+and the database has to sit on a mounted volume to survive at all.
 
 Everything else — sites, their ports, policies, rules and retention — lives in the database
 and is managed from the GUI, so adding a site never means editing a file.

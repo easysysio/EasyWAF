@@ -38,6 +38,13 @@ pub async fn get_login(
     if get_session(&jar).is_some() {
         return Ok(Redirect::to("/").into_response());
     }
+
+    // Nothing to sign in to yet. Every other handler already sends an
+    // unauthenticated caller here, so this one redirect covers the whole GUI
+    // without a middleware layer inspecting the database on every request.
+    if crate::routes::setup::needs_setup(&state.db).await {
+        return Ok(Redirect::to("/setup").into_response());
+    }
     render_login(&state, "", "", jar).await
 }
 

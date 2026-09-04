@@ -47,6 +47,11 @@ COPY docker/config.toml config.toml
 
 # Persist the database. Mount a named volume or host directory here, or the
 # data is lost with the container.
+#
+# The path is an environment variable rather than a config setting: config.toml
+# is baked into the image, so a container that needs its database somewhere else
+# would otherwise have to replace a file to say so.
+ENV DATABASE_URL=sqlite:///data/easywaf.db
 VOLUME ["/data"]
 
 # 8443 is the management GUI over TLS; 8080 redirects to it. Proxy listeners

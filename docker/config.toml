@@ -1,18 +1,18 @@
 # EasyWAF Configuration — container image
 #
-# Differs from the packaged config.toml in one way: the database lives in
-# /data, which the image declares as a volume, so it survives the container
-# rather than being written into the working directory and lost.
+# Nothing security-sensitive is set here any more, which is the point. Before
+# 0.4.2 this file carried a `secret` that signed session and CAPTCHA-clearance
+# cookies and was published inside the image for everyone to read. The signing
+# key is now generated on first run and stored in the database, and the
+# administrator account is created through the GUI at first start.
 #
-# Override this file to change anything here:
+# The database lives in /data, declared as a volume by the image so it survives
+# the container. That comes from the DATABASE_URL environment variable set in
+# the Dockerfile — override it with `-e DATABASE_URL=...` if you mount the
+# volume somewhere else.
+#
+# Override this file to change anything below:
 #   docker run -v ./config.toml:/opt/easywaf/config.toml ...
-#
-# The secret below MUST be replaced before production — it signs the GUI's
-# session cookies and the CAPTCHA clearance cookies, and it is published in
-# this image for everyone to read.
-
-secret       = "change-this-to-a-random-secret-before-production"
-database_url = "sqlite:///data/easywaf.db"
 
 [proxy]
 http_port    = 8081      # placeholder, not read

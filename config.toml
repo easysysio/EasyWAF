@@ -1,7 +1,9 @@
 # EasyWAF Configuration
 
-secret       = "change-this-to-a-random-secret-before-production"
-database_url = "sqlite://easywaf.db"
+# The cookie signing key is generated on first run and stored in the database,
+# and the administrator account is created through the GUI at first start —
+# neither is configured here. The database path defaults to ./easywaf.db and can
+# be overridden with the DATABASE_URL environment variable.
 
 [proxy]
 http_port  = 8081        # HTTP reverse proxy port (use 80 in production)

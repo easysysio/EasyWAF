@@ -6,10 +6,67 @@
 // =========================================================
 
 use axum_extra::extract::cookie::{Cookie, Key, SameSite, SignedCookieJar};
+use rand::RngCore;
 use serde::{Deserialize, Serialize};
+use sqlx::SqlitePool;
 use time::Duration;
 
 pub const SESSION_COOKIE: &str = "easywaf_session";
+
+/// Settings key holding the generated cookie signing key.
+const KEY_COOKIE_SECRET: &str = "cookie_secret";
+
+// ─── ensure_secret ───────────────────────────────────────
+
+/// Return the cookie signing secret, generating it on first run.
+///
+/// This replaced a `secret` setting in config.toml that shipped with a literal
+/// default value. Any installation that did not edit it signed session and
+/// CAPTCHA-clearance cookies with a key published in the repository, and
+/// nothing about a working system revealed that. A generated key has no such
+/// failure mode: there is no value to leave unchanged.
+///
+/// Stored rather than regenerated per start, for the same reason the
+/// management certificate is: a new key each boot would invalidate every
+/// session on every restart.
+pub async fn ensure_secret(db: &SqlitePool) -> String {
+    if let Some(existing) = sqlx::query_scalar!(
+        "SELECT value FROM settings WHERE key = ?", KEY_COOKIE_SECRET
+    )
+    .fetch_optional(db)
+    .await
+    .ok()
+    .flatten()
+    {
+        if existing.len() >= 64 {
+            return existing;
+        }
+        // Too short to be one of ours. Fall through and replace it rather than
+        // padding it out, which would keep a weak key alive.
+        tracing::warn!("Stored cookie secret is too short; generating a new one");
+    }
+
+    // 64 bytes from the OS CSPRNG, hex-encoded to 128 characters so it is
+    // comfortably longer than the 64 bytes make_key needs and safe to store as
+    // text.
+    let mut bytes = [0u8; 64];
+    rand::rngs::OsRng.fill_bytes(&mut bytes);
+    let secret: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+
+    let _ = sqlx::query!(
+        "INSERT INTO settings (key, value, updated_at)
+         VALUES (?, ?, datetime('now'))
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value,
+                                        updated_at = excluded.updated_at",
+        KEY_COOKIE_SECRET,
+        secret
+    )
+    .execute(db)
+    .await;
+
+    tracing::info!("Generated a cookie signing key and stored it in the database");
+    secret
+}
 
 // ─── SessionData ─────────────────────────────────────────
 

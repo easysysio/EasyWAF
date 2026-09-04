@@ -33,13 +33,13 @@ use super::settings::FlashQuery;
 /// Eight is not much, but it is enforced against a *new* password only, so it
 /// cannot lock anyone out of an existing account — and it is comfortably more
 /// than the five characters of `admin` this screen exists to replace.
-const MIN_PASSWORD_LEN: usize = 8;
+pub const MIN_PASSWORD_LEN: usize = 8;
 
 /// bcrypt hashes at most 72 bytes and silently ignores the rest, so a longer
 /// passphrase would be quietly truncated and the discarded tail would count
 /// for nothing. Rejecting it is honest; accepting it would hand someone a
 /// false sense of how strong their password is.
-const MAX_PASSWORD_BYTES: usize = 72;
+pub const MAX_PASSWORD_BYTES: usize = 72;
 
 // ─── Form ────────────────────────────────────────────────
 

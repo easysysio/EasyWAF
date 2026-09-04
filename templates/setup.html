@@ -1,0 +1,63 @@
+{% extends "layout_login.html" %}
+
+{% block content %}
+<div class="container">
+    <div class="row">
+        <div class="col-md-5 col-md-offset-3">
+            <div class="login-panel panel panel-default">
+                <div class="panel-heading">
+                    <h3 class="panel-title text-center">Welcome to EasyWAF</h3>
+                </div>
+                <div class="panel-body">
+
+                    {% if result == "failed" %}
+                    <div class="alert alert-danger alert-dismissible">
+                        <button type="button" class="close" data-dismiss="alert">&times;</button>
+                        <strong>Error:</strong> {{ msg }}
+                    </div>
+                    {% endif %}
+
+                    <p>
+                        This is the first start, so there is no account yet. Create the
+                        administrator below — it can manage sites, policies, rules and
+                        certificates.
+                    </p>
+
+                    <form role="form" method="post" action="/setup" autocomplete="off">
+
+                        <div class="form-group">
+                            <label>Username</label>
+                            <input type="text" class="form-control" name="username"
+                                   value="admin" autocomplete="username" autofocus required>
+                        </div>
+
+                        <div class="form-group">
+                            <label>Password <small class="text-muted">(at least {{ min_length }} characters)</small></label>
+                            <input type="password" class="form-control" name="password"
+                                   autocomplete="new-password" required>
+                        </div>
+
+                        <div class="form-group">
+                            <label>Confirm Password</label>
+                            <input type="password" class="form-control" name="confirm_password"
+                                   autocomplete="new-password" required>
+                        </div>
+
+                        <button type="submit" class="btn btn-success btn-block">
+                            Create Account
+                        </button>
+
+                    </form>
+
+                    <p class="help-block" style="margin-top: 15px;">
+                        There is nothing to recover this password with — EasyWAF has no
+                        mailer and no second account to reset it from. Put it somewhere
+                        safe before continuing.
+                    </p>
+
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

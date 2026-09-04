@@ -6,6 +6,56 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
+## [0.4.2] — 2026-09-04
+
+Closes the last two credentials that shipped with known values.
+
+### Upgrading from 0.4.x
+
+**Nothing breaks and nothing needs editing.** An existing `config.toml` still
+parses; `secret` and `database_url` are read, ignored, and named in a warning at
+startup so the lines can be deleted at leisure.
+
+Two things worth doing:
+
+* If you never changed the seeded `admin`/`admin` account, change it now under
+  **Account → Change Password**. The upgrade does not touch existing accounts,
+  so an installation carrying that password keeps carrying it.
+* **Containers must set `DATABASE_URL`.** The published image does this itself
+  (`sqlite:///data/easywaf.db`). A container running a *custom* `config.toml`
+  that relied on `database_url` to place the database on a mounted volume will
+  otherwise write it inside the container and lose it on the next `docker run`.
+
+Existing sessions survive the upgrade: the signing key is generated only when
+none is stored, and an installation that had one keeps it.
+
+### Changed
+- **The administrator account is created at first run instead of being seeded
+  as `admin`/`admin`.** The first start serves a setup form asking for a
+  username and password, and serves nothing else until one exists. A default
+  credential is only as good as the operator's memory to change it, and the
+  ones never changed are the ones nobody was told about — asking at first run
+  means an installation cannot be in that state at all. The form closes the
+  moment an account exists, checked again inside the insert so two simultaneous
+  requests cannot both create one.
+
+  It is safe to ask for a password there because 0.4.0 put the GUI behind TLS:
+  on the plain-HTTP port there is only a redirect, so the password is never
+  typed over a cleartext connection.
+- **`secret` is gone from `config.toml`**; the cookie signing key is generated
+  on first run and stored in the database, the same way the management
+  certificate already was. It shipped as a literal value in a public
+  repository, so every installation that did not edit it signed session and
+  CAPTCHA-clearance cookies with a key anyone could read — and nothing about a
+  working system revealed that. A generated key has no such failure mode:
+  there is no value to leave unchanged. The container image was the worst case,
+  since its config was baked in and identical for every user.
+- **`database_url` is gone from `config.toml`**, replaced by the `DATABASE_URL`
+  environment variable, defaulting to `easywaf.db` in the working directory. An
+  environment variable because the case that needs to override it is a
+  container, where the config file is inside the image and the database has to
+  live on a mounted volume to survive at all.
+
 ## [0.4.1] — 2026-09-04
 
 A dependency-hygiene release. No behaviour changes and nothing to do on

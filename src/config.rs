@@ -6,13 +6,35 @@
 use serde::Deserialize;
 use std::fs;
 
+/// Where the database lives when `DATABASE_URL` is not set.
+///
+/// Relative to the working directory, which is where EasyWAF already resolves
+/// templates, static assets and rules — the packaged service sets it to
+/// /opt/easywaf.
+const DEFAULT_DATABASE_URL: &str = "sqlite://easywaf.db";
+
 // ─── Config ──────────────────────────────────────────────
 
 #[derive(Deserialize, Clone, Debug)]
 pub struct Config {
-    pub secret:       String,
-    pub database_url: String,
-    pub proxy:        ProxyConfig,
+    pub proxy: ProxyConfig,
+
+    /// Accepted but ignored; kept only so a config.toml written before 0.4.2
+    /// still parses.
+    ///
+    /// The signing key is generated on first run and stored in the database
+    /// now. It was a plain setting shipped with a literal default value, which
+    /// meant every installation that did not edit it signed session and
+    /// CAPTCHA-clearance cookies with a key printed in the public repository.
+    /// A generated key cannot be left at a known value by inaction.
+    #[serde(default)]
+    pub secret: Option<String>,
+
+    /// Accepted but ignored; superseded by the `DATABASE_URL` environment
+    /// variable, which containers can set without editing a file inside the
+    /// image. See `database_url()`.
+    #[serde(default)]
+    pub database_url: Option<String>,
 }
 
 // ─── ProxyConfig ─────────────────────────────────────────
@@ -43,9 +65,41 @@ fn default_gui_tls_port() -> u16 {
 
 // ─── load ────────────────────────────────────────────────
 
+/// Where to open the database.
+///
+/// `DATABASE_URL` if set, otherwise the default path. An environment variable
+/// rather than a config key because the case that needs to override it is a
+/// container, where the config file is baked into the image and the database
+/// has to live on a mounted volume to survive the container at all.
+pub fn database_url() -> String {
+    std::env::var("DATABASE_URL")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .unwrap_or_else(|| DEFAULT_DATABASE_URL.to_string())
+}
+
 pub fn load(path: &str) -> Config {
     let text = fs::read_to_string(path)
         .unwrap_or_else(|e| panic!("Cannot read config file '{}': {}", path, e));
-    toml::from_str(&text)
-        .unwrap_or_else(|e| panic!("Cannot parse config file '{}': {}", path, e))
+    let cfg: Config = toml::from_str(&text)
+        .unwrap_or_else(|e| panic!("Cannot parse config file '{}': {}", path, e));
+
+    // Said once, at startup, rather than silently ignored: an operator who
+    // edits a setting and sees no effect has every reason to assume it worked.
+    if cfg.secret.is_some() {
+        tracing::warn!(
+            "config.toml still sets 'secret'. It is ignored as of 0.4.2 — the \
+             cookie signing key is generated on first run and stored in the \
+             database. The line can be deleted."
+        );
+    }
+    if cfg.database_url.is_some() {
+        tracing::warn!(
+            "config.toml still sets 'database_url'. It is ignored as of 0.4.2 — \
+             set the DATABASE_URL environment variable instead. Using {}.",
+            database_url()
+        );
+    }
+
+    cfg
 }

@@ -43,11 +43,12 @@ use axum::http::{header::CACHE_CONTROL, HeaderValue};
 use tracing::info;
 use tracing_subscriber::{fmt, EnvFilter};
 
-/// The account seeded on first run, and its password.
+/// The account name and password that 0.4.0 and 0.4.1 seeded on first run.
 ///
-/// Named constants rather than literals because three places have to agree on
-/// them: the seeding, the "still default" check behind the startup warning,
-/// and the banner on the account page.
+/// Nothing creates this account any more: first run asks for a username and
+/// password instead. They remain only so an installation upgraded from those
+/// versions can still be told it is carrying a credential everybody knows —
+/// the startup warning and the banner on the account page both check for it.
 pub const DEFAULT_USERNAME: &str = "admin";
 pub const DEFAULT_PASSWORD: &str = "admin";
 
@@ -90,12 +91,16 @@ async fn main() {
         .expect("install rustls crypto provider");
 
     let cfg = config::load("config.toml");
-    let db  = db::init(&cfg.database_url).await;
+    let db  = db::init(&config::database_url()).await;
 
     // Country lookups are done per request, so the database is opened once here.
     geo::init(cfg.proxy.geoip_db.as_deref().unwrap_or(""));
 
-    seed_admin(&db).await;
+    // Generated and stored on first run, so no installation is left signing
+    // cookies with a key published in the repository.
+    let secret = auth::ensure_secret(&db).await;
+
+    warn_if_default_password(&db).await;
 
     // ── Build module pipeline ─────────────────────────────
     // Modules run in order for every proxied request.
@@ -133,7 +138,7 @@ async fn main() {
         db:         db.clone(),
         pipeline:   pipeline.clone(),
         client,
-        secret:     cfg.secret.clone(),
+        secret:     secret.clone(),
         challenges: challenge::ChallengeStore::new(),
         is_tls:     false,
     };
@@ -150,7 +155,7 @@ async fn main() {
         .unwrap_or_else(|e| panic!("Template loading failed: {}", e));
     // Exposes {{ version() }} to every template — see app_version().
     tera.register_function("version", app_version);
-    let key = make_key(&cfg.secret);
+    let key = make_key(&secret);
 
     let gui_state = AppState {
         db:      db.clone(),
@@ -162,6 +167,7 @@ async fn main() {
 
     let app = Router::new()
         .route("/",                      get(routes::dashboard::get_dashboard))
+        .route("/setup",                 get(routes::setup::get_setup).post(routes::setup::post_setup))
         .route("/login",                 get(routes::login::get_login).post(routes::login::post_login))
         .route("/logout",                get(routes::login::get_logout))
         .route("/sites",                 get(routes::sites::get_sites))
@@ -367,43 +373,22 @@ fn app_version(_args: &HashMap<String, tera::Value>) -> tera::Result<tera::Value
     Ok(tera::Value::String(env!("CARGO_PKG_VERSION").to_string()))
 }
 
-// ─── seed_admin ──────────────────────────────────────────
+// ─── warn_if_default_password ────────────────────────────
 
-/// Insert a default admin account if no users exist yet, and warn on every
-/// start for as long as that password is still in place.
+/// Warn on every start while an account still has the password 0.4.x seeded.
 ///
-/// The warning is repeated rather than logged only at creation. A default
-/// credential on a security appliance is not a first-run detail — it stays
-/// dangerous until it is changed, and the one start where it was mentioned is
-/// long out of the journal by the time anyone looks.
-async fn seed_admin(db: &SqlitePool) {
-    let count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM users")
-        .fetch_one(db)
-        .await
-        .unwrap_or(0);
-
-    if count == 0 {
-        let hash = bcrypt::hash(DEFAULT_PASSWORD, bcrypt::DEFAULT_COST).expect("bcrypt hash");
-        sqlx::query!(
-            "INSERT INTO users (username, password_hash) VALUES (?, ?)",
-            DEFAULT_USERNAME,
-            hash
-        )
-        .execute(db)
-        .await
-        .expect("seed admin user");
-
-        tracing::warn!(
-            "No users found — created the default account {}/{}.",
-            DEFAULT_USERNAME,
-            DEFAULT_PASSWORD
-        );
-    }
-
+/// Nothing seeds `admin`/`admin` any more — a new installation sets its own
+/// password at first run — but an installation upgraded from 0.4.0 or 0.4.1 may
+/// still be carrying it, and the account that has it is the one that can change
+/// everything. Repeated each start rather than logged once at creation: a
+/// default credential stays dangerous until it is changed, and the single start
+/// that mentioned it is long out of the journal by the time anyone looks.
+async fn warn_if_default_password(db: &SqlitePool) {
     if routes::account::is_default_password(db, DEFAULT_USERNAME).await {
         tracing::warn!(
-            "The '{}' account is still using the default password. Change it under \
-             Account in the GUI — anyone who can reach the management port knows it.",
+            "The '{}' account is still using the password seeded by an earlier \
+             version. Change it under Account in the GUI — anyone who can reach \
+             the management port knows it.",
             DEFAULT_USERNAME
         );
     }

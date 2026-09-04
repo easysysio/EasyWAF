@@ -11,5 +11,6 @@ pub mod login;
 pub mod policy;
 pub mod rules;
 pub mod settings;
+pub mod setup;
 pub mod sites;
 pub mod traffic;
