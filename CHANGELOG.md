@@ -10,11 +10,12 @@ Version bumps and tags are created only after explicit approval.
 
 ### Added
 - `scripts/dev-db.sh` — applies any migrations a development database is
-  missing, keeping existing data. sqlx checks every query against a real schema
-  at compile time, but migrations are applied by the running binary, so a
-  database that has not been run against a recent build falls behind and
-  `cargo build` fails with `no such column` errors that read as faults in the
-  code rather than a stale schema.
+  missing, keeping existing data, and does nothing at all when the database is
+  already current. sqlx checks every query against a real schema at compile
+  time, but migrations are applied by the running binary, so a database that
+  has not been run against a recent build falls behind and `cargo build` fails
+  with `no such column` errors that read as faults in the code rather than a
+  stale schema.
 
 ### Fixed
 - A TLS listener logged "listening" *before* it actually bound the port —

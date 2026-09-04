@@ -245,8 +245,10 @@ must exist, and must be current, before you build. `.env` points `DATABASE_URL` 
 ./scripts/dev-db.sh
 ```
 
-That applies any migrations the database is missing, keeping whatever data is already in it.
-It is safe to run repeatedly, and creates the database if it does not exist yet.
+That applies any migrations the database is missing, keeping whatever data is already in it,
+and creates the database if it does not exist. On a database that is already current it does
+nothing at all — it checks the version first and exits — so it is cheap to run before any
+build, and it never drops anything.
 
 **This is the usual cause of a confusing build failure.** Migrations are applied by the
 *running* binary, so a development database that has not been run against a recent build

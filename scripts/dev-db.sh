@@ -17,9 +17,10 @@
 # are not. This script closes that gap without needing the
 # binary to run first.
 #
-# Existing data is kept: every migration is additive, so this
-# is safe to run against a database with sites and rules in
-# it. Migrations already applied are reported as skipped.
+# Existing data is kept and nothing is ever dropped: every
+# migration is additive. A database already brought up to
+# date is left completely untouched — the version is checked
+# first and the script exits without running anything.
 # =========================================================
 set -u
 
@@ -38,8 +39,32 @@ if ! command -v sqlite3 >/dev/null; then
     exit 1
 fi
 
+# The highest number in migrations/, e.g. 9 for 009_site_tls.sql. Derived
+# rather than counted, so a gap in the numbering cannot silently understate it.
+LATEST=$(ls migrations/*.sql 2>/dev/null | sed 's|.*/||; s|_.*||' | sed 's|^0*||' | sort -n | tail -1)
+
+if [ -z "$LATEST" ]; then
+    echo "No migrations found in migrations/." >&2
+    exit 1
+fi
+
 echo "Database: $DB"
-[ -f "$DB" ] || echo "  (creating — it does not exist yet)"
+
+if [ -f "$DB" ]; then
+    # PRAGMA user_version is SQLite's own per-database integer, unused by
+    # EasyWAF itself — the binary decides what to apply by inspecting the
+    # schema directly. Stamping it here lets this script skip the whole pass
+    # on a database it has already brought up to date, which is the common
+    # case: nothing to do, so nothing is touched.
+    CURRENT=$(sqlite3 "$DB" "PRAGMA user_version;" 2>/dev/null || echo 0)
+    if [ "${CURRENT:-0}" -ge "$LATEST" ]; then
+        echo "  already at migration $CURRENT — nothing to do"
+        exit 0
+    fi
+    echo "  at migration ${CURRENT:-0}, latest is $LATEST"
+else
+    echo "  (creating — it does not exist yet)"
+fi
 echo
 
 applied=0
@@ -54,7 +79,11 @@ for f in migrations/*.sql; do
     err=$(sqlite3 "$DB" < "$f" 2>&1 >/dev/null)
 
     if [ -z "$err" ]; then
-        printf '  \033[32mapplied\033[0m  %s\n' "$name"
+        # No error. For an ALTER this means the column was genuinely added;
+        # for a CREATE TABLE IF NOT EXISTS it may equally mean nothing
+        # happened. SQLite does not distinguish the two here, so this counts
+        # as "ran without complaint" rather than a claim about what changed.
+        printf '  \033[32mran\033[0m      %s\n' "$name"
         applied=$((applied + 1))
     elif echo "$err" | grep -qiE "duplicate column|already exists"; then
         # Re-running a migration that is already in place. Every migration is
@@ -69,7 +98,7 @@ for f in migrations/*.sql; do
 done
 
 echo
-echo "  $applied applied, $skipped already present, $failed failed"
+echo "  $applied ran, $skipped already present, $failed failed"
 
 if [ "$failed" -gt 0 ]; then
     echo
@@ -77,6 +106,11 @@ if [ "$failed" -gt 0 ]; then
     echo "add — fix those before running cargo build." >&2
     exit 1
 fi
+
+# Record how far this database has been brought, so a later run can skip the
+# pass entirely rather than replaying every migration to discover there is
+# nothing to do.
+sqlite3 "$DB" "PRAGMA user_version = $LATEST;" 2>/dev/null
 
 echo
 echo "cargo build should now succeed."
