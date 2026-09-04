@@ -18,8 +18,9 @@ blocked, with a per-site breakdown.*
 ## Status
 
 Working today: reverse proxying, the rule engine, country rules, the CAPTCHA challenge,
-traffic logging and retention, and the management GUI. Not yet implemented: **TLS
-termination** (the proxy serves plain HTTP) and **ACME**. See
+traffic logging and retention, and the management GUI — which is served over TLS with a
+self-signed certificate generated on first run. Not yet implemented: **TLS termination for
+proxied sites** (the proxy itself still serves plain HTTP) and **ACME**. See
 [Not implemented yet](#not-implemented-yet) before deploying.
 
 ---
@@ -39,7 +40,8 @@ termination** (the proxy serves plain HTTP) and **ACME**. See
                                   upstream app
 ```
 
-One process serves two things: the **management GUI** on `gui_port` (8080 by default), and one
+One process serves two things: the **management GUI** on `gui_tls_port` (8443 by default, over
+TLS, with `gui_port` 8080 redirecting to it), and one
 **proxy listener per distinct site port**. Saving a site on a new port binds it immediately —
 no restart. A request whose `Host:` matches no enabled site gets a 404.
 
@@ -127,13 +129,14 @@ root so a site can bind a privileged port such as 80.
 
 ```bash
 docker run -d --name easywaf \
-  -p 8080:8080 -p 80:80 \
+  -p 8443:8443 -p 8080:8080 -p 80:80 \
   -v easywaf-data:/data \
   easysysio/easywaf:latest
 ```
 
 Multi-arch (amd64 and arm64). The database lives in `/data`, so mount a volume there or it
-goes with the container. Publish whichever ports your sites listen on — 8080 is the GUI.
+goes with the container. Publish whichever ports your sites listen on — 8443 is the GUI,
+8080 redirects to it.
 
 The image ships a config with the same placeholder secret as the packages, which is published
 for anyone to read, so replace it before production by mounting your own:
@@ -146,10 +149,16 @@ docker run -d -v ./config.toml:/opt/easywaf/config.toml ... easysysio/easywaf:la
 
 ## First run
 
-Open `http://<host>:8080/` and sign in with **admin** / **admin**.
+Open `https://<host>:8443/` and sign in with **admin** / **admin**. Plain HTTP on 8080
+redirects there.
+
+Your browser will warn about the certificate. On first run EasyWAF generates a self-signed
+one named `easywaf` and stores it under **Certificates** — it exists so the management
+interface is never served over plain HTTP, not because it is trustworthy. Replace it with
+your own certificate to make the warning go away.
 
 > **Keep the management port private.** The first start seeds an `admin`/`admin` account and
-> there is no password-change screen yet. Firewall port 8080 or bind it to a management
+> there is no password-change screen yet. Firewall ports 8443 and 8080, or bind them to a management
 > network until that lands.
 
 ### Add a site
@@ -193,7 +202,8 @@ secret       = "change-this-to-a-random-secret-before-production"
 database_url = "sqlite://easywaf.db"
 
 [proxy]
-gui_port = 8080
+gui_port     = 8080      # plain HTTP; redirects to gui_tls_port
+gui_tls_port = 8443      # the GUI itself, over TLS
 ```
 
 `secret` signs GUI session cookies and CAPTCHA clearance cookies — change it before

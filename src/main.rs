@@ -9,6 +9,7 @@
 // =========================================================
 
 mod auth;
+mod cert;
 mod challenge;
 mod config;
 mod db;
@@ -21,9 +22,13 @@ mod routes;
 use auth::make_key;
 use axum::{
     extract::FromRef,
+    http::StatusCode,
+    response::{IntoResponse, Redirect, Response},
     routing::{get, post},
     Router,
 };
+use axum_server::tls_rustls::RustlsConfig;
+use std::net::SocketAddr;
 use axum_extra::extract::cookie::Key;
 use modules::{geoip::GeoIpModule, traffic::TrafficLogger, waf::WafModule, Pipeline};
 use sqlx::SqlitePool;
@@ -67,6 +72,13 @@ async fn main() {
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
         )
         .init();
+
+    // rustls needs a process-wide crypto provider chosen explicitly, since
+    // axum-server is built with tls-rustls-no-provider to keep aws-lc-rs (and
+    // its C build) out of the aarch64 cross-compile.
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("install rustls crypto provider");
 
     let cfg = config::load("config.toml");
     let db  = db::init(&cfg.database_url).await;
@@ -188,13 +200,108 @@ async fn main() {
         )
         .with_state(gui_state);
 
-    let gui_addr = format!("0.0.0.0:{}", cfg.proxy.gui_port);
-    info!("Management GUI listening on http://{}", gui_addr);
-    let listener = tokio::net::TcpListener::bind(&gui_addr)
+    // ── Management interface: TLS, with plain HTTP redirecting to it ──
+    // The certificate is generated on first run and reused afterwards, so the
+    // GUI is never served over plain HTTP — the only thing on gui_port is a
+    // redirect, which carries no session cookie because the cookie is Secure.
+    let (cert_pem, key_pem) = cert::ensure_default(&db)
         .await
-        .unwrap_or_else(|e| panic!("Cannot bind GUI to {}: {}", gui_addr, e));
+        .expect("management certificate");
+    let tls = RustlsConfig::from_pem(cert_pem.into_bytes(), key_pem.into_bytes())
+        .await
+        .expect("management TLS configuration");
 
-    axum::serve(listener, app).await.expect("GUI server error");
+    let redirect_addr: SocketAddr = format!("0.0.0.0:{}", cfg.proxy.gui_port)
+        .parse()
+        .expect("gui_port address");
+    let tls_addr: SocketAddr = format!("0.0.0.0:{}", cfg.proxy.gui_tls_port)
+        .parse()
+        .expect("gui_tls_port address");
+
+    spawn_https_redirect(redirect_addr, cfg.proxy.gui_tls_port);
+
+    info!("Management GUI listening on https://{}", tls_addr);
+    axum_server::bind_rustls(tls_addr, tls)
+        .serve(app.into_make_service())
+        .await
+        .expect("GUI server error");
+}
+
+// ─── spawn_https_redirect ────────────────────────────────
+
+/// Serve nothing but redirects on the plain-HTTP management port.
+///
+/// An operator who types the old address, or a bookmark from before TLS, still
+/// arrives somewhere useful instead of at a connection reset. Nothing else is
+/// served here: the GUI itself only exists over TLS.
+fn spawn_https_redirect(addr: SocketAddr, tls_port: u16) {
+    let app = Router::new().fallback(move |req: axum::extract::Request| async move {
+        redirect_to_https(req, tls_port)
+    });
+
+    tokio::spawn(async move {
+        match tokio::net::TcpListener::bind(addr).await {
+            Ok(listener) => {
+                info!("Management HTTP redirect listening on http://{}", addr);
+                if let Err(e) = axum::serve(listener, app).await {
+                    tracing::error!("Management redirect server error: {}", e);
+                }
+            }
+            // A failure here must not stop the GUI itself from serving: the
+            // redirect is a convenience, the TLS listener is the product.
+            Err(e) => tracing::error!(
+                %addr,
+                "Could not bind the management HTTP redirect port: {}", e
+            ),
+        }
+    });
+}
+
+/// Build the redirect to the same host on the TLS port.
+///
+/// 307 rather than a permanent redirect: `gui_tls_port` is configurable, and a
+/// permanently cached redirect would keep sending a browser to a port that no
+/// longer listens, with no way to clear it but the user's cache.
+fn redirect_to_https(req: axum::extract::Request, tls_port: u16) -> Response {
+    let host = req
+        .headers()
+        .get(axum::http::header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    let host = host_without_port(host);
+
+    let path_and_query = req
+        .uri()
+        .path_and_query()
+        .map(|p| p.as_str())
+        .unwrap_or("/");
+
+    if host.is_empty() {
+        return (StatusCode::BAD_REQUEST, "Missing Host header").into_response();
+    }
+
+    let location = if tls_port == 443 {
+        format!("https://{}{}", host, path_and_query)
+    } else {
+        format!("https://{}:{}{}", host, tls_port, path_and_query)
+    };
+
+    Redirect::temporary(&location).into_response()
+}
+
+/// Strip the port from a Host header value.
+///
+/// An IPv6 literal arrives bracketed — `[::1]:8080` — so splitting on the
+/// first colon would cut the address in half. The brackets are kept, since
+/// that is how the address has to appear in the redirect URL too.
+fn host_without_port(host: &str) -> &str {
+    if let Some(rest) = host.strip_prefix('[') {
+        return match rest.find(']') {
+            Some(end) => &host[..end + 2],
+            None => host,
+        };
+    }
+    host.split(':').next().unwrap_or("")
 }
 
 // ─── app_version ─────────────────────────────────────────

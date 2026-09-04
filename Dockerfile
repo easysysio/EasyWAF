@@ -49,8 +49,9 @@ COPY docker/config.toml config.toml
 # data is lost with the container.
 VOLUME ["/data"]
 
-# 8080 is the management GUI. Proxy listeners come from the ports configured on
-# each site, so publish whichever of those you use — commonly 80.
-EXPOSE 8080 80
+# 8443 is the management GUI over TLS; 8080 redirects to it. Proxy listeners
+# come from the ports configured on each site, so publish whichever of those
+# you use — commonly 80.
+EXPOSE 8443 8080 80
 
 CMD ["/usr/bin/easywaf"]

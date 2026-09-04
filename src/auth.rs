@@ -49,6 +49,10 @@ pub fn set_session(jar: SignedCookieJar, data: &SessionData) -> SignedCookieJar 
     let cookie = Cookie::build((SESSION_COOKIE, value))
         .path("/")
         .http_only(true)
+        // The GUI is served over TLS only; the plain-HTTP port does nothing
+        // but redirect. Secure keeps the browser from sending the session to
+        // that port in cleartext on its way there.
+        .secure(true)
         .same_site(SameSite::Lax)
         .max_age(Duration::hours(8))
         .build();

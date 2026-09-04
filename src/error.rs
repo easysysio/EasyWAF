@@ -22,8 +22,7 @@ pub enum AppError {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 
-    /// General internal error — not yet wired to any route, kept for future use.
-    #[allow(dead_code)]
+    /// General internal error.
     #[error("Internal error: {0}")]
     Internal(String),
 

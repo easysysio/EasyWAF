@@ -8,6 +8,27 @@ Version bumps and tags are created only after explicit approval.
 
 ## [Unreleased]
 
+### Added
+- **The management interface is served over TLS.** On first run EasyWAF
+  generates a self-signed certificate named `easywaf` and stores it under
+  Certificates, so the GUI is never served over plain HTTP — not even on a
+  fresh install, where there is otherwise nothing for an administrator to
+  prepare. It is a default, not a recommendation: browsers will warn, and
+  replacing it with a real certificate is the point of certificate management.
+  Later starts reuse the stored certificate rather than generating a new one,
+  since an operator who has accepted a fingerprint should not be asked to
+  accept another after a restart.
+- **`gui_tls_port`** (default 8443) serves the GUI; `gui_port` (8080) now does
+  nothing but redirect there, preserving path and query. The redirect is a 307
+  rather than a permanent one, because the TLS port is configurable and a
+  permanently cached redirect would keep sending browsers to a port that no
+  longer listens. The key is defaulted rather than required, so a `config.toml`
+  written before TLS existed keeps parsing across the upgrade.
+
+### Changed
+- The session cookie is now marked `Secure`, so a browser will not send it in
+  cleartext to the plain-HTTP redirect port on its way to the TLS one.
+
 ## [0.3.1] — 2026-09-03
 
 ### Fixed

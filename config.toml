@@ -5,6 +5,7 @@ database_url = "sqlite://easywaf.db"
 
 [proxy]
 http_port  = 8081        # HTTP reverse proxy port (use 80 in production)
-gui_port   = 8080        # Management GUI port
+gui_port   = 8080        # Management GUI: plain HTTP, redirects to gui_tls_port
+gui_tls_port = 8443      # Management GUI: served here, over TLS
 geoip_db   = ""          # Path to GeoLite2-Country.mmdb (leave empty to disable)
 acme_webroot = ""        # Path for ACME HTTP-01 challenge files

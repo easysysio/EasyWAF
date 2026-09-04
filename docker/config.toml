@@ -16,6 +16,7 @@ database_url = "sqlite:///data/easywaf.db"
 
 [proxy]
 http_port    = 8081      # placeholder, not read
-gui_port     = 8080      # management GUI
+gui_port     = 8080      # management GUI: plain HTTP, redirects to gui_tls_port
+gui_tls_port = 8443      # management GUI: served here, over TLS
 geoip_db     = ""        # external .mmdb; empty = bundled DB-IP Lite
 acme_webroot = ""        # placeholder, not read
