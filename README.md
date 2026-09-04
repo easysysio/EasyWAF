@@ -342,7 +342,8 @@ scheduled or decided — the roadmap lives in [docs/design/roadmap.md](docs/desi
 * **Routing is by `Host:` only, matched exactly.** No path prefixes, no wildcard hostnames
   like `*.example.com`. Two applications behind one hostname cannot be split. Not scheduled.
 * **One upstream per site.** No load balancing, no health checks, no failover to a second
-  backend. Not scheduled.
+  backend — an application running more than one instance needs a load balancer behind
+  EasyWAF. Scheduled for **0.8.0**.
 * **IPv6 literal hostnames do not route.** Host matching truncates at the first colon, so
   `[::1]:8080` does not match. Name-based hosts are unaffected.
 * **No health or metrics endpoint.** Nothing to point a load balancer's health check at, and
@@ -373,13 +374,13 @@ scheduled or decided — the roadmap lives in [docs/design/roadmap.md](docs/desi
 * **Sessions cannot be revoked.** They are stateless signed cookies, so changing a password
   does not invalidate one already issued — it expires on its own within 8 hours. Scheduled
   with roles in **0.6.0**, which needs the same refactor.
-* **No audit log.** Nothing records who changed what. Scheduled for **0.9.0** — deliberately
+* **No audit log.** Nothing records who changed what. Scheduled for **0.10.0** — deliberately
   after roles, since a trail saying "admin did X" says little when every operator is `admin`.
 * **No backup, restore or configuration export.** Everything lives in one SQLite file with no
   way to export it, clone it to staging, or keep it under version control. Scheduled for
-  **0.8.0**; until then, copy the database file with the service stopped.
-* **No high availability.** No configuration sync between nodes. Scheduled for **0.10.0**.
-* **No IP allow/block lists** (**0.11.0**) and **no rate limiting** (**0.12.0**).
+  **0.9.0**; until then, copy the database file with the service stopped.
+* **No high availability.** No configuration sync between nodes. Scheduled for **0.11.0**.
+* **No IP allow/block lists** (**0.12.0**) and **no rate limiting** (**0.13.0**).
 * **`http_port` and `acme_webroot` in `config.toml` are ignored.** They are placeholders from
   0.1.0; listening ports come from the sites you define.
 

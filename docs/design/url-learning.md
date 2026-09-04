@@ -1,6 +1,6 @@
 # Design note — learning and hardening modes (URL allowlisting)
 
-Status: planned for **0.13.0** — see [roadmap.md](roadmap.md).
+Status: planned for **0.14.0** — see [roadmap.md](roadmap.md).
 
 A positive security model: instead of describing what an attack looks like, as
 every rule so far does, describe what the application legitimately exposes and
@@ -149,7 +149,7 @@ CREATE TABLE learned_urls (
 
 **In memory, like everything else on this path.** The allowlist is consulted
 per request, so it is cached and rebuilt on change — the pattern already used
-for the regex cache, the country database, and the IP lists in 0.11.0.
+for the regex cache, the country database, and the IP lists in 0.12.0.
 
 **Bounded, and loud when it is not.** A site whose learned set keeps growing
 past a sane cap is telling you the normaliser is missing a dynamic pattern,

@@ -1,7 +1,7 @@
 # Design note — configuration sync between EasyWAF nodes
 
-Status: planned for **0.10.0** — see [roadmap.md](roadmap.md), after
-backup/export (0.8.0) and flow logs (0.9.0), and deliberately *before* rate
+Status: planned for **0.11.0** — see [roadmap.md](roadmap.md), after
+backup/export (0.9.0) and flow logs (0.10.0), and deliberately *before* rate
 limiting and learning mode.
 
 ## What this is, and what it is not
@@ -13,7 +13,7 @@ request reaches. EasyWAF's job is to make the nodes *identical*, not to
 distribute the traffic.
 
 **Traffic is not synchronised.** Each node records what it saw. Seeing it in
-one place is EasyLog's job (0.9.0), which is the right split: aggregating logs
+one place is EasyLog's job (0.10.0), which is the right split: aggregating logs
 is a solved problem in a product that already exists, and replicating a
 high-write append-only table between nodes would be the most expensive and
 least valuable thing to build.
@@ -54,7 +54,7 @@ than something automatic; automatic promotion needs consensus to avoid two
 nodes both believing they are primary, and that is a distributed-systems
 problem this product should not take on to avoid an occasional manual step.
 
-## It is 0.8.0's export, applied continuously
+## It is 0.9.0's export, applied continuously
 
 This is why it follows backup/export rather than preceding it. The question
 "what constitutes this appliance's configuration, expressed portably, without
@@ -112,7 +112,7 @@ it is, not merely know a shared string that leaks the moment it appears in
 anyone's shell history. The primary should be able to enumerate and revoke
 peers, a peer's first enrolment should be an explicit approval on the primary
 rather than anything automatic, and every sync should be recorded in the audit
-log (0.9.0) with what changed and which peer received it.
+log (0.10.0) with what changed and which peer received it.
 
 ## Open questions
 
@@ -126,7 +126,7 @@ log (0.9.0) with what changed and which peer received it.
   serving its last good configuration indefinitely and say so prominently,
   never degrade or stop.
 * **Does the replica's GUI allow local override?** Recommendation: no, with one
-  exception worth considering — the IP allow/block list, since 0.11.0's whole
+  exception worth considering — the IP allow/block list, since 0.12.0's whole
   premise is fixing a problem on the spot, and requiring a round trip to the
   primary during an incident undermines it. If allowed, it must be visibly
   temporary and reconciled explicitly.

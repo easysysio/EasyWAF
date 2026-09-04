@@ -10,12 +10,13 @@ next minor, so a release's notes stay about its feature.
 | 0.5.0 | ACME / Let's Encrypt |
 | 0.6.0 | User management and roles |
 | 0.7.0 | Updating the rule sets and the country database (see [rule-repository.md](rule-repository.md)) |
-| 0.8.0 | Backup, restore and configuration export (see [backup-restore.md](backup-restore.md)) |
-| 0.9.0 | Flow logs over syslog, audit log on disk |
-| 0.10.0 | Configuration sync between nodes — HA (see [ha-config-sync.md](ha-config-sync.md)) |
-| 0.11.0 | IP allow/block lists, addable with one click from Traffic Monitor (see [ip-lists.md](ip-lists.md)) |
-| 0.12.0 | Per-site rate limiting (see [rate-limiting.md](rate-limiting.md)) |
-| 0.13.0 | Learning and hardening modes — URL allowlisting (see [url-learning.md](url-learning.md)) |
+| 0.8.0 | Load balancing across upstreams, with health checks (see [load-balancing.md](load-balancing.md)) |
+| 0.9.0 | Backup, restore and configuration export (see [backup-restore.md](backup-restore.md)) |
+| 0.10.0 | Flow logs over syslog, audit log on disk |
+| 0.11.0 | Configuration sync between nodes — HA (see [ha-config-sync.md](ha-config-sync.md)) |
+| 0.12.0 | IP allow/block lists, addable with one click from Traffic Monitor (see [ip-lists.md](ip-lists.md)) |
+| 0.13.0 | Per-site rate limiting (see [rate-limiting.md](rate-limiting.md)) |
+| 0.14.0 | Learning and hardening modes — URL allowlisting (see [url-learning.md](url-learning.md)) |
 
 ## Candidates, not yet scheduled
 
@@ -140,16 +141,30 @@ provenance — and that lineage is fresher than the logging work, which has a
 cross-repository dependency (see [logging.md](logging.md)) that can proceed in
 parallel meanwhile.
 
-**Backup and export follow rule updates, because 0.7.0 decides what a rule
-is.** That release makes vendor rules immutable and turns an edit into a clone
+**Load balancing precedes backup and export, for the reason export follows rule
+updates: it changes what a core object is.** A site has exactly one upstream
+today, and several is a different shape rather than an extra column — so an
+export format written first would encode the single-target model and need
+reworking as soon as a site has a pool. Model changes belong before the format
+that has to represent them. It follows rule updates rather than preceding them
+because refreshing rules is closer to what EasyWAF is for: a WAF that cannot
+update its rules is a worse WAF, while one that cannot balance two backends is a
+proxy with a gap that a separate load balancer already fills for anyone who hit
+it. It is scheduled rather than left a candidate because the status quo quietly
+requires that second load balancer behind EasyWAF for any application running
+more than one instance, which undercuts the premise of a self-contained
+appliance.
+
+**Backup and export follow rule updates and load balancing, because 0.7.0
+decides what a rule is.** That release makes vendor rules immutable and turns an edit into a clone
 held as a custom rule. An export written before it would encode the present
 model — every rule equally editable — and need reworking immediately; written
 after, it can record the distinction that matters, so only an installation's
 own rules travel in full while vendor sets travel as a reference to a version.
 Putting it before IP lists, rate limiting and learning then means those three
 are designed with a format already in place rather than retrofitted into one,
-since each adds exportable state. It displaces flow logs by a release, which is
-the cheapest thing to displace for the reason given above.
+since each adds exportable state. It displaces flow logs, which is the cheapest thing to displace for the
+reason given above.
 
 The counter-argument is recorded rather than dismissed: every release it waits
 is another release in which losing the host loses the configuration. If that
@@ -158,11 +173,11 @@ schema-agnostic, so it neither depends on the rule model nor churns as the
 schema grows. Only the structured export has to wait.
 
 **Node sync follows export and logging, and precedes rate limiting and
-learning.** It is 0.8.0's export applied continuously — the same question of
+learning.** It is 0.9.0's export applied continuously — the same question of
 what constitutes this appliance's configuration, expressed portably — so
 building the two apart would produce two definitions of that, drifting. The
 traffic half of high availability is deliberately not built: each node records
-what it saw and EasyLog (0.9.0) aggregates it, which is why both prerequisites
+what it saw and EasyLog (0.10.0) aggregates it, which is why both prerequisites
 sit immediately before.
 
 It comes *before* rate limiting and learning because both change meaning on
@@ -186,7 +201,7 @@ while it is still moving.
 **IP lists and rate limiting sit before it, adjacent to each other, and each
 still self-contained.** Both are identity/volume signals rather than payload
 inspection, both share a pipeline position — checked early, before GeoIP and
-WAF, and both must respect the allowlist override from 0.11.0 — and both are
+WAF, and both must respect the allowlist override from 0.12.0 — and both are
 easy slots to pull forward if an urgent need shows up, since neither assumes
 anything from the releases ahead of it. They stay two releases rather than one
 because they differ enough in shape: an IP list is a set lookup, rate limiting

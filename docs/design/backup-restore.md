@@ -1,7 +1,7 @@
 # Design note — backup, restore, and configuration export
 
-Status: planned for **0.8.0** — see [roadmap.md](roadmap.md), after rule
-updates (0.7.0) and before flow logs.
+Status: planned for **0.9.0** — see [roadmap.md](roadmap.md), after rule
+updates (0.7.0) and load balancing (0.8.0), and before flow logs.
 
 ## The problem
 
@@ -90,7 +90,7 @@ should be settled before coding:
 
 **Replace or merge?** Both are legitimate — "make this instance match that
 file" versus "add these sites to what is here" — and they are different
-features with different failure modes. Pick one for 0.8.0 and say which; a
+features with different failure modes. Pick one for 0.9.0 and say which; a
 restore that silently does the other loses data.
 
 **What identifies an object across instances?** Not `id`: autoincrement values
@@ -110,7 +110,7 @@ hand back to an operator who has just recovered from an outage.
 database swapped in at the end. A half-applied configuration on a security
 appliance is worse than a failed restore, because it looks like success.
 
-## Why 0.8.0
+## Why 0.9.0
 
 **After 0.7.0, because 0.7.0 decides what a rule *is*.** That release makes
 vendor rules immutable and turns edits into clones held as custom rules. An
@@ -132,6 +132,6 @@ release it lands in.
 It is not earlier than 0.7.0 mainly because of the rule-model point above. The
 counter-argument is real and worth recording: every release it waits is another
 release in which a lost host means a lost configuration. If that becomes urgent
-before 0.8.0, **the snapshot half can be pulled forward on its own** — it is
+before 0.9.0, **the snapshot half can be pulled forward on its own** — it is
 schema-agnostic, so it neither depends on the rule model nor churns when the
 schema changes. The structured export is the half that must wait.
