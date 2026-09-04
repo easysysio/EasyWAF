@@ -6,6 +6,31 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
+## [Unreleased]
+
+### Changed
+- **`rustls-pemfile` is gone** (RUSTSEC-2025-0134, unmaintained). Its job moved
+  into `rustls-pki-types`, which rustls already re-exports, so certificate and
+  key parsing now goes through `PemObject` and the direct dependency is
+  dropped. `cargo audit` is clean again.
+
+  Removing our own use was not enough on its own — `axum-server` 0.7 pulled the
+  crate in too — so this also upgrades **axum-server to 0.8**, whose
+  `tls-rustls-no-provider` feature depends on `rustls-pki-types` instead.
+
+### Fixed
+- **The axum-server 0.8 upgrade panicked on the first HTTPS connection**, and
+  is fixed here rather than shipped. 0.8 adopts a listener with tokio's
+  `TcpListener::from_std`, which requires a non-blocking socket, while
+  `std::net::TcpListener::bind` returns a blocking one. Nothing in the type
+  system catches it: the binary compiled, bound the port, logged that it was
+  listening, and then panicked. Both TLS listeners now bind through one helper
+  that sets the socket non-blocking, with the reason recorded next to it.
+- `axum_server::from_tcp_rustls` became fallible in 0.8. Its error is now
+  reported against the port it concerns rather than unwrapped — the management
+  listener exits with a message, a proxy listener gives up on its own port and
+  leaves the others running.
+
 ## [0.4.0] — 2026-09-04
 
 The TLS release: the management interface and proxied sites both serve HTTPS,

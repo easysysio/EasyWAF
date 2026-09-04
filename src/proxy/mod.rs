@@ -258,7 +258,7 @@ async fn start_tls_on_port(state: ProxyState, port: u16) {
     // Bound before announcing, for the same reason as the management port:
     // bind_rustls defers the bind into serve(), so logging first would claim a
     // listener that may never exist.
-    let listener = match std::net::TcpListener::bind(addr) {
+    let listener = match crate::tls::bind_listener(addr) {
         Ok(l) => l,
         Err(e) => {
             tracing::error!(port, "Failed to bind TLS proxy port: {}", e);
@@ -273,7 +273,18 @@ async fn start_tls_on_port(state: ProxyState, port: u16) {
         .with_state(state)
         .into_make_service_with_connect_info::<SocketAddr>();
 
-    if let Err(e) = axum_server::from_tcp_rustls(listener, config).serve(app).await {
+    // 0.8 made this fallible rather than panicking on a listener it cannot
+    // adopt. Reported and returned from, since this task owns one port and
+    // the other listeners are unaffected.
+    let server = match axum_server::from_tcp_rustls(listener, config) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::error!(port, "Cannot serve TLS on the bound port: {}", e);
+            return;
+        }
+    };
+
+    if let Err(e) = server.serve(app).await {
         tracing::error!(port, "TLS proxy server error: {}", e);
     }
 }

@@ -20,6 +20,7 @@
 
 use crate::error::Result;
 use rustls::crypto::ring::sign::any_supported_type;
+use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use rustls::server::{ClientHello, ResolvesServerCert};
 use rustls::sign::CertifiedKey;
@@ -248,6 +249,23 @@ fn base_builder(
         .expect("TLS provider supports the configured versions")
 }
 
+/// Bind a TCP listener ready to be handed to `axum_server::from_tcp_rustls`.
+///
+/// The socket must be non-blocking. axum-server 0.8 adopts it with tokio's
+/// `TcpListener::from_std`, which panics on a blocking socket — and
+/// `std::net::TcpListener::bind` returns a blocking one. Nothing in the type
+/// system catches this: it compiles, binds, logs that it is listening, and
+/// panics on the first connection attempt.
+///
+/// Bound here rather than left to `serve()` so a port already in use is an
+/// error the caller can report against the port, instead of a panic from
+/// inside the server after it has claimed to be listening.
+pub fn bind_listener(addr: std::net::SocketAddr) -> std::io::Result<std::net::TcpListener> {
+    let listener = std::net::TcpListener::bind(addr)?;
+    listener.set_nonblocking(true)?;
+    Ok(listener)
+}
+
 // ─── reload ──────────────────────────────────────────────
 
 /// Rebuild the server-name to certificate map from the database.
@@ -320,7 +338,7 @@ fn parse_pem(
     cert_pem: &str,
     key_pem: &str,
 ) -> std::result::Result<(Vec<CertificateDer<'static>>, PrivateKeyDer<'static>), String> {
-    let chain: Vec<CertificateDer<'static>> = rustls_pemfile::certs(&mut cert_pem.as_bytes())
+    let chain: Vec<CertificateDer<'static>> = CertificateDer::pem_slice_iter(cert_pem.as_bytes())
         .collect::<std::result::Result<Vec<_>, _>>()
         .map_err(|e| format!("certificate PEM: {e}"))?;
 
@@ -328,9 +346,13 @@ fn parse_pem(
         return Err("no certificate found in PEM".to_string());
     }
 
-    let key: PrivateKeyDer<'static> = rustls_pemfile::private_key(&mut key_pem.as_bytes())
-        .map_err(|e| format!("private key PEM: {e}"))?
-        .ok_or_else(|| "no private key found in PEM".to_string())?;
+    // A missing key arrives as NoItemsFound, whose own wording says nothing
+    // about what was being looked for. The distinction matters when someone
+    // has pasted a certificate into the key field.
+    let key = PrivateKeyDer::from_pem_slice(key_pem.as_bytes()).map_err(|e| match e {
+        rustls::pki_types::pem::Error::NoItemsFound => "no private key found in PEM".to_string(),
+        other => format!("private key PEM: {other}"),
+    })?;
 
     Ok((chain, key))
 }

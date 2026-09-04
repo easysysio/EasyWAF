@@ -250,7 +250,7 @@ async fn main() {
     // logging first would claim the GUI is listening and then panic if the
     // port were taken — the least helpful thing to find in a log when the
     // service will not start.
-    let listener = match std::net::TcpListener::bind(tls_addr) {
+    let listener = match tls::bind_listener(tls_addr) {
         Ok(l) => l,
         Err(e) => {
             tracing::error!(
@@ -262,11 +262,16 @@ async fn main() {
         }
     };
 
+    let server = match axum_server::from_tcp_rustls(listener, tls) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::error!("Cannot serve the management GUI on {}: {}", tls_addr, e);
+            std::process::exit(1);
+        }
+    };
+
     info!("Management GUI listening on https://{}", tls_addr);
-    if let Err(e) = axum_server::from_tcp_rustls(listener, tls)
-        .serve(app.into_make_service())
-        .await
-    {
+    if let Err(e) = server.serve(app.into_make_service()).await {
         tracing::error!("Management GUI server error: {}", e);
         std::process::exit(1);
     }

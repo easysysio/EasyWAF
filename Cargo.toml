@@ -19,14 +19,13 @@ axum = { version = "0.8.4", features = ["macros", "json", "tokio", "multipart"] 
 # rustls/aws-lc-rs, which adds a C build to the aarch64 cross-compile. ring is
 # already in the tree via reqwest and sqlx, so the provider is chosen
 # explicitly at startup instead.
-axum-server = { version = "0.7", features = ["tls-rustls-no-provider"] }
+axum-server = { version = "0.8", features = ["tls-rustls-no-provider"] }
 rustls      = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 
 # Self-signed certificate generation for the management interface's first run
 rcgen = "0.13"
 
 # Parsing uploaded certificate and key PEM for per-site TLS
-rustls-pemfile = "2"
 axum-extra = { version = "0.10", features = ["cookie", "cookie-signed"] }
 
 # Async runtime
