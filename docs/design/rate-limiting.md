@@ -1,7 +1,7 @@
 # Design note — per-site rate limiting
 
-Status: planned for **0.11.0** — see [roadmap.md](roadmap.md), after IP
-allow/block lists (0.10.0). The two are adjacent because they are both
+Status: planned for **0.12.0** — see [roadmap.md](roadmap.md), after IP
+allow/block lists (0.11.0). The two are adjacent because they are both
 identity/volume signals rather than payload inspection and share a pipeline
 position, but they differ enough in shape — a set lookup versus a counter with
 a time window — to stay separate releases, consistent with one feature per
@@ -18,7 +18,7 @@ override — defeating the point of sharing.
 
 So rate-limit settings belong on `sites` directly, alongside the fields
 already there per-site: `listen_port`, `target`, the security-header toggles.
-Not a third policy concept next to WAF policies and the IP lists from 0.10.0 —
+Not a third policy concept next to WAF policies and the IP lists from 0.11.0 —
 each of those is genuinely shared threat data; a rate limit is a property of
 one site's own traffic shape.
 
@@ -45,14 +45,14 @@ one site's own traffic shape.
 
 ## Where it runs, and why
 
-Right after the IP allow/block check (0.10.0) and before GeoIP and WAF pattern
+Right after the IP allow/block check (0.11.0) and before GeoIP and WAF pattern
 matching — cheapest checks first. If a client is already over its limit,
 nothing is gained by then compiling and matching every WAF rule against a
 request that is going to be rejected anyway, the same reasoning already
 written down for why GeoIP precedes WAF.
 
 **It must respect the allowlist.** An allowlisted IP is checked before
-`Pipeline::run` is even called (0.10.0's design), so it automatically never
+`Pipeline::run` is even called (0.11.0's design), so it automatically never
 reaches a rate limiter either — one more confirmation that keeping the
 allowlist override structural, rather than a rule each module has to
 individually honour, was the right call.
