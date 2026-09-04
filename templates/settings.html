@@ -59,6 +59,37 @@
                 </div>
             </div>
 
+            <div class="panel panel-default">
+                <div class="panel-heading"><h4>TLS</h4></div>
+                <div class="panel-body">
+                    <div class="form-group">
+                        <label>TLS Profile <small class="text-muted">(applies to every HTTPS listener)</small></label>
+                        <select class="form-control" name="tls_profile">
+                            <option value="compatible" {% if tls_profile == "compatible" %}selected{% endif %}>
+                                Compatible — TLS 1.2 and 1.3
+                            </option>
+                            <option value="modern" {% if tls_profile == "modern" %}selected{% endif %}>
+                                Modern — TLS 1.3 only
+                            </option>
+                        </select>
+                        <p class="help-block">
+                            This is one setting for the whole appliance rather than per site:
+                            the TLS version and cipher suites are fixed when a listener binds
+                            its port, before the client has said which site it wants, so sites
+                            sharing a port necessarily share them. Certificates <em>are</em>
+                            per site — those are chosen by SNI during the handshake.
+                            <br>
+                            There is no weak-cipher option to pick: nothing below TLS 1.2, and
+                            no RC4, 3DES or CBC-SHA1, is implemented at all.
+                            <strong>Modern</strong> refuses clients that only speak TLS 1.2.
+                            <br>
+                            A change here takes effect when listeners are next bound, which
+                            means after a restart.
+                        </p>
+                    </div>
+                </div>
+            </div>
+
             <button type="submit" class="btn btn-success">
                 <i class="fa fa-save"></i> Save Settings
             </button>

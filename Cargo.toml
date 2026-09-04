@@ -24,6 +24,9 @@ rustls      = { version = "0.23", default-features = false, features = ["ring", 
 
 # Self-signed certificate generation for the management interface's first run
 rcgen = "0.13"
+
+# Parsing uploaded certificate and key PEM for per-site TLS
+rustls-pemfile = "2"
 axum-extra = { version = "0.10", features = ["cookie", "cookie-signed"] }
 
 # Async runtime

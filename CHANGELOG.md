@@ -9,6 +9,26 @@ Version bumps and tags are created only after explicit approval.
 ## [Unreleased]
 
 ### Added
+- **HTTPS for proxied sites.** A site can now serve plain HTTP, HTTPS, or both
+  at once: `listen_port` keeps serving HTTP and a new `tls_port` serves HTTPS,
+  bound independently so enabling one never switches the other off.
+  Certificates are chosen per site by **SNI** during the handshake, so many
+  sites share one HTTPS port, each presenting its own — and a client naming a
+  site with no certificate is refused rather than served somebody else's.
+  A site configured with an HTTPS port but no certificate does not bind that
+  port at all, since binding it would fail every handshake and be far harder to
+  diagnose than a port that simply is not listening.
+- **Optional per-site HTTP-to-HTTPS redirect**, off by default. The request was
+  for both secure and insecure access to work, so turning on HTTPS must not
+  silently stop the HTTP port serving.
+- **TLS profile** (Settings): "compatible" (TLS 1.2 and 1.3) or "modern"
+  (1.3 only). Appliance-wide rather than per site, because rustls fixes the
+  version and cipher suites when a listener binds its port — before the client
+  has said which site it wants — so sites sharing a port necessarily share
+  them. There is no weak-cipher option to expose: nothing below TLS 1.2, and no
+  RC4, 3DES or CBC-SHA1, is implemented at all. An unrecognised value falls
+  back to "compatible", so a bad setting cannot start refusing clients that
+  were working.
 - **The management interface is served over TLS.** On first run EasyWAF
   generates a self-signed certificate named `easywaf` and stores it under
   Certificates, so the GUI is never served over plain HTTP — not even on a

@@ -30,6 +30,9 @@ pub const KEY_RETENTION_DAYS: &str = "traffic_retention_days";
 /// Text shown to visitors of a site that has been disabled.
 pub const KEY_MAINTENANCE_MESSAGE: &str = "maintenance_message";
 
+/// TLS version profile applied to every HTTPS listener.
+pub const KEY_TLS_PROFILE: &str = "tls_profile";
+
 /// Used when the row is missing or cannot be parsed.
 const DEFAULT_RETENTION_DAYS: i64 = 0;
 
@@ -61,6 +64,7 @@ pub struct FlashQuery {
 pub struct SettingsForm {
     pub traffic_retention_days: Option<String>,
     pub maintenance_message:    Option<String>,
+    pub tls_profile:            Option<String>,
 }
 
 // ─── get_settings ────────────────────────────────────────
@@ -78,6 +82,7 @@ pub async fn get_settings(
 
     let retention_days      = get_retention_days(&state.db).await;
     let maintenance_message = get_maintenance_message(&state.db).await;
+    let tls_profile         = get_tls_profile(&state.db).await;
 
     // Shown alongside the field so the setting's effect is concrete.
     let stored_events: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM traffic_events")
@@ -90,6 +95,7 @@ pub async fn get_settings(
     ctx.insert("url",            "/settings");
     ctx.insert("retention_days",      &retention_days);
     ctx.insert("maintenance_message",  &maintenance_message);
+    ctx.insert("tls_profile",          tls_profile.as_str());
     ctx.insert("stored_events",  &stored_events);
     ctx.insert("result",         &flash.result.unwrap_or_default());
     ctx.insert("msg",            &flash.msg.unwrap_or_default());
@@ -140,6 +146,14 @@ pub async fn post_settings_update(
     set_setting(&state.db, KEY_RETENTION_DAYS, &days.to_string()).await?;
     set_setting(&state.db, KEY_MAINTENANCE_MESSAGE, maintenance).await?;
 
+    // Normalised through the same parser the listeners use, so an unexpected
+    // value is stored as the fallback rather than kept to surprise the next
+    // listener that binds.
+    let profile = crate::tls::TlsProfile::from_setting(
+        form.tls_profile.as_deref().unwrap_or(""),
+    );
+    set_setting(&state.db, KEY_TLS_PROFILE, profile.as_str()).await?;
+
     let msg = if days == 0 {
         "Settings saved — traffic history is kept indefinitely".to_string()
     } else {
@@ -167,6 +181,16 @@ pub async fn get_maintenance_message(db: &SqlitePool) -> String {
         Some(v) if !v.trim().is_empty() => v,
         _                              => DEFAULT_MAINTENANCE_MESSAGE.to_string(),
     }
+}
+
+/// Read the appliance-wide TLS profile, defaulting to the compatible one.
+///
+/// Read when a TLS listener binds, so a change takes effect on the next
+/// restart rather than immediately — the profile is fixed in the listener's
+/// configuration and cannot be swapped under an open socket.
+pub async fn get_tls_profile(db: &SqlitePool) -> crate::tls::TlsProfile {
+    let raw = get_setting(db, KEY_TLS_PROFILE).await.unwrap_or_default();
+    crate::tls::TlsProfile::from_setting(&raw)
 }
 
 /// Fetch one raw setting value. None when the key is not present.

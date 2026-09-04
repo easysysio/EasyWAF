@@ -30,12 +30,25 @@ pub struct Site {
     pub server_name:    String,
     pub target:         String,
     pub listen_port:    i64,
+    /// HTTPS port, or None when the site serves plain HTTP only.
+    pub tls_port:       Option<i64>,
+    pub cert_id:        Option<i64>,
+    pub tls_redirect:   bool,
     pub enabled:        bool,
     pub waf_policy_id:  Option<i64>,
     pub hsts:           bool,
     pub x_frame:        bool,
     pub x_content_type: bool,
     pub xss_protection: bool,
+}
+
+/// A certificate as offered in the site form's dropdown.
+#[derive(Debug, Serialize)]
+pub struct CertOption {
+    pub id:        i64,
+    pub name:      String,
+    pub domain:    String,
+    pub not_after: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -52,6 +65,11 @@ pub struct SiteForm {
     pub server_name:    String,
     pub target:         String,
     pub listen_port:    Option<String>,  // comes in as text; we parse to i64
+    /// HTTPS port. Empty means the site serves plain HTTP only.
+    pub tls_port:       Option<String>,
+    /// Certificate to present over HTTPS; empty means none selected.
+    pub cert_id:        Option<String>,
+    pub tls_redirect:   Option<String>,
     /// Comes in as "" when "None" is selected, or "123" when a policy is chosen.
     pub waf_policy_id:  Option<String>,
     pub hsts:           Option<String>,
@@ -88,6 +106,7 @@ pub async fn get_sites(
     ctx.insert("url",       "/sites");
     ctx.insert("sites",     &sites);
     ctx.insert("policies",  &policies);
+    ctx.insert("certs",     &fetch_certs(&state).await?);
     ctx.insert("result",    &flash.result.unwrap_or_default());
     ctx.insert("msg",       &flash.msg.unwrap_or_default());
 
@@ -113,6 +132,7 @@ pub async fn get_site_new(
     ctx.insert("title",     "Create Site");
     ctx.insert("url",       "/sites");
     ctx.insert("policies",  &policies);
+    ctx.insert("certs",     &fetch_certs(&state).await?);
 
     Ok((jar, Html(state.tera.render("site_create.html", &ctx)?)).into_response())
 }
@@ -158,20 +178,22 @@ pub async fn post_site_create(
     let x_content_type = form.x_content_type.is_some();
     let xss_protection = form.xss_protection.is_some();
     let waf_policy_id  = parse_policy_id(&form.waf_policy_id);
+    let tls_port       = parse_optional_port(&form.tls_port);
+    let cert_id        = parse_policy_id(&form.cert_id);
+    let tls_redirect   = form.tls_redirect.is_some();
 
     sqlx::query!(
         "INSERT INTO sites
-         (name, server_name, target, listen_port, waf_policy_id,
-          hsts, x_frame, x_content_type, xss_protection)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        name, server_name, form.target, listen_port, waf_policy_id,
-        hsts, x_frame, x_content_type, xss_protection,
+         (name, server_name, target, listen_port, tls_port, cert_id, tls_redirect,
+          waf_policy_id, hsts, x_frame, x_content_type, xss_protection)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        name, server_name, form.target, listen_port, tls_port, cert_id, tls_redirect,
+        waf_policy_id, hsts, x_frame, x_content_type, xss_protection,
     )
     .execute(&state.db)
     .await?;
 
-    // Signal the proxy to bind this port if it isn't already listening on it.
-    let _ = state.port_tx.send(listen_port as u16).await;
+    announce_site(&state, listen_port, tls_port).await;
 
     flash_redirect("/sites", "success", &format!("Site {} created successfully", name))
 }
@@ -198,6 +220,7 @@ pub async fn get_site_edit(
     ctx.insert("url",       "/sites");
     ctx.insert("site",      &site);
     ctx.insert("policies",  &policies);
+    ctx.insert("certs",     &fetch_certs(&state).await?);
 
     Ok((jar, Html(state.tera.render("site_settings.html", &ctx)?)).into_response())
 }
@@ -233,22 +256,26 @@ pub async fn post_site_update(
         return flash_redirect("/sites", "failed", "Hostname is required");
     }
 
+    let tls_port     = parse_optional_port(&form.tls_port);
+    let cert_id      = parse_policy_id(&form.cert_id);
+    let tls_redirect = form.tls_redirect.is_some();
+
     sqlx::query!(
         "UPDATE sites SET
-           server_name=?, target=?, listen_port=?, waf_policy_id=?,
+           server_name=?, target=?, listen_port=?, tls_port=?, cert_id=?,
+           tls_redirect=?, waf_policy_id=?,
            hsts=?, x_frame=?, x_content_type=?, xss_protection=?,
            updated_at=datetime('now')
          WHERE name=?",
-        server_name, form.target, listen_port, waf_policy_id,
+        server_name, form.target, listen_port, tls_port, cert_id,
+        tls_redirect, waf_policy_id,
         hsts, x_frame, x_content_type, xss_protection,
         name,
     )
     .execute(&state.db)
     .await?;
 
-    // Signal the proxy to bind the (possibly new) port without a restart.
-    // The proxy ignores this if the port is already bound.
-    let _ = state.port_tx.send(listen_port as u16).await;
+    announce_site(&state, listen_port, tls_port).await;
 
     flash_redirect("/sites", "success", &format!("Site {} updated successfully", name))
 }
@@ -290,7 +317,14 @@ pub async fn post_site_toggle(
     .await?;
 
     if enabled {
-        let _ = state.port_tx.send(site.listen_port as u16).await;
+        announce_site(&state, site.listen_port, site.tls_port).await;
+    } else {
+        // Disabling removes the site from the certificate map: its listener
+        // stays bound for the other sites sharing it, but this name should no
+        // longer present a certificate.
+        if let Err(e) = crate::tls::reload(&state.db).await {
+            tracing::error!("Could not reload site certificates: {}", e);
+        }
     }
 
     let msg = if enabled {
@@ -327,6 +361,9 @@ async fn fetch_sites(state: &AppState) -> Result<Vec<Site>> {
     let rows = sqlx::query!(
         "SELECT id as \"id!\", name, server_name, target,
                 listen_port    as \"listen_port!\",
+                tls_port,
+                cert_id,
+                tls_redirect   as \"tls_redirect!: bool\",
                 enabled        as \"enabled!: bool\",
                 waf_policy_id,
                 hsts           as \"hsts!: bool\",
@@ -344,6 +381,9 @@ async fn fetch_sites(state: &AppState) -> Result<Vec<Site>> {
         server_name:    r.server_name,
         target:         r.target,
         listen_port:    r.listen_port,
+        tls_port:       r.tls_port,
+        cert_id:        r.cert_id,
+        tls_redirect:   r.tls_redirect,
         enabled:        r.enabled,
         waf_policy_id:  r.waf_policy_id,
         hsts:           r.hsts,
@@ -358,6 +398,9 @@ async fn fetch_site(state: &AppState, name: &str) -> Result<Site> {
     let r = sqlx::query!(
         "SELECT id as \"id!\", name, server_name, target,
                 listen_port    as \"listen_port!\",
+                tls_port,
+                cert_id,
+                tls_redirect   as \"tls_redirect!: bool\",
                 enabled        as \"enabled!: bool\",
                 waf_policy_id,
                 hsts           as \"hsts!: bool\",
@@ -377,6 +420,9 @@ async fn fetch_site(state: &AppState, name: &str) -> Result<Site> {
         server_name:    r.server_name,
         target:         r.target,
         listen_port:    r.listen_port,
+        tls_port:       r.tls_port,
+        cert_id:        r.cert_id,
+        tls_redirect:   r.tls_redirect,
         enabled:        r.enabled,
         waf_policy_id:  r.waf_policy_id,
         hsts:           r.hsts,
@@ -387,11 +433,53 @@ async fn fetch_site(state: &AppState, name: &str) -> Result<Site> {
 }
 
 /// Fetch all WAF policies for the policy dropdown.
+/// Certificates available for a site to present over HTTPS.
+async fn fetch_certs(state: &AppState) -> Result<Vec<CertOption>> {
+    let rows = sqlx::query!(
+        r#"SELECT id as "id!", name, COALESCE(domain, '') as "domain!", COALESCE(not_after, '') as "not_after!"
+           FROM certs ORDER BY name"#
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|r| CertOption { id: r.id, name: r.name, domain: r.domain, not_after: r.not_after })
+        .collect())
+}
+
 async fn fetch_policies(state: &AppState) -> Result<Vec<Policy>> {
     let rows = sqlx::query!("SELECT id as \"id!\", name FROM policies ORDER BY name")
         .fetch_all(&state.db)
         .await?;
     Ok(rows.into_iter().map(|r| Policy { id: r.id, name: r.name }).collect())
+}
+
+// ─── announce_site ───────────────────────────────────────
+
+/// Tell the proxy about a site's ports and refresh the TLS certificate map.
+///
+/// Both listeners are signalled because a site can serve plain HTTP and HTTPS
+/// at once; the proxy ignores a port it already holds. The certificate map is
+/// rebuilt too, since it is resolved synchronously during a TLS handshake and
+/// cannot query the database itself — a new or re-pointed site would otherwise
+/// fail every handshake until the next restart.
+async fn announce_site(state: &AppState, listen_port: i64, tls_port: Option<i64>) {
+    let _ = state
+        .port_tx
+        .send(crate::proxy::BindRequest { port: listen_port as u16, tls: false })
+        .await;
+
+    if let Some(p) = tls_port {
+        let _ = state
+            .port_tx
+            .send(crate::proxy::BindRequest { port: p as u16, tls: true })
+            .await;
+    }
+
+    if let Err(e) = crate::tls::reload(&state.db).await {
+        tracing::error!("Could not reload site certificates: {}", e);
+    }
 }
 
 // ─── Form parsing helpers ─────────────────────────────────
@@ -442,6 +530,19 @@ fn parse_port(raw: &Option<String>) -> i64 {
         .and_then(|s| s.trim().parse::<i64>().ok())
         .filter(|&p| p > 0 && p <= 65535)
         .unwrap_or(80)
+}
+
+/// Parse an optional port from the form: empty → None, out of range → None.
+///
+/// Out of range becomes None rather than a clamped value: a mistyped port
+/// should leave the site without HTTPS, which is visible, rather than
+/// listening somewhere nobody asked for.
+fn parse_optional_port(raw: &Option<String>) -> Option<i64> {
+    raw.as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .and_then(|s| s.parse::<i64>().ok())
+        .filter(|p| *p > 0 && *p <= 65535)
 }
 
 /// Parse waf_policy_id from the form: empty string → None, numeric string → Some(i64).

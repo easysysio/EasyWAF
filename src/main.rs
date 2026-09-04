@@ -18,6 +18,7 @@ mod geo;
 mod modules;
 mod proxy;
 mod routes;
+mod tls;
 
 use auth::make_key;
 use axum::{
@@ -53,7 +54,7 @@ pub struct AppState {
     pub key:      Key,
     /// Send a port number here to make the proxy bind a new listener at
     /// runtime — no restart needed. The proxy ignores already-bound ports.
-    pub port_tx:  mpsc::Sender<u16>,
+    pub port_tx:  mpsc::Sender<proxy::BindRequest>,
 }
 
 /// Required so SignedCookieJar can extract the Key from AppState.
@@ -111,7 +112,13 @@ async fn main() {
 
     // ── Channel: GUI → proxy for dynamic port binding ─────
     // Buffer of 32 is plenty — port changes are infrequent.
-    let (port_tx, port_rx) = mpsc::channel::<u16>(32);
+    let (port_tx, port_rx) = mpsc::channel::<proxy::BindRequest>(32);
+
+    // Certificates are resolved per TLS handshake from an in-memory map, so
+    // it has to be populated before any HTTPS listener starts accepting.
+    if let Err(e) = tls::reload(&db).await {
+        tracing::error!("Could not load site certificates: {}", e);
+    }
 
     // ── Start proxy server (background task) ──────────────
     let proxy_state = proxy::ProxyState {
@@ -120,6 +127,7 @@ async fn main() {
         client,
         secret:     cfg.secret.clone(),
         challenges: challenge::ChallengeStore::new(),
+        is_tls:     false,
     };
     tokio::spawn(async move {
         proxy::start(proxy_state, port_rx).await;

@@ -31,6 +31,7 @@ use axum::{
 use reqwest::Client;
 use sqlx::SqlitePool;
 use std::{collections::{HashMap, HashSet}, net::SocketAddr, sync::Arc, time::Instant};
+use axum_server::tls_rustls::RustlsConfig;
 use tokio::{net::TcpListener, sync::mpsc};
 
 // ─── Hop-by-hop headers ──────────────────────────────────
@@ -48,6 +49,18 @@ const HOP_HEADERS: &[&str] = &[
     "upgrade",
 ];
 
+// ─── BindRequest ─────────────────────────────────────────
+
+/// A port the GUI has asked the proxy to start listening on.
+///
+/// Carries the kind because a site can have both: `listen_port` serving plain
+/// HTTP and `tls_port` serving HTTPS, bound independently.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct BindRequest {
+    pub port: u16,
+    pub tls:  bool,
+}
+
 // ─── ProxyState ──────────────────────────────────────────
 
 /// State shared across all proxy request handlers.
@@ -61,6 +74,10 @@ pub struct ProxyState {
     pub secret:     String,
     /// In-memory store of in-flight CAPTCHA challenges.
     pub challenges: ChallengeStore,
+    /// True for the HTTPS listeners. The handler is shared between both kinds,
+    /// and needs to know which it is on to avoid redirecting an HTTPS request
+    /// to itself forever.
+    pub is_tls:     bool,
 }
 
 // ─── SiteRow ─────────────────────────────────────────────
@@ -70,6 +87,8 @@ struct SiteRow {
     id:             i64,
     name:           String,
     target:         String,
+    tls_port:       Option<i64>,
+    tls_redirect:   bool,
     hsts:           bool,
     x_frame:        bool,
     x_content_type: bool,
@@ -83,43 +102,49 @@ struct SiteRow {
 ///
 /// Already-bound ports are tracked in a local HashSet and silently ignored
 /// when sent again (e.g. when a site's non-port fields are updated).
-pub async fn start(state: ProxyState, mut port_rx: mpsc::Receiver<u16>) {
-    // Track which ports we have already spawned a listener for.
-    let mut bound: HashSet<u16> = HashSet::new();
+pub async fn start(state: ProxyState, mut port_rx: mpsc::Receiver<BindRequest>) {
+    // Track which ports we have already spawned a listener for. A plain and a
+    // TLS listener on the same number would be a configuration mistake, but
+    // they are tracked separately so the set never silently swallows one.
+    let mut bound: HashSet<BindRequest> = HashSet::new();
 
     // Bind every port that is configured in the DB at startup.
-    let initial_ports = get_listen_ports(&state.db).await;
-    if initial_ports.is_empty() {
+    let initial = get_listen_ports(&state.db).await;
+    if initial.is_empty() {
         tracing::warn!(
             "No enabled sites found at startup — proxy is not listening on any port. \
              Create a site in the GUI to begin proxying."
         );
     }
-    for port in initial_ports {
-        if bound.insert(port) {
-            spawn_listener(state.clone(), port);
+    for req in initial {
+        if bound.insert(req) {
+            spawn_listener(state.clone(), req);
         }
     }
 
     // Wait for new ports sent by the GUI (site create / update).
     // The loop runs for the lifetime of the process because AppState holds
     // a Sender, so the channel is never closed until the process exits.
-    while let Some(port) = port_rx.recv().await {
-        if bound.insert(port) {
-            tracing::info!(port, "Dynamically binding new proxy listener");
-            spawn_listener(state.clone(), port);
+    while let Some(req) = port_rx.recv().await {
+        if bound.insert(req) {
+            tracing::info!(port = req.port, tls = req.tls, "Dynamically binding new proxy listener");
+            spawn_listener(state.clone(), req);
         } else {
-            tracing::debug!(port, "Port already bound — ignoring signal");
+            tracing::debug!(port = req.port, tls = req.tls, "Port already bound — ignoring signal");
         }
     }
 }
 
 // ─── spawn_listener ──────────────────────────────────────
 
-/// Spawn a background task that binds `port` and serves forever.
-fn spawn_listener(state: ProxyState, port: u16) {
+/// Spawn a background task that binds the port and serves forever.
+fn spawn_listener(state: ProxyState, req: BindRequest) {
     tokio::spawn(async move {
-        start_on_port(state, port).await;
+        if req.tls {
+            start_tls_on_port(state, req.port).await;
+        } else {
+            start_on_port(state, req.port).await;
+        }
     });
 }
 
@@ -127,29 +152,53 @@ fn spawn_listener(state: ProxyState, port: u16) {
 
 /// Query the database for the distinct set of listen_port values across
 /// all enabled sites. Returns a sorted, deduplicated list of port numbers.
-async fn get_listen_ports(db: &SqlitePool) -> Vec<u16> {
-    let rows = sqlx::query!(
+async fn get_listen_ports(db: &SqlitePool) -> Vec<BindRequest> {
+    let mut out: Vec<BindRequest> = Vec::new();
+
+    let plain = sqlx::query!(
         "SELECT DISTINCT listen_port as \"listen_port!\" FROM sites WHERE enabled = 1"
     )
     .fetch_all(db)
     .await
     .unwrap_or_default();
 
-    let mut ports: Vec<u16> = rows
-        .into_iter()
-        .filter_map(|r| {
-            // Clamp to valid port range — values outside 1-65535 are ignored.
-            if r.listen_port > 0 && r.listen_port <= 65535 {
-                Some(r.listen_port as u16)
-            } else {
-                None
-            }
-        })
-        .collect();
+    for r in plain {
+        if let Some(port) = valid_port(r.listen_port) {
+            out.push(BindRequest { port, tls: false });
+        }
+    }
 
-    ports.sort_unstable();
-    ports.dedup();
-    ports
+    // Only sites that actually have a certificate: binding a TLS port with
+    // nothing to present would fail every handshake, which is worse than not
+    // listening at all and much harder to diagnose.
+    let secure = sqlx::query!(
+        "SELECT DISTINCT tls_port as \"tls_port!\"
+         FROM sites
+         WHERE enabled = 1 AND tls_port IS NOT NULL AND cert_id IS NOT NULL"
+    )
+    .fetch_all(db)
+    .await
+    .unwrap_or_default();
+
+    for r in secure {
+        if let Some(port) = valid_port(r.tls_port) {
+            out.push(BindRequest { port, tls: true });
+        }
+    }
+
+    out.sort_unstable_by_key(|r| (r.port, r.tls));
+    out.dedup();
+    out
+}
+
+/// Accept a port number only if it is in range — a value outside 1-65535 is
+/// ignored rather than wrapped into some other port.
+fn valid_port(port: i64) -> Option<u16> {
+    if port > 0 && port <= 65535 {
+        Some(port as u16)
+    } else {
+        None
+    }
 }
 
 // ─── start_on_port ───────────────────────────────────────
@@ -179,6 +228,42 @@ async fn start_on_port(state: ProxyState, port: u16) {
     axum::serve(listener, app)
         .await
         .expect("proxy server error");
+}
+
+// ─── start_tls_on_port ───────────────────────────────────
+
+/// Bind an HTTPS listener and serve requests forever.
+///
+/// Certificates are chosen per connection by SNI, so one port serves every
+/// site configured to use it, each presenting its own certificate. The TLS
+/// version and cipher profile is appliance-wide — rustls fixes it when the
+/// listener is bound, before any server name is known.
+///
+/// Logs and returns rather than panicking if the bind fails, so one
+/// misconfigured port cannot take the whole proxy down.
+async fn start_tls_on_port(state: ProxyState, port: u16) {
+    let state = ProxyState { is_tls: true, ..state };
+    let addr: SocketAddr = match format!("0.0.0.0:{}", port).parse() {
+        Ok(a) => a,
+        Err(e) => {
+            tracing::error!(port, "Invalid TLS listen address: {}", e);
+            return;
+        }
+    };
+
+    let profile = crate::routes::settings::get_tls_profile(&state.db).await;
+    let config = RustlsConfig::from_config(crate::tls::server_config(profile));
+
+    tracing::info!(profile = profile.as_str(), "Proxy listening on https://{}", addr);
+
+    let app = Router::new()
+        .fallback(handle_request)
+        .with_state(state)
+        .into_make_service_with_connect_info::<SocketAddr>();
+
+    if let Err(e) = axum_server::bind_rustls(addr, config).serve(app).await {
+        tracing::error!(port, "TLS proxy server error: {}", e);
+    }
 }
 
 // ─── handle_request ──────────────────────────────────────
@@ -233,6 +318,33 @@ async fn handle_request(
             return error_response(StatusCode::NOT_FOUND, "No site configured for this host");
         }
     };
+
+    // ── 2b. Redirect to HTTPS when the site asks for it ───
+    // Only from a plain listener, and only when there is somewhere to send
+    // them: redirecting to a TLS port that is not bound would take the site
+    // off the air instead of securing it. Done before any inspection, since
+    // the request is not being served here either way.
+    if !state.is_tls && site.tls_redirect {
+        if let Some(tls_port) = site.tls_port {
+            let target = if tls_port == 443 {
+                format!("https://{}{}", host, req.uri().path_and_query().map(|p| p.as_str()).unwrap_or("/"))
+            } else {
+                format!(
+                    "https://{}:{}{}",
+                    host,
+                    tls_port,
+                    req.uri().path_and_query().map(|p| p.as_str()).unwrap_or("/")
+                )
+            };
+            return Response::builder()
+                .status(StatusCode::TEMPORARY_REDIRECT)
+                .header("location", target)
+                .body(Body::empty())
+                .unwrap_or_else(|_| {
+                    error_response(StatusCode::INTERNAL_SERVER_ERROR, "Redirect build error")
+                });
+        }
+    }
 
     // ── 3. Decompose request ──────────────────────────────
     let (parts, body) = req.into_parts();
@@ -442,6 +554,8 @@ async fn handle_request(
 async fn lookup_site(db: &SqlitePool, host: &str) -> Option<SiteRow> {
     sqlx::query!(
         "SELECT id as \"id!\", name, target,
+                tls_port,
+                tls_redirect   as \"tls_redirect!: bool\",
                 hsts           as \"hsts!: bool\",
                 x_frame        as \"x_frame!: bool\",
                 x_content_type as \"x_content_type!: bool\",
@@ -458,6 +572,8 @@ async fn lookup_site(db: &SqlitePool, host: &str) -> Option<SiteRow> {
         id:             r.id,
         name:           r.name,
         target:         r.target,
+        tls_port:       r.tls_port,
+        tls_redirect:   r.tls_redirect,
         hsts:           r.hsts,
         x_frame:        r.x_frame,
         x_content_type: r.x_content_type,

@@ -18,9 +18,8 @@ blocked, with a per-site breakdown.*
 ## Status
 
 Working today: reverse proxying, the rule engine, country rules, the CAPTCHA challenge,
-traffic logging and retention, and the management GUI — which is served over TLS with a
-self-signed certificate generated on first run. Not yet implemented: **TLS termination for
-proxied sites** (the proxy itself still serves plain HTTP) and **ACME**. See
+traffic logging and retention, HTTPS for both the management GUI and proxied sites, and the
+management GUI itself. Not yet implemented: **ACME** — certificates are uploaded manually. See
 [Not implemented yet](#not-implemented-yet) before deploying.
 
 ---
@@ -72,6 +71,10 @@ and the per-site security headers still apply, but nothing is inspected.
   and a per-site breakdown.
 * **Traffic retention** — bound the history from Settings; older events are pruned at startup
   and hourly.
+* **HTTPS per site** — each site can serve plain HTTP, HTTPS, or both at once. Certificates
+  are selected per site by SNI, so many sites share one HTTPS port, each presenting its own.
+  An optional per-site redirect sends HTTP to HTTPS; it is off by default, so turning on
+  HTTPS never silently stops the HTTP port working.
 * **Per-site security headers** — HSTS, `X-Frame-Options`, `X-Content-Type-Options`,
   `X-XSS-Protection`, toggled individually.
 * **Light / dark / auto theme.**
@@ -169,7 +172,9 @@ your own certificate to make the warning go away.
 |---|---|---|
 | Hostname | `example.com` | The `Host:` header to route on — bare name, no scheme, no port |
 | Upstream Target | `http://127.0.0.1:3000` | Where to forward — full URL including scheme |
-| Listen Port | `80` | Bound immediately; the previously bound port keeps listening until restart |
+| Listen Port | `80` | Plain HTTP. Bound immediately; the previously bound port keeps listening until restart |
+| HTTPS Port | `443` | Optional. Empty means HTTP only; setting it serves HTTPS *as well as* HTTP |
+| Certificate | one you uploaded | Required for HTTPS. A site with an HTTPS port but no certificate does not bind that port at all, rather than binding it and failing every handshake |
 
 ### Attach a WAF policy
 
@@ -211,6 +216,13 @@ production. Restart to apply any edit.
 
 Everything else — sites, their ports, policies, rules and retention — lives in the database
 and is managed from the GUI, so adding a site never means editing a file.
+
+The TLS version profile is one appliance-wide setting under **Settings** — "compatible"
+(TLS 1.2 and 1.3) or "modern" (1.3 only) — rather than per site, because rustls fixes the
+version and cipher suites when a listener binds its port, before the client has said which
+site it wants. Certificates *are* per site; those are chosen by SNI during the handshake.
+There is no weak-cipher option: nothing below TLS 1.2, and no RC4, 3DES or CBC-SHA1, is
+implemented at all.
 
 `geoip_db` optionally points at a MaxMind-format `.mmdb` to use instead of the bundled DB-IP
 Lite database — a fresher DB-IP file, or MaxMind GeoLite2. Leave it empty for the bundled one.
