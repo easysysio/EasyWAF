@@ -228,11 +228,30 @@ async fn main() {
 
     spawn_https_redirect(redirect_addr, cfg.proxy.gui_tls_port);
 
+    // Bind before announcing. bind_rustls binds lazily inside serve(), so
+    // logging first would claim the GUI is listening and then panic if the
+    // port were taken — the least helpful thing to find in a log when the
+    // service will not start.
+    let listener = match std::net::TcpListener::bind(tls_addr) {
+        Ok(l) => l,
+        Err(e) => {
+            tracing::error!(
+                "Cannot bind the management GUI to {}: {}. Another process is \
+                 probably using the port — check with: ss -lntp | grep {}",
+                tls_addr, e, cfg.proxy.gui_tls_port
+            );
+            std::process::exit(1);
+        }
+    };
+
     info!("Management GUI listening on https://{}", tls_addr);
-    axum_server::bind_rustls(tls_addr, tls)
+    if let Err(e) = axum_server::from_tcp_rustls(listener, tls)
         .serve(app.into_make_service())
         .await
-        .expect("GUI server error");
+    {
+        tracing::error!("Management GUI server error: {}", e);
+        std::process::exit(1);
+    }
 }
 
 // ─── spawn_https_redirect ────────────────────────────────

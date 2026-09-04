@@ -8,6 +8,13 @@ Version bumps and tags are created only after explicit approval.
 
 ## [Unreleased]
 
+### Fixed
+- A TLS listener logged "listening" *before* it actually bound the port —
+  `bind_rustls` defers the bind into `serve()` — so a port already in use
+  produced a log claiming the GUI was up followed by a panic. Both the
+  management and proxy TLS listeners now bind first and report a clear,
+  actionable error naming the port instead of panicking.
+
 ### Added
 - **HTTPS for proxied sites.** A site can now serve plain HTTP, HTTPS, or both
   at once: `listen_port` keeps serving HTTP and a new `tls_port` serves HTTPS,

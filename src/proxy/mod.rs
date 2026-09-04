@@ -254,6 +254,17 @@ async fn start_tls_on_port(state: ProxyState, port: u16) {
     let profile = crate::routes::settings::get_tls_profile(&state.db).await;
     let config = RustlsConfig::from_config(crate::tls::server_config(profile));
 
+    // Bound before announcing, for the same reason as the management port:
+    // bind_rustls defers the bind into serve(), so logging first would claim a
+    // listener that may never exist.
+    let listener = match std::net::TcpListener::bind(addr) {
+        Ok(l) => l,
+        Err(e) => {
+            tracing::error!(port, "Failed to bind TLS proxy port: {}", e);
+            return;
+        }
+    };
+
     tracing::info!(profile = profile.as_str(), "Proxy listening on https://{}", addr);
 
     let app = Router::new()
@@ -261,7 +272,7 @@ async fn start_tls_on_port(state: ProxyState, port: u16) {
         .with_state(state)
         .into_make_service_with_connect_info::<SocketAddr>();
 
-    if let Err(e) = axum_server::bind_rustls(addr, config).serve(app).await {
+    if let Err(e) = axum_server::from_tcp_rustls(listener, config).serve(app).await {
         tracing::error!(port, "TLS proxy server error: {}", e);
     }
 }
