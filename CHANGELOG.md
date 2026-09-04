@@ -6,6 +6,18 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
+## [Unreleased]
+
+### Fixed
+- **The README's limitations section had been wrong since 0.4.0.** It still said
+  the proxy served plain HTTP and that the admin password could only be changed
+  in the database — both fixed by that release, in the same commits that failed
+  to update this section. Rewritten as *What EasyWAF does not do*, covering what
+  is actually missing across the proxy, the WAF and management, and separating
+  what is scheduled (with its release number) from what is a decision. A
+  limitations list that is out of date is worse than none: it is the section a
+  reader trusts precisely because they expect it to be unflattering.
+
 ## [0.4.2] — 2026-09-04
 
 Closes the last two credentials that shipped with known values.

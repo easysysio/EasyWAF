@@ -19,8 +19,12 @@ blocked, with a per-site breakdown.*
 
 Working today: reverse proxying, the rule engine, country rules, the CAPTCHA challenge,
 traffic logging and retention, HTTPS for both the management GUI and proxied sites, and the
-management GUI itself. Not yet implemented: **ACME** — certificates are uploaded manually. See
-[Not implemented yet](#not-implemented-yet) before deploying.
+management GUI itself.
+
+The largest gaps are **ACME** (certificates are uploaded by hand — it is the next release),
+**WebSockets** (they do not proxy at all), and **backup/export** (there is none). Read
+[What EasyWAF does not do](#what-easywaf-does-not-do) before deploying — it is short, and it
+is the honest half of this page.
 
 ---
 
@@ -324,21 +328,71 @@ packaging/          systemd unit
 
 ---
 
-## Not implemented yet
+## What EasyWAF does not do
 
-Called out so nothing here is a surprise in production:
+Called out so nothing here is a surprise in production. Split by whether it is
+scheduled or decided — the roadmap lives in [docs/design/roadmap.md](docs/design/roadmap.md).
 
-* **TLS / HTTPS** — the proxy serves plain HTTP. Certificates can be stored in the GUI but are
-  not used to terminate TLS. Put EasyWAF behind a TLS terminator if you need HTTPS.
-* **ACME** — no automatic certificate issuance.
-* **WebSockets** — the `Upgrade` header is stripped as hop-by-hop, so upgrades do not proxy.
-* **Password change** — the admin password can only be changed in the database.
-* **IPv6 literal hostnames** — host matching truncates at the first colon.
+### As a reverse proxy
 
-Request bodies are buffered up to 32 MB so rules can inspect them; larger requests are
-rejected with 400. Responses are streamed.
+* **WebSockets do not work.** `Connection` and `Upgrade` are stripped as hop-by-hop headers
+  and there is no tunnelling path, so an upgrade never reaches the upstream. Anything with
+  live updates — chat, hot reload, streaming dashboards — breaks. Not scheduled.
+* **No HTTP/2 to clients.** No ALPN is advertised, so connections are HTTP/1.1. Not scheduled.
+* **Routing is by `Host:` only, matched exactly.** No path prefixes, no wildcard hostnames
+  like `*.example.com`. Two applications behind one hostname cannot be split. Not scheduled.
+* **One upstream per site.** No load balancing, no health checks, no failover to a second
+  backend. Not scheduled.
+* **IPv6 literal hostnames do not route.** Host matching truncates at the first colon, so
+  `[::1]:8080` does not match. Name-based hosts are unaffected.
+* **No health or metrics endpoint.** Nothing to point a load balancer's health check at, and
+  no Prometheus scrape target.
 
----
+### As a WAF
+
+* **Requests only — responses are not inspected.** Nothing detects what leaks *out*: stack
+  traces, SQL errors, directory listings, card numbers. This is the half of a WAF that CRS
+  reserves its 950xxx band for. Not scheduled, and it has a real cost: responses stream
+  today, and inspecting them means buffering.
+* **The GUI cannot tell you why a request was blocked.** Traffic Monitor records that a
+  request was blocked, not which rule did it or what the score was — diagnosing a false
+  positive means debug logging and reading the journal. Unscheduled but wanted; most of the
+  plumbing already exists and is inert.
+* **Traffic history holds no headers or bodies** — method, host, path, country and verdict
+  only. So a new rule cannot be replayed against past traffic to see what it would have
+  matched.
+* **Request bodies are buffered to 32 MB** so rules can inspect them; anything larger is
+  rejected with 400.
+
+### Managing it
+
+* **Certificates are uploaded by hand — no ACME yet.** Renewal is a calendar reminder.
+  Scheduled for **0.5.0**, and the next release.
+* **One account, and everyone who has it is an administrator.** No second user, no roles, no
+  read-only access. Scheduled for **0.6.0**.
+* **Sessions cannot be revoked.** They are stateless signed cookies, so changing a password
+  does not invalidate one already issued — it expires on its own within 8 hours. Scheduled
+  with roles in **0.6.0**, which needs the same refactor.
+* **No audit log.** Nothing records who changed what. Scheduled for **0.9.0** — deliberately
+  after roles, since a trail saying "admin did X" says little when every operator is `admin`.
+* **No backup, restore or configuration export.** Everything lives in one SQLite file with no
+  way to export it, clone it to staging, or keep it under version control. Scheduled for
+  **0.8.0**; until then, copy the database file with the service stopped.
+* **No high availability.** No configuration sync between nodes. Scheduled for **0.10.0**.
+* **No IP allow/block lists** (**0.11.0**) and **no rate limiting** (**0.12.0**).
+* **`http_port` and `acme_webroot` in `config.toml` are ignored.** They are placeholders from
+  0.1.0; listening ports come from the sites you define.
+
+### Decided, not missing
+
+* **TLS version and cipher suites are appliance-wide, not per site.** rustls fixes both when a
+  listener binds its port, before the client has said which site it wants, so sites sharing a
+  port necessarily share them. Certificates *are* per site, chosen by SNI. Per-site and
+  per-port policies were both considered and declined.
+* **There is no password recovery.** No mailer, no second account to reset from. A lost
+  administrator password means editing the `users` table directly.
+* **Traffic is not replicated and is not intended to be.** When node sync arrives, each node
+  will keep its own traffic history and [EasyLog](https://easysys.io) aggregates it.
 
 ## Releasing
 
