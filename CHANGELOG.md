@@ -17,6 +17,24 @@ Version bumps and tags are created only after explicit approval.
   with `no such column` errors that read as faults in the code rather than a
   stale schema.
 
+- **Configurable cipher suites** (Settings): one editable line naming the suites
+  every HTTPS listener offers, pre-filled with all nine this build supports, for
+  policies that permit only a subset. Names are validated on save — an
+  unrecognised one is refused rather than silently dropped, since dropping it
+  would leave an operator believing a restriction was in force that was not —
+  and a selection that could negotiate nothing (TLS 1.2 suites only under the
+  "modern" profile) is refused too, rather than being stored to take the GUI
+  down at the next restart along with everything else. Applies to the management
+  interface as well as to proxied sites, which now build their TLS configuration
+  the same way: a policy restricting ciphers means the administrative interface
+  too.
+
+  Worth stating plainly for compliance work: **there are no CBC suites to
+  disable.** All nine are AEAD (GCM or ChaCha20-Poly1305) and every TLS 1.2 one
+  is ECDHE, so requirements forbidding CBC, RC4, 3DES, static-RSA key exchange
+  or anything below TLS 1.2 are already met before the line is touched. A unit
+  test asserts this rather than leaving it as a claim in the documentation.
+
 ### Fixed
 - A TLS listener logged "listening" *before* it actually bound the port —
   `bind_rustls` defers the bind into `serve()` — so a port already in use

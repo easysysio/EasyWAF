@@ -215,9 +215,17 @@ async fn main() {
     let (cert_pem, key_pem) = cert::ensure_default(&db)
         .await
         .expect("management certificate");
-    let tls = RustlsConfig::from_pem(cert_pem.into_bytes(), key_pem.into_bytes())
-        .await
-        .expect("management TLS configuration");
+
+    // Built from the same profile and cipher settings as the proxied sites,
+    // rather than from rustls's defaults. A policy that restricts ciphers
+    // means the administrative interface too — it would be an odd appliance
+    // whose own front door was the one exception to its TLS policy.
+    let profile = routes::settings::get_tls_profile(&db).await;
+    let suites  = routes::settings::get_tls_ciphers(&db).await;
+    let tls = RustlsConfig::from_config(
+        tls::single_cert_config(profile, &suites, &cert_pem, &key_pem)
+            .expect("management TLS configuration"),
+    );
 
     let redirect_addr: SocketAddr = format!("0.0.0.0:{}", cfg.proxy.gui_port)
         .parse()

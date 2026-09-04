@@ -217,12 +217,33 @@ production. Restart to apply any edit.
 Everything else — sites, their ports, policies, rules and retention — lives in the database
 and is managed from the GUI, so adding a site never means editing a file.
 
-The TLS version profile is one appliance-wide setting under **Settings** — "compatible"
-(TLS 1.2 and 1.3) or "modern" (1.3 only) — rather than per site, because rustls fixes the
-version and cipher suites when a listener binds its port, before the client has said which
-site it wants. Certificates *are* per site; those are chosen by SNI during the handshake.
-There is no weak-cipher option: nothing below TLS 1.2, and no RC4, 3DES or CBC-SHA1, is
-implemented at all.
+The TLS version profile and the cipher suites are two appliance-wide settings under
+**Settings**, rather than per site, because rustls fixes both when a listener binds its
+port — before the client has said which site it wants. Certificates *are* per site; those
+are chosen by SNI during the handshake. Both settings cover the management interface as
+well as the proxied sites, and take effect on restart.
+
+The profile is "compatible" (TLS 1.2 and 1.3) or "modern" (1.3 only). The cipher suites
+are one editable line, pre-filled with everything supported; delete the ones your policy
+forbids. A name EasyWAF does not recognise is refused on save rather than dropped, so a
+restriction you believe is in force always is.
+
+Nothing weak is on that line to begin with. All nine suites are AEAD, and the TLS 1.2 ones
+are all ECDHE:
+
+```
+TLS13_AES_256_GCM_SHA384                  TLS13_AES_128_GCM_SHA256
+TLS13_CHACHA20_POLY1305_SHA256
+TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384   TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256
+TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256
+TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384     TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256
+```
+
+So a requirement to disable CBC — or RC4, 3DES, static-RSA key exchange, or anything below
+TLS 1.2 — is met before any configuration: none of it is implemented, so none of it can be
+selected. Restricting the line is for policies that go further, such as AES-only or
+256-bit-only.
 
 `geoip_db` optionally points at a MaxMind-format `.mmdb` to use instead of the bundled DB-IP
 Lite database — a fresher DB-IP file, or MaxMind GeoLite2. Leave it empty for the bundled one.

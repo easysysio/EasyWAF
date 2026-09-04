@@ -252,7 +252,8 @@ async fn start_tls_on_port(state: ProxyState, port: u16) {
     };
 
     let profile = crate::routes::settings::get_tls_profile(&state.db).await;
-    let config = RustlsConfig::from_config(crate::tls::server_config(profile));
+    let suites  = crate::routes::settings::get_tls_ciphers(&state.db).await;
+    let config  = RustlsConfig::from_config(crate::tls::server_config(profile, &suites));
 
     // Bound before announcing, for the same reason as the management port:
     // bind_rustls defers the bind into serve(), so logging first would claim a

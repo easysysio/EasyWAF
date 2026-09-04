@@ -33,6 +33,10 @@ pub const KEY_MAINTENANCE_MESSAGE: &str = "maintenance_message";
 /// TLS version profile applied to every HTTPS listener.
 pub const KEY_TLS_PROFILE: &str = "tls_profile";
 
+/// Cipher suites offered by every HTTPS listener, space-separated. Empty means
+/// every suite this build supports.
+pub const KEY_TLS_CIPHERS: &str = "tls_ciphers";
+
 /// Used when the row is missing or cannot be parsed.
 const DEFAULT_RETENTION_DAYS: i64 = 0;
 
@@ -65,6 +69,7 @@ pub struct SettingsForm {
     pub traffic_retention_days: Option<String>,
     pub maintenance_message:    Option<String>,
     pub tls_profile:            Option<String>,
+    pub tls_ciphers:            Option<String>,
 }
 
 // ─── get_settings ────────────────────────────────────────
@@ -84,6 +89,15 @@ pub async fn get_settings(
     let maintenance_message = get_maintenance_message(&state.db).await;
     let tls_profile         = get_tls_profile(&state.db).await;
 
+    // The stored line is shown as typed. When nothing has been set the field
+    // is pre-filled with every supported suite rather than left blank: an
+    // operator restricting ciphers needs the exact spellings to edit down
+    // from, and there is nowhere else to discover them.
+    let tls_ciphers = match get_setting(&state.db, KEY_TLS_CIPHERS).await {
+        Some(v) if !v.trim().is_empty() => v,
+        _                               => crate::tls::all_suite_names(),
+    };
+
     // Shown alongside the field so the setting's effect is concrete.
     let stored_events: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM traffic_events")
         .fetch_one(&state.db)
@@ -96,6 +110,8 @@ pub async fn get_settings(
     ctx.insert("retention_days",      &retention_days);
     ctx.insert("maintenance_message",  &maintenance_message);
     ctx.insert("tls_profile",          tls_profile.as_str());
+    ctx.insert("tls_ciphers",          &tls_ciphers);
+    ctx.insert("tls_ciphers_all",      &crate::tls::all_suite_names());
     ctx.insert("stored_events",  &stored_events);
     ctx.insert("result",         &flash.result.unwrap_or_default());
     ctx.insert("msg",            &flash.msg.unwrap_or_default());
@@ -152,7 +168,37 @@ pub async fn post_settings_update(
     let profile = crate::tls::TlsProfile::from_setting(
         form.tls_profile.as_deref().unwrap_or(""),
     );
+
+    // Ciphers are validated before anything is written, and a bad list is
+    // refused outright. Storing one would not fail here — it would fail at the
+    // next restart, when every HTTPS listener refuses every handshake and the
+    // GUI that could fix it is one of them.
+    let ciphers_raw = form.tls_ciphers.as_deref().unwrap_or("").trim();
+    let suites = match crate::tls::parse_suites(ciphers_raw) {
+        Ok(s)  => s,
+        Err(e) => return flash_redirect("/settings", "failed", &format!("Cipher suites: {e}")),
+    };
+
+    if !crate::tls::suites_usable_with(profile, &suites) {
+        return flash_redirect(
+            "/settings",
+            "failed",
+            "Modern (TLS 1.3 only) needs at least one TLS13_ suite selected — \
+             the suites chosen are all TLS 1.2, so no connection could be negotiated",
+        );
+    }
+
     set_setting(&state.db, KEY_TLS_PROFILE, profile.as_str()).await?;
+
+    // Stored normalised: the names rustls knows, in its own preference order,
+    // rather than however they were typed. What is read back is then exactly
+    // what the listener will offer.
+    let normalised = suites
+        .iter()
+        .map(crate::tls::suite_name)
+        .collect::<Vec<_>>()
+        .join(" ");
+    set_setting(&state.db, KEY_TLS_CIPHERS, &normalised).await?;
 
     let msg = if days == 0 {
         "Settings saved — traffic history is kept indefinitely".to_string()
@@ -191,6 +237,24 @@ pub async fn get_maintenance_message(db: &SqlitePool) -> String {
 pub async fn get_tls_profile(db: &SqlitePool) -> crate::tls::TlsProfile {
     let raw = get_setting(db, KEY_TLS_PROFILE).await.unwrap_or_default();
     crate::tls::TlsProfile::from_setting(&raw)
+}
+
+/// Read the cipher suites every HTTPS listener should offer.
+///
+/// Falls back to all supported suites when unset or unparseable. The fallback
+/// is deliberate: a corrupted value must not leave the appliance unable to
+/// negotiate TLS at all, which would take the management GUI down with it.
+/// The form rejects anything invalid, so this path means the row was edited
+/// outside EasyWAF.
+pub async fn get_tls_ciphers(db: &SqlitePool) -> Vec<rustls::SupportedCipherSuite> {
+    let raw = get_setting(db, KEY_TLS_CIPHERS).await.unwrap_or_default();
+    match crate::tls::parse_suites(&raw) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!("Stored TLS cipher list is unusable ({e}); offering all supported suites");
+            crate::tls::all_suites()
+        }
+    }
 }
 
 /// Fetch one raw setting value. None when the key is not present.

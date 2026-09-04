@@ -87,6 +87,34 @@
                             means after a restart.
                         </p>
                     </div>
+
+                    <div class="form-group">
+                        <label>Cipher Suites <small class="text-muted">(space-separated; the ones offered to clients)</small></label>
+                        <input type="text" class="form-control" name="tls_ciphers"
+                               value="{{ tls_ciphers }}" spellcheck="false"
+                               style="font-family: monospace; font-size: 12px;">
+                        <p class="help-block">
+                            Edit the line down to the suites your policy permits. Names are
+                            checked on save — an unrecognised one is refused rather than
+                            quietly dropped, so a restriction you think is in force always is.
+                            Order is not yours to set: the server offers them strongest first.
+                            <br>
+                            <strong>Every suite here is AEAD.</strong> If a standard forbids
+                            CBC, or RC4, or 3DES, or static-RSA key exchange, that is already
+                            satisfied — none is implemented, so none can be selected. The
+                            TLS 1.2 suites are all ECDHE, so all have forward secrecy.
+                            <code>TLS13_</code> suites apply to TLS 1.3 and the rest to
+                            TLS 1.2; leaving one family out under
+                            <strong>Compatible</strong> means clients of that version cannot
+                            connect.
+                            <br>
+                            Supported by this build:
+                            <code style="font-size: 11px;">{{ tls_ciphers_all }}</code>
+                            <br>
+                            This applies to the management interface as well as to proxied
+                            sites, and takes effect after a restart.
+                        </p>
+                    </div>
                 </div>
             </div>
 
