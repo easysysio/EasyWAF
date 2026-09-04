@@ -58,7 +58,7 @@ CREATE TABLE ip_rules (
     ip         TEXT    NOT NULL UNIQUE,   -- exact IPv4 or IPv6, not a range
     list_type  TEXT    NOT NULL,          -- 'allow' | 'block'
     reason     TEXT,                      -- free text, e.g. "false positive on 942007"
-    added_by   TEXT,                      -- username, once 0.5.0 exists
+    added_by   TEXT,                      -- username, once 0.6.0 exists
     created_at TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 ```

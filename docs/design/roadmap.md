@@ -7,8 +7,8 @@ next minor, so a release's notes stay about its feature.
 | Release | Feature |
 |---|---|
 | 0.4.0 | TLS termination, certificate management, self-service password change — **released 2026-09-04** |
-| 0.5.0 | User management and roles |
-| 0.6.0 | ACME / Let's Encrypt |
+| 0.5.0 | ACME / Let's Encrypt |
+| 0.6.0 | User management and roles |
 | 0.7.0 | Updating the rule sets and the country database (see [rule-repository.md](rule-repository.md)) |
 | 0.8.0 | Backup, restore and configuration export (see [backup-restore.md](backup-restore.md)) |
 | 0.9.0 | Flow logs over syslog, audit log on disk |
@@ -66,14 +66,30 @@ A user agent must ignore a `Strict-Transport-Security` header received over
 insecure transport (RFC 6797 §8.1), so that checkbox has been inert since
 0.1.0. TLS is what makes it real.
 
-**ACME is separated from TLS** because it is the riskiest piece and the two are
-independently useful. TLS with an uploaded or self-signed certificate is
+**ACME is separated from TLS, but immediately follows it.** It is the riskiest
+piece and the two are independently useful. TLS with an uploaded or self-signed certificate is
 shippable and testable on its own, while ACME needs the domain publicly
 reachable, is governed by Let's Encrypt rate limits that punish retry loops,
 and its hard part is not issuance but unattended renewal sixty days later.
 Bundling them would hold working HTTPS behind the harder half.
 
-**User management comes early, and specifically before everything except TLS,
+**ACME moved ahead of user management on 2026-09-04, deliberately reversing the
+argument below.** The reason is dogfooding: EasyWAF's author runs Traefik in
+front of their own sites and will migrate once certificates renew themselves,
+and running real traffic through the product is the fastest way to find what
+testing does not. On a single-operator instance roles are close to moot, so the
+release that unblocks production use should not sit behind them.
+
+The cost is real and was accepted rather than waved away: the retrofit argued
+for below gets one release larger, and ACME's own state — accounts, renewal
+schedules, per-site enablement — is part of what roles will later have to
+govern. One release is a marginal increase on a retrofit already sized at 40
+call sites, and the argument for roles-first is about *cost growth*, not about
+correctness, so paying slightly more later to get real traffic sooner is a
+trade worth taking once. It is not a licence to keep deferring it: everything
+after 0.6.0 assumes roles exist.
+
+**User management comes next, and before everything except TLS and ACME,
 because the authorization surface only grows.** There are 40 separate
 `get_session(&jar)` checks across the handlers today, each a binary "is anyone
 logged in". Roles turn every one into an authorization decision, which wants
@@ -87,9 +103,11 @@ plane, users and roles protect access to it, and doing them adjacently keeps
 that code open once. And it precedes the audit log deliberately — a trail
 recording that "admin did X" says little when every operator is `admin`.
 
-The cost is that ACME slips a release, and certificates expire on a schedule
-nobody controls. That trade was taken knowingly: manual renewal is a calendar
-reminder, while a missed authorization check is a vulnerability.
+That reasoning stands on its own terms; what changed is which cost is being
+paid. The original trade accepted that ACME slipped a release, on the grounds
+that manual renewal is a calendar reminder while a missed authorization check
+is a vulnerability. Both halves are still true — the retrofit is still the
+thing to protect, and roles are still next.
 
 **Rule and database updates come before flow logs** because 0.3.0 already laid
 their groundwork — the replaceable country-database reader and the rule import
@@ -143,7 +161,7 @@ while it is still moving.
 **IP lists and rate limiting sit before it, adjacent to each other, and each
 still self-contained.** Both are identity/volume signals rather than payload
 inspection, both share a pipeline position — checked early, before GeoIP and
-WAF, and both must respect the allowlist override from 0.10.0 — and both are
+WAF, and both must respect the allowlist override from 0.11.0 — and both are
 easy slots to pull forward if an urgent need shows up, since neither assumes
 anything from the releases ahead of it. They stay two releases rather than one
 because they differ enough in shape: an IP list is a set lookup, rate limiting
@@ -151,7 +169,7 @@ is a counter with a time window and its own state-management questions.
 
 ## What 0.1.0 already left in place
 
-The schema anticipated most of 0.4.0 and 0.5.0:
+The schema anticipated most of 0.4.0, 0.5.0 and 0.6.0:
 
 * `certs` — `cert_pem`, `key_pem`, `domain`, `not_before`, `not_after`,
   `acme_domain`, `acme_expires`
@@ -160,7 +178,7 @@ The schema anticipated most of 0.4.0 and 0.5.0:
 
 So the data model is largely there; what is missing is the serving and issuing.
 
-## Constraints to settle before coding 0.4.0
+## Constraints settled before coding 0.4.0 (released; kept for the reasoning)
 
 **A port is TLS or plain, not both.** Listeners are bound per *port* and shared
 by every site on that port ([proxy/mod.rs](../../src/proxy/mod.rs)), so TLS is
@@ -170,14 +188,15 @@ certificate selection by **SNI** — a rustls certificate resolver keyed on
 `server_name`. This may change how sites and ports relate, so it is worth
 settling before writing code rather than discovering it halfway.
 
-**A self-service password change belongs here**, not deferred to 0.5.0 with the
+**A self-service password change belongs here**, not deferred to user
+management with the
 rest of user management. There is currently no way to change the password
 outside the database, and "change my own password" is not throwaway work — it
 survives unchanged into a multi-user world, while closing the unchangeable
 `admin`/`admin` gap now rather than two releases out. The README presently tells
 operators to firewall port 8080 as a workaround for its absence.
 
-## Constraints to settle before coding 0.5.0
+## Constraints to settle before coding 0.6.0 (users and roles)
 
 **Which roles, minimally.** Two to begin with — `admin` (everything) and
 `viewer` (dashboard, traffic, the read-only pages) — adding an `operator` tier
@@ -203,7 +222,7 @@ roles, so the two belong together rather than being done twice. Until then the
 honest statement — made on the account page — is that other sessions expire
 rather than end.
 
-## Constraint to settle before coding 0.6.0
+## Constraint to settle before coding 0.5.0 (ACME)
 
 **Do not use `acme_webroot`.** It is a placeholder from 0.1.0, but EasyWAF
 already owns port 80, so it should answer `/.well-known/acme-challenge/<token>`

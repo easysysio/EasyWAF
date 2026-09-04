@@ -52,7 +52,7 @@ This must be decided before the format is, not after:
 
 * **Private keys are excluded by default.** An export is for configuration; a
   restore onto a new host re-uploads certificates or re-issues them via ACME
-  (0.6.0). Including keys must be an explicit, separately named choice — not a
+  (0.5.0). Including keys must be an explicit, separately named choice — not a
   flag someone sets once and forgets, and never the default that a support
   request casually produces.
 * **An export that does include keys must say so, loudly, in the file itself

@@ -87,7 +87,7 @@ node while the others are drained — and that is a design decision belonging to
 **ACME must renew on exactly one node.** If every node renews independently
 they duplicate issuance, and Let's Encrypt's rate limits punish exactly that.
 The primary renews; the resulting certificate replicates like any other
-configuration. Since ACME (0.6.0) lands well before this, its design should
+configuration. Since ACME (0.5.0) lands well before this, its design should
 avoid assuming it is alone — at minimum leaving room for a "this node renews"
 flag rather than making it an implicit truth.
 
