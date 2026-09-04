@@ -6,6 +6,24 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
+## [0.4.1] — 2026-09-04
+
+A dependency-hygiene release. No behaviour changes and nothing to do on
+upgrade.
+
+### Changed
+- **`rustls-pemfile` is gone** (RUSTSEC-2025-0134, unmaintained). Its job moved
+  into `rustls-pki-types`, which rustls already re-exports, so certificate and
+  key parsing goes through `PemObject` instead. Dropping EasyWAF's own use was
+  not enough on its own — `axum-server` 0.7 pulled the crate in too — so
+  **axum-server is upgraded to 0.8**, whose `tls-rustls-no-provider` feature
+  depends on `rustls-pki-types` as well. The crate is now absent from the
+  dependency tree entirely rather than merely unused by EasyWAF's own code, and
+  `cargo audit` reports nothing.
+
+  It was an unmaintained-crate warning rather than a vulnerability, so 0.4.0 is
+  not unsafe to run — this closes the warning rather than fixing an exposure.
+
 ## [0.4.0] — 2026-09-04
 
 The TLS release: the management interface and proxied sites both serve HTTPS,
@@ -115,14 +133,6 @@ unchanged.
 ### Changed
 - The session cookie is now marked `Secure`, so a browser will not send it in
   cleartext to the plain-HTTP redirect port on its way to the TLS one.
-- **`rustls-pemfile` is gone** (RUSTSEC-2025-0134, unmaintained). Its job moved
-  into `rustls-pki-types`, which rustls already re-exports, so certificate and
-  key parsing goes through `PemObject` instead. Dropping our own use was not
-  enough on its own — `axum-server` 0.7 pulled the crate in too — so
-  **axum-server is upgraded to 0.8**, whose `tls-rustls-no-provider` feature
-  depends on `rustls-pki-types` as well. The crate is now absent from the
-  dependency tree entirely rather than merely unused by EasyWAF's own code, and
-  `cargo audit` reports nothing.
 
 ### Fixed
 - A TLS listener logged "listening" *before* it actually bound the port —
