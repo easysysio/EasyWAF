@@ -36,6 +36,31 @@ mode from an hour of shell work into a click — and leads naturally into
 disabling the rule, cloning it to tune (0.7.0), or allowlisting the client
 (0.9.0).
 
+**Reverse-proxy parity — WebSockets, HTTP/2, path routing, multiple
+upstreams.** Found on 2026-09-04 while checking whether ACME alone would let
+EasyWAF replace Traefik in front of the author's own sites. It would: none of
+these blocks that migration. They are recorded because they block *someone*,
+and because a product described as a reverse proxy is expected to have them.
+
+* **WebSockets do not work, and fail quietly.** `connection` and `upgrade` are
+  in `HOP_HEADERS` ([proxy/mod.rs](../../src/proxy/mod.rs)) and stripped before
+  forwarding — correct for ordinary hop-by-hop headers, but a proxy supporting
+  WebSockets must special-case the upgrade and then tunnel bytes both ways.
+  There is no `on_upgrade`, no 101 handling, no `copy_bidirectional`. This is
+  not a small fix: the upstream client is **reqwest**, which has no
+  protocol-upgrade API at all, so upgraded requests need a separate connection
+  path through hyper. It also raises a question this product should answer
+  deliberately — a tunnelled connection is inspected once, at the handshake,
+  and never again.
+* **No HTTP/2 to clients.** No ALPN is configured, and rustls will not
+  negotiate `h2` without it. Adding `alpn_protocols` is small; making the proxy
+  actually serve h2 is not.
+* **Routing is Host-only and exact.** No path prefixes, no wildcard server
+  names — `WHERE server_name = ?`. Two applications behind one hostname cannot
+  be expressed.
+* **One `target` per site.** No load balancing across upstreams, no health
+  checks, no failover to a second backend.
+
 **Response inspection.** Everything today inspects requests; the other half of
 a WAF catches what leaks out — stack traces, SQL errors, directory listings,
 card numbers — which is what CRS reserves the 950xxx band for. The cost is
@@ -235,3 +260,11 @@ retention sweep is the existing pattern), backoff that respects Let's Encrypt's
 rate limits, and somewhere in the GUI that shows when a certificate last
 renewed and when it will next be attempted — a renewal that fails silently is
 an outage scheduled ninety days out.
+
+**HTTP-01 only; wildcard certificates are out of scope for 0.5.0.** A wildcard
+requires DNS-01, which means credentials for a DNS provider's API and a
+provider abstraction behind it — a materially larger feature than answering a
+challenge on a port EasyWAF already owns. Confirmed on 2026-09-04 that the
+migration driving this release needs neither, so scoping it out is a decision
+rather than an omission. Anyone needing a wildcard uploads one under
+Certificates, which has worked since 0.4.0.
