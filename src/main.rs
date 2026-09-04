@@ -43,6 +43,14 @@ use axum::http::{header::CACHE_CONTROL, HeaderValue};
 use tracing::info;
 use tracing_subscriber::{fmt, EnvFilter};
 
+/// The account seeded on first run, and its password.
+///
+/// Named constants rather than literals because three places have to agree on
+/// them: the seeding, the "still default" check behind the startup warning,
+/// and the banner on the account page.
+pub const DEFAULT_USERNAME: &str = "admin";
+pub const DEFAULT_PASSWORD: &str = "admin";
+
 // ─── AppState ────────────────────────────────────────────
 
 /// Shared state for the management GUI handlers.
@@ -163,6 +171,8 @@ async fn main() {
         .route("/sites/{name}/update",   post(routes::sites::post_site_update))
         .route("/sites/{name}/toggle",   post(routes::sites::post_site_toggle))
         .route("/sites/{name}/delete",   post(routes::sites::post_site_delete))
+        .route("/account",               get(routes::account::get_account))
+        .route("/account/password",      post(routes::account::post_account_password))
         .route("/settings",              get(routes::settings::get_settings))
         .route("/settings/update",       post(routes::settings::post_settings_update))
         .route("/certs",                 get(routes::certs::get_certs))
@@ -354,8 +364,13 @@ fn app_version(_args: &HashMap<String, tera::Value>) -> tera::Result<tera::Value
 
 // ─── seed_admin ──────────────────────────────────────────
 
-/// Insert a default admin/admin account if no users exist yet.
-/// Logs a warning so the operator knows to change the password.
+/// Insert a default admin account if no users exist yet, and warn on every
+/// start for as long as that password is still in place.
+///
+/// The warning is repeated rather than logged only at creation. A default
+/// credential on a security appliance is not a first-run detail — it stays
+/// dangerous until it is changed, and the one start where it was mentioned is
+/// long out of the journal by the time anyone looks.
 async fn seed_admin(db: &SqlitePool) {
     let count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM users")
         .fetch_one(db)
@@ -363,9 +378,10 @@ async fn seed_admin(db: &SqlitePool) {
         .unwrap_or(0);
 
     if count == 0 {
-        let hash = bcrypt::hash("admin", bcrypt::DEFAULT_COST).expect("bcrypt hash");
+        let hash = bcrypt::hash(DEFAULT_PASSWORD, bcrypt::DEFAULT_COST).expect("bcrypt hash");
         sqlx::query!(
-            "INSERT INTO users (username, password_hash) VALUES ('admin', ?)",
+            "INSERT INTO users (username, password_hash) VALUES (?, ?)",
+            DEFAULT_USERNAME,
             hash
         )
         .execute(db)
@@ -373,8 +389,17 @@ async fn seed_admin(db: &SqlitePool) {
         .expect("seed admin user");
 
         tracing::warn!(
-            "No users found — created default account admin/admin. \
-             Change this password immediately!"
+            "No users found — created the default account {}/{}.",
+            DEFAULT_USERNAME,
+            DEFAULT_PASSWORD
+        );
+    }
+
+    if routes::account::is_default_password(db, DEFAULT_USERNAME).await {
+        tracing::warn!(
+            "The '{}' account is still using the default password. Change it under \
+             Account in the GUI — anyone who can reach the management port knows it.",
+            DEFAULT_USERNAME
         );
     }
 }

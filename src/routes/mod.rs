@@ -3,6 +3,7 @@
 // Re-exports all route modules.
 // =========================================================
 
+pub mod account;
 pub mod certs;
 pub mod dashboard;
 pub mod geoip;

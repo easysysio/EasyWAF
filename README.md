@@ -160,9 +160,14 @@ one named `easywaf` and stores it under **Certificates** — it exists so the ma
 interface is never served over plain HTTP, not because it is trustworthy. Replace it with
 your own certificate to make the warning go away.
 
-> **Keep the management port private.** The first start seeds an `admin`/`admin` account and
-> there is no password-change screen yet. Firewall ports 8443 and 8080, or bind them to a management
-> network until that lands.
+> **Change the password first.** The seeded `admin`/`admin` account ships with every copy,
+> so anyone who can reach the management port already knows it. **Account → Change Password**
+> (also under Settings). Until you do, EasyWAF says so on every start in the log and on the
+> account page itself.
+
+Keeping the management ports off the public internet is still worth doing — bind them to a
+management network or firewall 8443 and 8080 — but it is now defence in depth rather than
+the only thing standing between a stranger and your appliance.
 
 ### Add a site
 

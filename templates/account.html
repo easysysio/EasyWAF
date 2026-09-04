@@ -1,0 +1,77 @@
+{% extends "layout_default.html" %}
+
+{% block content %}
+
+{% if result == "failed" %}
+<div class="alert alert-danger alert-dismissible">
+    <button type="button" class="close" data-dismiss="alert">&times;</button>
+    {{ msg }}
+</div>
+{% endif %}
+
+{% if result == "success" %}
+<div class="alert alert-success alert-dismissible">
+    <button type="button" class="close" data-dismiss="alert">&times;</button>
+    {{ msg }}
+</div>
+{% endif %}
+
+{% if using_default %}
+<div class="alert alert-warning">
+    <i class="fa fa-exclamation-triangle"></i>
+    <strong>This account is still using the default password.</strong>
+    It ships with every copy of EasyWAF, so anyone who can reach this port already
+    knows it. Change it below.
+</div>
+{% endif %}
+
+<div class="row">
+    <div class="col-lg-6">
+
+        <div class="panel panel-default">
+            <div class="panel-heading"><h4>Change Password</h4></div>
+            <div class="panel-body">
+
+                <form method="post" action="/account/password" autocomplete="off">
+
+                    <div class="form-group">
+                        <label>Current Password</label>
+                        <input type="password" class="form-control" name="current_password"
+                               autocomplete="current-password" required>
+                        <p class="help-block">
+                            Required even though you are signed in — it is what stops an
+                            unattended browser being used to change the password and lock
+                            you out of your own appliance.
+                        </p>
+                    </div>
+
+                    <div class="form-group">
+                        <label>New Password <small class="text-muted">(at least {{ min_length }} characters)</small></label>
+                        <input type="password" class="form-control" name="new_password"
+                               autocomplete="new-password" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Confirm New Password</label>
+                        <input type="password" class="form-control" name="confirm_password"
+                               autocomplete="new-password" required>
+                    </div>
+
+                    <button type="submit" class="btn btn-success">
+                        <i class="fa fa-key"></i> Change Password
+                    </button>
+
+                </form>
+            </div>
+        </div>
+
+        <p class="help-block">
+            You are signed in as <strong>{{ username }}</strong>, and this changes that
+            account's password only. Sessions already open in other browsers are signed
+            cookies rather than server-side records, so they stay valid until they expire
+            — sign out everywhere you are unsure of, or restart EasyWAF, if that matters.
+        </p>
+
+    </div>
+</div>
+{% endblock %}

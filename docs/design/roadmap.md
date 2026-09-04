@@ -6,7 +6,7 @@ next minor, so a release's notes stay about its feature.
 
 | Release | Feature |
 |---|---|
-| 0.4.0 | TLS termination, certificate management, self-service password change |
+| 0.4.0 | TLS termination, certificate management, self-service password change — **released 2026-09-04** |
 | 0.5.0 | User management and roles |
 | 0.6.0 | ACME / Let's Encrypt |
 | 0.7.0 | Updating the rule sets and the country database (see [rule-repository.md](rule-repository.md)) |
@@ -165,6 +165,16 @@ requirement a handler declares, not a check it remembers to make.
 `user_id` and `username` but no role, so it must carry one or look it up per
 request. Decide too what prevents the last remaining admin from deleting or
 demoting themselves.
+
+**Sessions cannot be revoked, and 0.4.0 left it that way.** They are stateless
+signed cookies, so changing a password does not invalidate one already issued —
+it stays valid for its remaining 8 hours, in any browser that holds it. Fixing
+it needs a server-side check per request (a session epoch on the user row,
+compared on every load), which means `get_session` becomes async and every one
+of its call sites is touched. That is the same refactor this release needs for
+roles, so the two belong together rather than being done twice. Until then the
+honest statement — made on the account page — is that other sessions expire
+rather than end.
 
 ## Constraint to settle before coding 0.6.0
 

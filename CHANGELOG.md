@@ -6,9 +6,50 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
-## [Unreleased]
+## [0.4.0] — 2026-09-04
+
+The TLS release: the management interface and proxied sites both serve HTTPS,
+certificates are managed from the GUI, and the seeded password can finally be
+changed from the GUI too.
+
+### Upgrading from 0.3.x — read this first
+
+**The management GUI has moved to `https://<host>:8443/`.** Port 8080 still
+answers, but now does nothing except redirect there.
+
+0.3.1's README told operators to firewall port 8080 as the way to keep the GUI
+private. If you did that and opened nothing else, **you will not be able to
+reach the GUI after upgrading** — 8080 will redirect you to a port your own
+firewall is blocking. Open 8443 to whatever can currently reach 8080 *before*
+you upgrade.
+
+Your browser will warn about the certificate on first load. EasyWAF generates a
+self-signed one named `easywaf`; replace it under **Certificates**.
+
+Nothing else needs doing: the new `gui_tls_port` key is defaulted, so a
+`config.toml` written before TLS existed keeps parsing, and site ports are
+unchanged.
 
 ### Added
+- **Self-service password change** (Account → Change Password). EasyWAF seeds an
+  `admin`/`admin` account on first run, and until now the only way to change it
+  was editing the `users` table with `sqlite3` — a default credential that
+  shipped with every copy and could not practically be replaced. Changing it
+  requires the current password even though the session already proves identity,
+  so an unattended browser cannot be used to take the account over, and rejects
+  a new password under 8 characters or over bcrypt's 72-byte limit rather than
+  letting bcrypt silently ignore the tail.
+
+  EasyWAF now also says so while the default is still in place: a warning on
+  **every** start rather than only the one where the account was created, and a
+  banner on the account page itself.
+
+  This is deliberately "change my own password" and not user administration —
+  it is all a single-account appliance needs, and it survives unchanged into
+  0.5.0's roles rather than being thrown away by them. One limitation worth
+  knowing: sessions are stateless signed cookies, so a change does not revoke
+  one already issued; it expires on its own within 8 hours. Revocation needs a
+  per-request server-side check, which is scheduled with 0.5.0's session work.
 - `scripts/dev-db.sh` — applies any migrations a development database is
   missing, keeping existing data, and does nothing at all when the database is
   already current. sqlx checks every query against a real schema at compile
@@ -35,14 +76,6 @@ Version bumps and tags are created only after explicit approval.
   or anything below TLS 1.2 are already met before the line is touched. A unit
   test asserts this rather than leaving it as a claim in the documentation.
 
-### Fixed
-- A TLS listener logged "listening" *before* it actually bound the port —
-  `bind_rustls` defers the bind into `serve()` — so a port already in use
-  produced a log claiming the GUI was up followed by a panic. Both the
-  management and proxy TLS listeners now bind first and report a clear,
-  actionable error naming the port instead of panicking.
-
-### Added
 - **HTTPS for proxied sites.** A site can now serve plain HTTP, HTTPS, or both
   at once: `listen_port` keeps serving HTTP and a new `tls_port` serves HTTPS,
   bound independently so enabling one never switches the other off.
@@ -82,6 +115,13 @@ Version bumps and tags are created only after explicit approval.
 ### Changed
 - The session cookie is now marked `Secure`, so a browser will not send it in
   cleartext to the plain-HTTP redirect port on its way to the TLS one.
+
+### Fixed
+- A TLS listener logged "listening" *before* it actually bound the port —
+  `bind_rustls` defers the bind into `serve()` — so a port already in use
+  produced a log claiming the GUI was up followed by a panic. Both the
+  management and proxy TLS listeners now bind first and report a clear,
+  actionable error naming the port instead of panicking.
 
 ## [0.3.1] — 2026-09-03
 
