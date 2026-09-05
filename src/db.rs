@@ -57,9 +57,31 @@ pub async fn init(database_url: &str) -> SqlitePool {
     run_migration_008(&pool).await;
     run_migration_009(&pool).await;
     run_migration_010(&pool).await;
+    run_migration_011(&pool).await;
 
     info!("Database ready: {}", database_url);
     pool
+}
+
+// ─── run_migration_011 ───────────────────────────────────
+
+/// Per-site choice of X-Frame-Options value.
+async fn run_migration_011(pool: &SqlitePool) {
+    let exists: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM pragma_table_info('sites') WHERE name = 'x_frame_value'",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0);
+
+    if exists == 0 {
+        let sql_011 = include_str!("../migrations/011_x_frame_value.sql");
+        sqlx::raw_sql(sql_011)
+            .execute(pool)
+            .await
+            .unwrap_or_else(|e| panic!("Migration 011 failed: {}", e));
+        info!("Migration 011 applied: X-Frame-Options value is now per site");
+    }
 }
 
 // ─── run_migration_010 ───────────────────────────────────

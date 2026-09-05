@@ -6,6 +6,24 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
+## [Unreleased]
+
+### Changed
+- **`X-Frame-Options` is now a choice per site, not always `DENY`.** The header
+  was hard-coded, and `DENY` forbids framing by *anything* — including the site
+  itself. Applications that frame their own pages break quietly under it;
+  Nextcloud reports the header as misconfigured and says some features may not
+  work, which is what found this.
+
+  `SAMEORIGIN` is what actually defends against clickjacking, since framing by
+  another origin is the threat and framing by yourself is not. It is the default
+  for new sites. **Existing sites are set to `DENY` by the migration**, so the
+  upgrade changes nothing for anyone — those it was breaking can now choose, and
+  those relying on it keep it.
+
+  The configured value replaces whatever the application sent, so the setting
+  says what is served rather than sometimes deferring to the upstream.
+
 ## [0.5.2] — 2026-09-05
 
 A single fix, released on its own because it breaks logging in to any

@@ -38,6 +38,7 @@ pub struct Site {
     pub waf_policy_id:  Option<i64>,
     pub hsts:           bool,
     pub x_frame:        bool,
+    pub x_frame_value:  String,
     pub x_content_type: bool,
     pub xss_protection: bool,
 }
@@ -74,6 +75,7 @@ pub struct SiteForm {
     pub waf_policy_id:  Option<String>,
     pub hsts:           Option<String>,
     pub x_frame:        Option<String>,
+    pub x_frame_value:  Option<String>,
     pub x_content_type: Option<String>,
     pub xss_protection: Option<String>,
 }
@@ -175,6 +177,12 @@ pub async fn post_site_create(
 
     let hsts           = form.hsts.is_some();
     let x_frame        = form.x_frame.is_some();
+    // Anything unrecognised becomes SAMEORIGIN rather than DENY: a typo should
+    // not silently apply the stricter value that breaks framing.
+    let x_frame_value  = match form.x_frame_value.as_deref().map(str::trim) {
+        Some("DENY") => "DENY".to_string(),
+        _            => "SAMEORIGIN".to_string(),
+    };
     let x_content_type = form.x_content_type.is_some();
     let xss_protection = form.xss_protection.is_some();
     let waf_policy_id  = parse_policy_id(&form.waf_policy_id);
@@ -185,10 +193,10 @@ pub async fn post_site_create(
     sqlx::query!(
         "INSERT INTO sites
          (name, server_name, target, listen_port, tls_port, cert_id, tls_redirect,
-          waf_policy_id, hsts, x_frame, x_content_type, xss_protection)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          waf_policy_id, hsts, x_frame, x_frame_value, x_content_type, xss_protection)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         name, server_name, form.target, listen_port, tls_port, cert_id, tls_redirect,
-        waf_policy_id, hsts, x_frame, x_content_type, xss_protection,
+        waf_policy_id, hsts, x_frame, x_frame_value, x_content_type, xss_protection,
     )
     .execute(&state.db)
     .await?;
@@ -244,6 +252,12 @@ pub async fn post_site_update(
 
     let hsts           = form.hsts.is_some();
     let x_frame        = form.x_frame.is_some();
+    // Anything unrecognised becomes SAMEORIGIN rather than DENY: a typo should
+    // not silently apply the stricter value that breaks framing.
+    let x_frame_value  = match form.x_frame_value.as_deref().map(str::trim) {
+        Some("DENY") => "DENY".to_string(),
+        _            => "SAMEORIGIN".to_string(),
+    };
     let x_content_type = form.x_content_type.is_some();
     let xss_protection = form.xss_protection.is_some();
     let server_name    = normalize_server_name(&form.server_name);
@@ -264,12 +278,12 @@ pub async fn post_site_update(
         "UPDATE sites SET
            server_name=?, target=?, listen_port=?, tls_port=?, cert_id=?,
            tls_redirect=?, waf_policy_id=?,
-           hsts=?, x_frame=?, x_content_type=?, xss_protection=?,
+           hsts=?, x_frame=?, x_frame_value=?, x_content_type=?, xss_protection=?,
            updated_at=datetime('now')
          WHERE name=?",
         server_name, form.target, listen_port, tls_port, cert_id,
         tls_redirect, waf_policy_id,
-        hsts, x_frame, x_content_type, xss_protection,
+        hsts, x_frame, x_frame_value, x_content_type, xss_protection,
         name,
     )
     .execute(&state.db)
@@ -368,6 +382,7 @@ async fn fetch_sites(state: &AppState) -> Result<Vec<Site>> {
                 waf_policy_id,
                 hsts           as \"hsts!: bool\",
                 x_frame        as \"x_frame!: bool\",
+                x_frame_value  as \"x_frame_value!\",
                 x_content_type as \"x_content_type!: bool\",
                 xss_protection as \"xss_protection!: bool\"
          FROM sites ORDER BY name"
@@ -388,6 +403,7 @@ async fn fetch_sites(state: &AppState) -> Result<Vec<Site>> {
         waf_policy_id:  r.waf_policy_id,
         hsts:           r.hsts,
         x_frame:        r.x_frame,
+        x_frame_value:  r.x_frame_value,
         x_content_type: r.x_content_type,
         xss_protection: r.xss_protection,
     }).collect())
@@ -405,6 +421,7 @@ async fn fetch_site(state: &AppState, name: &str) -> Result<Site> {
                 waf_policy_id,
                 hsts           as \"hsts!: bool\",
                 x_frame        as \"x_frame!: bool\",
+                x_frame_value  as \"x_frame_value!\",
                 x_content_type as \"x_content_type!: bool\",
                 xss_protection as \"xss_protection!: bool\"
          FROM sites WHERE name = ?",
@@ -427,6 +444,7 @@ async fn fetch_site(state: &AppState, name: &str) -> Result<Site> {
         waf_policy_id:  r.waf_policy_id,
         hsts:           r.hsts,
         x_frame:        r.x_frame,
+        x_frame_value:  r.x_frame_value,
         x_content_type: r.x_content_type,
         xss_protection: r.xss_protection,
     })

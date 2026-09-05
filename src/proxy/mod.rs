@@ -91,6 +91,7 @@ struct SiteRow {
     tls_redirect:   bool,
     hsts:           bool,
     x_frame:        bool,
+    x_frame_value:  String,
     x_content_type: bool,
     xss_protection: bool,
 }
@@ -900,6 +901,7 @@ async fn lookup_site(db: &SqlitePool, host: &str) -> Option<SiteRow> {
                 tls_redirect   as \"tls_redirect!: bool\",
                 hsts           as \"hsts!: bool\",
                 x_frame        as \"x_frame!: bool\",
+                x_frame_value  as \"x_frame_value!\",
                 x_content_type as \"x_content_type!: bool\",
                 xss_protection as \"xss_protection!: bool\"
          FROM sites
@@ -918,6 +920,7 @@ async fn lookup_site(db: &SqlitePool, host: &str) -> Option<SiteRow> {
         tls_redirect:   r.tls_redirect,
         hsts:           r.hsts,
         x_frame:        r.x_frame,
+        x_frame_value:  r.x_frame_value,
         x_content_type: r.x_content_type,
         xss_protection: r.xss_protection,
     })
@@ -1010,10 +1013,18 @@ fn inject_security_headers(headers: &mut HeaderMap, site: &SiteRow) {
         );
     }
     if site.x_frame {
-        headers.insert(
-            HeaderName::from_static("x-frame-options"),
-            HeaderValue::from_static("DENY"),
-        );
+        // The configured value wins over anything the application sent, so
+        // what the setting says is what is served. DENY forbids framing by
+        // *anything*, self included, which quietly breaks applications that
+        // frame their own pages — Nextcloud is one, and reports the header as
+        // misconfigured when it sees it.
+        let v = match site.x_frame_value.trim().to_uppercase().as_str() {
+            "DENY" => "DENY",
+            _      => "SAMEORIGIN",
+        };
+        if let Ok(hv) = HeaderValue::from_str(v) {
+            headers.insert(HeaderName::from_static("x-frame-options"), hv);
+        }
     }
     if site.x_content_type {
         headers.insert(

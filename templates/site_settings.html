@@ -55,8 +55,28 @@
                                 <label>
                                     <input type="checkbox" name="x_frame" value="1"
                                         {% if site.x_frame %}checked{% endif %}>
-                                    <strong>X-Frame-Options DENY</strong>
+                                    <strong>X-Frame-Options</strong>
                                 </label>
+                                <select class="form-control input-sm" name="x_frame_value"
+                                        style="max-width:340px; margin-top:4px">
+                                    <option value="SAMEORIGIN" {% if site.x_frame_value != "DENY" %}selected{% endif %}>
+                                        SAMEORIGIN — only this site may frame its pages
+                                    </option>
+                                    <option value="DENY" {% if site.x_frame_value == "DENY" %}selected{% endif %}>
+                                        DENY — nothing may frame them, including itself
+                                    </option>
+                                </select>
+                                <p class="help-block" style="margin-top:4px">
+                                    Clickjacking is framing by <em>another</em> origin, which
+                                    <strong>SAMEORIGIN</strong> already prevents.
+                                    <strong>DENY</strong> also stops a site framing its own
+                                    pages, which breaks applications that do —
+                                    Nextcloud and Collabora among them, and Nextcloud reports
+                                    the header as misconfigured when it sees it.
+                                    <br>
+                                    This value replaces whatever the application sent, so the
+                                    setting says what is served.
+                                </p>
                             </div>
                             <div class="checkbox">
                                 <label>

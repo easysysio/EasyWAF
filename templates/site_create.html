@@ -50,8 +50,17 @@
                             <div class="checkbox">
                                 <label>
                                     <input type="checkbox" name="x_frame" value="1">
-                                    <strong>X-Frame-Options DENY</strong>
+                                    <strong>X-Frame-Options</strong>
                                 </label>
+                                <select class="form-control input-sm" name="x_frame_value"
+                                        style="max-width:340px; margin-top:4px">
+                                    <option value="SAMEORIGIN" selected>
+                                        SAMEORIGIN — only this site may frame its pages
+                                    </option>
+                                    <option value="DENY">
+                                        DENY — nothing may frame them, including itself
+                                    </option>
+                                </select>
                             </div>
                             <div class="checkbox">
                                 <label>
