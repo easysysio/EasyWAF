@@ -6,7 +6,12 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
-## [Unreleased] — will be 0.5.1
+## [0.5.1] — 2026-09-05
+
+Everything here came out of migrating a real installation onto EasyWAF, which
+is why a patch release carries two features: each was something that stopped an
+application working, found by pointing it at production traffic rather than at
+a test. Nothing to do on upgrade — no migration, no configuration change.
 
 ### Added
 - **Forwarding headers are sent to the upstream**: `X-Forwarded-For`,

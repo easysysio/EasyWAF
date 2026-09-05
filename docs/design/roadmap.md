@@ -18,6 +18,15 @@ next minor, so a release's notes stay about its feature.
 | 0.13.0 | Per-site rate limiting (see [rate-limiting.md](rate-limiting.md)) |
 | 0.14.0 | Learning and hardening modes — URL allowlisting (see [url-learning.md](url-learning.md)) |
 
+## Next patch
+
+**0.5.2 — hostname aliases.** A site matches one `server_name` exactly, so two
+names for one application means two sites with duplicate settings kept in step
+by hand, and any divergence is a bug that appears on only one name. Traefik
+expresses this as `Host(a) || Host(b)` on one router with a single certificate
+covering both. The work is an `aliases` column, matching it in the site lookup,
+and ACME requesting a certificate that covers every name on the site.
+
 ## Candidates, not yet scheduled
 
 Recorded so they are not lost. No version assigned — these are worth doing,
