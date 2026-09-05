@@ -6,7 +6,10 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
-## [Unreleased]
+## [0.4.3] — 2026-09-05
+
+Certificate details, and one fewer external dependency at runtime. Nothing to
+do on upgrade.
 
 ### Added
 - **Certificate details.** Clicking a certificate under Certificates opens what
