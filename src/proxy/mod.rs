@@ -405,7 +405,11 @@ async fn handle_request(
     let path      = parts.uri.path().to_string();
     let query     = parts.uri.query().map(str::to_string);
     let headers   = parts.headers.clone();
-    let client_ip = peer.ip();
+    // The connection's peer unless it came from a configured proxy, in which
+    // case the client address that proxy reported. Resolved here, once, so
+    // everything downstream — country rules, CAPTCHA clearance, the traffic
+    // log — agrees on who the client is.
+    let client_ip = crate::forwarded::client_ip(peer.ip(), &headers);
     // Resolved once and reused: the traffic log records it, and the country
     // rules in the pipeline read it from the same lookup.
     let country   = crate::geo::country_of(client_ip);

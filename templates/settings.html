@@ -157,6 +157,41 @@
             </div>
 
             <div class="panel panel-default">
+                <div class="panel-heading"><h4>Trusted Proxies</h4></div>
+                <div class="panel-body">
+                    <div class="form-group">
+                        <label>Addresses whose <code>X-Forwarded-For</code> is believed
+                            <small class="text-muted">(one per line, or comma-separated)</small></label>
+                        <textarea class="form-control" name="trusted_proxies" rows="3"
+                                  spellcheck="false" style="font-family: monospace; font-size: 12px;"
+                                  placeholder="10.0.0.0/8&#10;192.168.1.5">{{ trusted_proxies }}</textarea>
+                        <p class="help-block">
+                            Leave empty unless something else sits in front of EasyWAF. With
+                            it empty — the default — the client address is the address that
+                            connected, and <code>X-Forwarded-For</code> is ignored entirely.
+                            <br>
+                            <strong>Only list proxies you control.</strong>
+                            <code>X-Forwarded-For</code> is a header, so any client can send
+                            one; if EasyWAF believed it unconditionally, anyone could claim
+                            any address and walk straight past country rules — and past the
+                            IP block lists coming in a later release. It is believed only
+                            when the connection itself came from an address listed here.
+                            <br>
+                            Single addresses and CIDR blocks both work, IPv4 and IPv6. An
+                            entry that does not parse is refused rather than skipped, since a
+                            silently ignored range is one you would believe was covered.
+                            <br>
+                            This affects who the Traffic Monitor, the country rules and
+                            CAPTCHA clearance think the client is. Getting it wrong in the
+                            other direction matters too: behind a proxy with nothing listed,
+                            every request looks like it came from that proxy, so one visitor
+                            solving a CAPTCHA would clear it for everyone.
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="panel panel-default">
                 <div class="panel-heading"><h4>Let's Encrypt (ACME)</h4></div>
                 <div class="panel-body">
                     <div class="form-group">

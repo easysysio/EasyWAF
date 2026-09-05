@@ -15,6 +15,7 @@ mod challenge;
 mod config;
 mod db;
 mod error;
+mod forwarded;
 mod geo;
 mod modules;
 mod proxy;
@@ -102,6 +103,9 @@ async fn main() {
     let secret = auth::ensure_secret(&db).await;
 
     warn_if_default_password(&db).await;
+
+    // Loaded once into memory: this is consulted on every proxied request.
+    forwarded::reload(&db).await;
 
     // ── Build module pipeline ─────────────────────────────
     // Modules run in order for every proxied request.

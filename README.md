@@ -79,6 +79,10 @@ and the per-site security headers still apply, but nothing is inspected.
   are selected per site by SNI, so many sites share one HTTPS port, each presenting its own.
   An optional per-site redirect sends HTTP to HTTPS; it is off by default, so turning on
   HTTPS never silently stops the HTTP port working.
+* **Trusted proxies** — when EasyWAF sits behind another proxy, list its addresses under
+  Settings and the client address is taken from `X-Forwarded-For`. Believed only for
+  connections from a listed address, so a client cannot claim someone else's IP; empty by
+  default, meaning the header is ignored entirely.
 * **Certificate inspection** — click a certificate to see what it says about itself: subject
   and issuer (CN, organization, city, state, country), validity and days remaining, the names
   it is valid for, key type and size, chain length, and its SHA-256 fingerprint. The private

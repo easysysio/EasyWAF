@@ -9,6 +9,23 @@ Version bumps and tags are created only after explicit approval.
 ## [Unreleased] — next release is 0.5.0 (ACME)
 
 ### Added
+- **`X-Forwarded-For` support, behind a trusted-proxy list.** When EasyWAF runs
+  behind another proxy, list that proxy's addresses under **Settings → Trusted
+  Proxies** and the client address is taken from the header instead of the
+  connection. Single addresses and CIDR blocks, IPv4 and IPv6.
+
+  Believed **only** for connections that arrive from a listed address, and the
+  header is walked from the right so a client cannot win by prepending a forged
+  hop. Empty by default, which ignores the header entirely and is exactly the
+  behaviour EasyWAF had before. An unparseable entry is refused rather than
+  skipped: a silently ignored range is one an operator would believe was
+  covered.
+
+  This matters for more than the logs. The client address decides country
+  rules, the Traffic Monitor, and **CAPTCHA clearance** — behind a proxy with
+  nothing configured, every request appears to come from that proxy, so one
+  visitor solving a challenge would clear it for everyone arriving through it.
+
 - **Let's Encrypt certificates, issued by EasyWAF.** Set a contact address and
   a directory under **Settings**, then use **Request Certificate** on a site.
   EasyWAF answers the HTTP-01 challenge on port 80 itself — no webroot, nothing

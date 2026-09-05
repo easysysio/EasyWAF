@@ -41,6 +41,9 @@ pub const KEY_TLS_CIPHERS: &str = "tls_ciphers";
 /// means the generated `easywaf` default.
 pub const KEY_MANAGEMENT_CERT: &str = "management_cert";
 
+/// Addresses whose `X-Forwarded-For` header is believed. Empty means none.
+pub const KEY_TRUSTED_PROXIES: &str = "trusted_proxies";
+
 /// Used when the row is missing or cannot be parsed.
 const DEFAULT_RETENTION_DAYS: i64 = 0;
 
@@ -77,6 +80,7 @@ pub struct SettingsForm {
     pub management_cert:        Option<String>,
     pub acme_email:             Option<String>,
     pub acme_directory:         Option<String>,
+    pub trusted_proxies:        Option<String>,
 }
 
 // ─── get_settings ────────────────────────────────────────
@@ -132,6 +136,7 @@ pub async fn get_settings(
     ctx.insert("acme_email",     &acme.as_ref().map(|a| a.email.clone()).unwrap_or_default());
     ctx.insert("acme_directory", &acme.map(|a| a.directory)
         .unwrap_or_else(|| crate::acme::STAGING_DIRECTORY.to_string()));
+    ctx.insert("trusted_proxies", &get_trusted_proxies(&state.db).await);
     ctx.insert("acme_staging",    crate::acme::STAGING_DIRECTORY);
     ctx.insert("acme_production", crate::acme::PRODUCTION_DIRECTORY);
     ctx.insert("tls_ciphers_all",      &crate::tls::all_suite_names());
@@ -249,6 +254,21 @@ pub async fn post_settings_update(
         crate::acme::set_config(&state.db, &acme_email, &acme_dir).await?;
     }
 
+    // Rejected rather than filtered: an entry that does not parse is a range
+    // the operator believes is trusted and is not, which is exactly the kind of
+    // gap this setting exists to close.
+    let proxies = form.trusted_proxies.as_deref().unwrap_or("").trim().to_string();
+    let (_, bad) = crate::forwarded::parse_list(&proxies);
+    if !bad.is_empty() {
+        return flash_redirect(
+            "/settings",
+            "failed",
+            &format!("Not an address or CIDR block: {}", bad.join(", ")),
+        );
+    }
+    set_setting(&state.db, KEY_TRUSTED_PROXIES, &proxies).await?;
+    crate::forwarded::reload(&state.db).await;
+
     set_setting(&state.db, KEY_MANAGEMENT_CERT, &mgmt).await?;
     set_setting(&state.db, KEY_TLS_PROFILE, profile.as_str()).await?;
 
@@ -338,6 +358,11 @@ async fn cert_names(db: &SqlitePool) -> Vec<String> {
     .fetch_all(db)
     .await
     .unwrap_or_default()
+}
+
+/// Addresses whose `X-Forwarded-For` header should be believed.
+pub async fn get_trusted_proxies(db: &SqlitePool) -> String {
+    get_setting(db, KEY_TRUSTED_PROXIES).await.unwrap_or_default()
 }
 
 /// Fetch one raw setting value. None when the key is not present.
