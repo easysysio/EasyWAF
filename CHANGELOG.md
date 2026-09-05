@@ -9,6 +9,26 @@ Version bumps and tags are created only after explicit approval.
 ## [Unreleased] — will be 0.5.1
 
 ### Added
+- **Forwarding headers are sent to the upstream**: `X-Forwarded-For`,
+  `X-Real-IP`, `X-Forwarded-Proto` and `X-Forwarded-Host`. EasyWAF previously
+  sent none, so an application behind it could not tell it was behind anything
+  — it saw a plain HTTP request from a local address and built `http://` URLs,
+  redirected to them, and marked session cookies as not needing a secure
+  connection. Applications that generate absolute URLs, Nextcloud among them,
+  fail to log in for exactly that reason, while an API-driven front end on the
+  same proxy works and makes it look like the application's fault.
+
+  `X-Forwarded-Proto` reports the scheme the *client* used, not the scheme of
+  the hop to the upstream, since that is what an application needs to link back
+  to itself. `X-Forwarded-Host` keeps its port, which an application on a
+  non-standard port needs to build a working URL.
+
+  A client's own `X-Forwarded-For` is replaced rather than extended. Sending
+  one is a claim about its address, and if this proxy did not believe it — it
+  only does for peers listed under Trusted Proxies — passing it on would hand
+  the upstream a forgery. Behind a trusted proxy the chain is preserved and
+  this hop appended.
+
 - **WebSockets are proxied.** An upgrade request is forwarded to the upstream
   with its `Connection` and `Upgrade` headers intact, and if the upstream
   answers `101 Switching Protocols` the connection is tunnelled in both

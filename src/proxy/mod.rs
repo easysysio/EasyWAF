@@ -289,6 +289,59 @@ async fn start_tls_on_port(state: ProxyState, port: u16) {
     }
 }
 
+// ─── Forwarding headers ──────────────────────────────────
+
+/// Tell the upstream what the original request looked like.
+///
+/// Without these an application behind EasyWAF cannot know it is behind
+/// anything: it sees a plain HTTP request from a local address, so it builds
+/// `http://` URLs, redirects to them, and marks session cookies as not needing
+/// a secure connection. Applications that generate absolute URLs — Nextcloud
+/// is the usual example — fail to log in for exactly that reason, while an
+/// API-driven front end on the same proxy works fine and makes it look like
+/// the application's fault.
+fn apply_forwarded_headers(
+    headers: &mut HeaderMap,
+    peer: std::net::IpAddr,
+    client: std::net::IpAddr,
+    original_host: Option<&HeaderValue>,
+    is_tls: bool,
+) {
+    // `client` differs from `peer` only when the peer is a proxy we trust and
+    // its X-Forwarded-For was honoured. In that case the chain it sent is
+    // worth passing on, with this hop appended.
+    //
+    // Otherwise the header is replaced outright rather than appended to. A
+    // client that sends its own X-Forwarded-For is claiming an address, and
+    // forwarding that claim would hand the upstream a forgery this proxy
+    // already decided not to believe.
+    let xff = match headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
+        Some(existing) if client != peer => format!("{existing}, {peer}"),
+        _ => client.to_string(),
+    };
+
+    let set = |h: &mut HeaderMap, name: &'static str, value: String| {
+        if let Ok(v) = HeaderValue::from_str(&value) {
+            h.insert(HeaderName::from_static(name), v);
+        }
+    };
+
+    set(headers, "x-forwarded-for", xff);
+    set(headers, "x-real-ip", client.to_string());
+
+    // The scheme the *client* used, which is what an application needs to build
+    // links back to itself — not the scheme of this hop to the upstream.
+    set(headers, "x-forwarded-proto", if is_tls { "https".into() } else { "http".into() });
+
+    // Forwarded verbatim, port included: an application on a non-standard port
+    // needs it to build a URL that works.
+    if let Some(h) = original_host
+        && let Ok(v) = h.to_str()
+    {
+        set(headers, "x-forwarded-host", v.to_string());
+    }
+}
+
 // ─── WebSocket / protocol upgrades ───────────────────────
 
 /// Whether this request is asking to leave HTTP behind.
@@ -728,6 +781,14 @@ async fn handle_request(
         fwd_headers.remove(*h);
     }
 
+    apply_forwarded_headers(
+        &mut fwd_headers,
+        peer.ip(),
+        client_ip,
+        headers.get(axum::http::header::HOST),
+        state.is_tls,
+    );
+
     let upstream_result = state
         .client
         .request(to_reqwest_method(&method), &upstream_url)
@@ -1081,6 +1142,69 @@ mod tests {
             );
         }
         h
+    }
+
+    fn fwd(peer: &str, client: &str, host: Option<&str>, tls: bool) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        if let Some(v) = host {
+            h.insert(axum::http::header::HOST, HeaderValue::from_str(v).unwrap());
+        }
+        apply_forwarded_headers(
+            &mut h, peer.parse().unwrap(), client.parse().unwrap(),
+            host.map(|v| HeaderValue::from_str(v).unwrap()).as_ref(), tls,
+        );
+        h
+    }
+
+    fn got<'a>(h: &'a HeaderMap, k: &str) -> &'a str {
+        h.get(k).and_then(|v| v.to_str().ok()).unwrap_or("")
+    }
+
+    #[test]
+    fn tells_the_upstream_what_the_client_asked_for() {
+        let h = fwd("203.0.113.9", "203.0.113.9", Some("cloud.example.com"), true);
+        assert_eq!(got(&h, "x-forwarded-for"), "203.0.113.9");
+        assert_eq!(got(&h, "x-real-ip"), "203.0.113.9");
+        // The scheme the client used, not the scheme of the hop to the
+        // upstream — this is what an application builds its own links from.
+        assert_eq!(got(&h, "x-forwarded-proto"), "https");
+        assert_eq!(got(&h, "x-forwarded-host"), "cloud.example.com");
+
+        let h = fwd("203.0.113.9", "203.0.113.9", Some("cloud.example.com"), false);
+        assert_eq!(got(&h, "x-forwarded-proto"), "http");
+    }
+
+    #[test]
+    fn a_clients_own_forwarded_for_is_replaced_not_extended() {
+        // The peer is the client, so any chain it sent is a claim this proxy
+        // already declined to believe; passing it on would hand the upstream a
+        // forgery.
+        let mut h = HeaderMap::new();
+        h.insert("x-forwarded-for", HeaderValue::from_static("1.2.3.4, 5.6.7.8"));
+        apply_forwarded_headers(
+            &mut h, "203.0.113.9".parse().unwrap(), "203.0.113.9".parse().unwrap(), None, false,
+        );
+        assert_eq!(got(&h, "x-forwarded-for"), "203.0.113.9");
+    }
+
+    #[test]
+    fn a_trusted_proxys_chain_is_preserved_and_extended() {
+        // client != peer means the peer is trusted and its header was
+        // honoured, so the upstream should see the whole path.
+        let mut h = HeaderMap::new();
+        h.insert("x-forwarded-for", HeaderValue::from_static("203.0.113.9"));
+        apply_forwarded_headers(
+            &mut h, "10.0.0.1".parse().unwrap(), "203.0.113.9".parse().unwrap(), None, true,
+        );
+        assert_eq!(got(&h, "x-forwarded-for"), "203.0.113.9, 10.0.0.1");
+        assert_eq!(got(&h, "x-real-ip"), "203.0.113.9");
+    }
+
+    #[test]
+    fn the_host_keeps_its_port() {
+        // An application on a non-standard port needs it to build a working URL.
+        let h = fwd("203.0.113.9", "203.0.113.9", Some("cloud.example.com:8443"), true);
+        assert_eq!(got(&h, "x-forwarded-host"), "cloud.example.com:8443");
     }
 
     #[test]

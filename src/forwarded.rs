@@ -133,6 +133,11 @@ pub async fn reload(db: &SqlitePool) -> usize {
     n
 }
 
+/// Whether the connection's peer is a configured proxy.
+pub fn peer_is_trusted(ip: IpAddr) -> bool {
+    trusted().read().map(|t| t.iter().any(|c| c.contains(ip))).unwrap_or(false)
+}
+
 // ─── client_ip ───────────────────────────────────────────
 
 /// The address to treat as the client's.

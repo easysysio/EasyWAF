@@ -85,6 +85,9 @@ and the per-site security headers still apply, but nothing is inspected.
   the database so a restart cannot turn a failing renewal into a rate-limited account. Each
   certificate's page shows when renewal was last attempted, whether it worked, and when the
   next attempt is due.
+* **Forwarding headers** — `X-Forwarded-For`, `X-Real-IP`, `X-Forwarded-Proto` and
+  `X-Forwarded-Host` are sent upstream, so an application behind EasyWAF can tell what
+  the client actually asked for and build links back to itself correctly.
 * **WebSockets** — upgrade requests are tunnelled to the upstream, so terminals, chat, hot
   reload and streaming dashboards work through EasyWAF. The handshake is inspected like any
   other request; the tunnel that follows is relayed as opaque frames.
