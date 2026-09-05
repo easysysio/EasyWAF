@@ -6,6 +6,24 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
+## [Unreleased] — will be 0.5.2
+
+### Fixed
+- **Only the last of any repeated response header reached the client, which
+  broke logins.** Headers were copied from the upstream with `insert`, and a
+  `HeaderMap` yields one pair per value — so a response carrying four
+  `Set-Cookie` headers arrived with one. Applications that set a session cookie
+  alongside others could not establish a session at all: the login POST
+  succeeded, the session cookie was discarded in the proxy, and the browser came
+  back to the login page with no error anywhere. Nextcloud is the case that
+  found it; its mobile app was unaffected because it authenticates with a token
+  rather than a browser session, which made it look like a Nextcloud problem.
+  Verified against the previous build: four cookies in, one out.
+
+  The same mistake was present in the request direction, where a client sending
+  `Cookie` more than once would have had all but the last dropped before the
+  upstream saw them.
+
 ## [0.5.1] — 2026-09-05
 
 Everything here came out of migrating a real installation onto EasyWAF, which

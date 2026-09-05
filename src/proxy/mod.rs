@@ -289,6 +289,22 @@ async fn start_tls_on_port(state: ProxyState, port: u16) {
     }
 }
 
+/// Copy the upstream's response headers, dropping hop-by-hop ones.
+///
+/// `append`, not `insert`. A `HeaderMap` yields one pair per value, so
+/// inserting in a loop keeps only the last of any repeated header — and the
+/// header applications repeat most is `Set-Cookie`. A login that sets a session
+/// cookie alongside others would reach the browser with one of them, the
+/// session would not exist, and the user would be returned to the login page
+/// with nothing logged anywhere to say why.
+fn copy_response_headers(dst: &mut HeaderMap, src: &HeaderMap) {
+    for (k, v) in src {
+        if !HOP_HEADERS.contains(&k.as_str()) {
+            dst.append(k, v.clone());
+        }
+    }
+}
+
 // ─── Forwarding headers ──────────────────────────────────
 
 /// Tell the upstream what the original request looked like.
@@ -833,13 +849,16 @@ async fn handle_request(
             let body        = Body::from_stream(body_stream);
 
             // Copy upstream response headers (minus hop-by-hop).
+            //
+            // `append`, not `insert`. A HeaderMap yields one pair per value, so
+            // inserting in a loop keeps only the last of any repeated header —
+            // and the header applications repeat most is Set-Cookie. A login
+            // that sets a session cookie and a passphrase cookie together would
+            // arrive with one of them, and the browser would come back
+            // unauthenticated to the login page with nothing logged anywhere.
             let mut resp = Response::builder().status(status);
             if let Some(headers_mut) = resp.headers_mut() {
-                for (k, v) in &resp_headers {
-                    if !HOP_HEADERS.contains(&k.as_str()) {
-                        headers_mut.insert(k, v.clone());
-                    }
-                }
+                copy_response_headers(headers_mut, &resp_headers);
                 // Inject any security headers configured for this site.
                 inject_security_headers(headers_mut, &site);
             }
@@ -1123,7 +1142,9 @@ fn to_reqwest_headers(headers: &HeaderMap) -> reqwest::header::HeaderMap {
             reqwest::header::HeaderName::from_bytes(k.as_ref()),
             reqwest::header::HeaderValue::from_bytes(v.as_bytes()),
         ) {
-            out.insert(name, val);
+            // `append` for the same reason as the response side: a repeated
+            // header must survive the crossing, not collapse to its last value.
+            out.append(name, val);
         }
     }
     out
@@ -1205,6 +1226,44 @@ mod tests {
         // An application on a non-standard port needs it to build a working URL.
         let h = fwd("203.0.113.9", "203.0.113.9", Some("cloud.example.com:8443"), true);
         assert_eq!(got(&h, "x-forwarded-host"), "cloud.example.com:8443");
+    }
+
+    #[test]
+    fn every_set_cookie_survives_the_crossing() {
+        // The bug this exists to prevent: insert() in a copy loop keeps only
+        // the last value of a repeated header. Nextcloud sets four cookies on
+        // login, three were discarded, and the session never existed.
+        let mut src = HeaderMap::new();
+        for c in ["a=1", "b=2", "c=3", "d=4"] {
+            src.append("set-cookie", HeaderValue::from_str(c).unwrap());
+        }
+        let mut dst = HeaderMap::new();
+        copy_response_headers(&mut dst, &src);
+        assert_eq!(dst.get_all("set-cookie").iter().count(), 4);
+    }
+
+    #[test]
+    fn hop_by_hop_headers_are_still_dropped() {
+        let mut src = HeaderMap::new();
+        src.insert("connection", HeaderValue::from_static("keep-alive"));
+        src.insert("transfer-encoding", HeaderValue::from_static("chunked"));
+        src.insert("content-type", HeaderValue::from_static("text/html"));
+        let mut dst = HeaderMap::new();
+        copy_response_headers(&mut dst, &src);
+        assert!(dst.get("connection").is_none());
+        assert!(dst.get("transfer-encoding").is_none());
+        assert_eq!(got(&dst, "content-type"), "text/html");
+    }
+
+    #[test]
+    fn repeated_request_headers_reach_the_upstream() {
+        // The same mistake in the other direction: a client may send Cookie
+        // more than once, and collapsing them loses part of the session.
+        let mut h = HeaderMap::new();
+        h.append("cookie", HeaderValue::from_static("a=1"));
+        h.append("cookie", HeaderValue::from_static("b=2"));
+        let out = to_reqwest_headers(&h);
+        assert_eq!(out.get_all("cookie").iter().count(), 2);
     }
 
     #[test]
