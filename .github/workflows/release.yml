@@ -205,6 +205,27 @@ jobs:
             org.opencontainers.image.source=https://github.com/easysysio/EasyWAF
             org.opencontainers.image.licenses=GPL-3.0
 
+      # The overview shown on the Docker Hub repository page. Pushed from the
+      # repository so it is versioned and reviewed like anything else, rather
+      # than being typed into a web form once and quietly going stale.
+      #
+      # Non-fatal on purpose. Docker Hub's description API has historically
+      # wanted the account password rather than an access token, so this can
+      # fail on token scope alone — and an image that published successfully
+      # must not be reported as a failed release because its README did not
+      # update. Check the step's log after a release; if it fails, give
+      # DOCKERHUB_TOKEN a scope that permits it, or drop this step and edit the
+      # page by hand.
+      - name: Update the Docker Hub overview
+        continue-on-error: true
+        uses: peter-evans/dockerhub-description@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: easysysio/easywaf
+          readme-filepath: docker/README.md
+          short-description: Self-contained web application firewall and reverse proxy
+
   # ─── Create the GitHub Release ──────────────────────────────
   release:
     name: Publish release

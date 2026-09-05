@@ -157,6 +157,9 @@ elsewhere, mount your own config or set the environment variable:
 docker run -d -v ./config.toml:/opt/easywaf/config.toml ... easysysio/easywaf:latest
 ```
 
+The Docker Hub overview is [`docker/README.md`](docker/README.md), pushed by the release
+workflow so it is versioned here rather than typed into a web form and left to rot.
+
 ---
 
 ## First run
