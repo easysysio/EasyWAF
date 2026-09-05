@@ -324,6 +324,36 @@ async fn handle_request(
         return error_response(StatusCode::BAD_REQUEST, "Missing Host header");
     }
 
+    // ── 1b. ACME HTTP-01 challenge ────────────────────────
+    // Answered before everything else, and on purpose.
+    //
+    // Before the site lookup, so it works for a site that is disabled or not
+    // configured yet. Before the HTTPS redirect, because the CA follows
+    // redirects and a site with a broken certificate would bounce the
+    // validator into a connection it cannot complete — the exact situation
+    // someone is trying to fix. Before the pipeline, because a token is opaque
+    // base64url and nothing should be able to score or block one: a renewal
+    // that failed because a scanner rule matched its challenge token would be
+    // a genuinely awful outage to diagnose.
+    //
+    // Only on the plain-HTTP listener: HTTP-01 validation always arrives on
+    // port 80, so answering on the TLS one would serve a token to something
+    // that is not the CA.
+    //
+    // A challenge path with no answer published falls through to be handled as
+    // any other request would be, rather than confirming the path exists.
+    if !state.is_tls
+        && let Some(token) = crate::acme::token_from_path(req.uri().path())
+        && let Some(answer) = crate::acme::answer(token)
+    {
+        tracing::info!(host = %host, "Answered an ACME HTTP-01 challenge");
+        return Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", "text/plain")
+            .body(Body::from(answer))
+            .unwrap_or_else(|_| error_response(StatusCode::INTERNAL_SERVER_ERROR, "response"));
+    }
+
     // ── 2. Look up site ───────────────────────────────────
     let site = match lookup_site(&state.db, &host).await {
         Some(s) => s,

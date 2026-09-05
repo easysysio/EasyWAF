@@ -7,7 +7,7 @@ next minor, so a release's notes stay about its feature.
 | Release | Feature |
 |---|---|
 | 0.4.0 | TLS termination, certificate management, self-service password change — **released 2026-09-04** |
-| 0.5.0 | ACME / Let's Encrypt |
+| 0.5.0 | ACME / Let's Encrypt (see [acme.md](acme.md)) |
 | 0.6.0 | User management and roles |
 | 0.7.0 | Updating the rule sets and the country database (see [rule-repository.md](rule-repository.md)) |
 | 0.8.0 | Load balancing across upstreams, with health checks (see [load-balancing.md](load-balancing.md)) |

@@ -8,6 +8,7 @@
 // Both share the SQLite pool and module pipeline.
 // =========================================================
 
+mod acme;
 mod auth;
 mod cert;
 mod challenge;
