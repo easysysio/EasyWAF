@@ -455,6 +455,103 @@ async fn fetch_policies(state: &AppState) -> Result<Vec<Policy>> {
     Ok(rows.into_iter().map(|r| Policy { id: r.id, name: r.name }).collect())
 }
 
+// ─── post_site_acme ──────────────────────────────────────
+
+/// POST /sites/{name}/acme — obtain a Let's Encrypt certificate for this site.
+///
+/// The issued certificate is stored as an ordinary row in `certs` and assigned
+/// to the site, so everything downstream — the SNI map, the detail page, the
+/// deletion guard, per-site selection — treats it exactly like an uploaded one
+/// and needs to know nothing about where it came from.
+pub async fn post_site_acme(
+    State(state): State<AppState>,
+    jar: SignedCookieJar,
+    Path(name): Path<String>,
+) -> Result<Response> {
+    if get_session(&jar).is_none() {
+        return Ok(Redirect::to("/login").into_response());
+    }
+
+    let site = sqlx::query!(
+        r#"SELECT id as "id!", server_name as "server_name!", listen_port
+           FROM sites WHERE name = ?"#,
+        name
+    )
+    .fetch_optional(&state.db)
+    .await?;
+
+    let site = match site {
+        Some(s) => s,
+        None    => return flash_redirect("/sites", "failed", "No such site"),
+    };
+
+    let back = format!("/sites/{}/edit", urlencoding::encode(&name));
+
+    if crate::acme::config(&state.db).await?.is_none() {
+        return flash_redirect(
+            &back,
+            "failed",
+            "Set an ACME contact address under Settings before requesting a certificate",
+        );
+    }
+
+    // Warned before the attempt rather than after it fails, because what the CA
+    // reports for this is a timeout that reads like a network fault.
+    if site.listen_port != 80 {
+        tracing::warn!(
+            site = %name, port = site.listen_port,
+            "Requesting a certificate for a site that does not listen on port 80 — \
+             HTTP-01 validation always arrives there"
+        );
+    }
+
+    let (cert_pem, key_pem) = match crate::acme::issue(&state.db, &site.server_name).await {
+        Ok(pair) => pair,
+        Err(e)   => return flash_redirect(&back, "failed", &format!("{e}")),
+    };
+
+    // Dates come from the certificate itself rather than from an assumption
+    // about validity periods, so renewal later reads what the CA issued.
+    let (not_before, not_after) = match crate::routes::certs::inspect("", &cert_pem, true) {
+        Ok(d)  => (Some(d.not_before), Some(d.not_after)),
+        Err(_) => (None, None),
+    };
+
+    let cert_name = site.server_name.clone();
+    sqlx::query!(
+        "INSERT INTO certs (name, domain, not_before, not_after, cert_pem, key_pem, acme_domain)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(name) DO UPDATE SET
+             domain = excluded.domain, not_before = excluded.not_before,
+             not_after = excluded.not_after, cert_pem = excluded.cert_pem,
+             key_pem = excluded.key_pem, acme_domain = excluded.acme_domain",
+        cert_name, site.server_name, not_before, not_after, cert_pem, key_pem, site.server_name
+    )
+    .execute(&state.db)
+    .await?;
+
+    let cert_id: i64 = sqlx::query_scalar!(
+        r#"SELECT id as "id!" FROM certs WHERE name = ?"#, cert_name
+    )
+    .fetch_one(&state.db)
+    .await?;
+
+    sqlx::query!(
+        "UPDATE sites SET cert_id = ?, acme_enabled = 1 WHERE id = ?",
+        cert_id, site.id
+    )
+    .execute(&state.db)
+    .await?;
+
+    crate::tls::reload(&state.db).await?;
+
+    flash_redirect(
+        &back,
+        "success",
+        &format!("Issued a certificate for {} — add a TLS port to serve it", site.server_name),
+    )
+}
+
 // ─── announce_site ───────────────────────────────────────
 
 /// Tell the proxy about a site's ports and refresh the TLS certificate map.

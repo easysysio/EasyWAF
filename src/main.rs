@@ -176,6 +176,7 @@ async fn main() {
         .route("/sites/create",          post(routes::sites::post_site_create))
         .route("/sites/{name}/edit",     get(routes::sites::get_site_edit))
         .route("/sites/{name}/update",   post(routes::sites::post_site_update))
+        .route("/sites/{name}/acme",     post(routes::sites::post_site_acme))
         .route("/sites/{name}/toggle",   post(routes::sites::post_site_toggle))
         .route("/sites/{name}/delete",   post(routes::sites::post_site_delete))
         .route("/account",               get(routes::account::get_account))

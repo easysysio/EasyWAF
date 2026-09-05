@@ -75,6 +75,8 @@ pub struct SettingsForm {
     pub tls_profile:            Option<String>,
     pub tls_ciphers:            Option<String>,
     pub management_cert:        Option<String>,
+    pub acme_email:             Option<String>,
+    pub acme_directory:         Option<String>,
 }
 
 // ─── get_settings ────────────────────────────────────────
@@ -125,6 +127,13 @@ pub async fn get_settings(
     ctx.insert("management_cert",         &management_cert);
     ctx.insert("cert_names",              &cert_names);
     ctx.insert("management_cert_missing", &management_cert_missing);
+
+    let acme = crate::acme::config(&state.db).await?;
+    ctx.insert("acme_email",     &acme.as_ref().map(|a| a.email.clone()).unwrap_or_default());
+    ctx.insert("acme_directory", &acme.map(|a| a.directory)
+        .unwrap_or_else(|| crate::acme::STAGING_DIRECTORY.to_string()));
+    ctx.insert("acme_staging",    crate::acme::STAGING_DIRECTORY);
+    ctx.insert("acme_production", crate::acme::PRODUCTION_DIRECTORY);
     ctx.insert("tls_ciphers_all",      &crate::tls::all_suite_names());
     ctx.insert("stored_events",  &stored_events);
     ctx.insert("result",         &flash.result.unwrap_or_default());
@@ -226,6 +235,18 @@ pub async fn post_settings_update(
                 }
             }
         }
+    }
+
+    // ACME contact and directory. Stored in acme_accounts rather than settings
+    // because the account key belongs beside them — an account is tied to one
+    // directory, so changing either has to invalidate the stored credentials.
+    let acme_email = form.acme_email.as_deref().unwrap_or("").trim().to_string();
+    let acme_dir   = form.acme_directory.as_deref().unwrap_or("").trim().to_string();
+    if !acme_email.is_empty() {
+        if !acme_email.contains('@') {
+            return flash_redirect("/settings", "failed", "ACME contact must be an email address");
+        }
+        crate::acme::set_config(&state.db, &acme_email, &acme_dir).await?;
     }
 
     set_setting(&state.db, KEY_MANAGEMENT_CERT, &mgmt).await?;

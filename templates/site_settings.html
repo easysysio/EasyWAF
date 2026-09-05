@@ -106,7 +106,8 @@
                         <p class="help-block">
                             A site with an HTTPS port but no certificate cannot complete a
                             handshake, so its port is not bound at all rather than bound and
-                            failing. Upload certificates under <a href="/certs">Certificates</a>.
+                            failing. Upload certificates under <a href="/certs">Certificates</a>,
+                            or get one from Let's Encrypt below.
                         </p>
                     </div>
 
@@ -122,8 +123,35 @@
                         <i class="fa fa-save"></i> Update Site
                     </button>
                     <a href="/sites" class="btn btn-default">Cancel</a>
-
                 </form>
+
+                {# Its own form: issuing talks to the CA and is not part of saving
+                   the site, so it must not be submitted by pressing Return in a
+                   text field. #}
+                <hr>
+                <h4><i class="fa fa-certificate"></i> Let's Encrypt</h4>
+                <p class="help-block" style="margin-top:-4px">
+                    Requests a certificate for <strong>{{ site.server_name }}</strong> and
+                    assigns it to this site. EasyWAF answers the challenge itself, so there
+                    is nothing to configure on the backend.
+                </p>
+                <p class="help-block">
+                    For this to work, <code>{{ site.server_name }}</code> must resolve to
+                    this host from the public internet and this host must be reachable on
+                    <strong>port 80</strong>. HTTP-01 validation always arrives there
+                    {% if site.listen_port != 80 %}— and this site listens on
+                    <strong>{{ site.listen_port }}</strong>, so validation will not reach it
+                    unless something in front forwards port 80 here{% endif %}.
+                    Set the contact address under <a href="/settings">Settings</a> first, and
+                    start with the staging directory.
+                </p>
+                <form method="post" action="/sites/{{ site.name }}/acme"
+                      onsubmit="return confirm('Request a Let\'s Encrypt certificate for {{ site.server_name }}?');">
+                    <button type="submit" class="btn btn-primary">
+                        <i class="fa fa-refresh"></i> Request Certificate
+                    </button>
+                </form>
+
             </div>
         </div>
     </div>

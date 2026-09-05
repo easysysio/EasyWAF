@@ -12,10 +12,11 @@
 // provider credentials and an abstraction behind them.
 // =========================================================
 
-// The issuance flow that calls publish/withdraw lands in the next slice of
-// 0.5.0; until then only the tests exercise them. Removed with that commit.
-#![allow(dead_code)]
-
+use crate::error::{AppError, Result};
+use instant_acme::{
+    Account, AccountCredentials, ChallengeType, Identifier, NewAccount, NewOrder, RetryPolicy,
+};
+use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::sync::{OnceLock, RwLock};
 
@@ -57,11 +58,6 @@ pub fn answer(token: &str) -> Option<String> {
     tokens().read().ok()?.get(token).cloned()
 }
 
-/// How many answers are currently published — for the GUI and for tests.
-pub fn pending() -> usize {
-    tokens().read().map(|m| m.len()).unwrap_or(0)
-}
-
 /// A guard that withdraws its token when dropped.
 ///
 /// Orders fail in several places — validation times out, finalisation is
@@ -96,6 +92,228 @@ pub fn token_from_path(path: &str) -> Option<&str> {
         return None;
     }
     Some(rest)
+}
+
+// ─── Account ─────────────────────────────────────────────
+
+/// Let's Encrypt's staging directory — untrusted certificates, generous limits.
+pub const STAGING_DIRECTORY: &str = "https://acme-staging-v02.api.letsencrypt.org/directory";
+/// Let's Encrypt's production directory.
+pub const PRODUCTION_DIRECTORY: &str = "https://acme-v02.api.letsencrypt.org/directory";
+
+/// The stored ACME account: contact address and which directory it belongs to.
+#[derive(Debug, Clone)]
+pub struct AcmeConfig {
+    pub email: String,
+    pub directory: String,
+}
+
+/// Read the configured account, if one has been set up.
+pub async fn config(db: &SqlitePool) -> Result<Option<AcmeConfig>> {
+    let row = sqlx::query!(
+        r#"SELECT email as "email!", directory as "directory!"
+           FROM acme_accounts ORDER BY id LIMIT 1"#
+    )
+    .fetch_optional(db)
+    .await?;
+
+    Ok(row.map(|r| AcmeConfig {
+        email: r.email,
+        directory: r.directory,
+    }))
+}
+
+/// Load the ACME account, registering one on first use.
+///
+/// The credentials are stored rather than the account being re-registered each
+/// time: an account is an identity at the CA that rate limits are counted
+/// against, and creating a fresh one per issuance would both lose that history
+/// and eventually run into the account-creation limit.
+///
+/// Changing the contact email or directory replaces the stored credentials,
+/// because an account belongs to one directory — staging and production are
+/// separate registries and an account from one is meaningless to the other.
+async fn account(db: &SqlitePool, cfg: &AcmeConfig) -> Result<Account> {
+    let stored = sqlx::query!(
+        r#"SELECT private_key as "private_key!", directory as "directory!"
+           FROM acme_accounts ORDER BY id LIMIT 1"#
+    )
+    .fetch_optional(db)
+    .await?;
+
+    if let Some(row) = stored
+        && row.directory == cfg.directory
+        && !row.private_key.trim().is_empty()
+        && let Ok(creds) = serde_json::from_str::<AccountCredentials>(&row.private_key)
+        && let Ok(acct) = Account::builder()
+            .map_err(acme_err)?
+            .from_credentials(creds)
+            .await
+    {
+        return Ok(acct);
+    }
+
+    let contact = format!("mailto:{}", cfg.email);
+    let (acct, creds) = Account::builder()
+        .map_err(acme_err)?
+        .create(
+            &NewAccount {
+                contact: &[&contact],
+                // Registering an account *is* the agreement; there is no
+                // separate step, so a checkbox in the GUI is what this
+                // reflects rather than something decided here.
+                terms_of_service_agreed: true,
+                only_return_existing: false,
+            },
+            cfg.directory.clone(),
+            None,
+        )
+        .await
+        .map_err(acme_err)?;
+
+    let serialised = serde_json::to_string(&creds)
+        .map_err(|e| AppError::Internal(format!("ACME credentials: {e}")))?;
+
+    sqlx::query!(
+        "INSERT INTO acme_accounts (email, private_key, directory) VALUES (?, ?, ?)",
+        cfg.email,
+        serialised,
+        cfg.directory
+    )
+    .execute(db)
+    .await?;
+
+    tracing::info!("Registered an ACME account with {}", cfg.directory);
+    Ok(acct)
+}
+
+// ─── Issuance ────────────────────────────────────────────
+
+/// Obtain a certificate for one domain, returning (cert chain PEM, key PEM).
+///
+/// The whole HTTP-01 exchange: order, publish the token where the proxy will
+/// answer it, tell the CA to validate, wait, then finalise. The published
+/// tokens are held in guards so every failure path withdraws them — and there
+/// are many, since most of this is waiting on someone else's server.
+pub async fn issue(db: &SqlitePool, domain: &str) -> Result<(String, String)> {
+    let cfg = config(db)
+        .await?
+        .ok_or_else(|| AppError::Internal("ACME is not configured".into()))?;
+
+    let account = account(db, &cfg).await?;
+    let identifiers = [Identifier::Dns(domain.to_string())];
+    let mut order = account
+        .new_order(&NewOrder::new(&identifiers))
+        .await
+        .map_err(acme_err)?;
+
+    // Held for the life of the order: dropping one withdraws its token.
+    let mut published = Vec::new();
+
+    {
+        let mut auths = order.authorizations();
+        while let Some(result) = auths.next().await {
+            let mut authz = result.map_err(acme_err)?;
+
+            // An authorization the CA already considers valid needs no challenge.
+            // Re-answering one is harmless but pointless, and it is common on a
+            // re-issue within the reuse window.
+            if authz.status == instant_acme::AuthorizationStatus::Valid {
+                continue;
+            }
+
+            let mut challenge = authz.challenge(ChallengeType::Http01).ok_or_else(|| {
+                AppError::Internal(format!(
+                    "{domain}: the CA offered no HTTP-01 challenge. Wildcards need DNS-01, \
+                 which EasyWAF does not implement — upload that certificate instead."
+                ))
+            })?;
+
+            let token = challenge.token.clone();
+            let key_auth = challenge.key_authorization().as_str().to_string();
+
+            // Published before telling the CA it is ready, never after: validation
+            // can begin the instant set_ready returns.
+            published.push(PublishedToken::new(&token, &key_auth));
+            challenge.set_ready().await.map_err(acme_err)?;
+        }
+    } // ends the borrow of `order` taken by authorizations()
+
+    let status = order
+        .poll_ready(&RetryPolicy::default())
+        .await
+        .map_err(acme_err)?;
+    if status != instant_acme::OrderStatus::Ready {
+        return Err(AppError::Internal(format!(
+            "{domain}: validation did not succeed (order is {status:?}). Check that the \
+             name resolves to this host and that port 80 is reachable from the internet."
+        )));
+    }
+
+    // finalize generates the keypair and hands back its PEM; the CA never sees
+    // the private key, only the CSR built from it.
+    let key_pem = order.finalize().await.map_err(acme_err)?;
+    let cert_pem = order
+        .poll_certificate(&RetryPolicy::default())
+        .await
+        .map_err(acme_err)?;
+
+    drop(published);
+    tracing::info!(domain, "Issued a certificate over ACME");
+    Ok((cert_pem, key_pem))
+}
+
+/// ACME failures are reported to an operator, so they keep the CA's own wording
+/// — it is usually specific about what it could not verify.
+fn acme_err(e: instant_acme::Error) -> AppError {
+    AppError::Internal(format!("ACME: {e}"))
+}
+
+/// Store the ACME contact and directory.
+///
+/// Changing either clears the stored account credentials: an ACME account
+/// belongs to one directory, so credentials from staging mean nothing to
+/// production, and a changed contact should be registered rather than
+/// silently kept. The next issuance registers afresh.
+pub async fn set_config(db: &SqlitePool, email: &str, directory: &str) -> Result<()> {
+    let directory = if directory.trim().is_empty() {
+        STAGING_DIRECTORY
+    } else {
+        directory.trim()
+    };
+
+    let existing = sqlx::query!(
+        r#"SELECT id as "id!", email as "email!", directory as "directory!"
+           FROM acme_accounts ORDER BY id LIMIT 1"#
+    )
+    .fetch_optional(db)
+    .await?;
+
+    match existing {
+        Some(r) if r.email == email && r.directory == directory => Ok(()),
+        Some(r) => {
+            sqlx::query!(
+                "UPDATE acme_accounts SET email = ?, directory = ?, private_key = '' WHERE id = ?",
+                email,
+                directory,
+                r.id
+            )
+            .execute(db)
+            .await?;
+            tracing::info!("ACME contact or directory changed — the account will be re-registered");
+            Ok(())
+        }
+        None => {
+            sqlx::query!(
+                "INSERT INTO acme_accounts (email, private_key, directory) VALUES (?, '', ?)",
+                email,
+                directory
+            )
+            .execute(db)
+            .await?;
+            Ok(())
+        }
+    }
 }
 
 #[cfg(test)]

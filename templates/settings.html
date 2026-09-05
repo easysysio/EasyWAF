@@ -156,6 +156,52 @@
                 </div>
             </div>
 
+            <div class="panel panel-default">
+                <div class="panel-heading"><h4>Let's Encrypt (ACME)</h4></div>
+                <div class="panel-body">
+                    <div class="form-group">
+                        <label>Contact Address</label>
+                        <input type="email" class="form-control" name="acme_email"
+                               value="{{ acme_email }}" placeholder="you@example.com">
+                        <p class="help-block">
+                            Where the CA sends expiry warnings. Setting it registers an
+                            account on first use, which is also how you accept
+                            Let's Encrypt's subscriber agreement.
+                        </p>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Directory</label>
+                        <select class="form-control" name="acme_directory">
+                            <option value="{{ acme_staging }}" {% if acme_directory == acme_staging %}selected{% endif %}>
+                                Staging — for testing; certificates are not trusted
+                            </option>
+                            <option value="{{ acme_production }}" {% if acme_directory == acme_production %}selected{% endif %}>
+                                Production — real, trusted certificates
+                            </option>
+                        </select>
+                        <p class="help-block">
+                            <strong>Start with staging.</strong> Browsers will still warn,
+                            because staging certificates are not trusted — but it proves the
+                            whole exchange works without spending production quota. Production
+                            allows only five failed validations per hostname per hour, which a
+                            first attempt burns through easily. Switch once staging succeeds.
+                            <br>
+                            Changing the address or the directory re-registers the account:
+                            staging and production are separate registries, so credentials
+                            from one mean nothing to the other.
+                            <br>
+                            <strong>For validation to succeed</strong> the site's name must
+                            resolve to this host from the public internet, and this host must
+                            be reachable on <strong>port 80</strong> — HTTP-01 validation
+                            always arrives there, and that is a property of the protocol
+                            rather than a choice EasyWAF makes. EasyWAF answers the challenge
+                            itself; there is no directory to configure.
+                        </p>
+                    </div>
+                </div>
+            </div>
+
             <button type="submit" class="btn btn-success">
                 <i class="fa fa-save"></i> Save Settings
             </button>

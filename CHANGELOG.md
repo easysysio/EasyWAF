@@ -9,6 +9,23 @@ Version bumps and tags are created only after explicit approval.
 ## [Unreleased] — next release is 0.5.0 (ACME)
 
 ### Added
+- **Let's Encrypt certificates, issued by EasyWAF.** Set a contact address and
+  a directory under **Settings**, then use **Request Certificate** on a site.
+  EasyWAF answers the HTTP-01 challenge on port 80 itself — no webroot, nothing
+  to configure on the backend — and stores the result as an ordinary row in
+  `certs`, assigned to the site. Everything downstream treats it exactly like an
+  uploaded certificate.
+
+  **Staging is the default and is offered explicitly.** Production allows only
+  five failed validations per hostname per hour, which a first attempt burns
+  through easily; staging proves the whole exchange works without spending that.
+  Changing the contact or the directory re-registers the account, since staging
+  and production are separate registries.
+
+  Renewal is not automated yet — that is the next part of 0.5.0. Certificates
+  last 90 days, so nothing issued now needs attention for a while, but do not
+  rely on it renewing itself.
+
 - **A Docker Hub overview** (`docker/README.md`): what EasyWAF is, quick start,
   what each port is for, why `/data` must be mounted, a compose file, adding a
   site — including the trap that an upstream on the Docker host is not
