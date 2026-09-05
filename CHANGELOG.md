@@ -8,6 +8,26 @@ Version bumps and tags are created only after explicit approval.
 
 ## [Unreleased] — will be 0.5.1
 
+### Added
+- **WebSockets are proxied.** An upgrade request is forwarded to the upstream
+  with its `Connection` and `Upgrade` headers intact, and if the upstream
+  answers `101 Switching Protocols` the connection is tunnelled in both
+  directions until either end closes. Terminals, chat, hot reload and streaming
+  dashboards work through EasyWAF; previously the upgrade headers were stripped
+  as hop-by-hop — correct for ordinary traffic — so the upstream never saw the
+  request and every client reported that WebSockets were unavailable.
+
+  The handshake is a normal request and goes through the rule engine like any
+  other, and is recorded in Traffic Monitor as a `101`. **The tunnel itself is
+  not inspected**: once upgraded the payload is no longer HTTP, so there is
+  nothing for HTTP rules to match. That is inherent to proxying WebSockets
+  rather than a shortcut, and it is worth knowing before putting one behind a
+  WAF.
+
+  Upgrades to an `https://` upstream are refused with a clear message rather
+  than attempted — the tunnelling path has no TLS client — so the failure names
+  itself instead of arriving as a protocol error.
+
 ### Fixed
 - **An uploaded certificate is now checked against its key.** Nothing was
   validated on upload beyond the name being non-empty, so a mismatched pair was

@@ -289,6 +289,158 @@ async fn start_tls_on_port(state: ProxyState, port: u16) {
     }
 }
 
+// ─── WebSocket / protocol upgrades ───────────────────────
+
+/// Whether this request is asking to leave HTTP behind.
+///
+/// Both headers are required: `Upgrade` names the protocol, and `Connection`
+/// must list `upgrade` for it to mean anything. A request carrying only one is
+/// not an upgrade and must not be treated as one.
+pub fn is_upgrade(headers: &HeaderMap) -> bool {
+    let connection_says_upgrade = headers
+        .get_all("connection")
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|v| v.split(','))
+        .any(|t| t.trim().eq_ignore_ascii_case("upgrade"));
+
+    connection_says_upgrade && headers.contains_key("upgrade")
+}
+
+/// Proxy an upgrade request, tunnelling the connection if the upstream accepts.
+///
+/// This is the one path that does not go through reqwest, which has no way to
+/// take over a connection after the response. It opens its own connection,
+/// speaks HTTP/1.1 by hand, and if the upstream answers `101 Switching
+/// Protocols` it stops being an HTTP proxy: both sides are handed to
+/// `copy_bidirectional` and the bytes are relayed until one end closes.
+///
+/// **The tunnel is not inspected.** The handshake is a normal request and goes
+/// through the pipeline like any other, but once it is upgraded EasyWAF is
+/// relaying opaque frames. That is inherent to proxying WebSockets rather than
+/// a shortcut — the payload is no longer HTTP, so there is nothing for HTTP
+/// rules to match.
+async fn proxy_upgrade(
+    upstream: &str,
+    method: &Method,
+    headers: &HeaderMap,
+    on_upgrade: hyper::upgrade::OnUpgrade,
+) -> std::result::Result<Response<Body>, String> {
+    let url = upstream.parse::<hyper::Uri>().map_err(|e| format!("upstream URL: {e}"))?;
+    let host = url.host().ok_or("upstream URL has no host")?;
+    let port = url.port_u16().unwrap_or(match url.scheme_str() {
+        Some("https") => 443,
+        _             => 80,
+    });
+
+    if url.scheme_str() == Some("https") {
+        // Tunnelling to a TLS upstream needs a TLS client on this path too.
+        // Refused rather than attempted, so the failure names itself instead of
+        // arriving as a protocol error.
+        return Err("upgrades to an https:// upstream are not supported yet".into());
+    }
+
+    let stream = tokio::net::TcpStream::connect((host, port))
+        .await
+        .map_err(|e| format!("connecting to {host}:{port}: {e}"))?;
+
+    let (mut sender, conn) = hyper::client::conn::http1::handshake(
+        hyper_util::rt::TokioIo::new(stream),
+    )
+    .await
+    .map_err(|e| format!("upstream handshake: {e}"))?;
+
+    // The connection must keep being driven, and `with_upgrades` is what lets
+    // it hand back the raw stream once the upstream switches protocols.
+    let conn_task = tokio::spawn(conn.with_upgrades());
+
+    let path = url.path_and_query().map(|p| p.as_str()).unwrap_or("/");
+    let mut builder = hyper::Request::builder().method(method).uri(path);
+
+    if let Some(hs) = builder.headers_mut() {
+        // Forwarded whole, including Connection and Upgrade. They are
+        // hop-by-hop and stripped for every other request, which is correct —
+        // and is exactly why an upgrade never reached the upstream before.
+        for (k, v) in headers {
+            hs.insert(k, v.clone());
+        }
+        if let Ok(h) = hyper::header::HeaderValue::from_str(&format!("{host}:{port}")) {
+            hs.insert(hyper::header::HOST, h);
+        }
+    }
+
+    let req = builder
+        .body(http_body_util::Empty::<bytes::Bytes>::new())
+        .map_err(|e| format!("building upstream request: {e}"))?;
+
+    let upstream_resp = sender
+        .send_request(req)
+        .await
+        .map_err(|e| format!("upstream request: {e}"))?;
+
+    let status = upstream_resp.status();
+    let resp_headers = upstream_resp.headers().clone();
+
+    if status != StatusCode::SWITCHING_PROTOCOLS {
+        // The upstream declined to upgrade. Pass its answer back unchanged;
+        // it is a normal response and the client will deal with it.
+        conn_task.abort();
+        let mut resp = Response::builder().status(status);
+        if let Some(hs) = resp.headers_mut() {
+            for (k, v) in &resp_headers {
+                if !HOP_HEADERS.contains(&k.as_str()) {
+                    hs.insert(k, v.clone());
+                }
+            }
+        }
+        return resp
+            .body(Body::empty())
+            .map_err(|e| format!("response: {e}"));
+    }
+
+    // Both sides agreed. Wait for each end to hand over its raw stream, then
+    // relay until one closes.
+    tokio::spawn(async move {
+        let upstream_io = match hyper::upgrade::on(upstream_resp).await {
+            Ok(io) => io,
+            Err(e) => {
+                tracing::warn!("upstream upgrade failed: {}", e);
+                return;
+            }
+        };
+        let client_io = match on_upgrade.await {
+            Ok(io) => io,
+            Err(e) => {
+                tracing::warn!("client upgrade failed: {}", e);
+                return;
+            }
+        };
+
+        let mut a = hyper_util::rt::TokioIo::new(client_io);
+        let mut b = hyper_util::rt::TokioIo::new(upstream_io);
+
+        match tokio::io::copy_bidirectional(&mut a, &mut b).await {
+            Ok((from_client, from_upstream)) => tracing::debug!(
+                from_client, from_upstream, "upgraded connection closed"
+            ),
+            // Both halves closing abruptly is ordinary for a tunnel that a
+            // browser tab simply went away from, so this is not an error.
+            Err(e) => tracing::debug!("upgraded connection ended: {}", e),
+        }
+    });
+
+    // 101 back to the client with the upstream's own handshake headers —
+    // Sec-WebSocket-Accept among them, which the client verifies. These are
+    // hop-by-hop and must NOT be stripped here.
+    let mut resp = Response::builder().status(StatusCode::SWITCHING_PROTOCOLS);
+    if let Some(hs) = resp.headers_mut() {
+        for (k, v) in &resp_headers {
+            hs.insert(k, v.clone());
+        }
+    }
+    resp.body(Body::empty()).map_err(|e| format!("response: {e}"))
+}
+
 // ─── handle_request ──────────────────────────────────────
 
 /// Main proxy handler — called for every incoming request on every port.
@@ -400,6 +552,11 @@ async fn handle_request(
     }
 
     // ── 3. Decompose request ──────────────────────────────
+    // Taken before the request is torn apart: the handle that lets this
+    // connection be upgraded lives in its extensions and goes with them.
+    let mut req = req;
+    let on_upgrade = req.extensions_mut().remove::<hyper::upgrade::OnUpgrade>();
+
     let (parts, body) = req.into_parts();
     let method    = parts.method.clone();
     let path      = parts.uri.path().to_string();
@@ -516,6 +673,54 @@ async fn handle_request(
         site.target.trim_end_matches('/'),
         path_and_query
     );
+
+    // An accepted upgrade leaves HTTP behind, so it cannot go through reqwest,
+    // which has no way to take over a connection after the response. It happens
+    // here rather than earlier so the handshake is inspected like any other
+    // request — it is a normal GET with headers, and the pipeline has already
+    // had its say by this point.
+    if is_upgrade(&headers)
+        && let Some(on_upgrade) = on_upgrade
+    {
+        tracing::debug!(host = %host, path = %path, "proxying a protocol upgrade");
+        let resp = match proxy_upgrade(&upstream_url, &method, &headers, on_upgrade).await {
+            Ok(resp) => resp,
+            Err(e) => {
+                tracing::warn!(upstream = %upstream_url, "upgrade failed: {}", e);
+                error_response(StatusCode::BAD_GATEWAY, "Upgrade failed")
+            }
+        };
+
+        // Logged like any other request. The tunnel that follows cannot be,
+        // but the handshake is the only record that the connection happened at
+        // all — without it a WebSocket application is invisible in Traffic
+        // Monitor, which is worse than useless when someone is trying to work
+        // out whether their traffic is reaching the site.
+        let db         = state.db.clone();
+        let method_str = method.to_string();
+        let status     = resp.status().as_u16() as i64;
+        let elapsed    = started_at.elapsed().as_millis() as i64;
+        let (h, pth, c) = (host.clone(), path.clone(), country.clone());
+        let site_id    = site.id;
+        let ip         = client_ip.to_string();
+        tokio::spawn(async move {
+            log_event(db, TrafficRecord {
+                site_id,
+                client_ip:    ip,
+                method:       method_str,
+                host:         h,
+                path:         pth,
+                status_code:  status,
+                response_ms:  elapsed,
+                blocked:      false,
+                block_reason: None,
+                waf_score:    None,
+                country:      c,
+            }).await;
+        });
+
+        return resp;
+    }
 
     // Strip hop-by-hop headers before forwarding.
     let mut fwd_headers = headers.clone();
@@ -861,4 +1066,53 @@ fn to_reqwest_headers(headers: &HeaderMap) -> reqwest::header::HeaderMap {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn hm(pairs: &[(&str, &str)]) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        for (k, v) in pairs {
+            h.append(
+                HeaderName::from_bytes(k.as_bytes()).unwrap(),
+                HeaderValue::from_str(v).unwrap(),
+            );
+        }
+        h
+    }
+
+    #[test]
+    fn recognises_a_websocket_upgrade() {
+        assert!(is_upgrade(&hm(&[("connection", "Upgrade"), ("upgrade", "websocket")])));
+        // Real clients send this with keep-alive alongside, and case varies.
+        assert!(is_upgrade(&hm(&[
+            ("connection", "keep-alive, Upgrade"), ("upgrade", "websocket"),
+        ])));
+        assert!(is_upgrade(&hm(&[("Connection", "upgrade"), ("Upgrade", "WebSocket")])));
+        // Some send Connection as repeated headers rather than one list.
+        assert!(is_upgrade(&hm(&[
+            ("connection", "keep-alive"), ("connection", "Upgrade"), ("upgrade", "websocket"),
+        ])));
+    }
+
+    #[test]
+    fn one_header_alone_is_not_an_upgrade() {
+        // Either half on its own is meaningless, and treating it as an upgrade
+        // would divert an ordinary request into the tunnelling path.
+        assert!(!is_upgrade(&hm(&[("upgrade", "websocket")])));
+        assert!(!is_upgrade(&hm(&[("connection", "Upgrade")])));
+        assert!(!is_upgrade(&hm(&[("connection", "keep-alive"), ("upgrade", "websocket")])));
+        assert!(!is_upgrade(&HeaderMap::new()));
+    }
+
+    #[test]
+    fn upgrade_is_not_matched_inside_another_token() {
+        // Browsers send "upgrade-insecure-requests"; a substring match would
+        // divert those requests into a tunnel they never asked for.
+        assert!(!is_upgrade(&hm(&[
+            ("connection", "upgrade-insecure-requests"), ("upgrade", "websocket"),
+        ])));
+    }
 }

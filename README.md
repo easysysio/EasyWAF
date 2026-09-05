@@ -21,8 +21,8 @@ Working today: reverse proxying, the rule engine, country rules, the CAPTCHA cha
 traffic logging and retention, HTTPS for both the management GUI and proxied sites, and the
 management GUI itself.
 
-The largest gaps are **WebSockets** (they do not proxy at all), **backup/export** (there is
-none), and **load balancing** (one upstream per site). Read
+The largest gaps are **backup/export** (there is none) and **load balancing** (one upstream
+per site). Read
 [What EasyWAF does not do](#what-easywaf-does-not-do) before deploying — it is short, and it
 is the honest half of this page.
 
@@ -85,6 +85,9 @@ and the per-site security headers still apply, but nothing is inspected.
   the database so a restart cannot turn a failing renewal into a rate-limited account. Each
   certificate's page shows when renewal was last attempted, whether it worked, and when the
   next attempt is due.
+* **WebSockets** — upgrade requests are tunnelled to the upstream, so terminals, chat, hot
+  reload and streaming dashboards work through EasyWAF. The handshake is inspected like any
+  other request; the tunnel that follows is relayed as opaque frames.
 * **Trusted proxies** — when EasyWAF sits behind another proxy, list its addresses under
   Settings and the client address is taken from `X-Forwarded-For`. Believed only for
   connections from a listed address, so a client cannot claim someone else's IP; empty by
@@ -356,9 +359,12 @@ scheduled or decided — the roadmap lives in [docs/design/roadmap.md](docs/desi
 
 ### As a reverse proxy
 
-* **WebSockets do not work.** `Connection` and `Upgrade` are stripped as hop-by-hop headers
-  and there is no tunnelling path, so an upgrade never reaches the upstream. Anything with
-  live updates — chat, hot reload, streaming dashboards — breaks. Not scheduled.
+* **A WebSocket tunnel is not inspected.** The handshake is a normal request and goes
+  through the rule engine like any other, but once the connection is upgraded EasyWAF
+  relays opaque frames — the payload is no longer HTTP, so there is nothing for HTTP rules
+  to match. The connection is recorded in Traffic Monitor as its handshake.
+* **Upgrades to an `https://` upstream are refused.** Plain-HTTP upstreams tunnel fine;
+  a TLS upstream would need a TLS client on the tunnelling path, which is not built.
 * **No HTTP/2 to clients.** No ALPN is advertised, so connections are HTTP/1.1. Not scheduled.
 * **Routing is by `Host:` only, matched exactly.** No path prefixes, no wildcard hostnames
   like `*.example.com`. Two applications behind one hostname cannot be split. Not scheduled.

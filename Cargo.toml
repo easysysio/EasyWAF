@@ -86,6 +86,9 @@ sha2 = "0.10"
 rand = "0.8"
 x509-parser = "0.18.1"
 instant-acme = { version = "0.8.5", default-features = false, features = ["ring", "hyper-rustls", "rcgen"] }
+hyper = { version = "1.11.1", features = ["client", "http1"] }
+hyper-util = { version = "0.1.20", features = ["tokio"] }
+http-body-util = "0.1.5"
 
 # ─── Debian package (.deb) — cargo-deb ──────────────────────
 # Binary → /usr/bin; runtime assets → /opt/easywaf (the systemd unit sets
