@@ -20,7 +20,8 @@ next minor, so a release's notes stay about its feature.
 
 ## Next patch
 
-**0.5.2 — hostname aliases.** A site matches one `server_name` exactly, so two
+**Hostname aliases**, in the next patch after 0.5.2 — which was spent on a
+header-copying fix that broke cookie-based logins. A site matches one `server_name` exactly, so two
 names for one application means two sites with duplicate settings kept in step
 by hand, and any divergence is a bug that appears on only one name. Traefik
 expresses this as `Host(a) || Host(b)` on one router with a single certificate

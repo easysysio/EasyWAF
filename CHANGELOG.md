@@ -6,7 +6,10 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
-## [Unreleased] — will be 0.5.2
+## [0.5.2] — 2026-09-05
+
+A single fix, released on its own because it breaks logging in to any
+application that sets more than one cookie. Nothing to do on upgrade.
 
 ### Fixed
 - **Only the last of any repeated response header reached the client, which
