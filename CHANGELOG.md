@@ -6,6 +6,25 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
+## [Unreleased]
+
+### Fixed
+- **Rule 932012 blocked ordinary traffic from any application whose cookies
+  start with a command name.** `[;|`]\s*(…|nc|netcat)` had no word boundary, so
+  `nc` matched the `nc` of `nc_token` and `id` the `id` of `identity` — and a
+  `Cookie` header is semicolon-separated by definition. `; nc_token=…` therefore
+  read as "semicolon, then netcat" and scored **8 of the default threshold of
+  10** on every single request, before anything an attacker sent was weighed.
+  Two points of headroom left, so any second match — a `--` inside a random
+  session value, say — tipped it over, and Nextcloud broke seemingly at random.
+  A word boundary fixes it; every real chaining attack is still caught, which
+  the tests now assert both ways.
+- **The rule list behind the Seed button still had the `Accept: */*` bug.** The
+  catalog copy of the SQL-comment rule was corrected long ago; this second,
+  hard-coded copy in `rules.rs` was missed, so anyone who pressed Seed rather
+  than Import got a rule that scored every request 3 for the `*/` in a header
+  every HTTP client sends.
+
 ## [0.5.3] — 2026-09-05
 
 Nothing to do on upgrade, but **one thing to check**: sites that already had

@@ -421,7 +421,11 @@ pub async fn seed_default_rules(state: &AppState, policy_id: i64) -> Result<()> 
             "SQLi: SQL comment",
             "SQL comment stripping suffix",
             "ANY",
-            r"(?i)(--|#|/\*|\*/)",
+            // /\* and \*/ as standalone alternatives match the "*/" in every
+            // client's default "Accept: */*" header, scoring every request.
+            // The catalog copy of this rule was corrected; this one was missed,
+            // so anyone who pressed Seed got the broken version.
+            r"(?i)(--|#|/\*.*?\*/|;--)",
             3, "score",
         ),
 

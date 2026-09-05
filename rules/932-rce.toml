@@ -104,7 +104,13 @@ id          = 932012
 name        = "RCE: pipe / semicolon command chaining"
 description = "Shell metacharacters used to chain OS commands"
 zone        = "ANY"
-pattern     = '[;|`]\s*(ls|cat|id|whoami|uname|wget|curl|bash|sh|python|perl|nc|netcat)'
+# The command names need a word boundary. Without one, "nc" matched the "nc"
+# of "nc_token" and "id" the "id" of "identity" — and a Cookie header is
+# semicolon-separated by definition, so "; nc_token=..." read as "semicolon,
+# then netcat". Every request carrying Nextcloud's cookies scored 8 of the
+# default threshold of 10 before anything an attacker sent was considered,
+# leaving two points of headroom and blocking real traffic at random.
+pattern     = '[;|`]\s*(ls|cat|id|whoami|uname|wget|curl|bash|sh|python|perl|nc|netcat)\b'
 score       = 8
 action      = "score"
 
