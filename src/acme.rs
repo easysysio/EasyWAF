@@ -306,6 +306,175 @@ pub async fn issue_and_store(
     Ok(id)
 }
 
+// ─── Renewal ─────────────────────────────────────────────
+
+/// Renew once a certificate has this many days left.
+///
+/// Thirty leaves four weeks of retries before anything expires, which is the
+/// margin that makes a failing renewal a problem to look into rather than an
+/// emergency.
+const RENEW_AT_DAYS: i64 = 30;
+
+/// How often the sweep runs.
+///
+/// Hourly, not because renewal is urgent — it has a month of slack — but
+/// because a failed attempt should be retried on the schedule its backoff
+/// asks for, and the backoff cannot be honoured more finely than the sweep.
+const SWEEP_INTERVAL: std::time::Duration = std::time::Duration::from_secs(3600);
+
+/// Wait before retrying after `failures` consecutive failures.
+///
+/// Doubling from an hour to a day. Let's Encrypt permits five failed
+/// validations per hostname per hour, so even the first interval is well
+/// clear of it, and a domain that is simply misconfigured settles into one
+/// attempt a day rather than filling the log.
+fn backoff(failures: i64) -> chrono::Duration {
+    let hours = match failures {
+        ..=1 => 1,
+        2    => 2,
+        3    => 4,
+        4    => 8,
+        5    => 12,
+        _    => 24,
+    };
+    chrono::Duration::hours(hours)
+}
+
+/// One certificate's renewal state, as the sweep sees it.
+struct Renewable {
+    name:         String,
+    domain:       String,
+    not_after:    Option<String>,
+    next_attempt: Option<String>,
+    failures:     i64,
+}
+
+/// Whether this certificate should be attempted now.
+///
+/// Separated from the sweep so the decision is testable without a database or
+/// a CA: it is the part with the reasoning in it.
+fn is_due(r: &Renewable, now: chrono::DateTime<chrono::Utc>) -> bool {
+    // Backoff first: a certificate inside its backoff window is not attempted
+    // however close to expiry it is. Retrying sooner would not fix whatever is
+    // wrong and would spend the CA's patience getting there.
+    if let Some(next) = r.next_attempt.as_deref()
+        && let Ok(t) = chrono::DateTime::parse_from_rfc3339(next)
+        && now < t.with_timezone(&chrono::Utc)
+    {
+        return false;
+    }
+
+    let Some(raw) = r.not_after.as_deref() else {
+        // No expiry recorded — attempt it, since the alternative is never
+        // touching a certificate nobody knows the lifetime of.
+        return true;
+    };
+
+    match parse_not_after(raw) {
+        Some(exp) => (exp - now).num_days() <= RENEW_AT_DAYS,
+        None      => true,
+    }
+}
+
+/// Parse the `not_after` string as written by the certificate inspector.
+fn parse_not_after(raw: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    // x509-parser renders ASN.1 time like "Oct 10 06:49:20 2027 +00:00".
+    let raw = raw.trim();
+    for fmt in ["%b %e %H:%M:%S %Y %:z", "%b %d %H:%M:%S %Y %:z"] {
+        if let Ok(t) = chrono::DateTime::parse_from_str(raw, fmt) {
+            return Some(t.with_timezone(&chrono::Utc));
+        }
+    }
+    chrono::DateTime::parse_from_rfc3339(raw)
+        .ok()
+        .map(|t| t.with_timezone(&chrono::Utc))
+}
+
+/// Attempt renewal for every ACME certificate that is due.
+pub async fn renew_due(db: &SqlitePool) {
+    // A node told not to renew does nothing. The flag exists now so that
+    // configuration sync can set it later without unpicking an assumption that
+    // this is the only node — every node renewing independently would
+    // duplicate issuance and hit exactly the rate limits the backoff avoids.
+    if !crate::routes::settings::get_acme_renew_here(db).await {
+        return;
+    }
+
+    let rows = sqlx::query!(
+        r#"SELECT name as "name!", acme_domain as "acme_domain!", not_after,
+                  acme_next_attempt, acme_failures as "acme_failures!"
+           FROM certs WHERE acme_domain IS NOT NULL AND trim(acme_domain) <> ''"#
+    )
+    .fetch_all(db)
+    .await;
+
+    let Ok(rows) = rows else { return };
+    let now = chrono::Utc::now();
+
+    for row in rows {
+        let r = Renewable {
+            name:         row.name,
+            domain:       row.acme_domain,
+            not_after:    row.not_after,
+            next_attempt: row.acme_next_attempt,
+            failures:     row.acme_failures,
+        };
+
+        if !is_due(&r, now) {
+            continue;
+        }
+
+        tracing::info!(domain = %r.domain, "Renewing certificate");
+        let stamp = now.to_rfc3339();
+
+        match issue_and_store(db, &r.domain, &r.name).await {
+            Ok(_) => {
+                let _ = sqlx::query!(
+                    "UPDATE certs SET acme_last_attempt = ?, acme_last_error = NULL,
+                                      acme_next_attempt = NULL, acme_failures = 0
+                     WHERE name = ?",
+                    stamp, r.name
+                )
+                .execute(db)
+                .await;
+                tracing::info!(domain = %r.domain, "Renewed");
+            }
+            Err(e) => {
+                let failures = r.failures + 1;
+                let next = (now + backoff(failures)).to_rfc3339();
+                let msg = e.to_string();
+                let _ = sqlx::query!(
+                    "UPDATE certs SET acme_last_attempt = ?, acme_last_error = ?,
+                                      acme_next_attempt = ?, acme_failures = ?
+                     WHERE name = ?",
+                    stamp, msg, next, failures, r.name
+                )
+                .execute(db)
+                .await;
+                tracing::error!(
+                    domain = %r.domain, failures,
+                    "Renewal failed: {}. Next attempt after {}.", msg, next
+                );
+            }
+        }
+    }
+}
+
+/// Run the renewal sweep at startup and hourly thereafter.
+///
+/// Running at startup is safe precisely because the backoff is persisted: a
+/// service restarting in a loop finds `acme_next_attempt` still in the future
+/// and does nothing, rather than treating every start as a fresh chance to
+/// retry.
+pub fn spawn_renewal_task(db: SqlitePool) {
+    tokio::spawn(async move {
+        loop {
+            renew_due(&db).await;
+            tokio::time::sleep(SWEEP_INTERVAL).await;
+        }
+    });
+}
+
 /// ACME failures are reported to an operator, so they keep the CA's own wording
 /// — it is usually specific about what it could not verify.
 fn acme_err(e: instant_acme::Error) -> AppError {
@@ -362,6 +531,75 @@ pub async fn set_config(db: &SqlitePool, email: &str, directory: &str) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use chrono::{Duration, Utc};
+
+    fn cert(not_after_days: i64, next_attempt: Option<i64>, failures: i64) -> Renewable {
+        Renewable {
+            name:      "c".into(),
+            domain:    "example.com".into(),
+            not_after: Some((Utc::now() + Duration::days(not_after_days)).to_rfc3339()),
+            next_attempt: next_attempt.map(|h| (Utc::now() + Duration::hours(h)).to_rfc3339()),
+            failures,
+        }
+    }
+
+    #[test]
+    fn renews_only_inside_the_window() {
+        let now = Utc::now();
+        assert!(!is_due(&cert(60, None, 0), now), "60 days left is not due");
+        assert!(!is_due(&cert(31, None, 0), now), "31 days left is not due");
+        assert!(is_due(&cert(30, None, 0), now), "30 days left is due");
+        assert!(is_due(&cert(1, None, 0), now));
+        assert!(is_due(&cert(-5, None, 0), now), "already expired is due");
+    }
+
+    #[test]
+    fn backoff_is_respected_even_close_to_expiry() {
+        let now = Utc::now();
+        // The point of persisting this: retrying sooner would not fix whatever
+        // is wrong, and would spend the CA's patience getting there.
+        assert!(!is_due(&cert(2, Some(3), 4), now), "inside the backoff window");
+        assert!(is_due(&cert(2, Some(-1), 4), now), "backoff has elapsed");
+    }
+
+    #[test]
+    fn backoff_grows_then_caps() {
+        assert_eq!(backoff(1).num_hours(), 1);
+        assert_eq!(backoff(2).num_hours(), 2);
+        assert_eq!(backoff(3).num_hours(), 4);
+        assert_eq!(backoff(6).num_hours(), 24);
+        assert_eq!(backoff(50).num_hours(), 24, "caps rather than growing forever");
+        // Five failed validations per hostname per hour is the CA's limit, so
+        // even the first interval must clear it comfortably.
+        assert!(backoff(1).num_minutes() >= 60);
+    }
+
+    #[test]
+    fn an_unknown_expiry_is_attempted_rather_than_ignored() {
+        let now = Utc::now();
+        let r = Renewable {
+            name: "c".into(), domain: "example.com".into(),
+            not_after: None, next_attempt: None, failures: 0,
+        };
+        assert!(is_due(&r, now));
+
+        let unparseable = Renewable {
+            not_after: Some("not a date".into()),
+            ..Renewable { name: "c".into(), domain: "example.com".into(),
+                          not_after: None, next_attempt: None, failures: 0 }
+        };
+        assert!(is_due(&unparseable, now));
+    }
+
+    #[test]
+    fn parses_the_inspector_s_date_format() {
+        // What the certificate detail page shows, which is what gets stored.
+        let t = parse_not_after("Oct 10 06:49:20 2027 +00:00").expect("x509-parser format");
+        assert_eq!(t.format("%Y-%m-%d").to_string(), "2027-10-10");
+        assert!(parse_not_after("2027-10-10T06:49:20Z").is_some(), "rfc3339 too");
+        assert!(parse_not_after("nonsense").is_none());
+    }
 
     #[test]
     fn recognises_a_challenge_path() {

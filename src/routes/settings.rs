@@ -44,6 +44,9 @@ pub const KEY_MANAGEMENT_CERT: &str = "management_cert";
 /// Addresses whose `X-Forwarded-For` header is believed. Empty means none.
 pub const KEY_TRUSTED_PROXIES: &str = "trusted_proxies";
 
+/// Whether this node performs ACME renewals. Defaults to yes.
+pub const KEY_ACME_RENEW_HERE: &str = "acme_renew_here";
+
 /// Used when the row is missing or cannot be parsed.
 const DEFAULT_RETENTION_DAYS: i64 = 0;
 
@@ -358,6 +361,20 @@ async fn cert_names(db: &SqlitePool) -> Vec<String> {
     .fetch_all(db)
     .await
     .unwrap_or_default()
+}
+
+/// Whether this node should renew ACME certificates.
+///
+/// Defaults to true, and there is no GUI for it yet — it exists so that
+/// configuration sync can set it when there is more than one node, without
+/// having to unpick an assumption that this is the only one. Every node
+/// renewing independently would duplicate issuance and hit the CA's rate
+/// limits.
+pub async fn get_acme_renew_here(db: &SqlitePool) -> bool {
+    match get_setting(db, KEY_ACME_RENEW_HERE).await {
+        Some(v) => !matches!(v.trim().to_lowercase().as_str(), "0" | "false" | "no"),
+        None    => true,
+    }
 }
 
 /// Addresses whose `X-Forwarded-For` header should be believed.

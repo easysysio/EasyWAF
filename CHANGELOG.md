@@ -41,9 +41,27 @@ Version bumps and tags are created only after explicit approval.
   Changing the contact or the directory re-registers the account, since staging
   and production are separate registries.
 
-  Renewal is not automated yet — that is the next part of 0.5.0. Certificates
-  last 90 days, so nothing issued now needs attention for a while, but do not
-  rely on it renewing itself.
+- **Automatic renewal.** Certificates issued over ACME renew themselves once 30
+  days remain, checked hourly. That margin leaves four weeks of retries before
+  anything expires, so a failure is something to look into rather than an
+  emergency.
+
+  **The backoff is persisted, not held in memory.** This is the part that would
+  otherwise be got wrong: an in-memory backoff resets on restart, so a
+  crash-looping service — or an operator restarting to "fix" a failing renewal —
+  becomes one that hammers the CA and gets the account rate-limited, making the
+  original problem unfixable for an hour. Retries double from one hour to a cap
+  of a day, and restarts do not reset the count or bring an attempt forward.
+
+  The certificate page shows what renewal is doing: when it was last attempted,
+  whether that succeeded, the error if it did not, and when the next attempt is
+  due. Without that there is nothing to tell a certificate renewing quietly from
+  one failing quietly, until it expires.
+
+  A per-node flag decides whether this node renews, defaulting to yes. There is
+  no GUI for it — it exists so configuration sync can set it when there is more
+  than one node, rather than the renewal path having to be unpicked later from
+  an assumption that it is alone.
 
 - **A Docker Hub overview** (`docker/README.md`): what EasyWAF is, quick start,
   what each port is for, why `/data` must be mounted, a compose file, adding a

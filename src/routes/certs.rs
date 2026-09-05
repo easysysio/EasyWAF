@@ -351,7 +351,10 @@ pub async fn get_cert_detail(
     };
 
     let row = sqlx::query!(
-        "SELECT name as \"name!\", cert_pem, key_pem FROM certs WHERE name = ?",
+        "SELECT name as \"name!\", cert_pem, key_pem, acme_domain,
+                acme_last_attempt, acme_last_error, acme_next_attempt,
+                acme_failures as \"acme_failures!\"
+         FROM certs WHERE name = ?",
         name
     )
     .fetch_optional(&state.db)
@@ -367,6 +370,14 @@ pub async fn get_cert_detail(
     ctx.insert("title",    &format!("Certificate: {}", row.name));
     ctx.insert("url",      "/certs");
     ctx.insert("name",     &row.name);
+
+    // Renewal state. Without it there is nothing to distinguish a certificate
+    // renewing quietly from one failing quietly, until it expires.
+    ctx.insert("acme_domain",       &row.acme_domain);
+    ctx.insert("acme_last_attempt", &row.acme_last_attempt);
+    ctx.insert("acme_last_error",   &row.acme_last_error);
+    ctx.insert("acme_next_attempt", &row.acme_next_attempt);
+    ctx.insert("acme_failures",     &row.acme_failures);
 
     match row.cert_pem.as_deref() {
         Some(pem) if !pem.trim().is_empty() => {

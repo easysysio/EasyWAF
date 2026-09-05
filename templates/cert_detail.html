@@ -105,6 +105,57 @@
             </div>
         </div>
 
+        {% if acme_domain %}
+        <div class="panel panel-default">
+            <div class="panel-heading"><h4>Automatic renewal</h4></div>
+            <div class="panel-body">
+                {% if acme_last_error %}
+                <div class="alert alert-danger" style="margin-bottom:10px">
+                    <i class="fa fa-exclamation-triangle"></i>
+                    <strong>The last renewal attempt failed.</strong>
+                    <br><code style="word-break:break-word">{{ acme_last_error }}</code>
+                    {% if acme_failures > 1 %}
+                    <br><small>{{ acme_failures }} consecutive failures — retries are being
+                    spaced out to stay inside the CA's rate limits.</small>
+                    {% endif %}
+                </div>
+                {% endif %}
+
+                <table class="table table-condensed">
+                    <tbody>
+                    <tr><th style="width:45%">Issued for</th><td><code>{{ acme_domain }}</code></td></tr>
+                    <tr><th>Last attempt</th>
+                        <td>
+                            {% if acme_last_attempt %}
+                                {{ acme_last_attempt }}
+                                {% if acme_last_error %}
+                                    <span class="label label-danger">failed</span>
+                                {% else %}
+                                    <span class="label label-success">succeeded</span>
+                                {% endif %}
+                            {% else %}
+                                <span class="text-muted">none yet — issued, not since renewed</span>
+                            {% endif %}
+                        </td></tr>
+                    <tr><th>Next attempt</th>
+                        <td>
+                            {% if acme_next_attempt %}
+                                not before {{ acme_next_attempt }}
+                            {% else %}
+                                when fewer than 30 days remain
+                            {% endif %}
+                        </td></tr>
+                    </tbody>
+                </table>
+                <p class="help-block">
+                    EasyWAF renews this automatically once 30 days are left, checking hourly.
+                    That leaves four weeks of retries before anything expires — so a failure
+                    here is something to look into, not an emergency.
+                </p>
+            </div>
+        </div>
+        {% endif %}
+
         <div class="panel panel-default">
             <div class="panel-heading"><h4>Valid for these names</h4></div>
             <div class="panel-body">
