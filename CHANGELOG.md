@@ -6,7 +6,12 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
-## [Unreleased]
+## [0.5.3] — 2026-09-05
+
+Nothing to do on upgrade, but **one thing to check**: sites that already had
+`X-Frame-Options` enabled keep sending `DENY`. If an application frames its own
+pages — Nextcloud, Collabora, Grafana — switch it to `SAMEORIGIN` under
+Sites → Settings.
 
 ### Changed
 - **`X-Frame-Options` is now a choice per site, not always `DENY`.** The header
