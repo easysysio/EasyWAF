@@ -143,15 +143,21 @@ pub async fn post_cert_delete(
     //
     // Refused rather than warned about: there is no reason to delete it, since
     // a start with it missing simply makes another.
-    if name == crate::cert::DEFAULT_CERT_NAME {
+    if name == crate::routes::settings::get_management_cert(&state.db).await {
+        // Worded for which case it is. Telling someone who has already
+        // uploaded their own certificate to "upload your own" reads as though
+        // the page has not noticed what they did.
+        let how = if name == crate::cert::DEFAULT_CERT_NAME {
+            "To replace it, upload your own under Certificates and select it as the \
+             Management Certificate under Settings — this one then becomes deletable."
+        } else {
+            "Select a different Management Certificate under Settings first; this one \
+             becomes deletable once it is no longer in use."
+        };
         return flash_redirect(
             "/certs",
             "failed",
-            &format!(
-                "'{name}' is the management interface's own certificate and cannot be \
-                 deleted. To stop using a self-signed certificate, upload your own and \
-                 assign it — this one is only the fallback."
-            ),
+            &format!("'{name}' is what the management interface is served with. {how}"),
         );
     }
 
@@ -210,6 +216,8 @@ async fn fetch_certs(state: &AppState) -> Result<Vec<Cert>> {
     .fetch_all(&state.db)
     .await?;
 
+    let mgmt = crate::routes::settings::get_management_cert(&state.db).await;
+
     // One query for every certificate rather than one per row: the list is
     // small, but a per-row query in a loop is the shape that stops being small
     // without anyone noticing.
@@ -229,7 +237,7 @@ async fn fetch_certs(state: &AppState) -> Result<Vec<Cert>> {
                 .filter(|u| u.cert_name == r.name)
                 .map(|u| u.site_name.clone())
                 .collect(),
-            is_management: r.name == crate::cert::DEFAULT_CERT_NAME,
+            is_management: r.name == mgmt,
             id:         r.id,
             name:       r.name,
             domain:     r.domain,

@@ -29,6 +29,24 @@ do on upgrade.
   intermediates or only the leaf, and which names it is actually valid for —
   the usual reason a browser rejects a certificate EasyWAF is serving happily.
 
+### Added
+- **The management interface's certificate is now chosen in Settings.** Upload
+  your own under Certificates, select it as the **Management Certificate** under
+  **Settings → TLS**, and restart. Previously the GUI always used the generated
+  `easywaf` certificate — the name was hard-coded — so the only way to serve
+  your own was to delete that one and upload a replacement under the same name,
+  which the deletion guard above now correctly prevents. Selecting it is the
+  supported path, and the generated certificate becomes deletable once nothing
+  uses it.
+
+  A choice that cannot serve TLS is refused when saved rather than at the next
+  start, and if the selected certificate is later removed or becomes unusable
+  EasyWAF starts on `easywaf` and logs why. The management interface is the only
+  place this setting can be corrected, so it has to come up: a GUI that refuses
+  to start because of its own certificate setting is a locked door with the key
+  inside. Settings then says the selection is missing rather than quietly
+  showing a different one.
+
 ### Fixed
 - **A certificate that is in use can no longer be deleted.** Deleting one
   assigned to a site silently unset that site's certificate — `sites.cert_id`
@@ -37,8 +55,8 @@ do on upgrade.
   over plain HTTP, so nothing looked wrong until someone tried the HTTPS one.
   Deletion is now refused, naming the sites that would break.
 
-  **The management interface's own `easywaf` certificate cannot be deleted at
-  all.** Removing it left the GUI running on a certificate that existed nowhere,
+  **The certificate the management interface is serving cannot be deleted
+  either** — whichever one is selected, not a fixed name. Removing it left the GUI running on a certificate that existed nowhere,
   and the next start generated a replacement with a different fingerprint — so
   every browser that had accepted the old one met a fresh warning, which is
   hard to tell apart from being locked out. There is no reason to delete it:

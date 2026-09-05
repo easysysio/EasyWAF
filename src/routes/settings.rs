@@ -37,6 +37,10 @@ pub const KEY_TLS_PROFILE: &str = "tls_profile";
 /// every suite this build supports.
 pub const KEY_TLS_CIPHERS: &str = "tls_ciphers";
 
+/// Name of the certificate the management interface serves. Empty or missing
+/// means the generated `easywaf` default.
+pub const KEY_MANAGEMENT_CERT: &str = "management_cert";
+
 /// Used when the row is missing or cannot be parsed.
 const DEFAULT_RETENTION_DAYS: i64 = 0;
 
@@ -70,6 +74,7 @@ pub struct SettingsForm {
     pub maintenance_message:    Option<String>,
     pub tls_profile:            Option<String>,
     pub tls_ciphers:            Option<String>,
+    pub management_cert:        Option<String>,
 }
 
 // ─── get_settings ────────────────────────────────────────
@@ -111,6 +116,15 @@ pub async fn get_settings(
     ctx.insert("maintenance_message",  &maintenance_message);
     ctx.insert("tls_profile",          tls_profile.as_str());
     ctx.insert("tls_ciphers",          &tls_ciphers);
+    let management_cert = get_management_cert(&state.db).await;
+    let cert_names      = cert_names(&state.db).await;
+    // A stored name that is no longer among the certificates would otherwise
+    // render as "nothing selected", and the picker would appear to say
+    // something the setting does not.
+    let management_cert_missing = !cert_names.contains(&management_cert);
+    ctx.insert("management_cert",         &management_cert);
+    ctx.insert("cert_names",              &cert_names);
+    ctx.insert("management_cert_missing", &management_cert_missing);
     ctx.insert("tls_ciphers_all",      &crate::tls::all_suite_names());
     ctx.insert("stored_events",  &stored_events);
     ctx.insert("result",         &flash.result.unwrap_or_default());
@@ -188,6 +202,33 @@ pub async fn post_settings_update(
         );
     }
 
+    // Checked before it is stored, and refused if it could not serve TLS. The
+    // GUI is the only place this setting can be corrected, so a bad value that
+    // only failed at the next start would take away the means of fixing it.
+    let mgmt = form.management_cert.as_deref().unwrap_or("").trim().to_string();
+    if !mgmt.is_empty() && mgmt != crate::cert::DEFAULT_CERT_NAME {
+        match crate::cert::load_named(&state.db, &mgmt).await? {
+            None => {
+                return flash_redirect(
+                    "/settings",
+                    "failed",
+                    &format!("'{mgmt}' has no certificate and key stored, so the management \
+                              interface could not be served with it"),
+                )
+            }
+            Some((c, k)) => {
+                if let Err(e) = crate::tls::validate_pem(&c, &k) {
+                    return flash_redirect(
+                        "/settings",
+                        "failed",
+                        &format!("'{mgmt}' cannot serve TLS: {e}"),
+                    );
+                }
+            }
+        }
+    }
+
+    set_setting(&state.db, KEY_MANAGEMENT_CERT, &mgmt).await?;
     set_setting(&state.db, KEY_TLS_PROFILE, profile.as_str()).await?;
 
     // Stored normalised: the names rustls knows, in its own preference order,
@@ -255,6 +296,27 @@ pub async fn get_tls_ciphers(db: &SqlitePool) -> Vec<rustls::SupportedCipherSuit
             crate::tls::all_suites()
         }
     }
+}
+
+/// The certificate name the management interface should use.
+pub async fn get_management_cert(db: &SqlitePool) -> String {
+    match get_setting(db, KEY_MANAGEMENT_CERT).await {
+        Some(v) if !v.trim().is_empty() => v.trim().to_string(),
+        _ => crate::cert::DEFAULT_CERT_NAME.to_string(),
+    }
+}
+
+/// Every stored certificate that has both halves, for the picker.
+async fn cert_names(db: &SqlitePool) -> Vec<String> {
+    sqlx::query_scalar!(
+        r#"SELECT name as "name!" FROM certs
+           WHERE cert_pem IS NOT NULL AND key_pem IS NOT NULL
+             AND trim(cert_pem) <> '' AND trim(key_pem) <> ''
+           ORDER BY name"#
+    )
+    .fetch_all(db)
+    .await
+    .unwrap_or_default()
 }
 
 /// Fetch one raw setting value. None when the key is not present.

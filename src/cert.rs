@@ -73,6 +73,60 @@ pub async fn ensure_default(db: &SqlitePool) -> Result<(String, String)> {
     Ok((cert_pem, key_pem))
 }
 
+// ─── resolve_management ──────────────────────────────────
+
+/// The certificate the management interface should serve, as
+/// (name, cert PEM, key PEM).
+///
+/// `selected` is the operator's choice from Settings. It is honoured when it
+/// exists and can actually serve TLS; otherwise this falls back to the
+/// generated default and says why.
+///
+/// The fallback is the whole point. A management interface that refuses to
+/// start because its certificate was deleted, replaced with something
+/// unparseable, or renamed is a locked door with the key inside — the GUI is
+/// the only place the setting can be corrected. Starting on a self-signed
+/// certificate and complaining loudly is always better than not starting.
+pub async fn resolve_management(db: &SqlitePool, selected: &str) -> Result<(String, String, String)> {
+    let selected = selected.trim();
+
+    if !selected.is_empty() && selected != DEFAULT_CERT_NAME {
+        match load_named(db, selected).await? {
+            Some((cert, key)) => match crate::tls::validate_pem(&cert, &key) {
+                Ok(()) => return Ok((selected.to_string(), cert, key)),
+                Err(e) => tracing::error!(
+                    "The certificate '{}' chosen for the management interface cannot serve \
+                     TLS ({}). Falling back to '{}' — fix or re-select it under Settings.",
+                    selected, e, DEFAULT_CERT_NAME
+                ),
+            },
+            None => tracing::error!(
+                "The certificate '{}' chosen for the management interface no longer exists. \
+                 Falling back to '{}' — re-select one under Settings.",
+                selected, DEFAULT_CERT_NAME
+            ),
+        }
+    }
+
+    let (cert, key) = ensure_default(db).await?;
+    Ok((DEFAULT_CERT_NAME.to_string(), cert, key))
+}
+
+/// Fetch any stored certificate by name, if it has both halves.
+pub async fn load_named(db: &SqlitePool, name: &str) -> Result<Option<(String, String)>> {
+    let row = sqlx::query!("SELECT cert_pem, key_pem FROM certs WHERE name = ?", name)
+        .fetch_optional(db)
+        .await?;
+
+    Ok(match row {
+        Some(r) => match (r.cert_pem, r.key_pem) {
+            (Some(c), Some(k)) if !c.trim().is_empty() && !k.trim().is_empty() => Some((c, k)),
+            _ => None,
+        },
+        None => None,
+    })
+}
+
 // ─── load ────────────────────────────────────────────────
 
 /// Fetch the stored default certificate, if it exists and is complete.

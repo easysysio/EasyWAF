@@ -329,6 +329,16 @@ fn certified_key(cert_pem: &str, key_pem: &str) -> std::result::Result<Certified
     Ok(CertifiedKey::new(chain, signing_key))
 }
 
+/// Check that a stored certificate and key can actually serve TLS.
+///
+/// Used before a certificate is accepted for the management interface, so an
+/// unusable one is refused while the operator is still on the page rather than
+/// discovered at the next start, when the GUI that could fix it is the thing
+/// that fails.
+pub fn validate_pem(cert_pem: &str, key_pem: &str) -> std::result::Result<(), String> {
+    certified_key(cert_pem, key_pem).map(|_| ())
+}
+
 /// Decode a stored certificate into the chain and key rustls wants.
 ///
 /// Shared by both listener kinds: SNI needs a `CertifiedKey`, a single-name

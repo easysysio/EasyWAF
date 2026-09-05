@@ -229,7 +229,8 @@ async fn main() {
     // The certificate is generated on first run and reused afterwards, so the
     // GUI is never served over plain HTTP — the only thing on gui_port is a
     // redirect, which carries no session cookie because the cookie is Secure.
-    let (cert_pem, key_pem) = cert::ensure_default(&db)
+    let chosen = routes::settings::get_management_cert(&db).await;
+    let (cert_name, cert_pem, key_pem) = cert::resolve_management(&db, &chosen)
         .await
         .expect("management certificate");
 
@@ -277,7 +278,7 @@ async fn main() {
         }
     };
 
-    info!("Management GUI listening on https://{}", tls_addr);
+    info!("Management GUI listening on https://{} (certificate '{}')", tls_addr, cert_name);
     if let Err(e) = server.serve(app.into_make_service()).await {
         tracing::error!("Management GUI server error: {}", e);
         std::process::exit(1);

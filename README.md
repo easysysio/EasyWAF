@@ -170,8 +170,12 @@ account to reset it from. Keep it somewhere safe.
 
 Your browser will warn about the certificate. On first run EasyWAF generates a self-signed
 one named `easywaf` and stores it under **Certificates** — it exists so the management
-interface is never served over plain HTTP, not because it is trustworthy. Replace it with
-your own certificate to make the warning go away.
+interface is never served over plain HTTP, not because it is trustworthy.
+
+To use your own instead: upload it under **Certificates**, then select it as the
+**Management Certificate** under **Settings → TLS** and restart. The generated one stays
+as a fallback — if the certificate you pick is later removed or becomes unusable, EasyWAF
+starts on `easywaf` and logs why rather than leaving you with no way in.
 
 > **Upgrading from 0.4.0 or 0.4.1?** Those versions seeded an `admin`/`admin` account. It
 > is untouched by the upgrade, so if you never changed it, change it now under

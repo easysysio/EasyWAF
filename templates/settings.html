@@ -63,6 +63,44 @@
                 <div class="panel-heading"><h4>TLS</h4></div>
                 <div class="panel-body">
                     <div class="form-group">
+                        <label>Management Certificate <small class="text-muted">(what the GUI on this port presents)</small></label>
+                        <select class="form-control" name="management_cert">
+                            {% if management_cert_missing %}
+                            <option value="{{ management_cert }}" selected>
+                                {{ management_cert }} — not found
+                            </option>
+                            {% endif %}
+                            {% for n in cert_names %}
+                            <option value="{{ n }}" {% if management_cert == n %}selected{% endif %}>{{ n }}</option>
+                            {% endfor %}
+                        </select>
+                        {% if management_cert_missing %}
+                        <p class="text-danger" style="margin-top:6px">
+                            <i class="fa fa-exclamation-triangle"></i>
+                            <strong>{{ management_cert }}</strong> is selected but has no usable
+                            certificate and key stored, so EasyWAF is serving this interface with
+                            the generated <code>easywaf</code> certificate instead. Pick one below.
+                        </p>
+                        {% endif %}
+                        <p class="help-block">
+                            EasyWAF generates a self-signed certificate named
+                            <code>easywaf</code> on first run so the GUI is never served over
+                            plain HTTP. To replace it, upload your own under
+                            <a href="/certs">Certificates</a> and select it here — browsers
+                            stop warning once you use a certificate they trust for the name
+                            you reach this interface by.
+                            <br>
+                            Whichever is selected cannot be deleted while it is in use. If it
+                            later becomes unusable or is removed outside the GUI, EasyWAF
+                            falls back to <code>easywaf</code> and logs why, rather than
+                            failing to start — this page is the only place the setting can be
+                            corrected, so the interface has to come up.
+                            <br>
+                            Takes effect after a restart.
+                        </p>
+                    </div>
+
+                    <div class="form-group">
                         <label>TLS Profile <small class="text-muted">(applies to every HTTPS listener)</small></label>
                         <select class="form-control" name="tls_profile">
                             <option value="compatible" {% if tls_profile == "compatible" %}selected{% endif %}>
