@@ -56,9 +56,31 @@ pub async fn init(database_url: &str) -> SqlitePool {
     run_migration_007(&pool).await;
     run_migration_008(&pool).await;
     run_migration_009(&pool).await;
+    run_migration_010(&pool).await;
 
     info!("Database ready: {}", database_url);
     pool
+}
+
+// ─── run_migration_010 ───────────────────────────────────
+
+/// Renewal tracking for ACME certificates.
+async fn run_migration_010(pool: &SqlitePool) {
+    let exists: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM pragma_table_info('certs') WHERE name = 'acme_last_attempt'",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0);
+
+    if exists == 0 {
+        let sql_010 = include_str!("../migrations/010_acme_renewal.sql");
+        sqlx::raw_sql(sql_010)
+            .execute(pool)
+            .await
+            .unwrap_or_else(|e| panic!("Migration 010 failed: {}", e));
+        info!("Migration 010 applied: added ACME renewal tracking to certs");
+    }
 }
 
 // ─── run_migration_004 ───────────────────────────────────

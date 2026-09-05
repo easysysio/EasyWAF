@@ -21,8 +21,8 @@ Working today: reverse proxying, the rule engine, country rules, the CAPTCHA cha
 traffic logging and retention, HTTPS for both the management GUI and proxied sites, and the
 management GUI itself.
 
-The largest gaps are **ACME** (certificates are uploaded by hand — it is the next release),
-**WebSockets** (they do not proxy at all), and **backup/export** (there is none). Read
+The largest gaps are **WebSockets** (they do not proxy at all), **backup/export** (there is
+none), and **load balancing** (one upstream per site). Read
 [What EasyWAF does not do](#what-easywaf-does-not-do) before deploying — it is short, and it
 is the honest half of this page.
 
@@ -79,6 +79,12 @@ and the per-site security headers still apply, but nothing is inspected.
   are selected per site by SNI, so many sites share one HTTPS port, each presenting its own.
   An optional per-site redirect sends HTTP to HTTPS; it is off by default, so turning on
   HTTPS never silently stops the HTTP port working.
+* **Let's Encrypt** — request a certificate for a domain or for a site, and EasyWAF answers
+  the HTTP-01 challenge itself on port 80: no webroot, and nothing to configure on the
+  backend. It renews automatically at 30 days remaining, with the retry backoff stored in
+  the database so a restart cannot turn a failing renewal into a rate-limited account. Each
+  certificate's page shows when renewal was last attempted, whether it worked, and when the
+  next attempt is due.
 * **Trusted proxies** — when EasyWAF sits behind another proxy, list its addresses under
   Settings and the client address is taken from `X-Forwarded-For`. Believed only for
   connections from a listed address, so a client cannot claim someone else's IP; empty by
@@ -382,8 +388,9 @@ scheduled or decided — the roadmap lives in [docs/design/roadmap.md](docs/desi
 
 ### Managing it
 
-* **Certificates are uploaded by hand — no ACME yet.** Renewal is a calendar reminder.
-  Scheduled for **0.5.0**, and the next release.
+* **ACME is HTTP-01 only.** No wildcards — those need DNS-01, which needs credentials for a
+  DNS provider's API. Upload a wildcard certificate instead. Validation always arrives on
+  port 80, so the host must be reachable there from the internet.
 * **One account, and everyone who has it is an administrator.** No second user, no roles, no
   read-only access. Scheduled for **0.6.0**.
 * **Sessions cannot be revoked.** They are stateless signed cookies, so changing a password

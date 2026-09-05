@@ -1,6 +1,6 @@
 # Design note — ACME / Let's Encrypt
 
-Status: in progress for **0.5.0** — see [roadmap.md](roadmap.md). Scoped to
+Status: **released in 0.5.0** (2026-09-05) — see [roadmap.md](roadmap.md). Scoped to
 **HTTP-01**; wildcards and DNS-01 are deliberately out (see the roadmap's
 constraints section).
 

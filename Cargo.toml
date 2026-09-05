@@ -1,6 +1,6 @@
 [package]
 name = "easywaf"
-version = "0.4.3"
+version = "0.5.0"
 edition = "2024"
 authors = ["Yariv Hakim"]
 description = "EasyWAF - Self-contained Web Application Firewall and Reverse Proxy"

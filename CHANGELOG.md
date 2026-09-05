@@ -6,7 +6,25 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
-## [Unreleased] — next release is 0.5.0 (ACME)
+## [0.5.0] — 2026-09-05
+
+**Let's Encrypt.** EasyWAF obtains and renews its own certificates, so HTTPS
+stops being a thing to remember every ninety days.
+
+### Upgrading from 0.4.x
+
+Nothing to do. A migration adds renewal-tracking columns to `certs` and is
+applied on start; existing certificates are untouched, and nothing renews a
+certificate EasyWAF did not issue — renewal only considers rows with an
+`acme_domain`, which only issuance sets.
+
+To use it: set a contact address under **Settings → Let's Encrypt**, start with
+the **staging** directory, and request a certificate from **Certificates** or
+from a site. Switch to production once staging succeeds.
+
+Validation is HTTP-01, so the name must resolve to this host from the public
+internet and the host must be reachable on **port 80**. If something else holds
+port 80, it has to forward `/.well-known/acme-challenge/` to EasyWAF.
 
 ### Added
 - **`X-Forwarded-For` support, behind a trusted-proxy list.** When EasyWAF runs
