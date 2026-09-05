@@ -264,6 +264,36 @@ fn parse_cert_pem(pem: &str) -> (Option<String>, Option<String>, Option<String>)
     }
 }
 
+// ─── get_cert_acme ───────────────────────────────────────
+
+/// GET /certs/request — the Let's Encrypt request form.
+///
+/// Separate from the upload page: they are two different things to do, and one
+/// page offering both meant the Let's Encrypt route was reachable only by
+/// pressing a button labelled "Upload Certificate".
+pub async fn get_cert_acme(
+    State(state): State<AppState>,
+    jar: SignedCookieJar,
+    Query(flash): Query<FlashQuery>,
+) -> Result<Response> {
+    let session = match get_session(&jar) {
+        Some(s) => s,
+        None    => return Ok(Redirect::to("/login").into_response()),
+    };
+
+    let mut ctx = Context::new();
+    ctx.insert("username", &session.username);
+    ctx.insert("title",    "Request Certificate");
+    ctx.insert("url",      "/certs");
+    // Said on arrival rather than on submit: a form that cannot succeed should
+    // say so before it is filled in.
+    ctx.insert("acme_configured", &crate::acme::config(&state.db).await?.is_some());
+    ctx.insert("result",   &flash.result.unwrap_or_default());
+    ctx.insert("msg",      &flash.msg.unwrap_or_default());
+
+    Ok((jar, Html(state.tera.render("cert_acme.html", &ctx)?)).into_response())
+}
+
 // ─── post_cert_acme ──────────────────────────────────────
 
 /// POST /certs/acme — obtain a Let's Encrypt certificate for a domain.
@@ -298,12 +328,12 @@ pub async fn post_cert_acme(
         .to_lowercase();
 
     if domain.is_empty() || !domain.contains('.') {
-        return flash_redirect("/certs/new", "failed", "Enter a fully-qualified domain name");
+        return flash_redirect("/certs/request", "failed", "Enter a fully-qualified domain name");
     }
 
     if domain.starts_with('*') {
         return flash_redirect(
-            "/certs/new",
+            "/certs/request",
             "failed",
             "Wildcards need a DNS-01 challenge, which EasyWAF does not implement. \
              Issue that certificate elsewhere and upload it here.",
@@ -312,7 +342,7 @@ pub async fn post_cert_acme(
 
     if crate::acme::config(&state.db).await?.is_none() {
         return flash_redirect(
-            "/certs/new",
+            "/certs/request",
             "failed",
             "Set an ACME contact address under Settings before requesting a certificate",
         );
@@ -329,7 +359,7 @@ pub async fn post_cert_acme(
             "success",
             &format!("Issued a certificate for {domain}, stored as '{name}'"),
         ),
-        Err(e) => flash_redirect("/certs/new", "failed", &format!("{e}")),
+        Err(e) => flash_redirect("/certs/request", "failed", &format!("{e}")),
     }
 }
 

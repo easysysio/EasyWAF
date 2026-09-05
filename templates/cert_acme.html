@@ -1,0 +1,91 @@
+{% extends "layout_default.html" %}
+
+{% block content %}
+
+{% if result == "failed" %}
+<div class="alert alert-danger alert-dismissible">
+    <button type="button" class="close" data-dismiss="alert">&times;</button>
+    {{ msg }}
+</div>
+{% endif %}
+
+{% if not acme_configured %}
+<div class="alert alert-warning">
+    <i class="fa fa-exclamation-triangle"></i>
+    <strong>No ACME contact address is set.</strong>
+    Let's Encrypt needs one before it will issue anything — set it under
+    <a href="/settings">Settings</a>, and start with the staging directory.
+</div>
+{% endif %}
+
+<div class="row">
+    <div class="col-lg-7">
+        <div class="panel panel-default">
+            <div class="panel-heading"><h4>Request from Let's Encrypt</h4></div>
+            <div class="panel-body">
+
+                <form method="post" action="/certs/acme">
+
+                    <div class="form-group">
+                        <label>Domain</label>
+                        <input type="text" class="form-control" name="domain"
+                               placeholder="www.example.com" autofocus required>
+                        <p class="help-block">
+                            One fully-qualified name. Wildcards need a DNS-01 challenge,
+                            which EasyWAF does not implement — issue those elsewhere and
+                            <a href="/certs/new">upload</a> them.
+                        </p>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Store as <small class="text-muted">(optional — defaults to the domain)</small></label>
+                        <input type="text" class="form-control" name="name">
+                    </div>
+
+                    <button type="submit" class="btn btn-primary" {% if not acme_configured %}disabled{% endif %}>
+                        <i class="fa fa-certificate"></i> Request Certificate
+                    </button>
+                    <a href="/certs" class="btn btn-default">Cancel</a>
+
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-5">
+        <div class="panel panel-default">
+            <div class="panel-heading"><h4>Before you request</h4></div>
+            <div class="panel-body">
+                <p>
+                    Validation is <strong>HTTP-01</strong>: the CA connects to the domain
+                    over plain HTTP and asks for a token EasyWAF serves. For that to
+                    succeed:
+                </p>
+                <ul>
+                    <li>the domain must resolve to this host <strong>from the public
+                        internet</strong>, not just on your network;</li>
+                    <li>this host must be reachable on <strong>port 80</strong> — the CA
+                        always connects there and cannot be pointed elsewhere;</li>
+                    <li>if something else holds port 80, it has to forward
+                        <code>/.well-known/acme-challenge/</code> here.</li>
+                </ul>
+                <p class="help-block">
+                    There is nothing to configure on your backend. EasyWAF answers the
+                    challenge itself, and does so even when the site is disabled or its
+                    upstream is down — which is usually when you need it.
+                </p>
+                <p class="help-block">
+                    Certificates last 90 days. EasyWAF renews them automatically once 30
+                    days remain and shows what renewal is doing on each certificate's page.
+                </p>
+                <p class="help-block">
+                    The certificate is stored but not attached to anything. Assign it to a
+                    site under <a href="/sites">Sites</a> — or use
+                    <strong>Request Certificate</strong> there to issue and assign in one
+                    step.
+                </p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

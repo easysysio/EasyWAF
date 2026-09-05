@@ -28,8 +28,10 @@ Version bumps and tags are created only after explicit approval.
 
 - **Let's Encrypt certificates, issued by EasyWAF.** Set a contact address and
   a directory under **Settings**, then request one either from **Certificates →
-  Add** (any domain, stored but not attached) or with **Request Certificate** on
-  a site (issued and assigned in one step).
+  Request from Let's Encrypt** (any domain, stored but not attached) or with
+  **Request Certificate** on a site (issued and assigned in one step). Uploading
+  and requesting are separate pages, reached by their own buttons, since they
+  are separate things to do.
   EasyWAF answers the HTTP-01 challenge on port 80 itself — no webroot, nothing
   to configure on the backend — and stores the result as an ordinary row in
   `certs`, assigned to the site. Everything downstream treats it exactly like an
