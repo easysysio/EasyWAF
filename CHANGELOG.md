@@ -30,6 +30,26 @@ do on upgrade.
   the usual reason a browser rejects a certificate EasyWAF is serving happily.
 
 ### Fixed
+- **A certificate that is in use can no longer be deleted.** Deleting one
+  assigned to a site silently unset that site's certificate — `sites.cert_id`
+  is `ON DELETE SET NULL` and foreign keys are enforced — and a site with an
+  HTTPS port but no certificate stops binding that port. The site kept working
+  over plain HTTP, so nothing looked wrong until someone tried the HTTPS one.
+  Deletion is now refused, naming the sites that would break.
+
+  **The management interface's own `easywaf` certificate cannot be deleted at
+  all.** Removing it left the GUI running on a certificate that existed nowhere,
+  and the next start generated a replacement with a different fingerprint — so
+  every browser that had accepted the old one met a fresh warning, which is
+  hard to tell apart from being locked out. There is no reason to delete it:
+  a start with it missing simply makes another.
+
+  Both are shown in the list rather than only enforced on submit — the delete
+  control is disabled with the reason on hover, and a new **In use by** column
+  says which sites hold each certificate.
+- Deleting a certificate now rebuilds the SNI map. It previously stayed in
+  memory, so a deleted certificate went on being served for the life of the
+  process.
 - **Reading a certificate no longer shells out to the `openssl` binary.**
   Extracting the domain and dates on upload ran `openssl x509` as a
   subprocess, making an undeclared external program a requirement for a

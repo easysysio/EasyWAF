@@ -26,6 +26,7 @@
                         <th>Domain</th>
                         <th>Valid From</th>
                         <th>Valid Until</th>
+                        <th>In use by</th>
                         <th>Actions</th>
                     </tr>
                 </thead>
@@ -37,6 +38,21 @@
                         <td>{{ cert.not_before | default(value="-") }}</td>
                         <td>{{ cert.not_after | default(value="-") }}</td>
                         <td>
+                            {% if cert.is_management %}
+                                <span class="label label-info">management interface</span>
+                            {% elif cert.used_by | length > 0 %}
+                                {{ cert.used_by | join(sep=", ") }}
+                            {% else %}
+                                <span class="text-muted">-</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if cert.is_management or cert.used_by | length > 0 %}
+                                {# Deleting either would break something silently, so the
+                                   control says why instead of failing after the click. #}
+                                <i class="fa fa-trash fa-2x text-muted" style="opacity:.3"
+                                   title="{% if cert.is_management %}This certificate serves the management interface and cannot be deleted{% else %}In use by {{ cert.used_by | join(sep=", ") }} — assign a different certificate there first{% endif %}"></i>
+                            {% else %}
                             <form method="post" action="/certs/{{ cert.name }}/delete"
                                   onsubmit="return confirm('Delete certificate {{ cert.name }}?');"
                                   style="display:inline">
@@ -44,6 +60,7 @@
                                     <i class="fa fa-trash fa-2x" title="Delete Certificate"></i>
                                 </button>
                             </form>
+                            {% endif %}
                         </td>
                     </tr>
                 {% endfor %}

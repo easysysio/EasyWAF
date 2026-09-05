@@ -21,6 +21,12 @@ use x509_parser::public_key::PublicKey;
 
 #[derive(Debug, Serialize)]
 pub struct Cert {
+    /// Sites currently serving this certificate. Shown in the list, and the
+    /// reason deletion is refused.
+    pub used_by: Vec<String>,
+    /// True for the management interface's own certificate, which cannot be
+    /// deleted.
+    pub is_management: bool,
     pub id:         i64,
     pub name:       String,
     pub domain:     Option<String>,
@@ -128,11 +134,70 @@ pub async fn post_cert_delete(
         return Ok(Redirect::to("/login").into_response());
     }
 
-    sqlx::query!("DELETE FROM certs WHERE name = ?", name)
-        .execute(&state.db)
-        .await?;
+    // The management interface is served with this one. Deleting it leaves the
+    // GUI running on a certificate that no longer exists anywhere, and the next
+    // start generates a replacement with a different fingerprint — so every
+    // browser that had accepted the old one is met by a fresh warning, which is
+    // indistinguishable from being locked out by anyone who does not know a
+    // certificate was replaced underneath them.
+    //
+    // Refused rather than warned about: there is no reason to delete it, since
+    // a start with it missing simply makes another.
+    if name == crate::cert::DEFAULT_CERT_NAME {
+        return flash_redirect(
+            "/certs",
+            "failed",
+            &format!(
+                "'{name}' is the management interface's own certificate and cannot be \
+                 deleted. To stop using a self-signed certificate, upload your own and \
+                 assign it — this one is only the fallback."
+            ),
+        );
+    }
 
-    flash_redirect("/certs", "success", &format!("Certificate {} deleted successfully", name))
+    // `sites.cert_id` is ON DELETE SET NULL and sqlx enables foreign keys, so
+    // deleting a certificate in use silently unsets it — and a site with an
+    // HTTPS port but no certificate stops binding that port. The site keeps
+    // working over plain HTTP, so nothing looks wrong until someone tries the
+    // HTTPS one.
+    let in_use: Vec<String> = sqlx::query_scalar!(
+        r#"SELECT s.name as "name!" FROM sites s
+           JOIN certs c ON c.id = s.cert_id
+           WHERE c.name = ? ORDER BY s.name"#,
+        name
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    if !in_use.is_empty() {
+        return flash_redirect(
+            "/certs",
+            "failed",
+            &format!(
+                "'{}' is in use by {}: {}. Assign a different certificate there first — \
+                 deleting it would stop {} serving HTTPS.",
+                name,
+                if in_use.len() == 1 { "one site" } else { "these sites" },
+                in_use.join(", "),
+                if in_use.len() == 1 { "it" } else { "them" },
+            ),
+        );
+    }
+
+    let deleted = sqlx::query!("DELETE FROM certs WHERE name = ?", name)
+        .execute(&state.db)
+        .await?
+        .rows_affected();
+
+    if deleted == 0 {
+        return flash_redirect("/certs", "failed", &format!("No certificate named '{name}'"));
+    }
+
+    // The in-memory SNI map still holds it until rebuilt, which would keep a
+    // deleted certificate being served for as long as the process lives.
+    crate::tls::reload(&state.db).await?;
+
+    flash_redirect("/certs", "success", &format!("Certificate {name} deleted"))
 }
 
 // ─── Helpers ─────────────────────────────────────────────
@@ -145,13 +210,33 @@ async fn fetch_certs(state: &AppState) -> Result<Vec<Cert>> {
     .fetch_all(&state.db)
     .await?;
 
-    Ok(rows.into_iter().map(|r| Cert {
-        id:         r.id,
-        name:       r.name,
-        domain:     r.domain,
-        not_before: r.not_before,
-        not_after:  r.not_after,
-    }).collect())
+    // One query for every certificate rather than one per row: the list is
+    // small, but a per-row query in a loop is the shape that stops being small
+    // without anyone noticing.
+    let usage = sqlx::query!(
+        r#"SELECT c.name as "cert_name!", s.name as "site_name!"
+           FROM sites s JOIN certs c ON c.id = s.cert_id
+           ORDER BY s.name"#
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|r| Cert {
+            used_by: usage
+                .iter()
+                .filter(|u| u.cert_name == r.name)
+                .map(|u| u.site_name.clone())
+                .collect(),
+            is_management: r.name == crate::cert::DEFAULT_CERT_NAME,
+            id:         r.id,
+            name:       r.name,
+            domain:     r.domain,
+            not_before: r.not_before,
+            not_after:  r.not_after,
+        })
+        .collect())
 }
 
 /// What the upload form stores: domain and validity, read from the certificate
