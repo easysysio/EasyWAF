@@ -6,6 +6,19 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
+## [Unreleased] — next release is 0.5.0 (ACME)
+
+### Added
+- **A Docker Hub overview** (`docker/README.md`): what EasyWAF is, quick start,
+  what each port is for, why `/data` must be mounted, a compose file, adding a
+  site — including the trap that an upstream on the Docker host is not
+  `127.0.0.1` from inside the container — and the honest list of what it does
+  not do. The release workflow pushes it, so it is versioned and reviewed here
+  rather than typed into a web form once and left to rot. That step is
+  non-fatal: Docker Hub's description API has historically wanted an account
+  password rather than a token, and an image that published successfully must
+  not be reported as a failed release because its overview did not update.
+
 ## [0.4.3] — 2026-09-05
 
 Certificate details, and one fewer external dependency at runtime. Nothing to
@@ -46,16 +59,6 @@ do on upgrade.
   to start because of its own certificate setting is a locked door with the key
   inside. Settings then says the selection is missing rather than quietly
   showing a different one.
-
-- **A Docker Hub overview** (`docker/README.md`): what EasyWAF is, quick start,
-  what each port is for, why `/data` must be mounted, a compose file, adding a
-  site — including the trap that an upstream on the Docker host is not
-  `127.0.0.1` from inside the container — and the honest list of what it does
-  not do. The release workflow pushes it, so it is versioned and reviewed here
-  rather than typed into a web form once and left to rot. That step is
-  non-fatal: Docker Hub's description API has historically wanted an account
-  password rather than a token, and an image that published successfully must
-  not be reported as a failed release because its overview did not update.
 
 ### Fixed
 - **A certificate that is in use can no longer be deleted.** Deleting one
