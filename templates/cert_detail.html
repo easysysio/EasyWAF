@@ -1,0 +1,172 @@
+{% extends "layout_default.html" %}
+
+{% block content %}
+
+<p><a href="/certs"><i class="fa fa-arrow-left"></i> Back to Certificates</a></p>
+
+{% if parse_error %}
+<div class="alert alert-danger">
+    <strong>This certificate could not be read.</strong> {{ parse_error }}
+</div>
+{% else %}
+
+{% if cert.expired %}
+<div class="alert alert-danger">
+    <i class="fa fa-exclamation-triangle"></i>
+    <strong>This certificate expired {{ cert.days_left | abs }} days ago.</strong>
+    Clients will refuse to connect to any site presenting it.
+</div>
+{% elif cert.not_yet_valid %}
+<div class="alert alert-warning">
+    <i class="fa fa-exclamation-triangle"></i>
+    <strong>This certificate is not valid yet</strong> — it does not begin until
+    {{ cert.not_before }}.
+</div>
+{% elif cert.days_left < 30 %}
+<div class="alert alert-warning">
+    <i class="fa fa-clock-o"></i>
+    <strong>Expires in {{ cert.days_left }} days.</strong> Replace it under
+    Certificates before then.
+</div>
+{% endif %}
+
+<div class="row">
+    <div class="col-lg-6">
+
+        <div class="panel panel-default">
+            <div class="panel-heading"><h4>Subject</h4></div>
+            <div class="panel-body">
+                {% if cert.subject.is_empty %}
+                <p class="text-muted">
+                    This certificate carries no subject name. That is legitimate — the
+                    names it is valid for are the alternative names below.
+                </p>
+                {% else %}
+                <table class="table table-condensed">
+                    <tbody>
+                    {% if cert.subject.common_name %}<tr><th style="width:45%">Common Name (CN)</th><td>{{ cert.subject.common_name }}</td></tr>{% endif %}
+                    {% if cert.subject.organization %}<tr><th>Organization (O)</th><td>{{ cert.subject.organization }}</td></tr>{% endif %}
+                    {% if cert.subject.organizational_unit %}<tr><th>Organizational Unit (OU)</th><td>{{ cert.subject.organizational_unit }}</td></tr>{% endif %}
+                    {% if cert.subject.locality %}<tr><th>City / Locality (L)</th><td>{{ cert.subject.locality }}</td></tr>{% endif %}
+                    {% if cert.subject.state %}<tr><th>State / Province (ST)</th><td>{{ cert.subject.state }}</td></tr>{% endif %}
+                    {% if cert.subject.country %}<tr><th>Country (C)</th><td>{{ cert.subject.country }}</td></tr>{% endif %}
+                    {% if cert.subject.email %}<tr><th>Email</th><td>{{ cert.subject.email }}</td></tr>{% endif %}
+                    </tbody>
+                </table>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="panel panel-default">
+            <div class="panel-heading"><h4>Issued by</h4></div>
+            <div class="panel-body">
+                {% if cert.self_signed %}
+                <p>
+                    <span class="label label-warning">Self-signed</span>
+                    Nothing vouches for this certificate, so browsers will warn. That is
+                    expected for the built-in <code>easywaf</code> certificate and a
+                    problem for a public site.
+                </p>
+                {% endif %}
+                <table class="table table-condensed">
+                    <tbody>
+                    {% if cert.issuer.common_name %}<tr><th style="width:45%">Common Name (CN)</th><td>{{ cert.issuer.common_name }}</td></tr>{% endif %}
+                    {% if cert.issuer.organization %}<tr><th>Organization (O)</th><td>{{ cert.issuer.organization }}</td></tr>{% endif %}
+                    {% if cert.issuer.organizational_unit %}<tr><th>Organizational Unit (OU)</th><td>{{ cert.issuer.organizational_unit }}</td></tr>{% endif %}
+                    {% if cert.issuer.locality %}<tr><th>City / Locality (L)</th><td>{{ cert.issuer.locality }}</td></tr>{% endif %}
+                    {% if cert.issuer.state %}<tr><th>State / Province (ST)</th><td>{{ cert.issuer.state }}</td></tr>{% endif %}
+                    {% if cert.issuer.country %}<tr><th>Country (C)</th><td>{{ cert.issuer.country }}</td></tr>{% endif %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+    </div>
+
+    <div class="col-lg-6">
+
+        <div class="panel panel-default">
+            <div class="panel-heading"><h4>Validity</h4></div>
+            <div class="panel-body">
+                <table class="table table-condensed">
+                    <tbody>
+                    <tr><th style="width:45%">Not before</th><td>{{ cert.not_before }}</td></tr>
+                    <tr><th>Not after</th><td>{{ cert.not_after }}</td></tr>
+                    <tr><th>Days remaining</th>
+                        <td>
+                            {% if cert.expired %}
+                            <span class="label label-danger">expired</span>
+                            {% else %}
+                            {{ cert.days_left }}
+                            {% endif %}
+                        </td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="panel panel-default">
+            <div class="panel-heading"><h4>Valid for these names</h4></div>
+            <div class="panel-body">
+                {% if cert.sans | length > 0 %}
+                <ul class="list-unstyled" style="margin-bottom:0">
+                    {% for n in cert.sans %}<li><code>{{ n }}</code></li>{% endfor %}
+                </ul>
+                <p class="help-block">
+                    A site is served this certificate when the name a client asks for
+                    (its SNI) matches its own <strong>Server Name</strong>. If the name
+                    you route on is not in this list, browsers will reject it even though
+                    EasyWAF presents it.
+                </p>
+                {% else %}
+                <p class="text-muted">
+                    No subject alternative names. Modern clients ignore the Common Name
+                    entirely, so this certificate will very likely be rejected whatever
+                    it is used for.
+                </p>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="panel panel-default">
+            <div class="panel-heading"><h4>Technical</h4></div>
+            <div class="panel-body">
+                <table class="table table-condensed">
+                    <tbody>
+                    <tr><th style="width:45%">Public key</th><td>{{ cert.key_type }}</td></tr>
+                    <tr><th>Signature algorithm</th><td><code>{{ cert.sig_alg }}</code></td></tr>
+                    <tr><th>Serial</th><td><code style="word-break:break-all">{{ cert.serial }}</code></td></tr>
+                    <tr><th>Certificates in file</th>
+                        <td>
+                            {{ cert.chain_len }}
+                            {% if cert.chain_len == 1 and not cert.self_signed %}
+                            <br><small class="text-muted">
+                                Leaf only — no intermediates. If your CA issues through one,
+                                clients that do not already have it may fail to build a chain.
+                            </small>
+                            {% endif %}
+                        </td></tr>
+                    <tr><th>Private key stored</th>
+                        <td>
+                            {% if cert.has_key %}
+                            <span class="label label-success">yes</span>
+                            {% else %}
+                            <span class="label label-danger">no</span>
+                            <small class="text-muted">— cannot terminate TLS without one</small>
+                            {% endif %}
+                        </td></tr>
+                    <tr><th>SHA-256 fingerprint</th>
+                        <td><code style="word-break:break-all; font-size:11px">{{ cert.fingerprint }}</code></td></tr>
+                    </tbody>
+                </table>
+                <p class="help-block">
+                    The private key itself is never displayed or exported — only whether one
+                    is present.
+                </p>
+            </div>
+        </div>
+
+    </div>
+</div>
+{% endif %}
+{% endblock %}

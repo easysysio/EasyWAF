@@ -79,6 +79,10 @@ and the per-site security headers still apply, but nothing is inspected.
   are selected per site by SNI, so many sites share one HTTPS port, each presenting its own.
   An optional per-site redirect sends HTTP to HTTPS; it is off by default, so turning on
   HTTPS never silently stops the HTTP port working.
+* **Certificate inspection** — click a certificate to see what it says about itself: subject
+  and issuer (CN, organization, city, state, country), validity and days remaining, the names
+  it is valid for, key type and size, chain length, and its SHA-256 fingerprint. The private
+  key is never shown.
 * **Per-site security headers** — HSTS, `X-Frame-Options`, `X-Content-Type-Options`,
   `X-XSS-Protection`, toggled individually.
 * **Light / dark / auto theme.**

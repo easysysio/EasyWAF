@@ -184,6 +184,7 @@ async fn main() {
         .route("/certs",                 get(routes::certs::get_certs))
         .route("/certs/new",             get(routes::certs::get_cert_new))
         .route("/certs/create",          post(routes::certs::post_cert_create))
+        .route("/certs/{name}",          get(routes::certs::get_cert_detail))
         .route("/certs/{name}/delete",   post(routes::certs::post_cert_delete))
         .route("/policy",                get(routes::policy::get_policies))
         .route("/policy/new",            get(routes::policy::get_policy_new))

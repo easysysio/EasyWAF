@@ -32,7 +32,7 @@
                 <tbody>
                 {% for cert in certs %}
                     <tr>
-                        <td>{{ cert.name }}</td>
+                        <td><a href="/certs/{{ cert.name | urlencode }}">{{ cert.name }}</a></td>
                         <td>{{ cert.domain | default(value="-") }}</td>
                         <td>{{ cert.not_before | default(value="-") }}</td>
                         <td>{{ cert.not_after | default(value="-") }}</td>

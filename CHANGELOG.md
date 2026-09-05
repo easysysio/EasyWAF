@@ -8,7 +8,33 @@ Version bumps and tags are created only after explicit approval.
 
 ## [Unreleased]
 
+### Added
+- **Certificate details.** Clicking a certificate under Certificates opens what
+  it actually says about itself: subject and issuer distinguished names (common
+  name, organization, unit, city, state, country, email), validity with days
+  remaining, every subject alternative name, key type and size, signature
+  algorithm, serial, chain length and the SHA-256 fingerprint. Read from the
+  stored PEM on each load rather than from the `certs` columns, which are a
+  three-field snapshot taken at upload and can only drift.
+
+  The private key is never displayed or exported — the page reports only
+  whether one is stored, since a certificate without its key cannot terminate
+  TLS and that is worth seeing.
+
+  It also answers questions the list could not: whether a certificate is
+  self-signed, whether it is about to expire, whether the file contains
+  intermediates or only the leaf, and which names it is actually valid for —
+  the usual reason a browser rejects a certificate EasyWAF is serving happily.
+
 ### Fixed
+- **Reading a certificate no longer shells out to the `openssl` binary.**
+  Extracting the domain and dates on upload ran `openssl x509` as a
+  subprocess, making an undeclared external program a requirement for a
+  certificate to display its own details, and failing silently to blank fields
+  when it was missing. The container image installs `ca-certificates` with
+  `--no-install-recommends`, so that binary cannot be assumed present. Parsing
+  is now in-process via `x509-parser`, which has no build script and so adds no
+  C build to the aarch64 cross-compile.
 - **The README's limitations section had been wrong since 0.4.0.** It still said
   the proxy served plain HTTP and that the admin password could only be changed
   in the database — both fixed by that release, in the same commits that failed
