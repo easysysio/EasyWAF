@@ -36,6 +36,14 @@ pub struct Cert {
 
 // ─── Forms ───────────────────────────────────────────────
 
+/// Requesting a certificate from Let's Encrypt rather than uploading one.
+#[derive(Deserialize)]
+pub struct AcmeForm {
+    pub domain: String,
+    /// What to store it under. Defaults to the domain.
+    pub name:   Option<String>,
+}
+
 #[derive(Deserialize)]
 pub struct CertForm {
     pub name:     String,
@@ -253,6 +261,75 @@ fn parse_cert_pem(pem: &str) -> (Option<String>, Option<String>, Option<String>)
     match inspect("", pem, false) {
         Ok(d) => (d.subject.common_name, Some(d.not_before), Some(d.not_after)),
         Err(_) => (None, None, None),
+    }
+}
+
+// ─── post_cert_acme ──────────────────────────────────────
+
+/// POST /certs/acme — obtain a Let's Encrypt certificate for a domain.
+///
+/// The same issuance a site can trigger, reached from the place certificates
+/// are managed. It does not assign the result to anything: this is for the
+/// operator who wants a certificate first and will attach it afterwards, or who
+/// needs one for a name that is not a site yet.
+pub async fn post_cert_acme(
+    State(state): State<AppState>,
+    jar: SignedCookieJar,
+    Form(form): Form<AcmeForm>,
+) -> Result<Response> {
+    if get_session(&jar).is_none() {
+        return Ok(Redirect::to("/login").into_response());
+    }
+
+    // Trimmed the same way a site's server name is, so a pasted URL does not
+    // become a domain nobody can issue for.
+    let domain = form
+        .domain
+        .trim()
+        .trim_start_matches("https://")
+        .trim_start_matches("http://")
+        .split('/')
+        .next()
+        .unwrap_or("")
+        .split(':')
+        .next()
+        .unwrap_or("")
+        .trim_end_matches('.')
+        .to_lowercase();
+
+    if domain.is_empty() || !domain.contains('.') {
+        return flash_redirect("/certs/new", "failed", "Enter a fully-qualified domain name");
+    }
+
+    if domain.starts_with('*') {
+        return flash_redirect(
+            "/certs/new",
+            "failed",
+            "Wildcards need a DNS-01 challenge, which EasyWAF does not implement. \
+             Issue that certificate elsewhere and upload it here.",
+        );
+    }
+
+    if crate::acme::config(&state.db).await?.is_none() {
+        return flash_redirect(
+            "/certs/new",
+            "failed",
+            "Set an ACME contact address under Settings before requesting a certificate",
+        );
+    }
+
+    let name = match form.name.as_deref().map(str::trim) {
+        Some(n) if !n.is_empty() => n.to_string(),
+        _                        => domain.clone(),
+    };
+
+    match crate::acme::issue_and_store(&state.db, &domain, &name).await {
+        Ok(_) => flash_redirect(
+            "/certs",
+            "success",
+            &format!("Issued a certificate for {domain}, stored as '{name}'"),
+        ),
+        Err(e) => flash_redirect("/certs/new", "failed", &format!("{e}")),
     }
 }
 

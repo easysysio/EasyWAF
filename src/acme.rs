@@ -263,6 +263,49 @@ pub async fn issue(db: &SqlitePool, domain: &str) -> Result<(String, String)> {
     Ok((cert_pem, key_pem))
 }
 
+/// Issue a certificate for `domain` and store it under `cert_name`.
+///
+/// Returns the row id, so a caller that wants to assign it to a site can.
+/// Shared by the two ways of asking for one — from a site, and from the
+/// certificate manager — because the storage has to be identical either way:
+/// anything that differed would show up later as a certificate that behaves
+/// oddly depending on which button produced it.
+pub async fn issue_and_store(
+    db: &SqlitePool,
+    domain: &str,
+    cert_name: &str,
+) -> Result<i64> {
+    let (cert_pem, key_pem) = issue(db, domain).await?;
+
+    // Dates come from the certificate itself rather than from an assumption
+    // about validity periods, so renewal later acts on what the CA issued.
+    let (not_before, not_after) = match crate::routes::certs::inspect("", &cert_pem, true) {
+        Ok(d)  => (Some(d.not_before), Some(d.not_after)),
+        Err(_) => (None, None),
+    };
+
+    sqlx::query!(
+        "INSERT INTO certs (name, domain, not_before, not_after, cert_pem, key_pem, acme_domain)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(name) DO UPDATE SET
+             domain = excluded.domain, not_before = excluded.not_before,
+             not_after = excluded.not_after, cert_pem = excluded.cert_pem,
+             key_pem = excluded.key_pem, acme_domain = excluded.acme_domain",
+        cert_name, domain, not_before, not_after, cert_pem, key_pem, domain
+    )
+    .execute(db)
+    .await?;
+
+    let id: i64 = sqlx::query_scalar!(r#"SELECT id as "id!" FROM certs WHERE name = ?"#, cert_name)
+        .fetch_one(db)
+        .await?;
+
+    // A renewal replaces the PEM in place, so the in-memory map has to be
+    // rebuilt or the old certificate goes on being served.
+    crate::tls::reload(db).await?;
+    Ok(id)
+}
+
 /// ACME failures are reported to an operator, so they keep the CA's own wording
 /// — it is usually specific about what it could not verify.
 fn acme_err(e: instant_acme::Error) -> AppError {

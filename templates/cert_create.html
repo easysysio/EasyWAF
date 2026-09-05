@@ -15,14 +15,14 @@
 
                     <div class="form-group">
                         <label>Certificate (PEM)</label>
-                        <textarea class="form-control" name="cert" rows="10"
+                        <textarea class="form-control" name="cert_pem" rows="10"
                                   placeholder="-----BEGIN CERTIFICATE-----&#10;...&#10;-----END CERTIFICATE-----"
                                   required></textarea>
                     </div>
 
                     <div class="form-group">
                         <label>Private Key (PEM)</label>
-                        <textarea class="form-control" name="key" rows="10"
+                        <textarea class="form-control" name="key_pem" rows="10"
                                   placeholder="-----BEGIN PRIVATE KEY-----&#10;...&#10;-----END PRIVATE KEY-----"
                                   required></textarea>
                     </div>
@@ -33,6 +33,53 @@
                     <a href="/certs" class="btn btn-default">Cancel</a>
 
                 </form>
+            </div>
+        </div>
+
+        <div class="panel panel-default">
+            <div class="panel-heading"><h4>Request from Let's Encrypt</h4></div>
+            <div class="panel-body">
+
+                <form method="post" action="/certs/acme">
+
+                    <div class="form-group">
+                        <label>Domain</label>
+                        <input type="text" class="form-control" name="domain"
+                               placeholder="www.example.com" required>
+                        <p class="help-block">
+                            One fully-qualified name. Wildcards need a DNS-01 challenge,
+                            which EasyWAF does not implement — issue those elsewhere and
+                            upload them above.
+                        </p>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Store as <small class="text-muted">(optional — defaults to the domain)</small></label>
+                        <input type="text" class="form-control" name="name" placeholder="">
+                    </div>
+
+                    <button type="submit" class="btn btn-primary">
+                        <i class="fa fa-certificate"></i> Request Certificate
+                    </button>
+
+                </form>
+
+                <p class="help-block" style="margin-top:15px">
+                    Set a contact address under <a href="/settings">Settings</a> first, and
+                    start with the staging directory — it proves the exchange works without
+                    spending production quota.
+                    <br>
+                    <strong>For validation to succeed</strong> the domain must resolve to
+                    this host from the public internet, and this host must be reachable on
+                    <strong>port 80</strong>. EasyWAF answers the challenge itself, so there
+                    is nothing to configure on a backend — but if something else is holding
+                    port 80, it has to forward
+                    <code>/.well-known/acme-challenge/</code> here.
+                    <br>
+                    The certificate is stored but not assigned to anything; attach it to a
+                    site under <a href="/sites">Sites</a>.
+                </p>
+
             </div>
         </div>
     </div>

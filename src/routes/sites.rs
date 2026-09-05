@@ -505,36 +505,12 @@ pub async fn post_site_acme(
         );
     }
 
-    let (cert_pem, key_pem) = match crate::acme::issue(&state.db, &site.server_name).await {
-        Ok(pair) => pair,
-        Err(e)   => return flash_redirect(&back, "failed", &format!("{e}")),
+    let cert_id = match crate::acme::issue_and_store(
+        &state.db, &site.server_name, &site.server_name
+    ).await {
+        Ok(id) => id,
+        Err(e) => return flash_redirect(&back, "failed", &format!("{e}")),
     };
-
-    // Dates come from the certificate itself rather than from an assumption
-    // about validity periods, so renewal later reads what the CA issued.
-    let (not_before, not_after) = match crate::routes::certs::inspect("", &cert_pem, true) {
-        Ok(d)  => (Some(d.not_before), Some(d.not_after)),
-        Err(_) => (None, None),
-    };
-
-    let cert_name = site.server_name.clone();
-    sqlx::query!(
-        "INSERT INTO certs (name, domain, not_before, not_after, cert_pem, key_pem, acme_domain)
-         VALUES (?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(name) DO UPDATE SET
-             domain = excluded.domain, not_before = excluded.not_before,
-             not_after = excluded.not_after, cert_pem = excluded.cert_pem,
-             key_pem = excluded.key_pem, acme_domain = excluded.acme_domain",
-        cert_name, site.server_name, not_before, not_after, cert_pem, key_pem, site.server_name
-    )
-    .execute(&state.db)
-    .await?;
-
-    let cert_id: i64 = sqlx::query_scalar!(
-        r#"SELECT id as "id!" FROM certs WHERE name = ?"#, cert_name
-    )
-    .fetch_one(&state.db)
-    .await?;
 
     sqlx::query!(
         "UPDATE sites SET cert_id = ?, acme_enabled = 1 WHERE id = ?",
@@ -542,8 +518,6 @@ pub async fn post_site_acme(
     )
     .execute(&state.db)
     .await?;
-
-    crate::tls::reload(&state.db).await?;
 
     flash_redirect(
         &back,

@@ -27,7 +27,9 @@ Version bumps and tags are created only after explicit approval.
   visitor solving a challenge would clear it for everyone arriving through it.
 
 - **Let's Encrypt certificates, issued by EasyWAF.** Set a contact address and
-  a directory under **Settings**, then use **Request Certificate** on a site.
+  a directory under **Settings**, then request one either from **Certificates →
+  Add** (any domain, stored but not attached) or with **Request Certificate** on
+  a site (issued and assigned in one step).
   EasyWAF answers the HTTP-01 challenge on port 80 itself — no webroot, nothing
   to configure on the backend — and stores the result as an ordinary row in
   `certs`, assigned to the site. Everything downstream treats it exactly like an
@@ -52,6 +54,14 @@ Version bumps and tags are created only after explicit approval.
   non-fatal: Docker Hub's description API has historically wanted an account
   password rather than a token, and an image that published successfully must
   not be reported as a failed release because its overview did not update.
+
+### Fixed
+- **Uploading a certificate never worked.** The form posted `cert` and `key`
+  while the handler expected `cert_pem` and `key_pem`, so every upload was
+  rejected with a 422 before it reached any of the code that stores one. The
+  field names now match. This was the path the documentation pointed at for
+  replacing the management certificate and for wildcard certificates, neither of
+  which was therefore possible from the GUI.
 
 ## [0.4.3] — 2026-09-05
 
