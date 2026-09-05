@@ -94,6 +94,14 @@ port 80, it has to forward `/.well-known/acme-challenge/` to EasyWAF.
   not be reported as a failed release because its overview did not update.
 
 ### Fixed
+- **An uploaded certificate is now checked against its key.** Nothing was
+  validated on upload beyond the name being non-empty, so a mismatched pair was
+  stored happily and the failure surfaced later — and in the worst shape. Two
+  individually valid halves from different pairs bind the port and then fail
+  *every* handshake with a signature error that points at nothing, which looks
+  like a working configuration. The public keys are now compared before storing,
+  along with rejecting unreadable PEM, swapped fields, and X.509 v1
+  certificates, which TLS does not accept.
 - **Uploading a certificate never worked.** The form posted `cert` and `key`
   while the handler expected `cert_pem` and `key_pem`, so every upload was
   rejected with a 422 before it reached any of the code that stores one. The

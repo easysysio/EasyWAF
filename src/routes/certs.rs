@@ -117,6 +117,14 @@ pub async fn post_cert_create(
         return flash_redirect("/certs", "failed", "Certificate name is required");
     }
 
+    // Checked before anything is stored. Storing an unusable pair means the
+    // site it is assigned to silently stops serving HTTPS — or worse, if the
+    // two halves are individually valid but unrelated, binds the port and
+    // fails every handshake, which looks like a working configuration.
+    if let Err(e) = crate::tls::validate_pem(&form.cert_pem, &form.key_pem) {
+        return flash_redirect("/certs/new", "failed", &format!("Not usable: {e}"));
+    }
+
     // Parse the certificate to extract metadata.
     let (domain, not_before, not_after) = parse_cert_pem(&form.cert_pem);
 

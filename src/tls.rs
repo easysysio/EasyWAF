@@ -336,7 +336,36 @@ fn certified_key(cert_pem: &str, key_pem: &str) -> std::result::Result<Certified
 /// discovered at the next start, when the GUI that could fix it is the thing
 /// that fails.
 pub fn validate_pem(cert_pem: &str, key_pem: &str) -> std::result::Result<(), String> {
-    certified_key(cert_pem, key_pem).map(|_| ())
+    let ck = certified_key(cert_pem, key_pem)?;
+
+    // Both halves parsing is not enough: a certificate and a key can each be
+    // perfectly valid and belong to different pairs. rustls compares the
+    // SubjectPublicKeyInfo of the key against the certificate's, which is the
+    // only thing that actually establishes they go together.
+    //
+    // Caught here rather than at the handshake, where the symptom is every
+    // client failing to connect with a signature error and nothing pointing at
+    // the certificate as the cause.
+    ck.keys_match().map_err(|e| match e {
+        rustls::Error::InconsistentKeys(rustls::InconsistentKeys::KeyMismatch) =>
+            "the private key does not belong to this certificate".to_string(),
+        rustls::Error::InconsistentKeys(rustls::InconsistentKeys::Unknown) =>
+            "the key type could not be checked against the certificate".to_string(),
+        // Anything else means the certificate itself could not be read far
+        // enough to compare, so reporting it as a key mismatch would send
+        // someone looking at the wrong half.
+        other => {
+            let text = other.to_string();
+            if text.contains("UnsupportedCertVersion") {
+                "this is an X.509 v1 certificate. TLS requires v3 — one generated \
+                 with no extensions at all, which a real CA never issues. Regenerate \
+                 it with a subjectAltName."
+                    .to_string()
+            } else {
+                format!("the certificate could not be read: {text}")
+            }
+        }
+    })
 }
 
 /// Decode a stored certificate into the chain and key rustls wants.
@@ -441,6 +470,41 @@ mod tests {
     /// An unrecognised or empty profile must fall back to accepting more
     /// clients, not fewer — a bad setting should not refuse connections that
     /// were working.
+    /// A certificate and its own key, plus a key from a different pair.
+    fn pair() -> (String, String, String) {
+        use rcgen::{CertificateParams, KeyPair};
+        let k1 = KeyPair::generate().unwrap();
+        let c1 = CertificateParams::new(vec!["a.example.com".into()])
+            .unwrap()
+            .self_signed(&k1)
+            .unwrap();
+        let k2 = KeyPair::generate().unwrap();
+        (c1.pem(), k1.serialize_pem(), k2.serialize_pem())
+    }
+
+    #[test]
+    fn a_matching_pair_is_accepted() {
+        let (cert, key, _) = pair();
+        assert!(validate_pem(&cert, &key).is_ok());
+    }
+
+    #[test]
+    fn a_key_from_a_different_pair_is_rejected() {
+        // Both halves are individually valid, which is exactly why parsing
+        // alone would let this through — and it would then bind the port and
+        // fail every handshake, looking like a working configuration.
+        let (cert, _, other_key) = pair();
+        let err = validate_pem(&cert, &other_key).unwrap_err();
+        assert!(err.contains("does not belong"), "{err}");
+    }
+
+    #[test]
+    fn swapped_fields_are_rejected() {
+        // Pasting the key into the certificate box and vice versa.
+        let (cert, key, _) = pair();
+        assert!(validate_pem(&key, &cert).is_err());
+    }
+
     #[test]
     fn profile_falls_back_to_compatible() {
         assert_eq!(TlsProfile::from_setting("modern"), TlsProfile::Modern);
