@@ -95,7 +95,7 @@ pub async fn get_cert_new(
 
     let mut ctx = Context::new();
     ctx.insert("username", &session.username);
-    ctx.insert("title",    "Upload Certificate");
+    ctx.insert("title",    "Add Certificate");
     ctx.insert("url",      "/certs");
 
     Ok((jar, Html(state.tera.render("cert_create.html", &ctx)?)).into_response())
