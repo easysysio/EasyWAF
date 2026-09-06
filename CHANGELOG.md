@@ -6,7 +6,15 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
-## [Unreleased]
+## [0.5.4] — 2026-09-06
+
+Two bundled rules scored ordinary traffic heavily enough to block real
+requests. Both are corrected **in existing databases too**: rules live in the
+database and importing skips anything already present, so fixing the shipped
+files would otherwise have reached nobody who had already imported them.
+
+A migration rewrites only the exact patterns EasyWAF shipped. A rule you have
+edited yourself does not match and is left alone.
 
 ### Fixed
 - **Rule 932012 blocked ordinary traffic from any application whose cookies

@@ -58,9 +58,31 @@ pub async fn init(database_url: &str) -> SqlitePool {
     run_migration_009(&pool).await;
     run_migration_010(&pool).await;
     run_migration_011(&pool).await;
+    run_migration_012(&pool).await;
 
     info!("Database ready: {}", database_url);
     pool
+}
+
+// ─── run_migration_012 ───────────────────────────────────
+
+/// Correct two bundled rules that scored ordinary traffic.
+///
+/// Unlike the others this adds no column, so there is nothing to check for
+/// beforehand — it is written to be safe to run repeatedly, matching only the
+/// exact patterns EasyWAF shipped and leaving an edited rule alone.
+async fn run_migration_012(pool: &SqlitePool) {
+    let sql_012 = include_str!("../migrations/012_rule_false_positives.sql");
+    match sqlx::raw_sql(sql_012).execute(pool).await {
+        Ok(r) if r.rows_affected() > 0 => {
+            info!("Migration 012 applied: corrected {} bundled rule(s) that matched ordinary traffic", r.rows_affected());
+        }
+        Ok(_) => {}
+        // Not fatal. A rule pattern that could not be corrected is a false
+        // positive, not a broken schema, and refusing to start over it would
+        // be the worse outcome.
+        Err(e) => tracing::warn!("Migration 012 could not update rule patterns: {}", e),
+    }
 }
 
 // ─── run_migration_011 ───────────────────────────────────
