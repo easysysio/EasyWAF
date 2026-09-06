@@ -561,3 +561,40 @@ html[data-theme="dark"] .alert-warning { color: #fbbf24 !important; }
 
 /* Checkbox / radio labels readable in both themes */
 .checkbox label, .radio label { color: var(--text-primary); }
+
+/* ─── Tabs ──────────────────────────────────────────────────────────────── */
+/* Bootstrap's own tabs assume a white page: a light active tab and hard grey
+   borders. Restated against the theme variables so they read the same in both
+   light and dark. */
+.nav-tabs {
+    border-bottom: 1px solid var(--border) !important;
+}
+.nav-tabs > li > a {
+    color: var(--text-secondary) !important;
+    background: transparent !important;
+    border: 1px solid transparent !important;
+    border-radius: 10px 10px 0 0 !important;
+    margin-right: 4px !important;
+    padding: 10px 18px !important;
+    transition: color .15s ease, background .15s ease;
+}
+.nav-tabs > li > a:hover,
+.nav-tabs > li > a:focus {
+    color: var(--text-primary) !important;
+    background: var(--surface-raised) !important;
+    border-color: transparent !important;
+}
+.nav-tabs > li.active > a,
+.nav-tabs > li.active > a:hover,
+.nav-tabs > li.active > a:focus {
+    color: var(--accent-blue) !important;
+    background: var(--surface-card) !important;
+    border: 1px solid var(--border) !important;
+    border-bottom-color: transparent !important;
+    text-shadow: 0 0 10px var(--accent-blue-glow);
+}
+.nav-tabs > li > a > .fa { margin-right: 6px; opacity: .85; }
+
+/* The first panel in a pane sits directly under the tab strip; without this it
+   touches the border and reads as part of it. */
+.tab-content.settings-tabs { padding-top: 18px; }

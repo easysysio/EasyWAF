@@ -55,6 +55,23 @@ Version bumps and tags are created only after explicit approval.
   deleted, since removing something that is currently enforcing is not a
   decision an update should make silently.
 
+### Changed
+- **Settings is organised into tabs** — General, TLS, Proxy, Rule Updates —
+  rather than six panels down one page. Rule Updates made the sixth, and a
+  page you have to scroll to find out what is on it is a page nobody reads to
+  the bottom of.
+
+  It stays **one form with one Save**: the handler writes every setting on each
+  save, so a form per tab would clear whatever the other tabs hold. A hidden
+  tab is still in the document and still submits what it contains.
+
+  Two things that a naive split would have broken. The tab you were on is
+  remembered, because saving redirects and being returned to the first tab
+  after a rejected value hides the field the message is about. And a field the
+  browser rejects pulls its own tab forward: a `required` field in a hidden tab
+  cannot be focused to complain about, so the browser gives up and **Save does
+  nothing at all, silently**.
+
 - **The rule channel is configurable, and the check can actually be turned
   off.** Settings gains a Rule Updates panel: whether to check at all, which
   channel to check, and when the last check happened or why it failed.

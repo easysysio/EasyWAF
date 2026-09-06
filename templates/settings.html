@@ -19,10 +19,31 @@
 <div class="row">
     <div class="col-lg-8">
 
-        {# One form across both panels: the handler writes every setting on each
-           save, so splitting it would mean each panel had to carry the other's
-           value in a hidden field to avoid clearing it. #}
+        {# One form across every tab. The handler writes each setting on every
+           save, so a form per tab would mean each save cleared whatever the
+           other tabs hold — unless each carried the others' values in hidden
+           fields, which is the same thing done worse.
+
+           The tabs are presentation only: a hidden tab-pane is still in the
+           document, so its fields still submit. #}
         <form method="post" action="/settings/update">
+            <ul class="nav nav-tabs" role="tablist" id="settings-tabs">
+                <li role="presentation" class="active">
+                    <a href="#tab-general" data-toggle="tab" role="tab">
+                        <i class="fa fa-sliders"></i> General</a></li>
+                <li role="presentation">
+                    <a href="#tab-tls" data-toggle="tab" role="tab">
+                        <i class="fa fa-lock"></i> TLS</a></li>
+                <li role="presentation">
+                    <a href="#tab-proxy" data-toggle="tab" role="tab">
+                        <i class="fa fa-exchange"></i> Proxy</a></li>
+                <li role="presentation">
+                    <a href="#tab-rules" data-toggle="tab" role="tab">
+                        <i class="fa fa-download"></i> Rule Updates</a></li>
+            </ul>
+
+            <div class="tab-content settings-tabs">
+                <div role="tabpanel" class="tab-pane active" id="tab-general">
 
             <div class="panel panel-default">
                 <div class="panel-heading"><h4>Traffic</h4></div>
@@ -58,6 +79,10 @@
                     </div>
                 </div>
             </div>
+
+                </div>
+
+                <div role="tabpanel" class="tab-pane" id="tab-tls">
 
             <div class="panel panel-default">
                 <div class="panel-heading"><h4>TLS</h4></div>
@@ -157,41 +182,6 @@
             </div>
 
             <div class="panel panel-default">
-                <div class="panel-heading"><h4>Trusted Proxies</h4></div>
-                <div class="panel-body">
-                    <div class="form-group">
-                        <label>Addresses whose <code>X-Forwarded-For</code> is believed
-                            <small class="text-muted">(one per line, or comma-separated)</small></label>
-                        <textarea class="form-control" name="trusted_proxies" rows="3"
-                                  spellcheck="false" style="font-family: monospace; font-size: 12px;"
-                                  placeholder="10.0.0.0/8&#10;192.168.1.5">{{ trusted_proxies }}</textarea>
-                        <p class="help-block">
-                            Leave empty unless something else sits in front of EasyWAF. With
-                            it empty — the default — the client address is the address that
-                            connected, and <code>X-Forwarded-For</code> is ignored entirely.
-                            <br>
-                            <strong>Only list proxies you control.</strong>
-                            <code>X-Forwarded-For</code> is a header, so any client can send
-                            one; if EasyWAF believed it unconditionally, anyone could claim
-                            any address and walk straight past country rules — and past the
-                            IP block lists coming in a later release. It is believed only
-                            when the connection itself came from an address listed here.
-                            <br>
-                            Single addresses and CIDR blocks both work, IPv4 and IPv6. An
-                            entry that does not parse is refused rather than skipped, since a
-                            silently ignored range is one you would believe was covered.
-                            <br>
-                            This affects who the Traffic Monitor, the country rules and
-                            CAPTCHA clearance think the client is. Getting it wrong in the
-                            other direction matters too: behind a proxy with nothing listed,
-                            every request looks like it came from that proxy, so one visitor
-                            solving a CAPTCHA would clear it for everyone.
-                        </p>
-                    </div>
-                </div>
-            </div>
-
-            <div class="panel panel-default">
                 <div class="panel-heading"><h4>Let's Encrypt (ACME)</h4></div>
                 <div class="panel-body">
                     <div class="form-group">
@@ -236,6 +226,49 @@
                     </div>
                 </div>
             </div>
+
+                </div>
+
+                <div role="tabpanel" class="tab-pane" id="tab-proxy">
+
+            <div class="panel panel-default">
+                <div class="panel-heading"><h4>Trusted Proxies</h4></div>
+                <div class="panel-body">
+                    <div class="form-group">
+                        <label>Addresses whose <code>X-Forwarded-For</code> is believed
+                            <small class="text-muted">(one per line, or comma-separated)</small></label>
+                        <textarea class="form-control" name="trusted_proxies" rows="3"
+                                  spellcheck="false" style="font-family: monospace; font-size: 12px;"
+                                  placeholder="10.0.0.0/8&#10;192.168.1.5">{{ trusted_proxies }}</textarea>
+                        <p class="help-block">
+                            Leave empty unless something else sits in front of EasyWAF. With
+                            it empty — the default — the client address is the address that
+                            connected, and <code>X-Forwarded-For</code> is ignored entirely.
+                            <br>
+                            <strong>Only list proxies you control.</strong>
+                            <code>X-Forwarded-For</code> is a header, so any client can send
+                            one; if EasyWAF believed it unconditionally, anyone could claim
+                            any address and walk straight past country rules — and past the
+                            IP block lists coming in a later release. It is believed only
+                            when the connection itself came from an address listed here.
+                            <br>
+                            Single addresses and CIDR blocks both work, IPv4 and IPv6. An
+                            entry that does not parse is refused rather than skipped, since a
+                            silently ignored range is one you would believe was covered.
+                            <br>
+                            This affects who the Traffic Monitor, the country rules and
+                            CAPTCHA clearance think the client is. Getting it wrong in the
+                            other direction matters too: behind a proxy with nothing listed,
+                            every request looks like it came from that proxy, so one visitor
+                            solving a CAPTCHA would clear it for everyone.
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+                </div>
+
+                <div role="tabpanel" class="tab-pane" id="tab-rules">
 
             <div class="panel panel-default">
                 <div class="panel-heading"><h4>Rule Updates</h4></div>
@@ -306,6 +339,10 @@
                 </div>
             </div>
 
+                </div>
+
+            </div>
+
             <button type="submit" class="btn btn-success">
                 <i class="fa fa-save"></i> Save Settings
             </button>
@@ -313,4 +350,43 @@
         </form>
     </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Return to the tab that was open. Settings saves by redirecting, so without
+// this every save — and every rejected value — lands you back on the first
+// tab, away from the field the message is talking about.
+(function () {
+    var KEY = "easywaf.settings.tab";
+    var tabs = document.getElementById("settings-tabs");
+    if (!tabs || !window.jQuery) return;
+
+    var stored = null;
+    try { stored = localStorage.getItem(KEY); } catch (e) { /* private mode */ }
+    if (stored && tabs.querySelector('a[href="' + stored + '"]')) {
+        jQuery('#settings-tabs a[href="' + stored + '"]').tab("show");
+    }
+
+    jQuery('#settings-tabs a[data-toggle="tab"]').on("shown.bs.tab", function (e) {
+        try { localStorage.setItem(KEY, e.target.getAttribute("href")); } catch (e) { }
+    });
+
+    // Show the tab holding a field the browser is about to reject. Retention is
+    // required and the ACME contact must be an address; if either is invalid
+    // while its tab is hidden, the browser cannot focus the control to complain
+    // about it and gives up — Save then does nothing at all, with no message.
+    // 'invalid' fires on each control before the browser reports the first, and
+    // does not bubble, so this listens in the capture phase.
+    var form = document.querySelector('form[action="/settings/update"]');
+    if (form) {
+        form.addEventListener("invalid", function (e) {
+            var pane = e.target.closest(".tab-pane");
+            if (pane && pane.className.indexOf("active") === -1) {
+                jQuery('#settings-tabs a[href="#' + pane.id + '"]').tab("show");
+            }
+        }, true);
+    }
+})();
+</script>
 {% endblock %}
