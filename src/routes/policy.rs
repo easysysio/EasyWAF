@@ -64,6 +64,14 @@ pub async fn get_policies(
     ctx.insert("title",     "Policy Manager");
     ctx.insert("url",       "/policy");
     ctx.insert("policies",  &policies);
+
+    // Shown where policies are, because an update applies to a policy rather
+    // than to the installation — "SQLi 3 is available; this policy has 2".
+    let updates = crate::rules_update::available(&state.db).await?;
+    let (fetched, error) = crate::rules_update::status(&state.db).await;
+    ctx.insert("rule_updates",       &updates);
+    ctx.insert("rule_check_fetched", &fetched);
+    ctx.insert("rule_check_error",   &error);
     ctx.insert("result",    &flash.result.unwrap_or_default());
     ctx.insert("msg",       &flash.msg.unwrap_or_default());
 

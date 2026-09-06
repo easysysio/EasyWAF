@@ -2,6 +2,43 @@
 
 {% block content %}
 
+{% if rule_updates | length > 0 %}
+<div class="alert alert-info">
+    <i class="fa fa-arrow-circle-up"></i>
+    <strong>Rule set updates are available.</strong>
+    A set is installed into a policy, so each is listed against the policy that
+    holds it — one policy may be behind while another is current.
+    <table class="table table-condensed" style="margin:10px 0 0 0; background:transparent">
+        <thead><tr><th>Policy</th><th>Rule set</th><th>Installed</th><th>Available</th></tr></thead>
+        <tbody>
+        {% for u in rule_updates %}
+            <tr>
+                <td>{{ u.policy_name }}</td>
+                <td>{{ u.set_name }} <small class="text-muted">{{ u.set_id }}</small></td>
+                <td>v{{ u.have }}</td>
+                <td><strong>v{{ u.offered }}</strong></td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    <small class="text-muted">
+        Nothing is applied automatically. A rule change can unblock an application
+        or break one, so it is a decision rather than a background task.
+    </small>
+</div>
+{% endif %}
+
+{% if rule_check_error %}
+<p class="help-block">
+    <i class="fa fa-info-circle"></i>
+    Rule update check: {{ rule_check_error }}.
+    {% if rule_check_fetched %}Last successful check {{ rule_check_fetched }}.{% endif %}
+    This is not an error to act on if the appliance has no outbound access —
+    turn the check off under Settings if it never will.
+</p>
+{% endif %}
+
+
 {% if result == "failed" %}
 <div class="alert alert-danger alert-dismissible">
     <button type="button" class="close" data-dismiss="alert">&times;</button>

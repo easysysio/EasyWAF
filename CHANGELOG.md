@@ -9,6 +9,22 @@ Version bumps and tags are created only after explicit approval.
 ## [Unreleased] — 0.6.0 (rule set updates)
 
 ### Added
+- **EasyWAF notices when a newer rule set is published.** It fetches the
+  channel manifest at startup and every six hours, and the Policy Manager shows
+  what is out of date — per policy, because a set is installed into a policy:
+  "SQLi 3 is available; this policy has 2", while another policy may already be
+  current.
+
+  **Nothing is applied automatically.** An auto-applied bad rule is an outage
+  across every site using that policy, and 0.5.4 is the evidence that a bad rule
+  blocks real traffic.
+
+  **It is quiet when it cannot reach the channel.** A WAF is often on a network
+  with no outbound access, so a failure is stored and shown on the page rather
+  than logged every six hours — a proxy that fills its log with a repository it
+  cannot reach teaches its operator to ignore the log. The last manifest is
+  cached, so the notice still works offline, and the check can be turned off.
+
 - **Imported rules are read-only; customising means cloning.** A rule that came
   from a rule set can no longer have its pattern, score, action, zone,
   description or name edited. Applying a set update overwrites every imported

@@ -20,6 +20,7 @@ mod geo;
 mod modules;
 mod proxy;
 mod routes;
+mod rules_update;
 mod tls;
 
 use auth::make_key;
@@ -155,6 +156,7 @@ async fn main() {
     // Prunes traffic_events on the schedule set in Settings. Off by default.
     modules::traffic::spawn_retention_task(db.clone());
     acme::spawn_renewal_task(db.clone());
+    rules_update::spawn_check_task(db.clone());
 
     // ── Build management GUI ──────────────────────────────
     let mut tera = Tera::new("templates/**/*.html")
