@@ -7,8 +7,9 @@ the moment a set is published.
 ## Shape
 
 Rule sets are downloadable units, each covering one kind of protection — SQL
-injection, WordPress, and so on — served from a directory in the EasySYS
-repository alongside the packages. EasyWAF checks for newer versions, shows a
+injection, WordPress, and so on — authored in the `EasyWAF-rules` repository and
+published to a signed directory in the EasySYS repository alongside the
+packages (see *One source of truth* and *Publishing*, below). EasyWAF checks for newer versions, shows a
 notification, and applies an update when an administrator asks it to. The
 country database travels the same channel.
 
@@ -108,6 +109,69 @@ human to look at, never an automatic action.
 version removes entirely — left in place as a harmless orphan, or flagged
 retired in the UI. Worth deciding at implementation time.
 
+## One source of truth: the rules repository
+
+`EasyWAF-rules` is authoritative. The `rules/` directory shipped alongside the
+binary is a **snapshot taken at release**, not a parallel copy anyone edits, and
+`git` is what records why a pattern is the way it is.
+
+This is settled first because the alternative has already gone wrong once. The
+`Accept: */*` false positive lived in two copies of the same rule — the TOML
+catalogue and a hard-coded list in `routes/rules.rs`. One was corrected when it
+was found; the other was not, so which button an operator pressed decided
+whether every request scored 3 for a header every HTTP client sends. It went
+unnoticed for four releases. Introducing the repository makes a **third** place
+the same rule could live, and three copies fail the same way two did, sooner.
+
+So:
+
+* **`EasyWAF-rules` holds the sets.** Edits happen there and nowhere else.
+* **`EasyWAF/rules/*.toml` is generated**, copied in at release time from a
+  pinned commit of the rules repository, and the release records which commit.
+  A rule shipped in a binary can then always be traced to the change that wrote
+  it.
+* **`seed_default_rules` is deleted.** Those 22 hard-coded rules are the second
+  copy that caused the problem; the Seed button becomes an import of the bundled
+  snapshot, so seeding and importing can no longer disagree. Nothing else needs
+  them: any installation that has imported the catalogue already has better
+  versions of all 22.
+
+**A corollary worth stating, because 0.5.4 had to work around it.** Import skips
+any `external_id` already present, so a corrected rule never reaches an
+installation that has already imported it. That is the right behaviour for
+*adding* a set and the wrong behaviour for *updating* one, and 0.6.0 is where
+the difference gets a mechanism instead of a migration. Until it exists, a rule
+correction has to be shipped as SQL that rewrites the exact pattern EasyWAF
+published, matching nothing an operator has edited — which is what migration 012
+does, and which does not scale past a handful.
+
+## Publishing: private repository, public channel
+
+The rules repository is private (Gitea); the update channel has to be public,
+because an installation fetching a rule set cannot hold credentials for it.
+Something must publish across that boundary, and packages already do exactly
+this: `github2repo.sh` takes built artifacts and lays them out as signed APT and
+YUM repositories under `repo.easysys.io/easywaf/…`.
+
+Rule sets follow the same shape rather than inventing a second one:
+
+* Published to `repo.easysys.io/easywaf/rules/<channel>/`, beside the packages
+  and served by the same web server.
+* **Signed with the same GPG key** the package repositories already use. An
+  installation that trusts EasyWAF packages then trusts rule sets by the same
+  mechanism, with no second key to distribute. A rule set is executable in every
+  sense that matters — it decides what traffic is refused — so an unsigned one
+  fetched over the network would be a straightforward supply-chain hole.
+* **Signature verified before a set is applied, not after downloading.** A set
+  that fails verification is discarded and reported, never imported "just this
+  once".
+* A `stable` and a `testing` channel, matching the packages, so a rule change
+  can be exercised before it reaches everyone. Today's two corrections would
+  both have gone to testing first.
+
+The publishing script is the rules repository's own concern rather than
+EasyWAF's, and belongs next to `github2repo.sh` on the repository server.
+
 ## Rule set files
 
 Each file gains a header the current parser ignores, so it can be added before
@@ -189,9 +253,11 @@ swapped in without restarting.
 ## Housekeeping this exposes
 
 `seed_default_rules` inserts 22 hardcoded rules that duplicate content in the
-`.toml` files and carry no `external_id`. With a managed repository that is a
-second source of truth which can never be updated; it should become "import the
-base set" instead.
+`.toml` files and carry no `external_id`. This note called it "a second source
+of truth which can never be updated" before it caused anything; in 0.5.4 it did
+— the SQL-comment rule was corrected in the catalogue and left broken here, so
+pressing Seed rather than Import gave a rule that scored every request. It is
+deleted rather than maintained; see *One source of truth* above.
 
 The `imported_pattern`, `imported_score` and `imported_action` columns added in
 migration 008 (0.3.0/0.3.1) supported an earlier design: diffing a rule's
