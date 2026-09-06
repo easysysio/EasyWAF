@@ -1,6 +1,11 @@
 # OWASP CRS — Remote File Inclusion (category 931)
 # Detects attempts to make the server fetch and include a remote resource.
 
+[set]
+id      = "owasp-rfi"
+name    = "Remote file inclusion"
+version = 1
+
 [[rules]]
 id          = 931001
 name        = "RFI: HTTP URL in parameter"

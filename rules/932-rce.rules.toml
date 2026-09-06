@@ -1,6 +1,11 @@
 # OWASP CRS — Remote Code / Command Execution (category 932)
 # Detects attempts to execute OS commands through the application.
 
+[set]
+id      = "owasp-rce"
+name    = "Remote code execution"
+version = 1
+
 [[rules]]
 id          = 932001
 name        = "RCE: Unix command injection keywords"

@@ -1,6 +1,11 @@
 # OWASP CRS — Scanner and Automated Tool Detection (category 913)
 # Identifies well-known attack and reconnaissance tools by their signatures.
 
+[set]
+id      = "owasp-scanners"
+name    = "Scanner and automated tool detection"
+version = 1
+
 [[rules]]
 id          = 913001
 name        = "Scanner: sqlmap"

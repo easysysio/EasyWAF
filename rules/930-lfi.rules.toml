@@ -1,6 +1,11 @@
 # OWASP CRS — Local File Inclusion (category 930)
 # Detects attempts to read sensitive files from the server filesystem.
 
+[set]
+id      = "owasp-lfi"
+name    = "Local file inclusion"
+version = 1
+
 [[rules]]
 id          = 930001
 name        = "LFI: directory traversal ../"

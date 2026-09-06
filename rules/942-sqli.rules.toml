@@ -2,6 +2,11 @@
 # Based on OWASP ModSecurity Core Rule Set v3.x
 # Zone ANY covers URL path, query string, request body and headers.
 
+[set]
+id      = "owasp-sqli"
+name    = "SQL injection"
+version = 1
+
 [[rules]]
 id          = 942001
 name        = "SQLi: UNION SELECT"

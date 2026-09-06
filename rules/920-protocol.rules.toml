@@ -1,6 +1,11 @@
 # OWASP CRS — Protocol Enforcement (category 920)
 # Detects malformed, abusive, or evasion-oriented HTTP requests.
 
+[set]
+id      = "owasp-protocol"
+name    = "Protocol enforcement"
+version = 1
+
 [[rules]]
 id          = 920001
 name        = "Protocol: HTTP method override header"

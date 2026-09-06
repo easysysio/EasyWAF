@@ -1,6 +1,11 @@
 # OWASP CRS — Cross-Site Scripting (category 941)
 # Based on OWASP ModSecurity Core Rule Set v3.x
 
+[set]
+id      = "owasp-xss"
+name    = "Cross-site scripting"
+version = 1
+
 [[rules]]
 id          = 941001
 name        = "XSS: script tag"

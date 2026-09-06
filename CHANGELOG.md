@@ -6,6 +6,27 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
+## [Unreleased] — 0.6.0 (rule set updates)
+
+### Added
+- **Rule sets describe themselves, and EasyWAF records what it holds.** Each
+  `.rules.toml` now carries a `[set]` header with its id and version, and
+  importing records both which set every rule came from and which version of
+  each set a policy holds.
+
+  This is the foundation the update mechanism needs: a policy that does not know
+  it holds SQLi v2 cannot be told v3 exists, which is exactly why correcting a
+  rule has so far meant shipping a migration that rewrote patterns by hand.
+
+  A set's version is tracked **per policy**, because sets are imported into
+  policies: policy A may hold v2 while policy B holds v3. The notification will
+  therefore be "SQLi 3 is available; this policy has 2", not "an update is
+  available".
+
+  The set is stored rather than derived from the rule's id range. That inference
+  is already wrong in this project's history — rule `931100` sat in the RCE file
+  for several releases, so `931xxx` did not mean RFI.
+
 ## [0.5.6] — 2026-09-06
 
 Three rule and matching faults found by running production traffic, one of them

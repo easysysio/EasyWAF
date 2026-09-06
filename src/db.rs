@@ -61,9 +61,31 @@ pub async fn init(database_url: &str) -> SqlitePool {
     run_migration_012(&pool).await;
     run_migration_013(&pool).await;
     run_migration_014(&pool).await;
+    run_migration_015(&pool).await;
 
     info!("Database ready: {}", database_url);
     pool
+}
+
+// ─── run_migration_015 ───────────────────────────────────
+
+/// Which set a rule came from, and which version each policy holds.
+async fn run_migration_015(pool: &SqlitePool) {
+    let exists: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM pragma_table_info('waf_rules') WHERE name = 'rule_set'",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0);
+
+    if exists == 0 {
+        let sql = include_str!("../migrations/015_rule_sets.sql");
+        sqlx::raw_sql(sql)
+            .execute(pool)
+            .await
+            .unwrap_or_else(|e| panic!("Migration 015 failed: {}", e));
+        info!("Migration 015 applied: rules record their set, policies record set versions");
+    }
 }
 
 // ─── run_migration_014 ───────────────────────────────────

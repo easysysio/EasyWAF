@@ -22,6 +22,7 @@ use axum::{
 use axum_extra::extract::cookie::SignedCookieJar;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use sqlx::SqlitePool;
 use tera::Context;
 
 // ─── Models ──────────────────────────────────────────────
@@ -569,12 +570,51 @@ pub async fn seed_default_rules(state: &AppState, policy_id: i64) -> Result<()> 
     Ok(())
 }
 
+// ─── record_installed_set ────────────────────────────────
+
+/// Note that a policy now holds a version of a set.
+///
+/// Recorded on install so an update check has something to compare against. A
+/// policy that does not know which version it holds cannot be told a newer one
+/// exists, which is why correcting a rule has so far meant a migration
+/// rewriting patterns by hand.
+async fn record_installed_set(
+    db: &SqlitePool,
+    policy_id: i64,
+    set: &RuleFileSet,
+) -> Result<()> {
+    let name = set.name.clone().unwrap_or_else(|| set.id.clone());
+    sqlx::query!(
+        "INSERT INTO policy_rule_sets (policy_id, set_id, name, version, installed_at)
+         VALUES (?, ?, ?, ?, datetime('now'))
+         ON CONFLICT(policy_id, set_id) DO UPDATE SET
+             name = excluded.name, version = excluded.version,
+             installed_at = excluded.installed_at",
+        policy_id, set.id, name, set.version
+    )
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
 // ─── TOML rule file structs ───────────────────────────────
 
 /// Top-level structure of a TOML rule file.
 #[derive(Deserialize)]
 struct RuleFile {
+    /// Which set this is. Optional so a file written before sets described
+    /// themselves still parses; such a file imports with no set recorded and
+    /// simply cannot be offered updates.
+    set:   Option<RuleFileSet>,
     rules: Vec<RuleFileDef>,
+}
+
+/// The `[set]` header: what this file is, and which version of it.
+#[derive(Deserialize, Clone)]
+struct RuleFileSet {
+    id:      String,
+    name:    Option<String>,
+    version: i64,
 }
 
 /// A single rule definition inside a TOML file.
@@ -669,6 +709,12 @@ pub async fn post_import_rules(
             }
         };
 
+        // Recorded per rule so "which rules in this policy belong to the SQLi
+        // set" is a stored fact rather than arithmetic on the id range — which
+        // this project's own history has already got wrong, when 931100 sat in
+        // the RCE file for several releases.
+        let set_id = file.set.as_ref().map(|s| s.id.clone());
+
         for rule in file.rules {
             // Skip if this external_id already exists for this policy.
             let exists: i64 = sqlx::query_scalar!(
@@ -688,8 +734,8 @@ pub async fn post_import_rules(
             sqlx::query!(
                 "INSERT INTO waf_rules
                  (policy_id, name, description, zone, pattern, score, action, external_id,
-                  imported_pattern, imported_score, imported_action)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                  rule_set, imported_pattern, imported_score, imported_action)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 policy_id,
                 rule.name,
                 description,
@@ -698,6 +744,7 @@ pub async fn post_import_rules(
                 rule.score,
                 rule.action,
                 rule.id,
+                set_id,
                 // What the rule looked like on import, so a later update can
                 // tell an untouched rule from one an administrator changed.
                 rule.pattern,
@@ -708,6 +755,13 @@ pub async fn post_import_rules(
             .await?;
 
             imported += 1;
+        }
+
+        // Recorded once the file's rules are in, and regardless of how many
+        // were skipped as already present: what matters is which version of
+        // the set this policy now holds, not how much of it was new.
+        if let Some(set) = file.set.as_ref() {
+            record_installed_set(&state.db, policy_id, set).await?;
         }
     }
 

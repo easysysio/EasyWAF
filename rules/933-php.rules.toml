@@ -1,6 +1,11 @@
 # OWASP CRS — PHP Injection Attacks (category 933)
 # Targets PHP-specific code injection vectors.
 
+[set]
+id      = "owasp-php"
+name    = "PHP injection"
+version = 1
+
 [[rules]]
 id          = 933001
 name        = "PHP: opening tag"
