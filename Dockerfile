@@ -33,11 +33,12 @@ ARG TARGETARCH
 COPY dist/easywaf-${TARGETARCH} /usr/bin/easywaf
 RUN chmod 755 /usr/bin/easywaf
 
-# EasyWAF resolves templates, static assets, rules and config.toml relative to
-# its working directory, so they live together and the workdir is set below.
+# Templates and static assets are compiled into the binary, so only the rule
+# sets and config.toml are read from the working directory. rules/ stays a
+# directory because it is data an operator can look at and a build refreshes
+# from the published channel — and because rules/key.gpg, the key every update
+# is verified against, belongs somewhere it can be inspected.
 WORKDIR /opt/easywaf
-COPY templates/ templates/
-COPY static/    static/
 COPY rules/     rules/
 
 # The container's config differs from the package's in one way: the database

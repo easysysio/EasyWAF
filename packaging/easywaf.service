@@ -4,8 +4,9 @@ After=network.target
 
 [Service]
 Type=simple
-# EasyWAF reads templates/, static/, rules/ and config.toml relative to its
-# working directory, and creates easywaf.db there on first run.
+# Templates and static assets are compiled into the binary. EasyWAF reads
+# rules/ and config.toml relative to its working directory, and creates
+# easywaf.db there on first run.
 WorkingDirectory=/opt/easywaf
 ExecStart=/usr/bin/easywaf
 Restart=on-failure

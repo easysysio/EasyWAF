@@ -6,6 +6,37 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
+## [Unreleased]
+
+### Changed
+- **Templates and static assets are compiled into the binary.** EasyWAF is
+  meant to be one executable, and it also needed `templates/` and `static/`
+  beside it in the right working directory. Getting that wrong did not fail at
+  startup — it failed on the first page load, as a panic or a GUI with no
+  stylesheet.
+
+  Only `rules/` and `config.toml` are read from the working directory now.
+  Rule sets stay on disk deliberately: they are data an operator can read, a
+  build refreshes them from the published channel, and `rules/key.gpg` — the
+  key every update is checked against — belongs somewhere it can be inspected.
+
+  A **debug** build still reads both from disk, so editing a template needs a
+  restart rather than a rebuild. Release builds embed them.
+
+  The packages no longer ship copies. That would have been worse than
+  redundant: editing an installed template would have had no effect and given
+  no error.
+
+### Fixed
+- **`rules/key.gpg` was missing from the .deb and .rpm.** It was added in 0.6.0
+  and never listed as a package asset, so an installation from the package
+  repositories had no key to verify against and **every rule set update was
+  refused** — "No signing key at rules/key.gpg". The container image was
+  unaffected; it copies the whole directory.
+
+  This means 0.6.0 and 0.6.1 packages cannot apply rule updates. Upgrading to a
+  build with this fix is enough; nothing needs to be done by hand.
+
 ## [0.6.1] — 2026-09-06
 
 **Two faults found by using 0.6.0 in production, and the page that finishes

@@ -347,9 +347,9 @@ src/
     traffic.rs      request logging and retention pruning
   routes/           GUI pages (dashboard, sites, policy, rules, traffic, certs, settings)
 migrations/         schema, applied in order at startup
-rules/              bundled OWASP-style rule sets (TOML)
-templates/          Tera templates
-static/             CSS and JS
+rules/              bundled OWASP-style rule sets (TOML), and key.gpg
+templates/          Tera templates      — compiled into the binary
+static/             CSS and JS          — compiled into the binary
 packaging/          systemd unit
 ```
 

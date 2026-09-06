@@ -90,6 +90,10 @@ hyper = { version = "1.11.1", features = ["client", "http1"] }
 hyper-util = { version = "0.1.20", features = ["tokio"] }
 http-body-util = "0.1.5"
 pgp = "0.20.0"
+# Templates and static files are compiled in, so the binary is the whole GUI.
+# mime-guess is already in the tree (reqwest pulls it), so the feature costs
+# nothing and beats hand-maintaining an extension table that fails silently.
+rust-embed = { version = "8", features = ["mime-guess"] }
 
 # ─── Debian package (.deb) — cargo-deb ──────────────────────
 # Binary → /usr/bin; runtime assets → /opt/easywaf (the systemd unit sets
@@ -110,13 +114,14 @@ It hosts multiple virtual sites, inspects traffic through a rule pipeline
 (OWASP-style WAF rules, GeoIP), and ships a web management GUI."""
 assets = [
     ["target/release/easywaf",        "/usr/bin/easywaf",                       "755"],
-    ["templates/*.html",              "/opt/easywaf/templates/",                "644"],
-    ["static/css/easywaf.css",        "/opt/easywaf/static/css/easywaf.css",    "644"],
-    ["static/js/easywaf.js",          "/opt/easywaf/static/js/easywaf.js",      "644"],
-    ["static/favicon.svg",            "/opt/easywaf/static/favicon.svg",        "644"],
-    ["static/favicon.png",            "/opt/easywaf/static/favicon.png",        "644"],
-    ["static/apple-touch-icon.png",   "/opt/easywaf/static/apple-touch-icon.png", "644"],
+    # Templates and static assets are compiled into the binary. Shipping copies
+    # as well would be worse than redundant: someone editing the installed file
+    # would see no effect and no error.
     ["rules/*.rules.toml",            "/opt/easywaf/rules/",                     "644"],
+    # The key every rule update is verified against. Without it the update
+    # mechanism refuses everything, so it is not optional.
+    ["rules/key.gpg",                 "/opt/easywaf/rules/key.gpg",             "644"],
+    ["rules/SOURCE",                  "/opt/easywaf/rules/SOURCE",              "644"],
     ["config.toml",                   "/opt/easywaf/config.toml",               "644"],
     ["packaging/easywaf.service",     "/lib/systemd/system/easywaf.service",    "644"],
     ["CHANGELOG.md",                  "/usr/share/doc/easywaf/CHANGELOG.md",    "644"],
@@ -145,13 +150,11 @@ fi
 """
 assets = [
     { source = "target/release/easywaf",     dest = "/usr/bin/easywaf",                    mode = "755" },
-    { source = "templates/*.html",           dest = "/opt/easywaf/templates/",             mode = "644" },
-    { source = "static/css/easywaf.css",     dest = "/opt/easywaf/static/css/easywaf.css", mode = "644" },
-    { source = "static/js/easywaf.js",       dest = "/opt/easywaf/static/js/easywaf.js",   mode = "644" },
-    { source = "static/favicon.svg",         dest = "/opt/easywaf/static/favicon.svg",     mode = "644" },
-    { source = "static/favicon.png",         dest = "/opt/easywaf/static/favicon.png",     mode = "644" },
-    { source = "static/apple-touch-icon.png", dest = "/opt/easywaf/static/apple-touch-icon.png", mode = "644" },
+    # Templates and static assets are compiled into the binary; see the .deb
+    # asset list above for why copies are not shipped alongside.
     { source = "rules/*.rules.toml",         dest = "/opt/easywaf/rules/",                 mode = "644" },
+    { source = "rules/key.gpg",              dest = "/opt/easywaf/rules/key.gpg",          mode = "644" },
+    { source = "rules/SOURCE",               dest = "/opt/easywaf/rules/SOURCE",           mode = "644" },
     { source = "config.toml",                dest = "/opt/easywaf/config.toml",            mode = "644" },
     { source = "packaging/easywaf.service",  dest = "/usr/lib/systemd/system/easywaf.service", mode = "644" },
     { source = "CHANGELOG.md",               dest = "/usr/share/doc/easywaf/CHANGELOG.md", mode = "644" },

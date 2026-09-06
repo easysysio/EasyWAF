@@ -8,6 +8,7 @@
 // Both share the SQLite pool and module pipeline.
 // =========================================================
 
+mod assets;
 mod acme;
 mod auth;
 mod cert;
@@ -41,9 +42,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tera::Tera;
 use tokio::sync::mpsc;
-use tower::ServiceBuilder;
-use tower_http::{services::ServeDir, set_header::SetResponseHeaderLayer};
-use axum::http::{header::CACHE_CONTROL, HeaderValue};
 use tracing::info;
 use tracing_subscriber::{fmt, EnvFilter};
 
@@ -160,7 +158,7 @@ async fn main() {
     rules_update::spawn_check_task(db.clone());
 
     // ── Build management GUI ──────────────────────────────
-    let mut tera = Tera::new("templates/**/*.html")
+    let mut tera = assets::tera()
         .unwrap_or_else(|e| panic!("Template loading failed: {}", e));
     // Exposes {{ version() }} to every template — see app_version().
     tera.register_function("version", app_version);
@@ -228,18 +226,10 @@ async fn main() {
         .route("/rules/{id}/delete",     post(routes::rules::post_rule_delete_global))
         .route("/geoip",                 get(routes::geoip::get_geoip))
         .route("/traffic",               get(routes::traffic::get_traffic))
-        // Serve static assets with Cache-Control: no-cache so the browser
-        // always revalidates (cheap 304 when unchanged, fresh CSS/JS when
-        // they change) — prevents stale cached stylesheets/scripts.
-        .nest_service(
-            "/static",
-            ServiceBuilder::new()
-                .layer(SetResponseHeaderLayer::overriding(
-                    CACHE_CONTROL,
-                    HeaderValue::from_static("no-cache"),
-                ))
-                .service(ServeDir::new("static")),
-        )
+        // Static assets come out of the binary, with Cache-Control: no-cache
+        // so the browser always revalidates — a stale cached stylesheet after
+        // an upgrade looks like a broken GUI.
+        .route("/static/{*path}", get(assets::serve_static))
         .with_state(gui_state);
 
     // ── Management interface: TLS, with plain HTTP redirecting to it ──
