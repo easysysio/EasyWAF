@@ -9,6 +9,13 @@ Version bumps and tags are created only after explicit approval.
 ## [Unreleased]
 
 ### Fixed
+- **The Rule Sets page was almost unreachable.** It had two entry points: a
+  button on a policy's rules page, and a link on the Policy Manager that
+  appeared *only while an update was pending*. So the way to find the page was
+  to already have an update waiting for you, and the way to get an update
+  offered is to have used the page. The Policy Manager now links to it from
+  every policy row, next to Manage Rules.
+
 - **Uploading a certificate under an existing name detached it from every site
   using it.** The upload used `INSERT OR REPLACE`, which deletes the
   conflicting row and inserts a new one with a new id. `sites.cert_id` is
