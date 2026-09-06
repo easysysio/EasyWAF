@@ -658,6 +658,152 @@ pub async fn install_set(
     Ok(touched)
 }
 
+// ─── backfill_rule_sets ──────────────────────────────────
+
+/// Adopt rules that were imported before sets were tracked.
+///
+/// 015 added `rule_set` and `policy_rule_sets` and backfilled neither, so an
+/// installation upgraded from 0.5.x has rules but no record of where they came
+/// from. Such a policy is never offered an update — `available()` reads
+/// `policy_rule_sets`, which is empty — and the Rule Sets page offers to
+/// install sets whose rules are already there. The whole update mechanism is
+/// inert on exactly the installations that have been running longest.
+///
+/// **A set is adopted only when the policy holds all of it, unchanged.** Both
+/// halves of that matter:
+///
+/// - *All of it.* The rule catalogue lets an operator take individual rules. A
+///   policy holding 5 of 18 chose 5; adopting it would let the next update
+///   install the other 13 and change what is enforced.
+/// - *Unchanged.* Imported rules were editable before 0.6.0, so an edited rule
+///   may be someone's deliberate correction. Adopting it would let an update
+///   overwrite that edit silently, which is the drift this design exists to
+///   prevent.
+///
+/// Anything else is left alone and logged. The operator can still adopt it from
+/// the Rule Sets page by pressing Install, which is an explicit act with a
+/// confirmation on it — the point is that this migration never makes that
+/// decision on their behalf.
+///
+/// Runs on every start rather than behind a flag. Adopted rules no longer match
+/// `rule_set IS NULL`, so it is naturally idempotent, and an installation that
+/// is fixed later heals on its next restart instead of having missed its one
+/// chance.
+pub async fn backfill_rule_sets(db: &SqlitePool) -> Result<()> {
+    let dir = std::path::Path::new("rules");
+    if !dir.exists() {
+        return Ok(());
+    }
+
+    // Nothing to adopt is the normal case after the first run.
+    let orphans: i64 = sqlx::query_scalar!(
+        r#"SELECT COUNT(*) as "n!: i64" FROM waf_rules
+           WHERE external_id IS NOT NULL AND rule_set IS NULL"#
+    )
+    .fetch_one(db)
+    .await
+    .unwrap_or(0);
+    if orphans == 0 {
+        return Ok(());
+    }
+
+    let policies = sqlx::query!(r#"SELECT id as "id!", name as "name!" FROM policies"#)
+        .fetch_all(db)
+        .await?;
+
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e)  => e,
+        Err(_) => return Ok(()),
+    };
+
+    let mut adopted = 0usize;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !is_rule_file(&path) {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(&path) else { continue };
+        let Ok(file) = toml::from_str::<RuleFile>(&text) else { continue };
+        let Some(set) = file.set.as_ref() else { continue };
+        if file.rules.is_empty() {
+            continue;
+        }
+
+        for policy in &policies {
+            // What this policy holds of the set, and has not already claimed.
+            let mut held = 0usize;
+            let mut differs = false;
+            for rule in &file.rules {
+                let row = sqlx::query!(
+                    r#"SELECT pattern, zone, action FROM waf_rules
+                       WHERE policy_id = ? AND external_id = ? AND rule_set IS NULL"#,
+                    policy.id, rule.id
+                )
+                .fetch_optional(db)
+                .await?;
+
+                if let Some(row) = row {
+                    held += 1;
+                    if row.pattern != rule.pattern
+                        || row.zone != rule.zone
+                        || row.action != rule.action
+                    {
+                        differs = true;
+                    }
+                }
+            }
+
+            if held == 0 {
+                continue;
+            }
+            if held != file.rules.len() || differs {
+                tracing::info!(
+                    policy = %policy.name, set = %set.id, held, total = file.rules.len(), differs,
+                    "Rule set left unclaimed: the policy holds part of it, or rules that \
+                     differ from what shipped. Install it from the Rule Sets page to adopt \
+                     it deliberately."
+                );
+                continue;
+            }
+
+            for rule in &file.rules {
+                sqlx::query!(
+                    "UPDATE waf_rules SET rule_set = ?
+                     WHERE policy_id = ? AND external_id = ? AND rule_set IS NULL",
+                    set.id, policy.id, rule.id
+                )
+                .execute(db)
+                .await?;
+            }
+
+            let name = set.name.clone().unwrap_or_else(|| set.id.clone());
+            sqlx::query!(
+                "INSERT INTO policy_rule_sets (policy_id, set_id, name, version, installed_at)
+                 VALUES (?, ?, ?, ?, datetime('now'))
+                 ON CONFLICT(policy_id, set_id) DO NOTHING",
+                policy.id, set.id, name, set.version
+            )
+            .execute(db)
+            .await?;
+
+            tracing::info!(
+                policy = %policy.name, set = %set.id, version = set.version,
+                rules = file.rules.len(),
+                "Adopted a rule set imported before sets were tracked"
+            );
+            adopted += 1;
+        }
+    }
+
+    if adopted > 0 {
+        tracing::info!(
+            adopted,
+            "Rule sets adopted — these policies can now be offered updates"
+        );
+    }
+    Ok(())
+}
+
 // ─── uninstall_set ───────────────────────────────────────
 
 /// Remove a rule set from a policy. Returns (rules removed, clones kept).

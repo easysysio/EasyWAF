@@ -6,6 +6,43 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
+## [0.6.4] — 2026-09-06
+
+**Policies that predate 0.6.0 now claim the rule sets they already hold.**
+
+0.6.3 shipped with this as a known gap. Migration 015 added the tracking for
+which set a rule came from and backfilled none of it, so an installation
+upgraded from 0.5.x had rules but no record of their origin — and was therefore
+**never offered a rule update**, because the check compares against sets a
+policy is recorded as holding. The Rule Sets page offered to install sets whose
+rules were already there, and had no Remove button because it believed nothing
+was installed. The whole 0.6.0 mechanism was inert on exactly the installations
+that had been running longest.
+
+**Upgrading is enough** — the adoption runs at startup and reports what it did.
+
+### Added
+- **Rule sets imported before 0.6.0 are adopted automatically**, and
+  deliberately only when it is safe to do so. A set is claimed **only if the
+  policy holds all of it, unchanged**:
+
+  - *All of it*, because the rule catalogue lets an operator take individual
+    rules. A policy holding 5 of 18 chose 5, and claiming the set would let the
+    next update install the other 13 and change what is enforced.
+  - *Unchanged*, because imported rules were editable before 0.6.0. An edited
+    rule may be someone's deliberate correction, and claiming it would let an
+    update overwrite that edit silently — the exact drift this design exists to
+    prevent.
+
+  Anything else is left alone and logged, naming the policy and the set. It can
+  still be adopted from the Rule Sets page with **Install**, which is an
+  explicit act with a confirmation on it. The migration never makes that
+  decision for you.
+
+  It runs on every start rather than once behind a flag: claimed rules no longer
+  match, so it is naturally idempotent, and an installation put right later
+  heals on its next restart instead of having missed its one chance.
+
 ## [0.6.3] — 2026-09-06
 
 **Five fixes, all found by using 0.6.2 rather than by reading it.**

@@ -62,9 +62,27 @@ pub async fn init(database_url: &str) -> SqlitePool {
     run_migration_013(&pool).await;
     run_migration_014(&pool).await;
     run_migration_015(&pool).await;
+    run_migration_016(&pool).await;
 
     info!("Database ready: {}", database_url);
     pool
+}
+
+// ─── run_migration_016 ───────────────────────────────────
+
+/// Claim rules that were imported before 015 gave them somewhere to say so.
+///
+/// Not a schema change, so it does not check for a column. It is safe to run on
+/// every start and does nothing once there is nothing left to claim; see
+/// `backfill_rule_sets` for why it is deliberately conservative about what it
+/// will claim at all.
+async fn run_migration_016(pool: &SqlitePool) {
+    if let Err(e) = crate::routes::rules::backfill_rule_sets(pool).await {
+        // Not fatal. A policy that stays unclaimed is a policy that is not
+        // offered updates, which is where it already was — and refusing to
+        // start over it would be worse than the problem.
+        tracing::warn!("Could not adopt pre-0.6.0 rule sets: {e}");
+    }
 }
 
 // ─── run_migration_015 ───────────────────────────────────
