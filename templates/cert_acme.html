@@ -65,7 +65,9 @@
                     <li>the domain must resolve to this host <strong>from the public
                         internet</strong>, not just on your network;</li>
                     <li>this host must be reachable on <strong>port 80</strong> — the CA
-                        always connects there and cannot be pointed elsewhere;</li>
+                        always connects there and cannot be pointed elsewhere. EasyWAF
+                        listens on port 80 itself, whatever ports your sites use, so
+                        there is nothing to set up for this;</li>
                     <li>if something else holds port 80, it has to forward
                         <code>/.well-known/acme-challenge/</code> here.</li>
                 </ul>

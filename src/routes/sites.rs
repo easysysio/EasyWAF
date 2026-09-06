@@ -224,7 +224,7 @@ pub async fn post_site_create(
     // DNS, a closed port 80, the CA's rate limit — and losing the site over
     // that would mean filling the form in again to retry something the site's
     // own page already offers a button for.
-    if let Err(e) = request_cert_for_new_site(&state, site_id, &server_name, listen_port).await {
+    if let Err(e) = request_cert_for_new_site(&state, site_id, &server_name).await {
         return flash_redirect(
             "/sites",
             "failed",
@@ -254,22 +254,11 @@ async fn request_cert_for_new_site(
     state:       &AppState,
     site_id:     i64,
     server_name: &str,
-    listen_port: i64,
 ) -> std::result::Result<(), String> {
     if crate::acme::config(&state.db).await.ok().flatten().is_none() {
         return Err("set an ACME contact address under Settings, then request one \
                     from the site's page"
             .to_string());
-    }
-
-    // Warned before the attempt, not after: what the CA reports for this is a
-    // timeout that reads like a network fault.
-    if listen_port != 80 {
-        tracing::warn!(
-            site = %server_name, port = listen_port,
-            "Requesting a certificate for a site that does not listen on port 80 — \
-             HTTP-01 validation always arrives there"
-        );
     }
 
     let cert_id = crate::acme::issue_and_store(&state.db, server_name, server_name)
@@ -597,16 +586,6 @@ pub async fn post_site_acme(
             &back,
             "failed",
             "Set an ACME contact address under Settings before requesting a certificate",
-        );
-    }
-
-    // Warned before the attempt rather than after it fails, because what the CA
-    // reports for this is a timeout that reads like a network fault.
-    if site.listen_port != 80 {
-        tracing::warn!(
-            site = %name, port = site.listen_port,
-            "Requesting a certificate for a site that does not listen on port 80 — \
-             HTTP-01 validation always arrives there"
         );
     }
 

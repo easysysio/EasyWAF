@@ -217,11 +217,12 @@
                             from one mean nothing to the other.
                             <br>
                             <strong>For validation to succeed</strong> the site's name must
-                            resolve to this host from the public internet, and this host must
-                            be reachable on <strong>port 80</strong> — HTTP-01 validation
-                            always arrives there, and that is a property of the protocol
-                            rather than a choice EasyWAF makes. EasyWAF answers the challenge
-                            itself; there is no directory to configure.
+                            resolve to this host from the public internet, and <strong>port
+                            80</strong> must be open to it — HTTP-01 validation always
+                            arrives there, and that is a property of the protocol rather than
+                            a choice EasyWAF makes. EasyWAF binds port 80 itself, whatever
+                            ports your sites use, and answers the challenge in the proxy;
+                            there is no directory to configure.
                         </p>
                     </div>
                 </div>

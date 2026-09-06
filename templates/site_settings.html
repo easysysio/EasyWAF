@@ -171,11 +171,10 @@
                 </p>
                 <p class="help-block">
                     For this to work, <code>{{ site.server_name }}</code> must resolve to
-                    this host from the public internet and this host must be reachable on
-                    <strong>port 80</strong>. HTTP-01 validation always arrives there
-                    {% if site.listen_port != 80 %}— and this site listens on
-                    <strong>{{ site.listen_port }}</strong>, so validation will not reach it
-                    unless something in front forwards port 80 here{% endif %}.
+                    this host from the public internet, and <strong>port 80</strong> must be
+                    open to it. HTTP-01 validation always arrives there, and EasyWAF listens
+                    on port 80 whatever ports your sites use — so this site being on
+                    <strong>{{ site.listen_port }}</strong> does not matter.
                     Set the contact address under <a href="/settings">Settings</a> first, and
                     start with the staging directory.
                 </p>

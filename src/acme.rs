@@ -268,14 +268,14 @@ pub async fn issue(db: &SqlitePool, domain: &str) -> Result<(String, String)> {
         Err(e) => {
             return Err(AppError::Internal(format!(
                 "{domain}: {e}.{}",
-                validation_diagnosis(db, answered_before).await
+                validation_diagnosis(answered_before)
             )))
         }
     };
     if status != instant_acme::OrderStatus::Ready {
         return Err(AppError::Internal(format!(
             "{domain}: validation did not succeed (order is {status:?}).{}",
-            validation_diagnosis(db, answered_before).await
+            validation_diagnosis(answered_before)
         )));
     }
 
@@ -300,21 +300,20 @@ pub async fn issue(db: &SqlitePool, domain: &str) -> Result<(String, String)> {
 /// listening on port 80. Port 80 is bound only when an enabled site has
 /// `listen_port = 80` — there is no listener otherwise — so a certificate can
 /// be requested for a name that nothing on this host will ever answer for.
-async fn validation_diagnosis(db: &SqlitePool, answered_before: u64) -> &'static str {
-    let on_80: i64 = sqlx::query_scalar!(
-        "SELECT COUNT(*) FROM sites WHERE enabled = 1 AND listen_port = 80"
-    )
-    .fetch_one(db)
-    .await
-    .unwrap_or(0);
+fn validation_diagnosis(answered_before: u64) -> &'static str {
+    // Whether the listener actually came up, not whether a site asked for it.
+    // Port 80 is bound unconditionally, so the only reason it is missing is
+    // that the bind failed — something else holds it, or the process could not
+    // take a privileged port.
+    let listening = crate::proxy::is_listening_plain(crate::proxy::ACME_PORT);
 
-    validation_message(answers_served() > answered_before, on_80 > 0)
+    validation_message(answers_served() > answered_before, listening)
 }
 
 /// The two facts, turned into the sentence an operator needs.
 ///
 /// Separated from reading them so it can be tested. Getting this wrong sends
-/// someone to check DNS when the cause is a port that was never bound, and a
+/// someone to check DNS when the cause is a port that never came up, and a
 /// confidently wrong diagnosis costs more than none at all.
 fn validation_message(answered: bool, listening_on_80: bool) -> &'static str {
     match (answered, listening_on_80) {
@@ -324,16 +323,17 @@ fn validation_message(answered: bool, listening_on_80: bool) -> &'static str {
              not to another one that also answers on port 80."
         }
         (false, false) => {
-            " EasyWAF never served the challenge, and no enabled site listens on port 80, so \
-             nothing on this host was bound there to receive it. HTTP-01 validation always \
-             arrives on port 80 — that is the protocol, not a setting. Give a site \
-             listen_port 80, or forward port 80 to a port EasyWAF does listen on."
+            " EasyWAF is not listening on port 80 — the bind failed at startup, so nothing \
+             here could receive the validation. Something else on this host already holds \
+             port 80, or EasyWAF lacks permission to take a privileged port. The startup \
+             log says which. HTTP-01 validation always arrives on port 80; that is the \
+             protocol, not a setting."
         }
         (false, true) => {
-            " EasyWAF never served the challenge, although it is listening on port 80. The \
-             request did not arrive: check that the name resolves to this host from the \
-             public internet, and that port 80 is open to it through any firewall or NAT \
-             in front."
+            " EasyWAF is listening on port 80 but was never asked for the token, so the \
+             request did not reach this host at all. Check that the name resolves here from \
+             the public internet, and that port 80 is open to it through any firewall or \
+             NAT in front."
         }
     }
 }
@@ -631,16 +631,16 @@ mod tests {
 
     #[test]
     fn a_validation_failure_names_the_cause_it_can_see() {
-        // Nothing bound on port 80 is the cause EasyWAF can be certain about,
-        // and the one nobody guesses from the word "timeout".
+        // The bind failed: the one cause EasyWAF is certain of, and the one
+        // nobody guesses from the word "timeout".
         let unbound = validation_message(false, false);
-        assert!(unbound.contains("no enabled site listens on port 80"));
-        assert!(unbound.contains("listen_port 80"), "says how to fix it, not only what broke");
+        assert!(unbound.contains("not listening on port 80"));
+        assert!(unbound.contains("startup log"), "says where to look, not only what broke");
 
-        // Bound but never asked: the request never got here.
+        // Listening but never asked: the request never got here.
         let never_arrived = validation_message(false, true);
-        assert!(never_arrived.contains("although it is listening on port 80"));
-        assert!(never_arrived.contains("resolves to this host"));
+        assert!(never_arrived.contains("listening on port 80 but was never asked"));
+        assert!(never_arrived.contains("resolves here"));
 
         // Served and still refused: something answered, possibly not us.
         let served = validation_message(true, false);

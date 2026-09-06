@@ -41,10 +41,23 @@ Three properties this path must have, each for a reason:
   validator into a connection it cannot complete. The challenge path is answered
   before the redirect is considered.
 
-**The operational constraint this creates, which the GUI must state:** the site
+**The operational constraint this creates, which the GUI must state:** the host
 has to be reachable from the internet on **port 80** for the name being issued.
-A site listening only on 8080 behind something else cannot be validated this
-way, and that is a property of HTTP-01 rather than of EasyWAF.
+That is a property of HTTP-01 rather than of EasyWAF.
+
+**Port 80 is therefore bound unconditionally**, whether or not a site asks for
+it. Binding only the ports sites declared meant a certificate could be requested
+for a name nothing on the host would ever answer for — the CA's connection was
+refused before EasyWAF saw it, and the only symptom was a timeout that read like
+a DNS fault. The listener adds an ACME responder, not a new way in: a request
+for a hostname no site claims is answered exactly as on any other port.
+
+A bind failure here is not fatal. Something else may already hold port 80, or
+the process may lack `CAP_NET_BIND_SERVICE`; sites on other ports keep working,
+and the error says that issuance and renewal are what stop. Whether the listener
+actually came up is recorded, so a failed validation can distinguish "nothing
+was listening" from "the request never arrived" from "the answer was refused" —
+three unrelated causes that otherwise share the word *timeout*.
 
 ## Tokens live in memory
 

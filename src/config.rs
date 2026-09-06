@@ -41,8 +41,14 @@ pub struct Config {
 
 #[derive(Deserialize, Clone, Debug)]
 pub struct ProxyConfig {
-    /// Port for the reverse proxy (HTTP). Default: 80.
-    pub http_port:  u16,
+    /// Accepted but ignored; each site carries its own `listen_port` now, set
+    /// in the GUI, and a single proxy-wide HTTP port stopped meaning anything
+    /// once one EasyWAF could serve sites on several.
+    ///
+    /// Port 80 is bound unconditionally regardless of this value, because
+    /// HTTP-01 validation always arrives there.
+    #[serde(default)]
+    pub http_port:  Option<u16>,
     /// Port the management GUI redirects from, in plain HTTP. Default: 8080.
     pub gui_port:   u16,
     /// Port the management GUI is served on, over TLS. Default: 8443.
@@ -54,7 +60,14 @@ pub struct ProxyConfig {
     pub gui_tls_port: u16,
     /// Optional: path to the MaxMind GeoLite2-Country.mmdb file.
     pub geoip_db:   Option<String>,
-    /// Directory for ACME HTTP-01 challenge files.
+    /// Accepted but ignored. EasyWAF answers HTTP-01 challenges from memory,
+    /// in the proxy, before the site lookup — there is no directory to serve
+    /// them from and never was one written to.
+    ///
+    /// Kept parseable rather than removed because it is the field someone
+    /// reaches for when a certificate request fails, and a config that refuses
+    /// to load is a worse answer than one that says the setting does nothing.
+    #[serde(default)]
     pub acme_webroot: Option<String>,
 }
 
@@ -91,6 +104,21 @@ pub fn load(path: &str) -> Config {
             "config.toml still sets 'secret'. It is ignored as of 0.4.2 — the \
              cookie signing key is generated on first run and stored in the \
              database. The line can be deleted."
+        );
+    }
+    if cfg.proxy.http_port.is_some() {
+        tracing::warn!(
+            "config.toml still sets 'proxy.http_port'. It is ignored — the port a site \
+             is served on is that site's own Listen Port, set in the GUI. Port 80 is \
+             bound in any case, because Let's Encrypt validation always arrives there. \
+             The line can be deleted."
+        );
+    }
+    if cfg.proxy.acme_webroot.as_deref().is_some_and(|v| !v.trim().is_empty()) {
+        tracing::warn!(
+            "config.toml sets 'proxy.acme_webroot'. It is ignored — EasyWAF answers \
+             HTTP-01 challenges itself, in the proxy, and writes no files. Nothing needs \
+             to serve a directory. The line can be deleted."
         );
     }
     if cfg.database_url.is_some() {

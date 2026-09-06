@@ -8,21 +8,45 @@ Version bumps and tags are created only after explicit approval.
 
 ## [Unreleased]
 
+### Changed
+- **Port 80 is now bound whether or not a site asks for it.** HTTP-01
+  validation always arrives there and cannot be pointed elsewhere, so binding
+  only the ports sites happened to declare meant a certificate could be
+  requested for a name nothing on the host would ever answer for. The CA's
+  connection was refused by the operating system before EasyWAF saw it, and the
+  only symptom was a timeout.
+
+  The listener adds an ACME responder, not a new way in: a request to port 80
+  for a hostname no site claims is answered exactly as on any other port — 404,
+  or the maintenance page for a site that is switched off.
+
+  **A bind failure is not fatal.** Something else may already hold port 80, or
+  the process may lack `CAP_NET_BIND_SERVICE`. Sites on other ports carry on,
+  and the error says what stops working — issuance and renewal — because that
+  consequence otherwise shows up much later and looks like a certificate fault
+  rather than a bind one.
+
+  The GUI no longer warns that a site not on port 80 cannot be validated. It
+  was true, and is not any more.
+
+- **`proxy.http_port` and `proxy.acme_webroot` are accepted but ignored**, with
+  a warning at startup naming each. Neither had been read for some time:
+  a site is served on its own Listen Port, and ACME challenges are answered
+  from memory in the proxy with no directory involved. `acme_webroot` in
+  particular is the setting someone reaches for when a certificate request
+  fails, and it did nothing.
+
 ### Fixed
 - **A certificate request that timed out now says what timed out.** HTTP-01
   validation failing produced `instant-acme`'s bare timeout, which sends people
   to check DNS — usually not the cause.
 
   EasyWAF knows two things the message never used: whether it served the
-  challenge token, and whether anything of its own is listening on port 80.
-  **Port 80 is bound only when an enabled site has `listen_port = 80`** — there
-  is no listener otherwise — so a certificate can be requested for a name that
-  nothing on this host will ever answer for, and the CA's request is refused by
-  the operating system before EasyWAF sees it.
+  challenge token, and whether its own port 80 listener actually came up.
 
-  The three cases now read differently: nothing bound on 80, bound but never
-  asked, and served-then-refused. They have unrelated causes and used to share
-  one word.
+  The three cases now read differently — the listener never bound, it is up but
+  was never asked, and the token was served and refused anyway. They have
+  unrelated causes and used to share one word.
 
 ## [0.6.0] — 2026-09-06
 

@@ -30,7 +30,7 @@ use axum::{
 };
 use reqwest::Client;
 use sqlx::SqlitePool;
-use std::{collections::{HashMap, HashSet}, net::SocketAddr, sync::Arc, time::Instant};
+use std::{collections::{HashMap, HashSet}, net::SocketAddr, sync::Arc, sync::OnceLock, sync::RwLock, time::Instant};
 use axum_server::tls_rustls::RustlsConfig;
 use tokio::{net::TcpListener, sync::mpsc};
 
@@ -59,6 +59,33 @@ const HOP_HEADERS: &[&str] = &[
 pub struct BindRequest {
     pub port: u16,
     pub tls:  bool,
+}
+
+/// The port HTTP-01 validation always arrives on. Fixed by RFC 8555: a CA
+/// will not be redirected to another port for the first request, so a
+/// certificate cannot be obtained without something answering here.
+pub const ACME_PORT: u16 = 80;
+
+/// Ports with a listener that actually came up, as opposed to one that was
+/// asked for.
+///
+/// A bind can fail after the request — the port is already in use, or the
+/// process lacks CAP_NET_BIND_SERVICE for a privileged one — and the two are
+/// indistinguishable from the request side. The difference is the whole
+/// explanation when a certificate validation never arrives, so it is recorded
+/// where the bind succeeds rather than where it is wished for.
+static LISTENING: OnceLock<RwLock<HashSet<BindRequest>>> = OnceLock::new();
+
+fn listening() -> &'static RwLock<HashSet<BindRequest>> {
+    LISTENING.get_or_init(Default::default)
+}
+
+/// Whether a plain-HTTP listener is up on `port`.
+pub fn is_listening_plain(port: u16) -> bool {
+    listening()
+        .read()
+        .map(|l| l.contains(&BindRequest { port, tls: false }))
+        .unwrap_or(false)
 }
 
 // ─── ProxyState ──────────────────────────────────────────
@@ -110,13 +137,28 @@ pub async fn start(state: ProxyState, mut port_rx: mpsc::Receiver<BindRequest>) 
     let mut bound: HashSet<BindRequest> = HashSet::new();
 
     // Bind every port that is configured in the DB at startup.
-    let initial = get_listen_ports(&state.db).await;
+    let mut initial = get_listen_ports(&state.db).await;
     if initial.is_empty() {
         tracing::warn!(
-            "No enabled sites found at startup — proxy is not listening on any port. \
+            "No enabled sites found at startup — no site is being proxied yet. \
              Create a site in the GUI to begin proxying."
         );
     }
+
+    // Port 80 is bound whether or not a site asks for it, because HTTP-01
+    // validation always arrives there and a certificate cannot be obtained
+    // without an answer. Binding it only when a site happened to use it meant
+    // a certificate could be requested for a name nothing on this host would
+    // ever answer for, and the only symptom was the CA timing out.
+    //
+    // A request to it for a hostname no site claims is answered exactly as it
+    // would be on any other port: 404, or the maintenance page for a site that
+    // is switched off. The listener adds an ACME responder, not a new way in.
+    let acme_bind = BindRequest { port: ACME_PORT, tls: false };
+    if !initial.contains(&acme_bind) {
+        initial.push(acme_bind);
+    }
+
     for req in initial {
         if bound.insert(req) {
             spawn_listener(state.clone(), req);
@@ -214,11 +256,29 @@ async fn start_on_port(state: ProxyState, port: u16) {
     let listener = match TcpListener::bind(&addr).await {
         Ok(l)  => l,
         Err(e) => {
-            tracing::error!(port, "Failed to bind proxy port: {}", e);
+            // Port 80 is bound for everyone now, so failing to get it is a
+            // normal thing to hit — something else already has it, or the
+            // process lacks CAP_NET_BIND_SERVICE. Worth saying what stops
+            // working, because the consequence shows up much later and looks
+            // like a certificate problem rather than a bind one.
+            if port == ACME_PORT {
+                tracing::error!(
+                    port,
+                    "Failed to bind port {port}: {e}. Let's Encrypt validation always \
+                     arrives on port {port}, so certificates cannot be issued or renewed \
+                     until whatever holds it is stopped, or port {port} is forwarded to a \
+                     port EasyWAF does listen on. Sites on other ports are unaffected."
+                );
+            } else {
+                tracing::error!(port, "Failed to bind proxy port: {}", e);
+            }
             return;
         }
     };
 
+    if let Ok(mut l) = listening().write() {
+        l.insert(BindRequest { port, tls: false });
+    }
     tracing::info!("Proxy listening on http://{}", addr);
 
     let app = Router::new()
@@ -267,6 +327,9 @@ async fn start_tls_on_port(state: ProxyState, port: u16) {
         }
     };
 
+    if let Ok(mut l) = listening().write() {
+        l.insert(BindRequest { port, tls: true });
+    }
     tracing::info!(profile = profile.as_str(), "Proxy listening on https://{}", addr);
 
     let app = Router::new()

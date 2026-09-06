@@ -5,9 +5,11 @@
 # neither is configured here. The database path defaults to ./easywaf.db and can
 # be overridden with the DATABASE_URL environment variable.
 
+# Sites are served on the ports they are given in the GUI, one Listen Port per
+# site — there is no proxy-wide HTTP port. Port 80 is bound in any case, because
+# Let's Encrypt validation always arrives there.
+
 [proxy]
-http_port  = 8081        # HTTP reverse proxy port (use 80 in production)
 gui_port   = 8080        # Management GUI: plain HTTP, redirects to gui_tls_port
 gui_tls_port = 8443      # Management GUI: served here, over TLS
 geoip_db   = ""          # Path to GeoLite2-Country.mmdb (leave empty to disable)
-acme_webroot = ""        # Path for ACME HTTP-01 challenge files
