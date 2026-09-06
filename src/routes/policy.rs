@@ -82,6 +82,51 @@ pub async fn post_apply_rule_update(
     }
 }
 
+// ─── post_remove_rule_set ────────────────────────────────
+
+/// POST /policy/{name}/rules/remove/{set_id} — take a set out of a policy.
+///
+/// This removes protection, so it says exactly what it did: how many rules
+/// went, and how many of your own were kept. "Removed" on its own would leave
+/// someone wondering whether their custom rules went with it.
+pub async fn post_remove_rule_set(
+    State(state): State<AppState>,
+    jar: SignedCookieJar,
+    Path((name, set_id)): Path<(String, String)>,
+) -> Result<Response> {
+    if get_session(&jar).is_none() {
+        return Ok(Redirect::to("/login").into_response());
+    }
+
+    let policy_id: Option<i64> =
+        sqlx::query_scalar!(r#"SELECT id as "id!" FROM policies WHERE name = ?"#, name)
+            .fetch_optional(&state.db)
+            .await?;
+    let Some(policy_id) = policy_id else {
+        return flash_redirect("/policy", "failed", "No such policy");
+    };
+
+    let back = format!("/policy/{}/rules/sets", urlencoding::encode(&name));
+
+    let (removed, clones) =
+        crate::routes::rules::uninstall_set(&state.db, policy_id, &set_id).await?;
+
+    if removed == 0 && clones == 0 {
+        return flash_redirect(&back, "failed", &format!("{set_id} was not installed"));
+    }
+
+    let msg = match clones {
+        0 => format!("Removed {set_id} — {removed} rules deleted"),
+        1 => format!(
+            "Removed {set_id} — {removed} rules deleted, 1 rule you cloned from it kept"
+        ),
+        n => format!(
+            "Removed {set_id} — {removed} rules deleted, {n} rules you cloned from it kept"
+        ),
+    };
+    flash_redirect(&back, "success", &msg)
+}
+
 // ─── get_rule_sets ───────────────────────────────────────
 
 /// GET /policy/{name}/rules/sets — every rule set the channel offers, and what

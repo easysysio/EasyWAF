@@ -658,6 +658,63 @@ pub async fn install_set(
     Ok(touched)
 }
 
+// ─── uninstall_set ───────────────────────────────────────
+
+/// Remove a rule set from a policy. Returns (rules removed, clones kept).
+///
+/// The mirror of `install_set`, and deliberately not a mirror of everything it
+/// wrote. Two things survive:
+///
+/// **Clones.** A clone is an ordinary custom rule that happens to record where
+/// it came from; the operator wrote it, an update never touches it, and neither
+/// does this. Deleting someone's own rule because it was once copied from a set
+/// they are removing would be the most surprising thing this button could do.
+///
+/// **Their provenance.** A surviving clone keeps `rule_set` and
+/// `cloned_from_*`, so reinstalling the set later resumes telling it when the
+/// original has moved on. The columns describe where the rule came from, which
+/// is still true after the set is gone.
+///
+/// Rules the operator disabled go with the set. Disabling one is a decision
+/// about a set that is installed; removing the set answers that question at a
+/// level above it.
+pub async fn uninstall_set(
+    db: &SqlitePool,
+    policy_id: i64,
+    set_id: &str,
+) -> Result<(usize, usize)> {
+    // `external_id IS NOT NULL` is what separates the two: an imported rule has
+    // one, a clone has it cleared precisely so that updates ignore it.
+    let clones: i64 = sqlx::query_scalar!(
+        r#"SELECT COUNT(*) as "n!: i64" FROM waf_rules
+           WHERE policy_id = ? AND rule_set = ? AND external_id IS NULL"#,
+        policy_id, set_id
+    )
+    .fetch_one(db)
+    .await?;
+
+    let removed = sqlx::query!(
+        "DELETE FROM waf_rules
+         WHERE policy_id = ? AND rule_set = ? AND external_id IS NOT NULL",
+        policy_id, set_id
+    )
+    .execute(db)
+    .await?
+    .rows_affected();
+
+    // The policy no longer holds it, so it stops being something to update and
+    // becomes something to install again.
+    sqlx::query!(
+        "DELETE FROM policy_rule_sets WHERE policy_id = ? AND set_id = ?",
+        policy_id, set_id
+    )
+    .execute(db)
+    .await?;
+
+    tracing::info!(policy_id, set_id, removed, clones, "Uninstalled a rule set");
+    Ok((removed as usize, clones as usize))
+}
+
 // ─── record_installed_set ────────────────────────────────
 
 /// Note that a policy now holds a version of a set.

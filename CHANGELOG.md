@@ -30,6 +30,16 @@ Version bumps and tags are created only after explicit approval.
   the channel*, because its rules are still installed and still refusing
   traffic. Hiding it would make rules that are enforcing invisible.
 
+  **A set can also be removed.** Its rules are deleted and the policy stops
+  holding it, so it appears as installable again. Two things survive: rules you
+  cloned from it, because a clone is your own rule that happens to record where
+  it came from, and their provenance — reinstall the set later and they resume
+  telling you when the original has moved on. Rules you had disabled go with
+  the set; disabling one is a decision about a set you are keeping.
+
+  The message says how many rules went and how many of yours were kept.
+  "Removed" alone would leave you wondering whether your custom rules went too.
+
   The update notice on the Policy Manager now links here rather than applying
   in place. Installing, updating and seeing what a policy holds were three
   different places; the notice was an action that existed only on whichever

@@ -127,6 +127,15 @@
                                         <i class="fa fa-arrow-circle-up"></i> Update
                                     </button>
                                 </form>
+                                <form method="post"
+                                      action="/policy/{{ policy_name }}/rules/remove/{{ s.id }}"
+                                      onsubmit="return confirm('Remove {{ s.id }} from policy {{ policy_name }}?\n\nThis deletes its {{ s.rules }} rules and stops that protection for every site using this policy.\n\nRules you cloned from it are kept. You can install it again from this page.');"
+                                      style="display:inline; margin-left:6px">
+                                    <button type="submit" class="btn btn-danger btn-xs"
+                                            title="Delete this set's rules and stop holding it">
+                                        <i class="fa fa-trash"></i> Remove
+                                    </button>
+                                </form>
 
                                 {% elif s.status == "current" %}
                                 <span class="text-success"><i class="fa fa-check"></i> up to date</span>
@@ -139,11 +148,29 @@
                                         Reinstall
                                     </button>
                                 </form>
+                                <form method="post"
+                                      action="/policy/{{ policy_name }}/rules/remove/{{ s.id }}"
+                                      onsubmit="return confirm('Remove {{ s.id }} from policy {{ policy_name }}?\n\nThis deletes its {{ s.rules }} rules and stops that protection for every site using this policy.\n\nRules you cloned from it are kept. You can install it again from this page.');"
+                                      style="display:inline; margin-left:6px">
+                                    <button type="submit" class="btn btn-danger btn-xs"
+                                            title="Delete this set's rules and stop holding it">
+                                        <i class="fa fa-trash"></i> Remove
+                                    </button>
+                                </form>
 
                                 {% else %}
                                 <span class="text-muted" title="Installed, but the channel no longer publishes it">
                                     <i class="fa fa-question-circle"></i> not in the channel
                                 </span>
+                                <form method="post"
+                                      action="/policy/{{ policy_name }}/rules/remove/{{ s.id }}"
+                                      onsubmit="return confirm('Remove {{ s.id }} from policy {{ policy_name }}?\n\nThis deletes its {{ s.rules }} rules and stops that protection for every site using this policy.\n\nRules you cloned from it are kept. You can install it again from this page.');"
+                                      style="display:inline; margin-left:6px">
+                                    <button type="submit" class="btn btn-danger btn-xs"
+                                            title="Delete this set's rules and stop holding it">
+                                        <i class="fa fa-trash"></i> Remove
+                                    </button>
+                                </form>
                                 {% endif %}
                             </td>
                         </tr>
