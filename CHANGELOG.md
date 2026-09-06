@@ -71,6 +71,24 @@ Version bumps and tags are created only after explicit approval.
   error is worse than no checkbox. Ticking it disables the certificate picker,
   since the issued certificate is what gets assigned.
 
+### Fixed
+- **Requesting a certificate said nothing, either way.** The site page's
+  Request Certificate button redirected back to the site page with a message
+  attached — and that page never read it or displayed it. The same was true of
+  the certificate upload form: a rejected key pair sent you back to a blank
+  form with no explanation.
+
+  So a certificate request that the CA refused was indistinguishable from a
+  button that did nothing. Issuing works until it doesn't — a rate limit, a
+  hostname that stopped resolving here, a port 80 that closed — and at that
+  point EasyWAF simply stopped producing certificates without saying why.
+  Both pages now show the result, success or failure, including what the CA
+  actually said.
+
+  **And a failed issuance is now logged.** It previously existed only as a
+  flash message, so a page that dropped one turned the whole attempt into
+  silence — nothing on screen and nothing in the log to look up afterwards.
+
 ### Changed
 - **Settings is organised into tabs** — General, TLS, Proxy, Rule Updates —
   rather than six panels down one page. Rule Updates made the sixth, and a

@@ -294,6 +294,7 @@ pub async fn get_site_edit(
     State(state): State<AppState>,
     jar: SignedCookieJar,
     Path(name): Path<String>,
+    Query(flash): Query<FlashQuery>,
 ) -> Result<Response> {
     let session = match get_session(&jar) {
         Some(s) => s,
@@ -310,6 +311,11 @@ pub async fn get_site_edit(
     ctx.insert("site",      &site);
     ctx.insert("policies",  &policies);
     ctx.insert("certs",     &fetch_certs(&state).await?);
+    // Requesting a certificate redirects back here. Without this the page came
+    // back looking exactly as it did before, whether the CA had issued one or
+    // refused — which is indistinguishable from the button doing nothing.
+    ctx.insert("result",    &flash.result.unwrap_or_default());
+    ctx.insert("msg",       &flash.msg.unwrap_or_default());
 
     Ok((jar, Html(state.tera.render("site_settings.html", &ctx)?)).into_response())
 }

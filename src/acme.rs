@@ -275,7 +275,17 @@ pub async fn issue_and_store(
     domain: &str,
     cert_name: &str,
 ) -> Result<i64> {
-    let (cert_pem, key_pem) = issue(db, domain).await?;
+    // Logged here rather than left to the caller. A failed request used to
+    // leave no record at all: the error became a flash message, and a page
+    // that did not render one turned the whole attempt into silence. The log
+    // is the one place that survives whatever the browser does next.
+    let (cert_pem, key_pem) = match issue(db, domain).await {
+        Ok(pair) => pair,
+        Err(e)   => {
+            tracing::warn!(domain, cert_name, error = %e, "ACME issuance failed");
+            return Err(e);
+        }
+    };
 
     // Dates come from the certificate itself rather than from an assumption
     // about validity periods, so renewal later acts on what the CA issued.

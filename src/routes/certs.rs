@@ -87,6 +87,7 @@ pub async fn get_certs(
 pub async fn get_cert_new(
     State(state): State<AppState>,
     jar: SignedCookieJar,
+    Query(flash): Query<FlashQuery>,
 ) -> Result<Response> {
     let session = match get_session(&jar) {
         Some(s) => s,
@@ -97,6 +98,11 @@ pub async fn get_cert_new(
     ctx.insert("username", &session.username);
     ctx.insert("title",    "Add Certificate");
     ctx.insert("url",      "/certs");
+    // A rejected pair redirects back here. Without this the form returned
+    // blank and said nothing, so an unusable certificate looked like a save
+    // that had simply not happened.
+    ctx.insert("result",   &flash.result.unwrap_or_default());
+    ctx.insert("msg",      &flash.msg.unwrap_or_default());
 
     Ok((jar, Html(state.tera.render("cert_create.html", &ctx)?)).into_response())
 }
