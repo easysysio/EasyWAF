@@ -24,14 +24,14 @@ Current allocation:
 
 | Range | Set | File |
 |---|---|---|
-| 913xxx | Scanner and automated tool detection | `913-scanners.toml` |
-| 920xxx | Protocol enforcement | `920-protocol.toml` |
-| 930xxx | Local file inclusion | `930-lfi.toml` |
-| 931xxx | Remote file inclusion | `931-rfi.toml` |
-| 932xxx | Remote code execution | `932-rce.toml` |
-| 933xxx | PHP injection | `933-php.toml` |
-| 941xxx | Cross-site scripting | `941-xss.toml` |
-| 942xxx | SQL injection | `942-sqli.toml` |
+| 913xxx | Scanner and automated tool detection | `913-scanners.rules.toml` |
+| 920xxx | Protocol enforcement | `920-protocol.rules.toml` |
+| 930xxx | Local file inclusion | `930-lfi.rules.toml` |
+| 931xxx | Remote file inclusion | `931-rfi.rules.toml` |
+| 932xxx | Remote code execution | `932-rce.rules.toml` |
+| 933xxx | PHP injection | `933-php.rules.toml` |
+| 941xxx | Cross-site scripting | `941-xss.rules.toml` |
+| 942xxx | SQL injection | `942-sqli.rules.toml` |
 
 CRS itself occupies up to roughly 980000, so **EasyWAF-specific sets that have
 no CRS counterpart — WordPress, and whatever follows — must be allocated a band
@@ -40,7 +40,7 @@ at authoring time is a band that will eventually collide with CRS as CRS grows.
 
 Two corrections were made while only this repository held the data:
 
-* `931100` in `932-rce.toml` became `932012`. An RCE rule carrying an RFI id.
+* `931100` in `932-rce.rules.toml` became `932012`. An RCE rule carrying an RFI id.
 * `990xxx` scanner rules became `913xxx`, CRS's actual scanner-detection
   category, and the file was renamed to match.
 

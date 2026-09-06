@@ -591,7 +591,19 @@ struct RuleFileDef {
 
 // ─── post_import_rules ───────────────────────────────────
 
-/// Read every *.toml file from the rules/ directory and insert any rule
+/// Whether a path is a rule set: `<something>.rules.toml`.
+///
+/// The double extension is deliberate. `.rules` says what the file is — which
+/// matters most once sets are published and downloaded on their own — while
+/// `.toml` keeps editors highlighting and validating it, which matters when
+/// the content is regular expressions being edited by hand.
+fn is_rule_file(path: &std::path::Path) -> bool {
+    path.file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| n.ends_with(".rules.toml"))
+}
+
+/// Read every *.rules.toml file from the rules/ directory and insert any rule
 /// whose external_id is not yet present for this policy.
 /// This makes repeated imports fully idempotent — safe to run many times.
 pub async fn post_import_rules(
@@ -613,7 +625,7 @@ pub async fn post_import_rules(
     .await?
     .ok_or_else(|| AppError::NotFound(format!("Policy '{}' not found", policy_name)))?;
 
-    // Read all .toml files from the rules/ directory.
+    // Read all rule sets from the rules/ directory.
     let rules_dir = std::path::Path::new("rules");
     if !rules_dir.exists() {
         tracing::warn!("rules/ directory not found — nothing imported");
@@ -634,8 +646,10 @@ pub async fn post_import_rules(
 
         let path = entry.path();
 
-        // Only process .toml files.
-        if path.extension().and_then(|s| s.to_str()) != Some("toml") {
+        // Only rule sets. The suffix is checked whole rather than by extension,
+        // so an unrelated .toml dropped into the directory is not parsed as
+        // rules and silently imported.
+        if !is_rule_file(&path) {
             continue;
         }
 
@@ -739,6 +753,15 @@ pub struct CatalogCategory {
     pub rules:       Vec<CatalogRule>,
 }
 
+/// The set name from a rule file path: `942-sqli.rules.toml` → `942-sqli`.
+fn rule_set_stem(path: &std::path::Path) -> String {
+    path.file_name()
+        .and_then(|n| n.to_str())
+        .and_then(|n| n.strip_suffix(".rules.toml"))
+        .unwrap_or("")
+        .to_string()
+}
+
 /// Derive a friendly (code, title) pair from a rule file stem like
 /// "942-sqli" → ("942", "SQL Injection").
 fn category_title(file_stem: &str) -> (String, String) {
@@ -773,7 +796,7 @@ fn read_rule_defs() -> HashMap<i64, RuleFileDef> {
     if let Ok(entries) = std::fs::read_dir(dir) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.extension().and_then(|s| s.to_str()) != Some("toml") {
+            if !is_rule_file(&path) {
                 continue;
             }
             let content = match std::fs::read_to_string(&path) {
@@ -803,7 +826,7 @@ pub fn read_catalog_categories(existing: &HashSet<i64>) -> Result<Vec<CatalogCat
         return Ok(categories);
     }
 
-    // Collect and sort .toml files so categories appear in a stable order.
+    // Collect and sort rule sets so categories appear in a stable order.
     let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(dir)
         .map_err(|e| AppError::Internal(format!("Cannot read rules dir: {}", e)))?
         .filter_map(|e| e.ok().map(|e| e.path()))
@@ -812,11 +835,9 @@ pub fn read_catalog_categories(existing: &HashSet<i64>) -> Result<Vec<CatalogCat
     files.sort();
 
     for path in files {
-        let stem = path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("")
-            .to_string();
+        // file_stem() leaves the ".rules" of "942-sqli.rules.toml" behind, which
+        // would make the category read "sqli.rules" instead of "SQL Injection".
+        let stem = rule_set_stem(&path);
 
         let content = match std::fs::read_to_string(&path) {
             Ok(s)  => s,

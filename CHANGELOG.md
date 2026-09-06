@@ -8,6 +8,18 @@ Version bumps and tags are created only after explicit approval.
 
 ## [Unreleased]
 
+### Changed
+- Rule set files are named `<band>-<slug>.rules.toml` rather than
+  `<band>-<slug>.toml`, and only files with that suffix are loaded. `.rules`
+  says what the file is — which matters once sets are published and downloaded
+  on their own — while `.toml` keeps editors highlighting and validating them,
+  which matters when the content is regular expressions edited by hand. A
+  stray `.toml` in the rules directory is now ignored instead of being parsed
+  as a rule set.
+
+  The sets themselves now live in the `EasyWAF-rules` repository, which is the
+  source of truth; what ships here is a snapshot of it.
+
 ### Fixed
 - **Stray empty boxes beside the table pagination**, on Sites, Certificates,
   Policies and Traffic Monitor. With DataTables' Bootstrap integration
