@@ -6,7 +6,36 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
-## [Unreleased]
+## [0.6.3] — 2026-09-06
+
+**Five fixes, all found by using 0.6.2 rather than by reading it.**
+
+The one to upgrade for: **uploading a certificate under a name that already
+existed silently detached it from every site using it**, because the row was
+replaced rather than updated and `sites.cert_id` is `ON DELETE SET NULL`. That
+is the manual-renewal path — what you do when a purchased certificate is about
+to expire, which is the worst possible moment for a site to quietly stop
+serving HTTPS. The upload also never rebuilt the SNI map, so a replacement was
+not served until a restart.
+
+Certificate requests no longer fail on a slow CA: the poll gave up after 30
+seconds, and Let's Encrypt under load takes longer. And when one does fail, the
+CA's own explanation is reported instead of a guess — a timeout used to claim
+the CA had "not accepted the answer", which a timeout cannot know.
+
+The **Rule Sets** page added in 0.6.1 is now reachable from the Policy Manager.
+It previously had one durable entry point buried inside a policy's rules page.
+
+**Upgrading is enough.**
+
+### Known gap
+
+An installation upgraded from 0.5.x or earlier has rules but no record of which
+*sets* they came from — migration 015 added the tracking without backfilling
+it. Such a policy shows every set as installable and is never offered an
+update. Pressing **Install** once per set adopts the rules already there
+(no duplicates, disabled rules stay disabled) and puts updates back in play.
+A migration to do this automatically has not been written yet.
 
 ### Fixed
 - **The Rule Sets page was almost unreachable.** It had two entry points: a
