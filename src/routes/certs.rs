@@ -134,15 +134,58 @@ pub async fn post_cert_create(
     // Parse the certificate to extract metadata.
     let (domain, not_before, not_after) = parse_cert_pem(&form.cert_pem);
 
+    // Whether this name is already here, and whether it was being renewed, is
+    // read before the write so the result can say what actually happened.
+    let existing = sqlx::query!(
+        r#"SELECT id as "id!", acme_domain FROM certs WHERE name = ?"#,
+        name
+    )
+    .fetch_optional(&state.db)
+    .await?;
+    let was_acme = existing
+        .as_ref()
+        .and_then(|r| r.acme_domain.as_deref())
+        .is_some_and(|d| !d.trim().is_empty());
+
+    // Updated in place, never replaced. `INSERT OR REPLACE` deletes the
+    // conflicting row and inserts a new one, which takes a new id — and
+    // sites.cert_id is ON DELETE SET NULL, so uploading a renewed certificate
+    // under its existing name silently detached it from every site using it.
+    // The only symptom was HTTPS quietly not being served after a restart.
+    //
+    // acme_domain is cleared deliberately rather than left alone. Uploading a
+    // certificate over an ACME-managed name means taking it over by hand, and
+    // leaving the column set would have the renewal task overwrite the upload
+    // a few weeks later. That was already the effect of INSERT OR REPLACE,
+    // which dropped the column by omission; now it is a decision instead of a
+    // side effect.
     sqlx::query!(
-        "INSERT OR REPLACE INTO certs (name, domain, not_before, not_after, cert_pem, key_pem)
-         VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO certs (name, domain, not_before, not_after, cert_pem, key_pem, acme_domain)
+         VALUES (?, ?, ?, ?, ?, ?, NULL)
+         ON CONFLICT(name) DO UPDATE SET
+             domain = excluded.domain, not_before = excluded.not_before,
+             not_after = excluded.not_after, cert_pem = excluded.cert_pem,
+             key_pem = excluded.key_pem, acme_domain = NULL",
         name, domain, not_before, not_after, form.cert_pem, form.key_pem,
     )
     .execute(&state.db)
     .await?;
 
-    flash_redirect("/certs", "success", &format!("Certificate {} saved successfully", name))
+    // The SNI map holds the previous PEM until rebuilt. Before this, a
+    // replaced certificate went on being served for the life of the process —
+    // which was invisible, because the upload reported success.
+    crate::tls::reload(&state.db).await?;
+
+    let msg = match (existing.is_some(), was_acme) {
+        (false, _)    => format!("Certificate {name} saved"),
+        (true, false) => format!("Certificate {name} replaced — sites using it now serve the new one"),
+        (true, true)  => format!(
+            "Certificate {name} replaced — sites using it now serve the new one, and it is \
+             no longer renewed automatically. Request it again from Let's Encrypt to put \
+             renewal back."
+        ),
+    };
+    flash_redirect("/certs", "success", &msg)
 }
 
 // ─── post_cert_delete ────────────────────────────────────

@@ -9,6 +9,29 @@ Version bumps and tags are created only after explicit approval.
 ## [Unreleased]
 
 ### Fixed
+- **Uploading a certificate under an existing name detached it from every site
+  using it.** The upload used `INSERT OR REPLACE`, which deletes the
+  conflicting row and inserts a new one with a new id. `sites.cert_id` is
+  `ON DELETE SET NULL`, so the site's certificate was silently cleared — and
+  the only symptom was HTTPS quietly not being served after the next restart,
+  long after the upload had reported success.
+
+  This is the manual-renewal path: exactly what someone does when a purchased
+  certificate is about to expire. It now updates the row in place, keeping its
+  id, so sites stay attached. (Requesting one over ACME was always correct —
+  it already upserted on the name.)
+
+  **The upload also never rebuilt the SNI map.** A replaced certificate went on
+  being served for the life of the process. Uploading now reloads, so the new
+  certificate is served immediately — verified by watching the served expiry
+  date change without a restart.
+
+  **And an upload over an ACME-managed name now stops automatic renewal**,
+  saying so. That was already the effect, by accident: `INSERT OR REPLACE`
+  dropped `acme_domain` because the column was not listed. Keeping the row
+  would have preserved it and let the renewal task overwrite the upload weeks
+  later, so it is now cleared deliberately.
+
 - **A slow certificate authority was reported as a failed validation.** The
   ACME poll used `instant-acme`'s default retry policy, which **gives up after
   30 seconds**. Let's Encrypt validates from several network vantage points and
