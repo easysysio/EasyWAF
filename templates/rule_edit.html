@@ -37,9 +37,17 @@
                 <p class="help-block">
                     <i class="fa fa-code-fork"></i>
                     Forked from imported rule <code>{{ cloned_from }}</code>{% if cloned_ver %}
-                    at version {{ cloned_ver }}{% endif %}. Nothing merges into it —
-                    this is recorded so you can tell when the set it came from has
-                    moved on.
+                    at version {{ cloned_ver }}{% endif %}. Nothing merges into it.
+                    {% if set_moved_on %}
+                    <br>
+                    <strong class="text-warning">
+                        <i class="fa fa-exclamation-triangle"></i>
+                        {% if rule_set %}<code>{{ rule_set }}</code> is{% else %}That set is{% endif %}
+                        now at version {{ set_now }}.</strong>
+                    This copy is from version {{ cloned_ver }}, so any correction made to
+                    the original since then is not in it. Compare them and decide — the
+                    original is still there, and still enforcing unless you disabled it.
+                    {% endif %}
                 </p>
                 {% endif %}
 

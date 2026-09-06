@@ -94,9 +94,11 @@ Version bumps and tags are created only after explicit approval.
   applying an update needs no comparison and has no case where the comparison
   could be wrong.
 
-  A clone records where it forked from and at which version, so an update notice
-  can say "your custom rule came from SQLi v2, the set is now v4". Nothing
-  merges — it is a nudge for a person.
+  A clone records where it forked from and at which version, and the rule's own
+  page says so: "forked from 913015 at version 1 — owasp-scanners is now at
+  version 2, so any correction made to the original since then is not in this
+  copy." Nothing merges; it is a nudge for a person, shown where that person
+  already is rather than left as two numbers on two pages to compare by hand.
 
 - **Rule sets describe themselves, and EasyWAF records what it holds.** Each
   `.rules.toml` now carries a `[set]` header with its id and version, and

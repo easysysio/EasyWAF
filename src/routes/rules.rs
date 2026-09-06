@@ -1421,7 +1421,8 @@ pub async fn get_rule_edit_global(
                 wr.external_id,
                 wr.rule_set,
                 wr.cloned_from_external_id,
-                wr.cloned_from_version
+                wr.cloned_from_version,
+                wr.policy_id as \"policy_id!\"
          FROM   waf_rules wr
          JOIN   policies  p ON p.id = wr.policy_id
          WHERE  wr.id = ?",
@@ -1452,6 +1453,31 @@ pub async fn get_rule_edit_global(
     ctx.insert("rule_set",     &r.rule_set);
     ctx.insert("cloned_from",  &r.cloned_from_external_id);
     ctx.insert("cloned_ver",   &r.cloned_from_version);
+
+    // Where the set has got to since the fork. The version was recorded at
+    // clone time precisely to answer this, and stopping at "so you can tell
+    // when the set has moved on" asks the reader to carry two numbers from two
+    // pages in their head — which is the same as not recording it.
+    let set_now: Option<i64> = match (&r.rule_set, r.cloned_from_version) {
+        (Some(set), Some(_)) => sqlx::query_scalar!(
+            "SELECT version FROM policy_rule_sets WHERE policy_id = ? AND set_id = ?",
+            r.policy_id, set
+        )
+        .fetch_optional(&state.db)
+        .await?,
+        _ => None,
+    };
+    // Decided here rather than in the template. Tera reads a compound
+    // condition mixing truthiness with a comparison as something other than
+    // what it looks like — it rendered nothing with set_now=2 and
+    // cloned_ver=1 — and a notice that silently fails to appear is worse than
+    // no notice, because the page then looks like it checked.
+    let set_moved_on = matches!(
+        (set_now, r.cloned_from_version),
+        (Some(now), Some(forked)) if now > forked
+    );
+    ctx.insert("set_now",      &set_now);
+    ctx.insert("set_moved_on", &set_moved_on);
     ctx.insert("username", &session.username);
     ctx.insert("title",    "Edit Rule");
     ctx.insert("url",      "/rules");
