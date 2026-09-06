@@ -1,0 +1,29 @@
+# Written by scripts/fetch-rules.sh — do not edit.
+# rules/ is a snapshot of the published rule channel.
+source = "http://127.0.0.1:19600"
+taken  = "2026-09-06T06:08:24Z"
+
+[[set]]
+file   = "913-scanners.rules.toml"
+sha256 = "aa0a4d33b82a5de846144ff3e2d69da0b555e71d6e6dd1fcf4efce04ebc42d00"
+[[set]]
+file   = "920-protocol.rules.toml"
+sha256 = "afb8007a6b3b9170a0b7f61decd580d7fbeb3a13609b0ca7696264200cdfa406"
+[[set]]
+file   = "930-lfi.rules.toml"
+sha256 = "2473d142da6a805c4110609a8fa58b58cecc0ba1c74a0738830dbc5506b1ba1a"
+[[set]]
+file   = "931-rfi.rules.toml"
+sha256 = "c0c6aeddf6b7b2887e5753928723d4d21d7cfd631b329520da829ed51b25a2ae"
+[[set]]
+file   = "932-rce.rules.toml"
+sha256 = "9d5b856a1496b14b8cab7fcc5271a6f540ebba911c329218800731ee87b7c4b8"
+[[set]]
+file   = "933-php.rules.toml"
+sha256 = "bad71a1f69decfe73e957f6b72684205f19aab16d880e1dd729a1f822fbbc5f7"
+[[set]]
+file   = "941-xss.rules.toml"
+sha256 = "3b8b92c960acf79cc6ffced4521eabfa049dff2e115ce1bb638e5c4a3f2a4d1f"
+[[set]]
+file   = "942-sqli.rules.toml"
+sha256 = "f89db8d5b480f5e4a9e383b7df7a0a661d6598606d8cda6633f5bfbc0e7182d9"

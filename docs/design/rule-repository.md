@@ -145,6 +145,39 @@ correction has to be shipped as SQL that rewrites the exact pattern EasyWAF
 published, matching nothing an operator has edited — which is what migration 012
 does, and which does not scale past a handful.
 
+## Bundling: basic sets, taken from the channel
+
+`sets.toml` marks each set `basic` or `optional`. Basic sets are bundled with
+every build and installed by default — protections that assume nothing about
+the application behind the proxy. Optional sets are published and updatable but
+never bundled: a set that only matters to one application, WordPress being the
+first, should not cost every deployment the matching.
+
+`scripts/fetch-rules.sh` refreshes `rules/` from the published channel, taking
+only the basic sets. It exists so the snapshot is never maintained by hand,
+which is the failure that left one copy of a rule corrected and another broken
+for four releases.
+
+Three things it does deliberately:
+
+* **Everything is fetched before anything is replaced.** A channel that fails
+  halfway leaves the working copy untouched rather than half-updated — a WAF
+  running half a rule set is worse than one running last week's.
+* **The directory is replaced wholesale, not merged.** A set withdrawn upstream,
+  because a rule in it was wrong, has to disappear here too rather than live on
+  in every subsequent build.
+* **`rules/SOURCE` records where the snapshot came from** and a SHA-256 per set,
+  so a shipped binary can be tied to exactly what it carries.
+
+**On currency versus reproducibility.** Taking the channel's current content
+means a release always ships current rules, at the cost of the same tag
+rebuilding into a different binary later. That trade is only safe because the
+result is committed and reviewed: `git diff rules/` is the gate, and a rule
+change is not one to wave through. Fetching at build time inside CI, with no
+human between the channel and the release, would mean a bad rule pushed
+upstream entering the next release unseen — and 0.5.4 is the evidence that a
+bad rule can block real traffic.
+
 ## Publishing: private repository, public channel
 
 The rules repository is private (Gitea); the update channel has to be public,

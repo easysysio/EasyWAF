@@ -9,6 +9,12 @@ Version bumps and tags are created only after explicit approval.
 ## [Unreleased]
 
 ### Changed
+- **`scripts/fetch-rules.sh`** refreshes `rules/` from the published rule
+  channel at `repo.easysys.io/easywaf/rules`, taking only the sets marked
+  `basic`. The bundled rules are a snapshot of that channel rather than a copy
+  maintained by hand — which is what left one version of a rule corrected and
+  another broken for four releases. `rules/SOURCE` records where a snapshot came
+  from and a SHA-256 per set.
 - Rule set files are named `<band>-<slug>.rules.toml` rather than
   `<band>-<slug>.toml`, and only files with that suffix are loaded. `.rules`
   says what the file is — which matters once sets are published and downloaded
