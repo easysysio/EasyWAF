@@ -6,7 +6,28 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
-## [Unreleased]
+## [0.6.1] — 2026-09-06
+
+**Two faults found by using 0.6.0 in production, and the page that finishes
+what it started.**
+
+A certificate request could sit and then fail with nothing but a timeout.
+The cause was that **port 80 was bound only when some site happened to use
+it** — HTTP-01 validation always arrives there, so a certificate could be
+requested for a name nothing on the host would ever answer for. Port 80 is now
+bound always, and a validation that does fail says which of three unrelated
+things went wrong instead of saying "timeout".
+
+**Upgrading is enough**, and it is worth doing if you use Let's Encrypt.
+Nothing to configure: port 80 is bound on start. If something else on the host
+already holds it, EasyWAF says so at startup and carries on serving everything
+else.
+
+0.6.0 could update a rule set but not install one, so `tier = "optional"` —
+sets published without being bundled — had nothing that could act on it. Each
+policy now has a **Rule Sets** page listing everything the channel publishes,
+where a set can be installed, updated, reinstalled or removed. Installing goes
+through the same signature and hash checks as an update.
 
 ### Added
 - **A Rule Sets page: browse everything the channel publishes, and install
