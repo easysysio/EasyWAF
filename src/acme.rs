@@ -260,22 +260,22 @@ pub async fn issue(db: &SqlitePool, domain: &str) -> Result<(String, String)> {
     // so the count is taken before the wait rather than inferred afterwards.
     let answered_before = answers_served();
 
-    let status = match order.poll_ready(&RetryPolicy::default()).await {
+    let status = match order.poll_ready(&validation_retry()).await {
         Ok(s) => s,
-        // A timeout here is the common failure and the least informative one:
-        // it means validation never resolved either way, which from the CA's
-        // side is indistinguishable from this host not existing.
+        // Not a rejection. A timeout means the order never reached a decision
+        // in the time allowed, which is a different thing from the CA refusing
+        // the answer, and points somewhere else entirely.
         Err(e) => {
             return Err(AppError::Internal(format!(
                 "{domain}: {e}.{}",
-                validation_diagnosis(answered_before)
+                validation_message(answers_served() > answered_before, listening_on_80(), true)
             )))
         }
     };
     if status != instant_acme::OrderStatus::Ready {
         return Err(AppError::Internal(format!(
             "{domain}: validation did not succeed (order is {status:?}).{}",
-            validation_diagnosis(answered_before)
+            validation_message(answers_served() > answered_before, listening_on_80(), false)
         )));
     }
 
@@ -283,7 +283,7 @@ pub async fn issue(db: &SqlitePool, domain: &str) -> Result<(String, String)> {
     // the private key, only the CSR built from it.
     let key_pem = order.finalize().await.map_err(acme_err)?;
     let cert_pem = order
-        .poll_certificate(&RetryPolicy::default())
+        .poll_certificate(&validation_retry())
         .await
         .map_err(acme_err)?;
 
@@ -300,40 +300,72 @@ pub async fn issue(db: &SqlitePool, domain: &str) -> Result<(String, String)> {
 /// listening on port 80. Port 80 is bound only when an enabled site has
 /// `listen_port = 80` — there is no listener otherwise — so a certificate can
 /// be requested for a name that nothing on this host will ever answer for.
-fn validation_diagnosis(answered_before: u64) -> &'static str {
-    // Whether the listener actually came up, not whether a site asked for it.
-    // Port 80 is bound unconditionally, so the only reason it is missing is
-    // that the bind failed — something else holds it, or the process could not
-    // take a privileged port.
-    let listening = crate::proxy::is_listening_plain(crate::proxy::ACME_PORT);
-
-    validation_message(answers_served() > answered_before, listening)
+fn listening_on_80() -> bool {
+    crate::proxy::is_listening_plain(crate::proxy::ACME_PORT)
 }
 
-/// The two facts, turned into the sentence an operator needs.
+/// How long to wait for the CA to decide, and to hand over the certificate.
 ///
-/// Separated from reading them so it can be tested. Getting this wrong sends
-/// someone to check DNS when the cause is a port that never came up, and a
-/// confidently wrong diagnosis costs more than none at all.
-fn validation_message(answered: bool, listening_on_80: bool) -> &'static str {
-    match (answered, listening_on_80) {
-        (true, _) => {
-            " The token was served, so the CA did reach this host: it fetched the challenge \
-             and did not accept the answer. Check that the name resolves to THIS host, and \
-             not to another one that also answers on port 80."
+/// `RetryPolicy::default()` gives up after 30 seconds, which is not enough.
+/// Let's Encrypt validates from several network vantage points and under load
+/// takes longer than that — so the default turned an ordinary slow validation
+/// into a failure, and the order often completed moments after EasyWAF had
+/// stopped looking.
+///
+/// Two minutes is a long time to hold a page open, and it is still the right
+/// trade: the alternative is telling someone their certificate failed when it
+/// did not.
+fn validation_retry() -> RetryPolicy {
+    RetryPolicy::new()
+        .initial_delay(std::time::Duration::from_millis(500))
+        .backoff(1.5)
+        .timeout(std::time::Duration::from_secs(120))
+}
+
+/// What to tell the operator about a validation that did not succeed.
+///
+/// Separated from the facts it reads so it can be tested. Getting this wrong
+/// is worse than saying nothing: the first version asserted that a timeout
+/// meant the CA had refused the answer, which sent someone looking at DNS for
+/// a host whose DNS was fine.
+///
+/// `timed_out` is the distinction that matters. A settled order that is not
+/// Ready is a decision — the CA looked and refused. A timeout is the absence
+/// of a decision, and says nothing about what the CA thought.
+fn validation_message(answered: bool, listening_on_80: bool, timed_out: bool) -> &'static str {
+    match (timed_out, answered, listening_on_80) {
+        // Waited, and the CA did fetch the token. Nothing here is known to be
+        // wrong, and the order may well have completed just after we stopped
+        // looking — which is why the advice is to try again rather than to go
+        // hunting.
+        (true, true, _) => {
+            " The token was served, so the CA reached this host and fetched the challenge — \
+             it simply had not finished validating in the time allowed. That is usually the \
+             CA being slow rather than anything being wrong here. Try again: if the \
+             authorization completed in the meantime, the retry finishes immediately."
         }
-        (false, false) => {
-            " EasyWAF is not listening on port 80 — the bind failed at startup, so nothing \
-             here could receive the validation. Something else on this host already holds \
-             port 80, or EasyWAF lacks permission to take a privileged port. The startup \
-             log says which. HTTP-01 validation always arrives on port 80; that is the \
-             protocol, not a setting."
+        (true, false, false) => {
+            " EasyWAF never served the challenge, and it is not listening on port 80 — the \
+             bind failed at startup, so nothing here could receive the validation. Something \
+             else on this host holds port 80, or EasyWAF lacks permission to take a \
+             privileged port. The startup log says which."
         }
-        (false, true) => {
+        (true, false, true) => {
             " EasyWAF is listening on port 80 but was never asked for the token, so the \
              request did not reach this host at all. Check that the name resolves here from \
-             the public internet, and that port 80 is open to it through any firewall or \
-             NAT in front."
+             the public internet, and that port 80 is open to it through any firewall or NAT \
+             in front."
+        }
+        // A settled, unsuccessful order. Here the CA really did decide.
+        (false, true, _) => {
+            " The token was served and the CA still refused it. Check that the name resolves \
+             to THIS host, and not to another one that also answers on port 80 and served a \
+             token of its own."
+        }
+        (false, false, _) => {
+            " EasyWAF was never asked for the token, so whatever the CA reached on port 80 \
+             for this name, it was not this host. Check where the name resolves from the \
+             public internet."
         }
     }
 }
@@ -630,40 +662,61 @@ mod tests {
     }
 
     #[test]
+    fn a_timeout_is_not_reported_as_a_refusal() {
+        // The distinction this whole function exists for. A timeout means the
+        // order never reached a decision; only a settled order is the CA
+        // saying no. Conflating them sent someone to check DNS that was fine.
+        let timed_out = validation_message(true, true, true);
+        let refused   = validation_message(true, true, false);
+
+        assert!(timed_out.contains("had not finished validating"));
+        assert!(timed_out.contains("Try again"), "a slow CA is retryable, and should say so");
+        assert!(!timed_out.contains("refused"), "a timeout must not claim the CA refused it");
+
+        assert!(refused.contains("still refused it"));
+        assert_ne!(timed_out, refused);
+    }
+
+    #[test]
     fn a_validation_failure_names_the_cause_it_can_see() {
-        // The bind failed: the one cause EasyWAF is certain of, and the one
-        // nobody guesses from the word "timeout".
-        let unbound = validation_message(false, false);
+        // The bind failed: the one cause EasyWAF is certain of.
+        let unbound = validation_message(false, false, true);
         assert!(unbound.contains("not listening on port 80"));
         assert!(unbound.contains("startup log"), "says where to look, not only what broke");
 
-        // Listening but never asked: the request never got here.
-        let never_arrived = validation_message(false, true);
-        assert!(never_arrived.contains("listening on port 80 but was never asked"));
+        // Listening, never asked: the request never got here.
+        let never_arrived = validation_message(false, true, true);
+        assert!(never_arrived.contains("never asked for the token"));
         assert!(never_arrived.contains("resolves here"));
 
-        // Served and still refused: something answered, possibly not us.
-        let served = validation_message(true, false);
-        assert!(served.contains("did reach this host"));
-        assert_eq!(
-            served,
-            validation_message(true, true),
-            "once the token was served, what is bound on 80 no longer explains anything"
-        );
+        // Settled without us being asked: something else answered for the name.
+        let elsewhere = validation_message(false, false, false);
+        assert!(elsewhere.contains("it was not this host"));
     }
 
     #[test]
     fn no_two_causes_share_a_message() {
         let all = [
-            validation_message(false, false),
-            validation_message(false, true),
-            validation_message(true, false),
+            validation_message(false, false, true),
+            validation_message(false, true,  true),
+            validation_message(true,  true,  true),
+            validation_message(true,  true,  false),
+            validation_message(false, false, false),
         ];
         for (i, a) in all.iter().enumerate() {
             for b in all.iter().skip(i + 1) {
                 assert_ne!(a, b, "two different causes cannot read the same");
             }
         }
+    }
+
+    #[test]
+    fn the_retry_budget_outlasts_a_slow_certificate_authority() {
+        // The default is 30s, which is inside the range Let's Encrypt takes
+        // under load — that default is what turned a slow validation into a
+        // reported failure.
+        let policy = format!("{:?}", validation_retry());
+        assert!(policy.contains("120"), "expected a 120s timeout, got {policy}");
     }
 
     #[test]

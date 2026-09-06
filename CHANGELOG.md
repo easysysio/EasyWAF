@@ -6,6 +6,28 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
+## [Unreleased]
+
+### Fixed
+- **A slow certificate authority was reported as a failed validation.** The
+  ACME poll used `instant-acme`'s default retry policy, which **gives up after
+  30 seconds**. Let's Encrypt validates from several network vantage points and
+  under load takes longer than that, so an ordinary slow validation was
+  reported as an error — and the order frequently completed moments after
+  EasyWAF had stopped looking. The budget is now 120 seconds, for the
+  certificate as well as the validation.
+
+- **And the message blamed the wrong thing.** A timeout said the CA "did not
+  accept the answer", which a timeout cannot know: an order the CA has refused
+  reaches a settled state, while a timeout is the absence of a decision. The
+  two now read differently, and the timeout says to try again — because if the
+  authorization completed in the meantime, the retry finishes immediately.
+
+  This one is worth naming as a lesson. The diagnosis added in 0.6.1 was meant
+  to replace a bare "timeout" with a cause; it replaced it with a **confident
+  and wrong** cause, which sent someone to check DNS on a host whose DNS was
+  fine. A diagnosis that guesses is worse than one that says it does not know.
+
 ## [0.6.2] — 2026-09-06
 
 **Rule set updates work on a package install again, and the binary is finally
