@@ -266,16 +266,20 @@ pub async fn issue(db: &SqlitePool, domain: &str) -> Result<(String, String)> {
         // in the time allowed, which is a different thing from the CA refusing
         // the answer, and points somewhere else entirely.
         Err(e) => {
+            let served = answers_served() > answered_before;
+            let said   = ca_explanation(&mut order).await;
             return Err(AppError::Internal(format!(
-                "{domain}: {e}.{}",
-                validation_message(answers_served() > answered_before, listening_on_80(), true)
-            )))
+                "{domain}: {e}.{said}{}",
+                validation_message(served, listening_on_80(), true)
+            )));
         }
     };
     if status != instant_acme::OrderStatus::Ready {
+        let served = answers_served() > answered_before;
+        let said   = ca_explanation(&mut order).await;
         return Err(AppError::Internal(format!(
-            "{domain}: validation did not succeed (order is {status:?}).{}",
-            validation_message(answers_served() > answered_before, listening_on_80(), false)
+            "{domain}: validation did not succeed (order is {status:?}).{said}{}",
+            validation_message(served, listening_on_80(), false)
         )));
     }
 
@@ -300,6 +304,50 @@ pub async fn issue(db: &SqlitePool, domain: &str) -> Result<(String, String)> {
 /// listening on port 80. Port 80 is bound only when an enabled site has
 /// `listen_port = 80` — there is no listener otherwise — so a certificate can
 /// be requested for a name that nothing on this host will ever answer for.
+/// What the CA itself said about each authorization, if anything.
+///
+/// Let's Encrypt records a precise reason on the challenge — the address it
+/// connected to, and what it got — and until now EasyWAF discarded all of it
+/// and substituted a guess. Its own words beat any inference made from this
+/// side of the connection, so they go first and the inference goes after.
+///
+/// Best-effort by design: this runs on a path that has already failed, and a
+/// second failure here must not replace the original error with one about
+/// fetching the explanation.
+async fn ca_explanation(order: &mut instant_acme::Order) -> String {
+    let mut notes: Vec<String> = Vec::new();
+    let mut auths = order.authorizations();
+
+    while let Some(Ok(mut authz)) = auths.next().await {
+        // The state held locally is from before the wait; the reason appears
+        // during it.
+        let _ = authz.refresh().await;
+
+        for challenge in &authz.challenges {
+            if let Some(problem) = &challenge.error
+                && let Some(detail) = &problem.detail
+            {
+                notes.push(detail.trim().to_string());
+            }
+        }
+
+        // A challenge still pending with no error is the CA saying it has not
+        // looked yet, which is worth distinguishing from having looked and
+        // said nothing.
+        if notes.is_empty() && authz.status == instant_acme::AuthorizationStatus::Pending {
+            notes.push("the authorization is still pending — the CA has not \
+                        recorded a result for it".to_string());
+        }
+    }
+
+    notes.dedup();
+    match notes.len() {
+        0 => String::new(),
+        1 => format!(" The CA said: {}.", notes[0].trim_end_matches('.')),
+        _ => format!(" The CA said: {}.", notes.join("; ").trim_end_matches('.')),
+    }
+}
+
 fn listening_on_80() -> bool {
     crate::proxy::is_listening_plain(crate::proxy::ACME_PORT)
 }

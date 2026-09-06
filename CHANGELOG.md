@@ -17,6 +17,17 @@ Version bumps and tags are created only after explicit approval.
   EasyWAF had stopped looking. The budget is now 120 seconds, for the
   certificate as well as the validation.
 
+- **The CA's own explanation is now reported.** Let's Encrypt records a precise
+  reason on the failed challenge — the address it connected to and what it got
+  back — and EasyWAF discarded all of it and substituted a guess. The
+  authorization is now re-read after a failure and whatever the CA said is put
+  in front of anything EasyWAF infers.
+
+  This is the difference between "timed out" and *"Fetching
+  http://name/.well-known/acme-challenge/…: Timeout during connect"* naming an
+  address you did not expect — which is how an AAAA record pointing somewhere
+  else is diagnosed in one step instead of several.
+
 - **And the message blamed the wrong thing.** A timeout said the CA "did not
   accept the answer", which a timeout cannot know: an order the CA has refused
   reaches a settled state, while a timeout is the absence of a decision. The
