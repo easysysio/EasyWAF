@@ -1,7 +1,7 @@
 # Design note — load balancing and upstream health
 
 Status: planned for **0.8.0** — see [roadmap.md](roadmap.md), after rule updates
-(0.7.0) and deliberately *before* backup/export (0.9.0).
+(0.6.0) and deliberately *before* backup/export (0.9.0).
 
 ## The gap
 

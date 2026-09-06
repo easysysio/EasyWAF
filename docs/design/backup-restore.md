@@ -1,7 +1,7 @@
 # Design note — backup, restore, and configuration export
 
 Status: planned for **0.9.0** — see [roadmap.md](roadmap.md), after rule
-updates (0.7.0) and load balancing (0.8.0), and before flow logs.
+updates (0.6.0) and load balancing (0.8.0), and before flow logs.
 
 ## The problem
 
@@ -112,7 +112,7 @@ appliance is worse than a failed restore, because it looks like success.
 
 ## Why 0.9.0
 
-**After 0.7.0, because 0.7.0 decides what a rule *is*.** That release makes
+**After 0.6.0, because 0.6.0 decides what a rule *is*.** That release makes
 vendor rules immutable and turns edits into clones held as custom rules. An
 export written before it would encode the current model — every rule equally
 editable — and then need reworking immediately. Exporting after it can record
@@ -129,7 +129,7 @@ displace — the logging work has a cross-repository dependency (see
 [logging.md](logging.md)) that can proceed in parallel regardless of which
 release it lands in.
 
-It is not earlier than 0.7.0 mainly because of the rule-model point above. The
+It is not earlier than 0.6.0 mainly because of the rule-model point above. The
 counter-argument is real and worth recording: every release it waits is another
 release in which a lost host means a lost configuration. If that becomes urgent
 before 0.9.0, **the snapshot half can be pulled forward on its own** — it is

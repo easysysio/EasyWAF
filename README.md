@@ -401,10 +401,10 @@ scheduled or decided — the roadmap lives in [docs/design/roadmap.md](docs/desi
   DNS provider's API. Upload a wildcard certificate instead. Validation always arrives on
   port 80, so the host must be reachable there from the internet.
 * **One account, and everyone who has it is an administrator.** No second user, no roles, no
-  read-only access. Scheduled for **0.6.0**.
+  read-only access. Scheduled for **0.7.0**.
 * **Sessions cannot be revoked.** They are stateless signed cookies, so changing a password
   does not invalidate one already issued — it expires on its own within 8 hours. Scheduled
-  with roles in **0.6.0**, which needs the same refactor.
+  with roles in **0.7.0**, which needs the same refactor.
 * **No audit log.** Nothing records who changed what. Scheduled for **0.10.0** — deliberately
   after roles, since a trail saying "admin did X" says little when every operator is `admin`.
 * **No backup, restore or configuration export.** Everything lives in one SQLite file with no

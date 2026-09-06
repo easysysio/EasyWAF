@@ -1,6 +1,6 @@
 # Design note — rule sets, the update channel, and rule numbering
 
-Status: planned for **0.7.0** — see [roadmap.md](roadmap.md). The numbering
+Status: planned for **0.6.0** — see [roadmap.md](roadmap.md). The numbering
 scheme below is in force **now**, because rule ids become public identifiers
 the moment a set is published.
 
@@ -131,7 +131,7 @@ name     = "SQL Injection"
 version  = 3
 sha256   = "…"
 size     = 20480
-requires = "0.7.0"          # minimum EasyWAF version
+requires = "0.6.0"          # minimum EasyWAF version
 url      = "sets/owasp-sqli-3.toml"
 ```
 

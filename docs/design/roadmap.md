@@ -8,8 +8,8 @@ next minor, so a release's notes stay about its feature.
 |---|---|
 | 0.4.0 | TLS termination, certificate management, self-service password change — **released 2026-09-04** |
 | 0.5.0 | ACME / Let's Encrypt (see [acme.md](acme.md)) — **released 2026-09-05** |
-| 0.6.0 | User management and roles |
-| 0.7.0 | Updating the rule sets and the country database (see [rule-repository.md](rule-repository.md)) |
+| 0.6.0 | Updating the rule sets and the country database (see [rule-repository.md](rule-repository.md)) |
+| 0.7.0 | User management and roles |
 | 0.8.0 | Load balancing across upstreams, with health checks (see [load-balancing.md](load-balancing.md)) |
 | 0.9.0 | Backup, restore and configuration export (see [backup-restore.md](backup-restore.md)) |
 | 0.10.0 | Flow logs over syslog, audit log on disk |
@@ -36,7 +36,7 @@ not yet ordered against each other.
 
 **Rule attribution — done in 0.5.5.** Traffic Monitor shows the score and
 every rule that contributed to it. Kept in mind for what follows: it is what
-makes disabling a rule, cloning it to tune (0.7.0) and allowlisting a client
+makes disabling a rule, cloning it to tune (0.6.0) and allowlisting a client
 (0.12.0) reachable in one click from the row that prompted them.
 
 **Reverse-proxy parity — WebSockets, HTTP/2, path routing, multiple
@@ -115,10 +115,31 @@ govern. One release is a marginal increase on a retrofit already sized at 40
 call sites, and the argument for roles-first is about *cost growth*, not about
 correctness, so paying slightly more later to get real traffic sooner is a
 trade worth taking once. It is not a licence to keep deferring it: everything
-after 0.6.0 assumes roles exist.
+after 0.7.0 assumes roles exist.
 
-**User management comes next, and before everything except TLS and ACME,
-because the authorization surface only grows.** There are 40 separate
+**Rule updates moved ahead of user management on 2026-09-06, reversing the
+argument below a second time.** The day EasyWAF took production traffic it
+needed two bundled rules corrected — one reading `; nc_token=` as "semicolon,
+then netcat", one calling any two adjacent percent-escapes double encoding —
+and there was no way to deliver either except a migration that rewrites rows in
+place. That works for two rules and does not scale to twenty: importing skips
+what is already present, so a corrected rule reaches nobody who has imported
+it, and every future correction would need its own migration.
+
+The rule set is also the part of EasyWAF that will be wrong most often. It is
+pattern-matching against every application anyone puts behind it, and the
+failure mode is blocking real traffic — which is worse than a missed attack for
+an operator deciding whether to trust the product. A WAF that cannot ship a
+rule fix is a WAF whose mistakes are permanent.
+
+The same cost applies as before: the authorization retrofit grows by another
+release, and rule sets, their versions and their provenance become more state
+for roles to govern. Accepted for the same reason and with the same caveat —
+everything after 0.7.0 assumes roles exist, and this is the last time that
+argument gets deferred.
+
+**User management comes next, and before everything except TLS, ACME and rule
+updates, because the authorization surface only grows.** There are 40 separate
 `get_session(&jar)` checks across the handlers today, each a binary "is anyone
 logged in". Roles turn every one into an authorization decision, which wants
 centralising into an extractor rather than 40 hand-written checks — one of
@@ -157,7 +178,7 @@ requires that second load balancer behind EasyWAF for any application running
 more than one instance, which undercuts the premise of a self-contained
 appliance.
 
-**Backup and export follow rule updates and load balancing, because 0.7.0
+**Backup and export follow rule updates and load balancing, because 0.6.0
 decides what a rule is.** That release makes vendor rules immutable and turns an edit into a clone
 held as a custom rule. An export written before it would encode the present
 model — every rule equally editable — and need reworking immediately; written
@@ -211,7 +232,7 @@ is a counter with a time window and its own state-management questions.
 
 ## What 0.1.0 already left in place
 
-The schema anticipated most of 0.4.0, 0.5.0 and 0.6.0:
+The schema anticipated most of 0.4.0, 0.5.0 and 0.7.0:
 
 * `certs` — `cert_pem`, `key_pem`, `domain`, `not_before`, `not_after`,
   `acme_domain`, `acme_expires`
@@ -238,7 +259,7 @@ survives unchanged into a multi-user world, while closing the unchangeable
 `admin`/`admin` gap now rather than two releases out. The README presently tells
 operators to firewall port 8080 as a workaround for its absence.
 
-## Constraints to settle before coding 0.6.0 (users and roles)
+## Constraints to settle before coding 0.7.0 (users and roles)
 
 **Which roles, minimally.** Two to begin with — `admin` (everything) and
 `viewer` (dashboard, traffic, the read-only pages) — adding an `operator` tier
