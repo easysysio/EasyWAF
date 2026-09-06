@@ -6,7 +6,36 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
-## [Unreleased] — 0.6.0 (rule set updates)
+## [0.6.0] — 2026-09-06
+
+**EasyWAF can now be told a rule set has been corrected, and apply it.** Until
+this release, fixing a rule meant shipping a migration that rewrote patterns in
+your database by hand — which is how one rule sat corrected in the repository
+and broken in every installation for four releases.
+
+Rule sets are now versioned and published to a signed channel. EasyWAF checks
+it, the Policy Manager shows which policies are behind, and applying is a
+button someone presses. **Nothing is ever applied on its own**: a bad rule
+applied automatically is an outage across every site using that policy, and
+0.5.4 is the evidence that a bad rule blocks real traffic.
+
+Applying keeps the decisions you made about a set. A rule you disabled because
+it blocked your traffic stays disabled through the update; rules you cloned are
+untouched. Nothing reaches the database until the manifest's signature and the
+set's hash both check out.
+
+**Upgrading is enough.** A migration adds the version tracking; policies keep
+the rules they hold and are simply told when a newer set exists.
+
+The channel is live at `repo.easysys.io/easywaf/rules`, signed with the same
+key that signs the EasySYS package repositories — fingerprint
+`82A1 264F 11C2 F278 61CF  A36E D700 3226 8BEE 7767`. That key ships with
+EasyWAF as `rules/key.gpg` and is what every update is checked against, so
+there is no second key to distribute and nothing to trust on first use.
+
+Also in this release: a fix for certificate requests that reported neither
+success nor failure, a new site being able to request its certificate while
+being created, and Settings organised into tabs.
 
 ### Added
 - **EasyWAF notices when a newer rule set is published.** It fetches the

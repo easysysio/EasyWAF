@@ -1,29 +1,45 @@
 # Written by scripts/fetch-rules.sh — do not edit.
 # rules/ is a snapshot of the published rule channel.
-source = "http://127.0.0.1:19600"
-taken  = "2026-09-06T06:08:24Z"
+source = "https://repo.easysys.io/easywaf/rules"
+taken  = "2026-09-06T15:53:55Z"
 
 [[set]]
-file   = "913-scanners.rules.toml"
-sha256 = "aa0a4d33b82a5de846144ff3e2d69da0b555e71d6e6dd1fcf4efce04ebc42d00"
+id      = "owasp-scanners"
+version = 1
+file    = "913-scanners.rules.toml"
+sha256  = "ed32843c25cdb0e930b8b0bfc2c5d52eea5c8583382012eb96874353df8b2ab6"
 [[set]]
-file   = "920-protocol.rules.toml"
-sha256 = "afb8007a6b3b9170a0b7f61decd580d7fbeb3a13609b0ca7696264200cdfa406"
+id      = "owasp-protocol"
+version = 1
+file    = "920-protocol.rules.toml"
+sha256  = "66e635d195f4ec14378c517c6ff72e9ca7dc0bbfb737425576353c05c23dd7ac"
 [[set]]
-file   = "930-lfi.rules.toml"
-sha256 = "2473d142da6a805c4110609a8fa58b58cecc0ba1c74a0738830dbc5506b1ba1a"
+id      = "owasp-lfi"
+version = 1
+file    = "930-lfi.rules.toml"
+sha256  = "14463f6d49d3b314949d34a02be46ed1f3b9012e28527b2d8a0c3886ff50819d"
 [[set]]
-file   = "931-rfi.rules.toml"
-sha256 = "c0c6aeddf6b7b2887e5753928723d4d21d7cfd631b329520da829ed51b25a2ae"
+id      = "owasp-rfi"
+version = 1
+file    = "931-rfi.rules.toml"
+sha256  = "dd73946f42bcdd4a8e2075b3092d1575dc07f8080a172eb2e18b2dad619338d7"
 [[set]]
-file   = "932-rce.rules.toml"
-sha256 = "9d5b856a1496b14b8cab7fcc5271a6f540ebba911c329218800731ee87b7c4b8"
+id      = "owasp-rce"
+version = 1
+file    = "932-rce.rules.toml"
+sha256  = "9017b1fa58a0d92de5d6077f3a8a74332376b44b2d371aa5719c593761eadce7"
 [[set]]
-file   = "933-php.rules.toml"
-sha256 = "bad71a1f69decfe73e957f6b72684205f19aab16d880e1dd729a1f822fbbc5f7"
+id      = "owasp-php"
+version = 1
+file    = "933-php.rules.toml"
+sha256  = "40115ee4eca435cc08954dbc7355f7506c85358a3e7b7bbeb5918a7d4aed4285"
 [[set]]
-file   = "941-xss.rules.toml"
-sha256 = "3b8b92c960acf79cc6ffced4521eabfa049dff2e115ce1bb638e5c4a3f2a4d1f"
+id      = "owasp-xss"
+version = 1
+file    = "941-xss.rules.toml"
+sha256  = "823c7cd6dc40079cd5ffd855e8894bdaeb8f44806edb130a87dc3e6f53f21fec"
 [[set]]
-file   = "942-sqli.rules.toml"
-sha256 = "f89db8d5b480f5e4a9e383b7df7a0a661d6598606d8cda6633f5bfbc0e7182d9"
+id      = "owasp-sqli"
+version = 1
+file    = "942-sqli.rules.toml"
+sha256  = "526a31c07a13c74190d4d1ec4031db3f0ece09e59b1f8601a803289eae2ff63c"
