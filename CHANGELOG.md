@@ -25,6 +25,36 @@ Version bumps and tags are created only after explicit approval.
   cannot reach teaches its operator to ignore the log. The last manifest is
   cached, so the notice still works offline, and the check can be turned off.
 
+- **An update can be applied, and nothing is trusted on the way in.** The
+  Policy Manager's update notice now carries a button that fetches the set and
+  installs it into that policy.
+
+  **The order is the security property.** The manifest is fetched and its
+  OpenPGP signature verified *before* anything is read from it; the set file is
+  then checked against the sha256 in that verified manifest; only if both hold
+  does a single rule reach the database. A channel that serves a modified set
+  under a valid manifest is refused by the hash, and one that serves a modified
+  manifest is refused by the signature. Verification is done in-process with
+  [`pgp`](https://crates.io/crates/pgp) — pure Rust, so it holds on an
+  installation with no `gpg` binary, which a container generally is.
+
+  **`rules/key.gpg` is the trust anchor and it ships with EasyWAF.** It is a
+  file in the repository rather than something fetched alongside the update,
+  because a key taken from the same server that serves what it signs proves
+  only that the server is self-consistent. `scripts/fetch-rules.sh` now pins it
+  the same way: it verifies against that file alone rather than the build
+  host's keyring, so a signature from any other key the builder happens to
+  trust is still a failure. On a first run against a new channel it takes the
+  key and prints the fingerprint to be confirmed once, by a person.
+
+  **Applying preserves the decisions you made about the set.** Rules are
+  overwritten in place, keeping each rule's `enabled` state and its place in the
+  policy — a rule you disabled because it blocked your traffic stays disabled
+  through the update, which is the whole reason disabling it was worth doing.
+  Clones are untouched. A rule dropped from the set is left alone rather than
+  deleted, since removing something that is currently enforcing is not a
+  decision an update should make silently.
+
 - **Imported rules are read-only; customising means cloning.** A rule that came
   from a rule set can no longer have its pattern, score, action, zone,
   description or name edited. Applying a set update overwrites every imported

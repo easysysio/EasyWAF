@@ -570,6 +570,94 @@ pub async fn seed_default_rules(state: &AppState, policy_id: i64) -> Result<()> 
     Ok(())
 }
 
+// ─── install_set ─────────────────────────────────────────
+
+/// Install a version of a rule set into a policy, replacing what it holds.
+///
+/// Every imported rule the policy holds for this set is overwritten —
+/// `pattern`, `score`, `action`, `zone`, `name`, `description` — while `id`,
+/// `enabled` and `policy_id` are preserved. That is safe unconditionally, not
+/// merely usually: an imported row cannot carry a customisation, because
+/// customising means cloning into a separate row that is no longer imported
+/// and that this never touches.
+///
+/// `enabled` surviving is the point of doing it this way rather than deleting
+/// and re-importing. An administrator who turned a noisy rule off expects it to
+/// stay off across an update; a delete-and-reimport would quietly turn it back
+/// on, which is the same class of surprise as an edit being reverted.
+///
+/// Rules new in this version are inserted. Rules the version no longer contains
+/// are left alone rather than deleted — an orphan that still matches something
+/// is less alarming than a rule vanishing from a policy without being asked.
+pub async fn install_set(
+    db: &SqlitePool,
+    policy_id: i64,
+    set_id: &str,
+    version: i64,
+    toml_text: &str,
+) -> Result<usize> {
+    let file: RuleFile = toml::from_str(toml_text)
+        .map_err(|e| AppError::Internal(format!("rule set could not be parsed: {e}")))?;
+
+    let mut touched = 0usize;
+    for rule in &file.rules {
+        let description = rule.description.clone().unwrap_or_default();
+
+        let existing: Option<i64> = sqlx::query_scalar!(
+            r#"SELECT id as "id!" FROM waf_rules
+               WHERE policy_id = ? AND external_id = ?"#,
+            policy_id, rule.id
+        )
+        .fetch_optional(db)
+        .await?;
+
+        match existing {
+            Some(id) => {
+                sqlx::query!(
+                    "UPDATE waf_rules
+                     SET name = ?, description = ?, zone = ?, pattern = ?,
+                         score = ?, action = ?, rule_set = ?,
+                         imported_pattern = ?, imported_score = ?, imported_action = ?
+                     WHERE id = ?",
+                    rule.name, description, rule.zone, rule.pattern,
+                    rule.score, rule.action, set_id,
+                    rule.pattern, rule.score, rule.action, id
+                )
+                .execute(db)
+                .await?;
+            }
+            None => {
+                sqlx::query!(
+                    "INSERT INTO waf_rules
+                     (policy_id, name, description, zone, pattern, score, action,
+                      external_id, rule_set, imported_pattern, imported_score, imported_action)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    policy_id, rule.name, description, rule.zone, rule.pattern,
+                    rule.score, rule.action, rule.id, set_id,
+                    rule.pattern, rule.score, rule.action
+                )
+                .execute(db)
+                .await?;
+            }
+        }
+        touched += 1;
+    }
+
+    let name = file.set.as_ref().and_then(|s| s.name.clone()).unwrap_or_else(|| set_id.to_string());
+    sqlx::query!(
+        "INSERT INTO policy_rule_sets (policy_id, set_id, name, version, installed_at)
+         VALUES (?, ?, ?, ?, datetime('now'))
+         ON CONFLICT(policy_id, set_id) DO UPDATE SET
+             name = excluded.name, version = excluded.version,
+             installed_at = excluded.installed_at",
+        policy_id, set_id, name, version
+    )
+    .execute(db)
+    .await?;
+
+    Ok(touched)
+}
+
 // ─── record_installed_set ────────────────────────────────
 
 /// Note that a policy now holds a version of a set.

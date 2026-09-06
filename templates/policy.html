@@ -9,7 +9,7 @@
     A set is installed into a policy, so each is listed against the policy that
     holds it — one policy may be behind while another is current.
     <table class="table table-condensed" style="margin:10px 0 0 0; background:transparent">
-        <thead><tr><th>Policy</th><th>Rule set</th><th>Installed</th><th>Available</th></tr></thead>
+        <thead><tr><th>Policy</th><th>Rule set</th><th>Installed</th><th>Available</th><th></th></tr></thead>
         <tbody>
         {% for u in rule_updates %}
             <tr>
@@ -17,6 +17,14 @@
                 <td>{{ u.set_name }} <small class="text-muted">{{ u.set_id }}</small></td>
                 <td>v{{ u.have }}</td>
                 <td><strong>v{{ u.offered }}</strong></td>
+                <td>
+                    <form method="post"
+                          action="/policy/{{ u.policy_name }}/rules/update/{{ u.set_id }}"
+                          onsubmit="return confirm('Update {{ u.set_id }} to v{{ u.offered }} for policy {{ u.policy_name }}?\n\nRules you have cloned are not touched. Rules you have disabled stay disabled.');"
+                          style="display:inline">
+                        <button type="submit" class="btn btn-primary btn-xs">Update</button>
+                    </form>
+                </td>
             </tr>
         {% endfor %}
         </tbody>

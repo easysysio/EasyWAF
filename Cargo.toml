@@ -89,6 +89,7 @@ instant-acme = { version = "0.8.5", default-features = false, features = ["ring"
 hyper = { version = "1.11.1", features = ["client", "http1"] }
 hyper-util = { version = "0.1.20", features = ["tokio"] }
 http-body-util = "0.1.5"
+pgp = "0.20.0"
 
 # ─── Debian package (.deb) — cargo-deb ──────────────────────
 # Binary → /usr/bin; runtime assets → /opt/easywaf (the systemd unit sets

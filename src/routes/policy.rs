@@ -45,6 +45,41 @@ pub struct FlashQuery {
     pub msg:    Option<String>,
 }
 
+// ─── post_apply_rule_update ──────────────────────────────
+
+/// POST /policy/{name}/rules/update/{set_id} — apply one set update.
+///
+/// One policy and one set at a time, deliberately. An "update everything"
+/// button would make a single click change what several sites refuse, and the
+/// point of notifying rather than auto-applying is that the decision is small
+/// enough to think about.
+pub async fn post_apply_rule_update(
+    State(state): State<AppState>,
+    jar: SignedCookieJar,
+    Path((name, set_id)): Path<(String, String)>,
+) -> Result<Response> {
+    if get_session(&jar).is_none() {
+        return Ok(Redirect::to("/login").into_response());
+    }
+
+    let policy_id: Option<i64> =
+        sqlx::query_scalar!(r#"SELECT id as "id!" FROM policies WHERE name = ?"#, name)
+            .fetch_optional(&state.db)
+            .await?;
+
+    let Some(policy_id) = policy_id else {
+        return flash_redirect("/policy", "failed", "No such policy");
+    };
+
+    match crate::rules_update::apply(&state.db, policy_id, &set_id).await {
+        Ok(msg) => flash_redirect("/policy", "success", &msg),
+        // Reported verbatim. A refusal here is a signature that did not verify
+        // or content that did not match its hash, and paraphrasing that into
+        // "update failed" would hide the one detail worth acting on.
+        Err(e)  => flash_redirect("/policy", "failed", &format!("Update refused: {e}")),
+    }
+}
+
 // ─── get_policies ────────────────────────────────────────
 
 pub async fn get_policies(

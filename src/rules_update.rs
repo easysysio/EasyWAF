@@ -189,6 +189,114 @@ pub fn spawn_check_task(db: SqlitePool) {
     });
 }
 
+// ─── Applying ────────────────────────────────────────────
+
+/// The trust anchor: the key the channel is signed with.
+///
+/// Read from `rules/key.gpg`, which ships beside the bundled sets and is
+/// fetched by `scripts/fetch-rules.sh` — so the key arrives with the binary,
+/// reviewed by whoever cut the release, rather than from the same connection
+/// as the thing it is meant to vouch for. Fetching the key from the channel at
+/// run time would verify the channel against itself.
+fn trusted_key() -> std::result::Result<String, String> {
+    std::fs::read_to_string("rules/key.gpg").map_err(|_| {
+        "No signing key at rules/key.gpg, so nothing can be verified. It ships \
+         with EasyWAF; if this installation was built without one, take the \
+         update as a file instead."
+            .to_string()
+    })
+}
+
+/// Fetch one set, verified, and install it into a policy.
+///
+/// Order matters: the manifest is fetched and its signature checked *before*
+/// anything is read from it, and the set is checked against the hash in that
+/// verified manifest before a single rule is written. Nothing touches the
+/// database until both hold.
+pub async fn apply(db: &SqlitePool, policy_id: i64, set_id: &str) -> std::result::Result<String, String> {
+    let key = trusted_key()?;
+    let base = url(db).await;
+    let base = base.trim_end_matches('/');
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(60))
+        .build()
+        .map_err(|e| format!("{e}"))?;
+
+    let fetch = |u: String| {
+        let c = client.clone();
+        async move {
+            let r = c.get(&u).send().await.map_err(|e| format!("{u}: {e}"))?;
+            if !r.status().is_success() {
+                return Err(format!("{u}: HTTP {}", r.status()));
+            }
+            r.bytes().await.map(|b| b.to_vec()).map_err(|e| format!("{u}: {e}"))
+        }
+    };
+
+    let manifest = fetch(format!("{base}/sets.toml")).await?;
+    let signature = fetch(format!("{base}/sets.toml.asc")).await?;
+    let signature = String::from_utf8(signature).map_err(|_| "the signature is not text".to_string())?;
+
+    let signer = crate::pgp_verify::verify_detached(&key, &manifest, &signature)?;
+    let manifest = String::from_utf8(manifest).map_err(|_| "the manifest is not text".to_string())?;
+
+    // Everything below is read from a manifest whose signature has been
+    // checked, so the file name and hash are as trustworthy as the versions.
+    let entry = manifest_entry(&manifest, set_id)
+        .ok_or_else(|| format!("the channel does not offer a set called '{set_id}'"))?;
+
+    let body = fetch(format!("{base}/{}", entry.file)).await?;
+    let digest = {
+        use sha2::{Digest, Sha256};
+        Sha256::digest(&body).iter().map(|b| format!("{b:02x}")).collect::<String>()
+    };
+    if digest != entry.sha256 {
+        return Err(format!(
+            "{} does not match the signed manifest: {} rather than {}",
+            entry.file, &digest[..12], &entry.sha256.chars().take(12).collect::<String>()
+        ));
+    }
+
+    let text = String::from_utf8(body).map_err(|_| "the rule set is not text".to_string())?;
+    let count = crate::routes::rules::install_set(db, policy_id, set_id, entry.version, &text)
+        .await
+        .map_err(|e| format!("{e}"))?;
+
+    tracing::info!(policy_id, set_id, version = entry.version, rules = count,
+                   "Applied a rule set update, signed by {}", signer);
+    Ok(format!("{} updated to v{} — {} rules, signed by {}", set_id, entry.version, count, signer))
+}
+
+/// One set's entry in the manifest, including what the versions alone omit.
+struct ManifestEntry {
+    file:    String,
+    sha256:  String,
+    version: i64,
+}
+
+fn manifest_entry(manifest: &str, set_id: &str) -> Option<ManifestEntry> {
+    for block in manifest.split("[[sets]]").skip(1) {
+        let value = |key: &str| -> Option<String> {
+            block.lines().find_map(|l| {
+                let l = l.trim();
+                l.strip_prefix(key)
+                    .and_then(|r| r.trim_start().strip_prefix('='))
+                    .map(|v| v.trim().trim_matches('"').to_string())
+            })
+        };
+        if value("id").as_deref() != Some(set_id) {
+            continue;
+        }
+        return Some(ManifestEntry {
+            file:    value("file")?,
+            sha256:  value("sha256")?,
+            version: value("version")?.parse().ok()?,
+        });
+    }
+    None
+}
+
 // ─── Settings ────────────────────────────────────────────
 
 pub async fn enabled(db: &SqlitePool) -> bool {

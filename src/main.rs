@@ -18,6 +18,7 @@ mod error;
 mod forwarded;
 mod geo;
 mod modules;
+mod pgp_verify;
 mod proxy;
 mod routes;
 mod rules_update;
@@ -203,6 +204,8 @@ async fn main() {
         .route("/policy/{name}/edit",    get(routes::policy::get_policy_edit))
         .route("/policy/{name}/update",  post(routes::policy::post_policy_update))
         .route("/policy/{name}/delete",  post(routes::policy::post_policy_delete))
+        .route("/policy/{name}/rules/update/{set_id}",
+               post(routes::policy::post_apply_rule_update))
         .route("/policy/{name}/rules",                get(routes::rules::get_rules))
         .route("/policy/{name}/rules/new",            get(routes::rules::get_rule_new))
         .route("/policy/{name}/rules/create",         post(routes::rules::post_rule_create))
