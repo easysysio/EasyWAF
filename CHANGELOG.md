@@ -6,7 +6,25 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
-## [Unreleased]
+## [0.6.2] — 2026-09-06
+
+**Rule set updates work on a package install again, and the binary is finally
+self-contained.**
+
+`rules/key.gpg` — the key every rule update is verified against — was added in
+0.6.0 and never listed as a package asset. A `.deb` or `.rpm` installation
+therefore had no key, and refused every update with "No signing key at
+rules/key.gpg". The Rule Sets page listed and checked normally, so the fault
+only appeared at the moment of installing something. **Container images were
+never affected.**
+
+**Upgrade if you installed from the package repositories** and want rule
+updates. Nothing to do by hand: the key ships with this build.
+
+Templates and static assets are now compiled into the binary, so only `rules/`
+and `config.toml` are read from the working directory. A wrong working
+directory used to produce a panic or a GUI with no stylesheet rather than a
+clear failure at startup.
 
 ### Changed
 - **Templates and static assets are compiled into the binary.** EasyWAF is
