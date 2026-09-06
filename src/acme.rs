@@ -53,9 +53,26 @@ pub fn withdraw(token: &str) {
     }
 }
 
+/// How many challenge answers have been served since start.
+///
+/// Only ever compared against a snapshot taken before an order, to tell two
+/// failures apart that look identical from the CA's side: one where the
+/// validator never reached this host at all, and one where it did and refused
+/// the answer. Those have completely different causes and the operator cannot
+/// distinguish them from "timeout".
+static ANSWERS_SERVED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+pub fn answers_served() -> u64 {
+    ANSWERS_SERVED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// The answer for a token, if one is currently published.
 pub fn answer(token: &str) -> Option<String> {
-    tokens().read().ok()?.get(token).cloned()
+    let found = tokens().read().ok()?.get(token).cloned();
+    if found.is_some() {
+        ANSWERS_SERVED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+    found
 }
 
 /// A guard that withdraws its token when dropped.
@@ -239,14 +256,26 @@ pub async fn issue(db: &SqlitePool, domain: &str) -> Result<(String, String)> {
         }
     } // ends the borrow of `order` taken by authorizations()
 
-    let status = order
-        .poll_ready(&RetryPolicy::default())
-        .await
-        .map_err(acme_err)?;
+    // Whether the validator ever reached us decides what to tell the operator,
+    // so the count is taken before the wait rather than inferred afterwards.
+    let answered_before = answers_served();
+
+    let status = match order.poll_ready(&RetryPolicy::default()).await {
+        Ok(s) => s,
+        // A timeout here is the common failure and the least informative one:
+        // it means validation never resolved either way, which from the CA's
+        // side is indistinguishable from this host not existing.
+        Err(e) => {
+            return Err(AppError::Internal(format!(
+                "{domain}: {e}.{}",
+                validation_diagnosis(db, answered_before).await
+            )))
+        }
+    };
     if status != instant_acme::OrderStatus::Ready {
         return Err(AppError::Internal(format!(
-            "{domain}: validation did not succeed (order is {status:?}). Check that the \
-             name resolves to this host and that port 80 is reachable from the internet."
+            "{domain}: validation did not succeed (order is {status:?}).{}",
+            validation_diagnosis(db, answered_before).await
         )));
     }
 
@@ -261,6 +290,52 @@ pub async fn issue(db: &SqlitePool, domain: &str) -> Result<(String, String)> {
     drop(published);
     tracing::info!(domain, "Issued a certificate over ACME");
     Ok((cert_pem, key_pem))
+}
+
+/// What to tell the operator about a validation that did not succeed.
+///
+/// "Timeout" on its own sends people to check DNS, which is usually not it.
+/// EasyWAF already knows the two things that matter and neither needs asking
+/// the CA: whether it served the token, and whether anything of its own is
+/// listening on port 80. Port 80 is bound only when an enabled site has
+/// `listen_port = 80` — there is no listener otherwise — so a certificate can
+/// be requested for a name that nothing on this host will ever answer for.
+async fn validation_diagnosis(db: &SqlitePool, answered_before: u64) -> &'static str {
+    let on_80: i64 = sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM sites WHERE enabled = 1 AND listen_port = 80"
+    )
+    .fetch_one(db)
+    .await
+    .unwrap_or(0);
+
+    validation_message(answers_served() > answered_before, on_80 > 0)
+}
+
+/// The two facts, turned into the sentence an operator needs.
+///
+/// Separated from reading them so it can be tested. Getting this wrong sends
+/// someone to check DNS when the cause is a port that was never bound, and a
+/// confidently wrong diagnosis costs more than none at all.
+fn validation_message(answered: bool, listening_on_80: bool) -> &'static str {
+    match (answered, listening_on_80) {
+        (true, _) => {
+            " The token was served, so the CA did reach this host: it fetched the challenge \
+             and did not accept the answer. Check that the name resolves to THIS host, and \
+             not to another one that also answers on port 80."
+        }
+        (false, false) => {
+            " EasyWAF never served the challenge, and no enabled site listens on port 80, so \
+             nothing on this host was bound there to receive it. HTTP-01 validation always \
+             arrives on port 80 — that is the protocol, not a setting. Give a site \
+             listen_port 80, or forward port 80 to a port EasyWAF does listen on."
+        }
+        (false, true) => {
+            " EasyWAF never served the challenge, although it is listening on port 80. The \
+             request did not arrive: check that the name resolves to this host from the \
+             public internet, and that port 80 is open to it through any firewall or NAT \
+             in front."
+        }
+    }
 }
 
 /// Issue a certificate for `domain` and store it under `cert_name`.
@@ -551,6 +626,43 @@ mod tests {
             not_after: Some((Utc::now() + Duration::days(not_after_days)).to_rfc3339()),
             next_attempt: next_attempt.map(|h| (Utc::now() + Duration::hours(h)).to_rfc3339()),
             failures,
+        }
+    }
+
+    #[test]
+    fn a_validation_failure_names_the_cause_it_can_see() {
+        // Nothing bound on port 80 is the cause EasyWAF can be certain about,
+        // and the one nobody guesses from the word "timeout".
+        let unbound = validation_message(false, false);
+        assert!(unbound.contains("no enabled site listens on port 80"));
+        assert!(unbound.contains("listen_port 80"), "says how to fix it, not only what broke");
+
+        // Bound but never asked: the request never got here.
+        let never_arrived = validation_message(false, true);
+        assert!(never_arrived.contains("although it is listening on port 80"));
+        assert!(never_arrived.contains("resolves to this host"));
+
+        // Served and still refused: something answered, possibly not us.
+        let served = validation_message(true, false);
+        assert!(served.contains("did reach this host"));
+        assert_eq!(
+            served,
+            validation_message(true, true),
+            "once the token was served, what is bound on 80 no longer explains anything"
+        );
+    }
+
+    #[test]
+    fn no_two_causes_share_a_message() {
+        let all = [
+            validation_message(false, false),
+            validation_message(false, true),
+            validation_message(true, false),
+        ];
+        for (i, a) in all.iter().enumerate() {
+            for b in all.iter().skip(i + 1) {
+                assert_ne!(a, b, "two different causes cannot read the same");
+            }
         }
     }
 

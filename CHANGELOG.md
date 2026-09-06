@@ -6,6 +6,24 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
+## [Unreleased]
+
+### Fixed
+- **A certificate request that timed out now says what timed out.** HTTP-01
+  validation failing produced `instant-acme`'s bare timeout, which sends people
+  to check DNS — usually not the cause.
+
+  EasyWAF knows two things the message never used: whether it served the
+  challenge token, and whether anything of its own is listening on port 80.
+  **Port 80 is bound only when an enabled site has `listen_port = 80`** — there
+  is no listener otherwise — so a certificate can be requested for a name that
+  nothing on this host will ever answer for, and the CA's request is refused by
+  the operating system before EasyWAF sees it.
+
+  The three cases now read differently: nothing bound on 80, bound but never
+  asked, and served-then-refused. They have unrelated causes and used to share
+  one word.
+
 ## [0.6.0] — 2026-09-06
 
 **EasyWAF can now be told a rule set has been corrected, and apply it.** Until
