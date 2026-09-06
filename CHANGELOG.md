@@ -8,6 +8,33 @@ Version bumps and tags are created only after explicit approval.
 
 ## [Unreleased]
 
+### Added
+- **A Rule Sets page: browse everything the channel publishes, and install
+  it.** Each policy gets one, listing every set on the channel with what that
+  policy holds of it — install a set it does not have, update one that is
+  behind, or reinstall one at the same version.
+
+  **This is what makes `tier = "optional"` mean anything.** Sets that are
+  published but not bundled — the WordPress case the tier was designed for —
+  had no way to be installed at all: `available()` reports only sets a policy
+  already holds, because an update to something nobody installed is not news,
+  and that same rule made a set you had never installed impossible to find.
+  Adding rules in bulk otherwise meant putting a `.rules.toml` on the appliance
+  by hand and pressing Import.
+
+  Installing goes through exactly the path an update does — signature checked
+  before the manifest is read, each set checked against the SHA-256 that signed
+  manifest gives for it — so nothing is trusted more for being new.
+
+  A set the channel has **stopped** publishing is still listed, marked *not in
+  the channel*, because its rules are still installed and still refusing
+  traffic. Hiding it would make rules that are enforcing invisible.
+
+  The update notice on the Policy Manager now links here rather than applying
+  in place. Installing, updating and seeing what a policy holds were three
+  different places; the notice was an action that existed only on whichever
+  page happened to spot it.
+
 ### Changed
 - **Port 80 is now bound whether or not a site asks for it.** HTTP-01
   validation always arrives there and cannot be pointed elsewhere, so binding

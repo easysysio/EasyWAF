@@ -71,13 +71,66 @@ pub async fn post_apply_rule_update(
         return flash_redirect("/policy", "failed", "No such policy");
     };
 
+    let back = format!("/policy/{}/rules/sets", urlencoding::encode(&name));
+
     match crate::rules_update::apply(&state.db, policy_id, &set_id).await {
-        Ok(msg) => flash_redirect("/policy", "success", &msg),
+        Ok(msg) => flash_redirect(&back, "success", &msg),
         // Reported verbatim. A refusal here is a signature that did not verify
         // or content that did not match its hash, and paraphrasing that into
         // "update failed" would hide the one detail worth acting on.
-        Err(e)  => flash_redirect("/policy", "failed", &format!("Update refused: {e}")),
+        Err(e)  => flash_redirect(&back, "failed", &format!("Update refused: {e}")),
     }
+}
+
+// ─── get_rule_sets ───────────────────────────────────────
+
+/// GET /policy/{name}/rules/sets — every rule set the channel offers, and what
+/// this policy has of each.
+///
+/// One page for installing a set, updating one, and seeing what is already
+/// enforcing. Those were three different things before: updates appeared as a
+/// notice on the policy list, installing came from whatever files happened to
+/// be in `rules/` on disk, and a published set nobody had installed could not
+/// be found at all.
+pub async fn get_rule_sets(
+    State(state): State<AppState>,
+    jar: SignedCookieJar,
+    Path(name): Path<String>,
+    Query(flash): Query<FlashQuery>,
+) -> Result<Response> {
+    let session = match get_session(&jar) {
+        Some(s) => s,
+        None    => return Ok(Redirect::to("/login").into_response()),
+    };
+
+    let policy_id: Option<i64> =
+        sqlx::query_scalar!(r#"SELECT id as "id!" FROM policies WHERE name = ?"#, name)
+            .fetch_optional(&state.db)
+            .await?;
+    let Some(policy_id) = policy_id else {
+        return flash_redirect("/policy", "failed", "No such policy");
+    };
+
+    let sets = crate::rules_update::catalog(&state.db, policy_id).await?;
+    let (checked, error) = crate::rules_update::status(&state.db).await;
+
+    let mut ctx = Context::new();
+    ctx.insert("username",    &session.username);
+    ctx.insert("title",       "Rule Sets");
+    ctx.insert("url",         "/policy");
+    ctx.insert("policy_name", &name);
+    ctx.insert("sets",        &sets);
+    // An empty list means one of two very different things — the channel has
+    // never been reached, or it genuinely offers nothing — and the page has to
+    // say which.
+    ctx.insert("checked",       &checked.unwrap_or_default());
+    ctx.insert("check_error",   &error.unwrap_or_default());
+    ctx.insert("update_count",  &sets.iter().filter(|s| s.status == "update").count());
+    ctx.insert("channel",       &crate::rules_update::url(&state.db).await);
+    ctx.insert("result",        &flash.result.unwrap_or_default());
+    ctx.insert("msg",           &flash.msg.unwrap_or_default());
+
+    Ok((jar, Html(state.tera.render("policy_rule_sets.html", &ctx)?)).into_response())
 }
 
 // ─── get_policies ────────────────────────────────────────

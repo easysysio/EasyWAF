@@ -38,10 +38,13 @@ pub const DEFAULT_URL: &str = "https://repo.easysys.io/easywaf/rules";
 /// One set as the channel offers it.
 #[derive(Debug, Clone, Serialize)]
 pub struct OfferedSet {
-    pub id:      String,
-    pub name:    String,
-    pub version: i64,
-    pub tier:    String,
+    pub id:          String,
+    pub name:        String,
+    pub version:     i64,
+    pub tier:        String,
+    /// Empty when the channel does not carry one. Older channels do not, and a
+    /// missing description is a set that reads plainly, not one that fails.
+    pub description: String,
 }
 
 /// Parse the manifest. Hand-rolled rather than via a TOML struct because the
@@ -68,13 +71,123 @@ pub fn parse_manifest(text: &str) -> Vec<OfferedSet> {
         };
         let Ok(version) = version.parse::<i64>() else { continue };
         out.push(OfferedSet {
-            name: value("name").unwrap_or_else(|| id.clone()),
-            tier: value("tier").unwrap_or_else(|| "basic".into()),
+            name:        value("name").unwrap_or_else(|| id.clone()),
+            tier:        value("tier").unwrap_or_else(|| "basic".into()),
+            description: value("description").unwrap_or_default(),
             id,
             version,
         });
     }
     out
+}
+
+/// One set as the catalogue shows it, for a particular policy.
+#[derive(Debug, Clone, Serialize)]
+pub struct CatalogSet {
+    pub id:          String,
+    pub name:        String,
+    pub description: String,
+    pub tier:        String,
+    /// What the channel offers. `None` for a set this policy holds that the
+    /// channel has stopped publishing — worth showing rather than hiding, since
+    /// the rules are still enforcing.
+    pub offered:     Option<i64>,
+    /// What this policy holds, if anything.
+    pub held:        Option<i64>,
+    /// `new`, `current`, `update`, or `withdrawn`. Decided here so the template
+    /// does not have to compare two optional numbers, which is where a display
+    /// that quietly says the wrong thing comes from.
+    pub status:      String,
+    pub rules:       i64,
+}
+
+/// Every set the channel offers, plus any this policy holds that it no longer
+/// does, in one list.
+///
+/// This is what makes an optional set installable. `available()` reports only
+/// sets a policy already has, because an update to something nobody installed
+/// is not news — but that same rule meant a set you had never installed could
+/// never be found either, and `tier = "optional"` had nothing that could act
+/// on it.
+pub async fn catalog(db: &SqlitePool, policy_id: i64) -> Result<Vec<CatalogSet>> {
+    let offered = match cached_manifest(db).await {
+        Some(text) => parse_manifest(&text),
+        None       => Vec::new(),
+    };
+
+    let held = sqlx::query!(
+        r#"SELECT set_id as "set_id!", version as "version!", name as "name!"
+           FROM   policy_rule_sets WHERE policy_id = ?"#,
+        policy_id
+    )
+    .fetch_all(db)
+    .await?;
+
+    // How many rules of each set this policy actually has, so the page can say
+    // what installing one brought rather than only that it happened.
+    let counts = sqlx::query!(
+        r#"SELECT rule_set as "set_id!", COUNT(*) as "n!: i64"
+           FROM   waf_rules
+           WHERE  policy_id = ? AND rule_set IS NOT NULL AND external_id IS NOT NULL
+           GROUP  BY rule_set"#,
+        policy_id
+    )
+    .fetch_all(db)
+    .await?;
+    let count_of = |id: &str| -> i64 {
+        counts.iter().find(|c| c.set_id == id).map(|c| c.n).unwrap_or(0)
+    };
+
+    let mut out: Vec<CatalogSet> = offered
+        .iter()
+        .map(|o| {
+            let have = held.iter().find(|h| h.set_id == o.id).map(|h| h.version);
+            let status = match have {
+                None                        => "new",
+                Some(v) if o.version > v    => "update",
+                Some(_)                     => "current",
+            };
+            CatalogSet {
+                id:          o.id.clone(),
+                name:        o.name.clone(),
+                description: o.description.clone(),
+                tier:        o.tier.clone(),
+                offered:     Some(o.version),
+                held:        have,
+                status:      status.to_string(),
+                rules:       count_of(&o.id),
+            }
+        })
+        .collect();
+
+    // Installed but no longer published. Still enforcing, so still shown.
+    for h in &held {
+        if !offered.iter().any(|o| o.id == h.set_id) {
+            out.push(CatalogSet {
+                id:          h.set_id.clone(),
+                name:        h.name.clone(),
+                description: String::new(),
+                tier:        String::new(),
+                offered:     None,
+                held:        Some(h.version),
+                status:      "withdrawn".to_string(),
+                rules:       count_of(&h.set_id),
+            });
+        }
+    }
+
+    // Installed first, then what can be added, each alphabetically: the sets
+    // already enforcing are the ones an operator is usually looking for.
+    out.sort_by(|a, b| {
+        let rank = |c: &CatalogSet| match c.status.as_str() {
+            "update" => 0,
+            "current" => 1,
+            "withdrawn" => 2,
+            _ => 3,
+        };
+        (rank(a), a.name.clone()).cmp(&(rank(b), b.name.clone()))
+    });
+    Ok(out)
 }
 
 // ─── Available updates ───────────────────────────────────

@@ -212,6 +212,7 @@ async fn main() {
         .route("/policy/{name}/rules/seed",           post(routes::rules::post_seed_rules))
         .route("/policy/{name}/rules/import",         post(routes::rules::post_import_rules))
         .route("/policy/{name}/rules/bulk",           post(routes::rules::post_bulk_rules))
+        .route("/policy/{name}/rules/sets",           get(routes::policy::get_rule_sets))
         .route("/policy/{name}/rules/catalog",        get(routes::rules::get_rules_catalog)
                                                          .post(routes::rules::post_rules_catalog))
         .route("/policy/{name}/rules/{id}/toggle",    post(routes::rules::post_rule_toggle))

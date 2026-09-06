@@ -1,0 +1,182 @@
+{% extends "layout_default.html" %}
+
+{% block content %}
+
+{% if result == "failed" %}
+<div class="alert alert-danger alert-dismissible">
+    <button type="button" class="close" data-dismiss="alert">&times;</button>
+    {{ msg }}
+</div>
+{% endif %}
+
+{% if result == "success" %}
+<div class="alert alert-success alert-dismissible">
+    <button type="button" class="close" data-dismiss="alert">&times;</button>
+    {{ msg }}
+</div>
+{% endif %}
+
+<div class="row">
+    <div class="col-lg-10">
+
+        <div class="panel panel-default">
+            <div class="panel-heading">
+                <h4>
+                    <i class="fa fa-th-large"></i> Rule Sets
+                    <small class="text-muted">— policy <code>{{ policy_name }}</code></small>
+                </h4>
+            </div>
+            <div class="panel-body">
+
+                <p class="help-block" style="margin-top:0">
+                    Every set published to the rule channel, and what this policy has of
+                    each. Sets are installed <strong>into a policy</strong>, so another
+                    policy can hold different sets or different versions.
+                    <br>
+                    Installing and updating both verify before writing: the manifest's
+                    signature is checked before anything is read from it, and each set
+                    against the SHA-256 that signed manifest gives for it.
+                    <strong>Rules you disabled stay disabled, and rules you cloned are
+                    never touched.</strong>
+                </p>
+
+                {% if check_error %}
+                <div class="alert alert-warning" style="margin-bottom:15px">
+                    <i class="fa fa-exclamation-triangle"></i>
+                    <strong>The channel could not be reached:</strong> {{ check_error }}
+                    {% if checked %}
+                    <br><small>Showing the last manifest fetched, from {{ checked }} UTC.
+                        Sets published since then are not listed.</small>
+                    {% else %}
+                    <br><small>Nothing has been fetched yet, so no sets can be listed.
+                        Check the channel under <a href="/settings">Settings</a>.</small>
+                    {% endif %}
+                </div>
+                {% endif %}
+
+                {% if update_count > 0 %}
+                <div class="alert alert-info" style="margin-bottom:15px">
+                    <i class="fa fa-arrow-circle-up"></i>
+                    <strong>{{ update_count }}</strong>
+                    set{% if update_count != 1 %}s have{% else %} has{% endif %}
+                    a newer version available.
+                    Nothing is applied on its own — a rule change can unblock an
+                    application or break one, so it stays a decision.
+                </div>
+                {% endif %}
+
+                {% if sets %}
+                <div style="overflow-x:auto">
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th>Set</th>
+                            <th class="text-center" style="white-space:nowrap">Version</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    {% for s in sets %}
+                        <tr>
+                            <td>
+                                <strong>{{ s.name }}</strong>
+                                {% if s.tier == "basic" %}
+                                    <span class="label label-default">basic</span>
+                                {% elif s.tier %}
+                                    <span class="label label-info">{{ s.tier }}</span>
+                                {% endif %}
+                                <br><small class="text-muted">
+                                    <code>{{ s.id }}</code>{% if s.rules > 0 %} · {{ s.rules }} rules in this policy{% endif %}
+                                </small>
+                                {% if s.description %}
+                                <br><small class="text-muted">{{ s.description }}</small>
+                                {% endif %}
+                            </td>
+                            {# Installed and available in one cell. Two columns of version
+                               numbers cost more width than they explain, and "v1 → v2"
+                               says the same thing in less. #}
+                            <td class="text-center" style="white-space:nowrap">
+                                {% if s.status == "update" %}
+                                    v{{ s.held }} <i class="fa fa-long-arrow-right text-muted"></i>
+                                    <strong>v{{ s.offered }}</strong>
+                                {% elif s.status == "new" %}
+                                    <span class="text-muted">v{{ s.offered }} available</span>
+                                {% elif s.status == "withdrawn" %}
+                                    v{{ s.held }}
+                                {% else %}
+                                    v{{ s.held }}
+                                {% endif %}
+                            </td>
+                            <td class="text-right" style="white-space:nowrap">
+                                {% if s.status == "new" %}
+                                <form method="post"
+                                      action="/policy/{{ policy_name }}/rules/update/{{ s.id }}"
+                                      onsubmit="return confirm('Install {{ s.id }} v{{ s.offered }} into policy {{ policy_name }}?\n\nIts rules start enabled and will be enforced by every site using this policy.');"
+                                      style="display:inline">
+                                    <button type="submit" class="btn btn-success btn-sm">
+                                        <i class="fa fa-download"></i> Install
+                                    </button>
+                                </form>
+
+                                {% elif s.status == "update" %}
+                                <form method="post"
+                                      action="/policy/{{ policy_name }}/rules/update/{{ s.id }}"
+                                      onsubmit="return confirm('Update {{ s.id }} from v{{ s.held }} to v{{ s.offered }}?\n\nRules you have cloned are not touched. Rules you have disabled stay disabled.');"
+                                      style="display:inline">
+                                    <button type="submit" class="btn btn-primary btn-sm">
+                                        <i class="fa fa-arrow-circle-up"></i> Update
+                                    </button>
+                                </form>
+
+                                {% elif s.status == "current" %}
+                                <span class="text-success"><i class="fa fa-check"></i> up to date</span>
+                                <form method="post"
+                                      action="/policy/{{ policy_name }}/rules/update/{{ s.id }}"
+                                      onsubmit="return confirm('Reinstall {{ s.id }} v{{ s.held }}?\n\nThis rewrites its rules to what the channel publishes, undoing nothing else: rules you disabled stay disabled and clones are untouched.');"
+                                      style="display:inline; margin-left:8px">
+                                    <button type="submit" class="btn btn-default btn-xs"
+                                            title="Fetch and reinstall this set at the same version">
+                                        Reinstall
+                                    </button>
+                                </form>
+
+                                {% else %}
+                                <span class="text-muted" title="Installed, but the channel no longer publishes it">
+                                    <i class="fa fa-question-circle"></i> not in the channel
+                                </span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+                </div>
+
+                {% elif not check_error %}
+                <p class="text-muted">
+                    The channel offers no sets, and this policy holds none.
+                    {% if checked %}Last checked {{ checked }} UTC.{% endif %}
+                </p>
+                {% endif %}
+
+                <hr>
+                <p class="help-block">
+                    Sets come from <code>{{ channel }}</code>, configurable under
+                    <a href="/settings">Settings</a>. A set marked
+                    <strong>not in the channel</strong> is still installed and still
+                    enforcing — the channel simply stopped publishing it, and removing
+                    rules that are currently refusing traffic is not something an update
+                    should do on its own.
+                </p>
+
+                <a href="/policy/{{ policy_name }}/rules" class="btn btn-default">
+                    <i class="fa fa-list"></i> This policy's rules
+                </a>
+                <a href="/policy" class="btn btn-default">Back to policies</a>
+
+            </div>
+        </div>
+
+    </div>
+</div>
+{% endblock %}

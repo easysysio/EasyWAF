@@ -18,12 +18,11 @@
                 <td>v{{ u.have }}</td>
                 <td><strong>v{{ u.offered }}</strong></td>
                 <td>
-                    <form method="post"
-                          action="/policy/{{ u.policy_name }}/rules/update/{{ u.set_id }}"
-                          onsubmit="return confirm('Update {{ u.set_id }} to v{{ u.offered }} for policy {{ u.policy_name }}?\n\nRules you have cloned are not touched. Rules you have disabled stay disabled.');"
-                          style="display:inline">
-                        <button type="submit" class="btn btn-primary btn-xs">Update</button>
-                    </form>
+                    {# Leads to the set catalogue rather than applying from here: one
+                       place to install, update and see what a policy holds beats an
+                       action that only exists on whichever page noticed. #}
+                    <a href="/policy/{{ u.policy_name }}/rules/sets"
+                       class="btn btn-primary btn-xs">Review</a>
                 </td>
             </tr>
         {% endfor %}
