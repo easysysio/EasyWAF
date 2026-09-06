@@ -59,9 +59,31 @@ pub async fn init(database_url: &str) -> SqlitePool {
     run_migration_010(&pool).await;
     run_migration_011(&pool).await;
     run_migration_012(&pool).await;
+    run_migration_013(&pool).await;
 
     info!("Database ready: {}", database_url);
     pool
+}
+
+// ─── run_migration_013 ───────────────────────────────────
+
+/// Which rules produced a verdict, stored on the traffic event.
+async fn run_migration_013(pool: &SqlitePool) {
+    let exists: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM pragma_table_info('traffic_events') WHERE name = 'matched_rules'",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0);
+
+    if exists == 0 {
+        let sql_013 = include_str!("../migrations/013_rule_attribution.sql");
+        sqlx::raw_sql(sql_013)
+            .execute(pool)
+            .await
+            .unwrap_or_else(|e| panic!("Migration 013 failed: {}", e));
+        info!("Migration 013 applied: traffic events record which rules matched");
+    }
 }
 
 // ─── run_migration_012 ───────────────────────────────────

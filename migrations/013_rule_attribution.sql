@@ -1,0 +1,21 @@
+-- =========================================================
+-- 013_rule_attribution.sql — EasyWAF
+-- Record which rules produced a verdict, not only the total.
+--
+-- traffic_events.waf_score has existed since 001 and was
+-- written as NULL at every call site, so the Traffic Monitor
+-- could say a request was blocked but never why. Diagnosing
+-- a false positive meant enabling debug logging on a live
+-- proxy and reproducing the request — three times now.
+--
+-- The matches go in one JSON column on the event rather than
+-- a row per match in a second table. traffic_events is the
+-- highest-write table in the schema and already the thing
+-- that makes the dashboard slow at scale; multiplying its
+-- writes to make a rarely-read detail queryable would be the
+-- wrong trade.
+-- =========================================================
+
+-- [{"id":932012,"name":"RCE: pipe / semicolon…","score":8}, …]
+-- NULL when nothing matched, so an ordinary request stores nothing.
+ALTER TABLE traffic_events ADD COLUMN matched_rules TEXT;

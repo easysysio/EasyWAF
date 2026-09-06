@@ -52,6 +52,8 @@ pub struct TrafficRecord {
     pub blocked:      bool,
     pub block_reason: Option<String>,
     pub waf_score:    Option<i64>,
+    /// JSON list of the rules that matched; None when none did.
+    pub matched_rules: Option<String>,
     pub country:      Option<String>,
 }
 
@@ -62,8 +64,8 @@ pub async fn log_event(db: SqlitePool, r: TrafficRecord) {
     let res = sqlx::query!(
         "INSERT INTO traffic_events
          (site_id, client_ip, method, host, path, status_code,
-          response_ms, blocked, block_reason, waf_score, country)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          response_ms, blocked, block_reason, waf_score, country, matched_rules)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         r.site_id,
         r.client_ip,
         r.method,
@@ -75,6 +77,7 @@ pub async fn log_event(db: SqlitePool, r: TrafficRecord) {
         r.block_reason,
         r.waf_score,
         r.country,
+        r.matched_rules,
     )
     .execute(&db)
     .await;

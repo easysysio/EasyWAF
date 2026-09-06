@@ -671,7 +671,7 @@ async fn handle_request(
 
     let verdict = state.pipeline.run(&ctx).await;
 
-    if let PipelineVerdict::Block { reason, status, .. } = verdict {
+    if let PipelineVerdict::Block { reason, status, findings, .. } = verdict {
         // Log the blocked request asynchronously so we don't delay the response.
         let elapsed    = started_at.elapsed().as_millis() as i64;
         let db         = state.db.clone();
@@ -688,7 +688,8 @@ async fn handle_request(
                 response_ms:  elapsed,
                 blocked:      true,
                 block_reason: Some(reason_log),
-                waf_score:    None,
+                waf_score:    Some(findings.score),
+                matched_rules: findings.hits_json(),
                 country:      country.clone(),
             }).await;
         });
@@ -696,7 +697,7 @@ async fn handle_request(
     }
 
     // ── 4b. Challenge verdict: show CAPTCHA unless already cleared ──
-    if let PipelineVerdict::Challenge { reason, .. } = &verdict {
+    if let PipelineVerdict::Challenge { reason, findings, .. } = &verdict {
         if !cleared {
             let dest = match &query {
                 Some(q) => format!("{}?{}", path, q),
@@ -709,6 +710,11 @@ async fn handle_request(
             let db         = state.db.clone();
             let method_str = method.to_string();
             let reason_log = format!("challenge: {}", reason);
+            // Copied out before the spawn: the verdict is borrowed here, and a
+            // challenged request is worth attributing for the same reason a
+            // blocked one is.
+            let score      = findings.score;
+            let hits       = findings.hits_json();
             let host_l     = host.clone();
             let path_l     = path.clone();
             let ip_l       = client_ip.to_string();
@@ -723,7 +729,8 @@ async fn handle_request(
                     response_ms:  elapsed,
                     blocked:      false,
                     block_reason: Some(reason_log),
-                    waf_score:    None,
+                    waf_score:    Some(score),
+                    matched_rules: hits,
                     country:      country.clone(),
                 }).await;
             });
@@ -785,6 +792,7 @@ async fn handle_request(
                 blocked:      false,
                 block_reason: None,
                 waf_score:    None,
+                matched_rules: None,
                 country:      c,
             }).await;
         });
@@ -833,6 +841,7 @@ async fn handle_request(
                     blocked:      false,
                     block_reason: None,
                     waf_score:    None,
+                    matched_rules: None,
                     country:      country.clone(),
                 }).await;
             });
@@ -879,6 +888,7 @@ async fn handle_request(
                     blocked:      false,
                     block_reason: None,
                     waf_score:    None,
+                    matched_rules: None,
                     country:      country.clone(),
                 }).await;
             });

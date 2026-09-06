@@ -6,6 +6,34 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
+## [0.5.5] — 2026-09-06
+
+Nothing to do on upgrade. A migration adds one column; events recorded before
+it simply show nothing in the new column.
+
+### Added
+- **Traffic Monitor says which rules produced a verdict.** A blocked or
+  challenged row now shows the total score and every rule that contributed —
+  catalogue number, name and points — so a false positive can be read off the
+  page instead of reconstructed.
+
+  This was the product's most frequently hit gap. `traffic_events.waf_score`
+  had existed since 0.1.0 and was written as `NULL` at every call site, and the
+  pipeline collected the matching rules and then discarded them, so the GUI
+  could say a request scored 14 but never what produced it. Diagnosing the
+  false positives in 0.3.1 and 0.5.4 meant enabling debug logging on a live
+  proxy and reproducing the request — three occasions, each of which a row
+  reading `932012 (8) + 920002 (6) = 14` would have answered immediately.
+
+  Matches are stored as one JSON column on the event rather than a row per
+  match in a second table: `traffic_events` is the highest-write table in the
+  schema and already what makes the dashboard slow at scale, so multiplying its
+  writes to make a rarely-read detail queryable would be the wrong trade.
+  Nothing is stored when nothing matched.
+
+  Rules in `DetectionOnly` mode report what they would have done, which is the
+  whole reason for running a policy that way.
+
 ## [0.5.4] — 2026-09-06
 
 Two bundled rules scored ordinary traffic heavily enough to block real

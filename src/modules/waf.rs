@@ -23,7 +23,7 @@
 // per request dominated the cost of matching them.
 // =========================================================
 
-use crate::modules::{InspectionModule, ModuleDecision, RequestContext};
+use crate::modules::{Findings, RuleHit, InspectionModule, ModuleDecision, RequestContext};
 use async_trait::async_trait;
 use axum::http::StatusCode;
 use regex::Regex;
@@ -112,6 +112,9 @@ enum Level {
 /// A single WAF rule loaded from the DB.
 struct RuleRow {
     id:      i64,
+    /// The catalogue number, when the rule came from a rule set. Custom rules
+    /// have none, which is why it is optional rather than defaulted to zero.
+    external_id: Option<i64>,
     name:    String,
     zone:    String,
     pattern: String,
@@ -174,6 +177,9 @@ impl InspectionModule for WafModule {
         // Step 5 — evaluate each rule in order.
         let mut total_score: i64 = 0;
         let mut challenge_reason: Option<String> = None;
+        // Every rule that matched, in the order it did, so the traffic record
+        // can say what produced the score rather than only what it came to.
+        let mut hits: Vec<RuleHit> = Vec::new();
 
         for rule in &rules {
             // Select the candidate forms for this rule's zone. A rule matches
@@ -205,14 +211,24 @@ impl InspectionModule for WafModule {
                 "WAF rule matched"
             );
 
+            hits.push(RuleHit {
+                id:    rule.external_id,
+                name:  rule.name.clone(),
+                // An instant-block rule carries its own weight rather than a
+                // score, so it is reported at the threshold it forced.
+                score: if rule.action == "block" { policy.score_threshold } else { rule.score },
+            });
+
             match rule.action.as_str() {
                 // Instant block regardless of score — block always wins, so
                 // we can decide right here.
                 "block" => {
+                    let score = policy.score_threshold;
                     return decide(
                         &policy,
                         Level::Block,
                         format!("WAF block rule matched: {}", rule.name),
+                        Findings { score, hits },
                     );
                 }
                 // Direct challenge request — remember it but keep scanning, so
@@ -234,11 +250,13 @@ impl InspectionModule for WafModule {
                 &policy,
                 Level::Block,
                 format!("WAF score {} ≥ block threshold {}", total_score, policy.score_threshold),
+                Findings { score: total_score, hits },
             );
         }
 
         if let Some(reason) = challenge_reason {
-            return decide(&policy, Level::Challenge, reason);
+            return decide(&policy, Level::Challenge, reason,
+                          Findings { score: total_score, hits });
         }
 
         if policy.challenge_threshold > 0 && total_score >= policy.challenge_threshold {
@@ -246,6 +264,7 @@ impl InspectionModule for WafModule {
                 &policy,
                 Level::Challenge,
                 format!("WAF score {} ≥ challenge threshold {}", total_score, policy.challenge_threshold),
+                Findings { score: total_score, hits },
             );
         }
 
@@ -325,13 +344,22 @@ fn percent_decode(s: &str) -> String {
 
 /// Map a decision Level to a ModuleDecision, applying the rule_engine mode.
 /// In DetectionOnly mode nothing is enforced — every decision becomes an Alert.
-fn decide(policy: &PolicyInfo, level: Level, reason: String) -> ModuleDecision {
+fn decide(
+    policy: &PolicyInfo,
+    level: Level,
+    reason: String,
+    findings: Findings,
+) -> ModuleDecision {
+    // DetectionOnly still reports what matched. Seeing which rules would have
+    // fired is the entire point of running a policy in that mode.
     if policy.rule_engine == "DetectionOnly" {
-        return ModuleDecision::Alert { reason };
+        return ModuleDecision::Alert { reason, findings };
     }
     match level {
-        Level::Challenge => ModuleDecision::Challenge { reason },
-        Level::Block     => ModuleDecision::Drop { reason, status: StatusCode::FORBIDDEN },
+        Level::Challenge => ModuleDecision::Challenge { reason, findings },
+        Level::Block     => {
+            ModuleDecision::Drop { reason, status: StatusCode::FORBIDDEN, findings }
+        }
     }
 }
 
@@ -366,6 +394,7 @@ async fn get_site_policy(db: &SqlitePool, site_id: i64) -> Option<PolicyInfo> {
 async fn get_rules(db: &SqlitePool, policy_id: i64) -> Vec<RuleRow> {
     let rows = sqlx::query!(
         "SELECT id       as \"id!\",
+                external_id,
                 name,
                 zone,
                 pattern,
@@ -382,8 +411,9 @@ async fn get_rules(db: &SqlitePool, policy_id: i64) -> Vec<RuleRow> {
 
     rows.into_iter()
         .map(|r| RuleRow {
-            id:      r.id,
-            name:    r.name,
+            id:          r.id,
+            external_id: r.external_id,
+            name:        r.name,
             zone:    r.zone,
             pattern: r.pattern,
             score:   r.score,

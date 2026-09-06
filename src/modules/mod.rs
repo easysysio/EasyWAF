@@ -15,6 +15,7 @@ pub mod traffic;
 pub mod waf;
 
 use axum::http::StatusCode;
+use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
 use bytes::Bytes;
 use axum::http::{HeaderMap, Method};
@@ -49,11 +50,52 @@ pub enum ModuleDecision {
     /// Request is clean — pass to the next module.
     Pass,
     /// Request is suspicious — log the alert and continue.
-    Alert { reason: String },
+    Alert { reason: String, findings: Findings },
     /// Request is suspicious-but-maybe-legit — show a CAPTCHA challenge.
-    Challenge { reason: String },
+    Challenge { reason: String, findings: Findings },
     /// Request is malicious — block it, stop the chain.
-    Drop { reason: String, status: StatusCode },
+    Drop { reason: String, status: StatusCode, findings: Findings },
+}
+
+// ─── RuleHit ─────────────────────────────────────────────
+
+/// One rule that matched, as the Traffic Monitor will show it.
+///
+/// Carried out of the module rather than only logged. The WAF knows exactly
+/// why it decided what it did; until now that knowledge reached a debug log
+/// and nowhere else, so diagnosing a false positive meant enabling debug
+/// logging on a production proxy and reproducing the request.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RuleHit {
+    /// The OWASP-style catalogue number, when the rule has one.
+    pub id:    Option<i64>,
+    pub name:  String,
+    pub score: i64,
+}
+
+/// What the WAF concluded, beyond the human-readable reason.
+#[derive(Debug, Clone, Default)]
+pub struct Findings {
+    pub score: i64,
+    pub hits:  Vec<RuleHit>,
+}
+
+impl Findings {
+    /// Fold another module's findings in. Scores add because the WAF's own
+    /// threshold is a sum; hits accumulate so nothing that matched is lost.
+    pub fn merge(&mut self, other: Findings) {
+        self.score += other.score;
+        self.hits.extend(other.hits);
+    }
+
+    /// The hits as JSON for storage, or None when nothing matched — so an
+    /// ordinary request stores no column rather than an empty array.
+    pub fn hits_json(&self) -> Option<String> {
+        if self.hits.is_empty() {
+            return None;
+        }
+        serde_json::to_string(&self.hits).ok()
+    }
 }
 
 // ─── Alert ───────────────────────────────────────────────
@@ -75,17 +117,19 @@ pub struct Alert {
 #[allow(dead_code)]
 pub enum PipelineVerdict {
     /// Forward to upstream. May carry alerts from intermediate modules.
-    Allow { alerts: Vec<Alert> },
+    Allow { alerts: Vec<Alert>, findings: Findings },
     /// Show a CAPTCHA challenge unless the client already has clearance.
     Challenge {
-        reason:  String,
-        alerts:  Vec<Alert>,
+        reason:   String,
+        alerts:   Vec<Alert>,
+        findings: Findings,
     },
     /// Block the request. The chain was stopped by one module.
     Block {
-        reason:  String,
-        status:  StatusCode,
-        alerts:  Vec<Alert>,
+        reason:   String,
+        status:   StatusCode,
+        alerts:   Vec<Alert>,
+        findings: Findings,
     },
 }
 
@@ -126,45 +170,98 @@ impl Pipeline {
     /// Execute all modules in order and return the final verdict.
     pub async fn run(&self, ctx: &RequestContext) -> PipelineVerdict {
         let mut alerts = Vec::new();
+        // Carried across modules so a request that is alerted on by one and
+        // blocked by another still reports everything that matched.
+        let mut findings = Findings::default();
 
         for module in &self.modules {
             match module.inspect(ctx).await {
                 ModuleDecision::Pass => {}
 
-                ModuleDecision::Alert { reason } => {
+                ModuleDecision::Alert { reason, findings: f } => {
                     tracing::debug!(
                         module = module.name(),
                         reason = %reason,
                         "module alert"
                     );
+                    findings.merge(f);
                     alerts.push(Alert { module: module.name(), reason });
                 }
 
-                ModuleDecision::Challenge { reason } => {
+                ModuleDecision::Challenge { reason, findings: f } => {
                     tracing::info!(
                         module = module.name(),
                         reason = %reason,
                         "request challenged"
                     );
-                    return PipelineVerdict::Challenge { reason, alerts };
+                    findings.merge(f);
+                    return PipelineVerdict::Challenge { reason, alerts, findings };
                 }
 
-                ModuleDecision::Drop { reason, status } => {
+                ModuleDecision::Drop { reason, status, findings: f } => {
                     tracing::info!(
                         module = module.name(),
                         reason = %reason,
                         status = status.as_u16(),
                         "request blocked"
                     );
-                    return PipelineVerdict::Block { reason, status, alerts };
+                    findings.merge(f);
+                    return PipelineVerdict::Block { reason, status, alerts, findings };
                 }
             }
         }
 
-        PipelineVerdict::Allow { alerts }
+        PipelineVerdict::Allow { alerts, findings }
     }
 }
 
 impl Default for Pipeline {
     fn default() -> Self { Self::new() }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn findings_merge_across_modules() {
+        // A request alerted on by one module and blocked by another must
+        // report everything that matched, not only the last module's view.
+        let mut a = Findings {
+            score: 6,
+            hits: vec![RuleHit { id: Some(920002), name: "double encoding".into(), score: 6 }],
+        };
+        a.merge(Findings {
+            score: 8,
+            hits: vec![RuleHit { id: Some(932012), name: "chaining".into(), score: 8 }],
+        });
+        assert_eq!(a.score, 14, "the threshold is a sum, so scores add");
+        assert_eq!(a.hits.len(), 2);
+    }
+
+    #[test]
+    fn nothing_matched_stores_nothing() {
+        // An ordinary request is the overwhelming majority of rows; it should
+        // not carry an empty array on every one of them.
+        assert!(Findings::default().hits_json().is_none());
+    }
+
+    #[test]
+    fn hits_round_trip_through_json() {
+        // The traffic page parses this back out, so the shape has to survive.
+        let f = Findings {
+            score: 11,
+            hits: vec![
+                RuleHit { id: Some(932012), name: "RCE: chaining".into(), score: 8 },
+                RuleHit { id: None, name: "a custom rule".into(), score: 3 },
+            ],
+        };
+        let json = f.hits_json().expect("some hits");
+        let back: Vec<RuleHit> = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.len(), 2);
+        assert_eq!(back[0].id, Some(932012));
+        assert_eq!(back[0].score, 8);
+        // A custom rule has no catalogue number, and that must not become 0.
+        assert_eq!(back[1].id, None);
+    }
 }

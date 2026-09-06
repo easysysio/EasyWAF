@@ -107,6 +107,7 @@
                     <th>ms</th>
                     <th>Country</th>
                     <th>Verdict</th>
+                    <th>Why</th>
                 </tr>
             </thead>
             <tbody>
@@ -159,6 +160,29 @@
                             <span class="label label-success">
                                 <i class="fa fa-check"></i> PASS
                             </span>
+                        {% endif %}
+                    </td>
+                    {# Which rules produced the verdict. Without this the table
+                       can say a request was blocked but not what to change,
+                       and diagnosing a false positive means debug logging on a
+                       live proxy. #}
+                    <td style="max-width:360px">
+                        {% if e.matched_rules | length > 0 %}
+                            {% if e.waf_score %}
+                            <span class="label label-default" style="margin-right:4px"
+                                  title="Total score">{{ e.waf_score }}</span>
+                            {% endif %}
+                            {% for h in e.matched_rules %}
+                            <div style="font-size:11px; line-height:1.5">
+                                {% if h.id %}<code>{{ h.id }}</code>{% endif %}
+                                {{ h.name }}
+                                <span class="text-muted">+{{ h.score }}</span>
+                            </div>
+                            {% endfor %}
+                        {% elif e.block_reason %}
+                            <small class="text-muted">{{ e.block_reason }}</small>
+                        {% else %}
+                            <span class="text-muted">—</span>
                         {% endif %}
                     </td>
                 </tr>

@@ -18,7 +18,7 @@
 // =========================================================
 
 use crate::geo;
-use crate::modules::{InspectionModule, ModuleDecision, RequestContext};
+use crate::modules::{Findings, InspectionModule, ModuleDecision, RequestContext};
 use async_trait::async_trait;
 use axum::http::StatusCode;
 use sqlx::SqlitePool;
@@ -93,9 +93,9 @@ impl InspectionModule for GeoIpModule {
 
         // DetectionOnly records what would have happened without enforcing it.
         if policy.rule_engine == "DetectionOnly" {
-            return ModuleDecision::Alert { reason };
+            return ModuleDecision::Alert { reason, findings: Findings::default() };
         }
-        ModuleDecision::Drop { reason, status: StatusCode::FORBIDDEN }
+        ModuleDecision::Drop { reason, status: StatusCode::FORBIDDEN, findings: Findings::default() }
     }
 }
 

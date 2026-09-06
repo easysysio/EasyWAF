@@ -34,28 +34,10 @@ and ACME requesting a certificate that covers every name on the site.
 Recorded so they are not lost. No version assigned — these are worth doing,
 not yet ordered against each other.
 
-**Rule attribution on the traffic event — "why was this blocked?"** The GUI
-cannot currently answer that. Diagnosing the 0.3.1 false positives took SSH, a
-systemd environment change, two restarts and `journalctl`, to learn something
-the WAF knew at the moment it decided. Much of the plumbing already exists and
-is inert: `traffic_events.waf_score` is threaded through `TrafficRecord` and
-the INSERT but passed `None` at all four call sites in
-[proxy/mod.rs](../../src/proxy/mod.rs), the same way `country` was before
-0.3.0; and `PipelineVerdict` already collects `alerts: Vec<Alert>` and then
-discards them. Recording the score and the matching rules, then showing them
-when a Traffic Monitor row is opened, turns the product's most common failure
-mode from an hour of shell work into a click — and leads naturally into
-disabling the rule, cloning it to tune (0.7.0), or allowlisting the client
-(0.12.0).
-
-Three occasions now, not one. 0.5.4 fixed two more bundled false positives —
-932012 reading `; nc_token=` as "semicolon, then netcat", and 920002 calling
-any two adjacent percent-escapes double encoding — and both took source access
-and a local reproduction of the operator's traffic to identify, because
-Traffic Monitor showed a score of 14 and no indication of what produced it.
-The operator would have diagnosed either in seconds from a row reading
-`932012 (8) + 920002 (6) = 14`. This is the most frequently-hit gap in the
-product and it is still unscheduled.
+**Rule attribution — done in 0.5.5.** Traffic Monitor shows the score and
+every rule that contributed to it. Kept in mind for what follows: it is what
+makes disabling a rule, cloning it to tune (0.7.0) and allowlisting a client
+(0.12.0) reachable in one click from the row that prompted them.
 
 **Reverse-proxy parity — WebSockets, HTTP/2, path routing, multiple
 upstreams.** Found on 2026-09-04 while checking whether ACME alone would let

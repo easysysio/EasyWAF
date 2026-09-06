@@ -41,6 +41,9 @@ pub struct TrafficEvent {
     pub response_ms:  i64,
     pub blocked:      bool,
     pub block_reason: Option<String>,
+    /// The rules that produced the verdict, ready to render.
+    pub matched_rules: Vec<crate::modules::RuleHit>,
+    pub waf_score:    Option<i64>,
     pub country:      Option<String>,
 }
 
@@ -79,6 +82,8 @@ struct EventRow {
     response_ms:  Option<i64>,
     blocked:      i64,             // NOT NULL DEFAULT 0
     block_reason: Option<String>,
+    matched_rules: Option<String>,
+    waf_score:    Option<i64>,
     country:      Option<String>,
 }
 
@@ -161,7 +166,8 @@ async fn fetch_events(
                 COALESCE(s.name, '[deleted]') AS site_name,
                 te.client_ip, te.method, te.host, te.path,
                 te.status_code, te.response_ms,
-                te.blocked, te.block_reason, te.country
+                te.blocked, te.block_reason, te.country,
+                te.matched_rules, te.waf_score
          FROM traffic_events te
          LEFT JOIN sites s ON s.id = te.site_id
          WHERE te.timestamp >= ",
@@ -187,6 +193,13 @@ async fn fetch_events(
         response_ms:  r.response_ms.unwrap_or(0),
         blocked:      r.blocked != 0,
         block_reason: r.block_reason,
+        // Stored as JSON; a row written before this existed, or by a version
+        // that could not parse, simply shows nothing rather than failing.
+        matched_rules: r.matched_rules
+            .as_deref()
+            .and_then(|j| serde_json::from_str(j).ok())
+            .unwrap_or_default(),
+        waf_score:    r.waf_score,
         country:      r.country,
     }).collect())
 }
