@@ -19,6 +19,18 @@ Version bumps and tags are created only after explicit approval.
   session value, say — tipped it over, and Nextcloud broke seemingly at random.
   A word boundary fixes it; every real chaining attack is still caught, which
   the tests now assert both ways.
+- **Rule 920002 treated ordinary URL encoding as a double-encoding attack.**
+  Its own description says "`%%XX` or `%25XX`", but the pattern's first
+  alternative was `(%[0-9a-fA-F]{2}){2,}` — *any two adjacent percent-escapes*.
+  That is not double encoding: it is what every character outside ASCII looks
+  like (`é` is `%C3%A9`, a Hebrew or emoji filename is several escapes in a
+  row), and what any base64 token containing an encoded `=`, `/` or `:` looks
+  like. Nextcloud's CSRF token is one, so signing out scored 6, and any
+  non-English filename scored 6 on every request touching it.
+
+  Double encoding is a percent that has itself been encoded. The rule now
+  matches that — and `%%XX`, which the old pattern missed despite the
+  description claiming it.
 - **The rule list behind the Seed button still had the `Accept: */*` bug.** The
   catalog copy of the SQL-comment rule was corrected long ago; this second,
   hard-coded copy in `rules.rs` was missed, so anyone who pressed Seed rather

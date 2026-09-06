@@ -450,6 +450,29 @@ mod tests {
     }
 
     #[test]
+    fn double_encoding_means_an_encoded_percent_not_two_escapes() {
+        let re = Regex::new(&pattern("920-protocol.toml", 920002)).unwrap();
+
+        // Two escapes in a row is ordinary URL encoding, not an attack. Any
+        // character outside ASCII produces several, so this used to score
+        // every request carrying a non-English filename.
+        for benign in [
+            "requesttoken=abc%3D%3Adef%3D",
+            "/files/%D7%AA%D7%9E%D7%95%D7%A0%D7%94.jpg",
+            "/files/caf%C3%A9.txt",
+            "/files/%F0%9F%93%81.png",
+            "/x?q=hello%20%22world%22",
+        ] {
+            assert!(!re.is_match(benign), "false positive on {benign:?}");
+        }
+
+        // A percent that has itself been encoded is the real thing.
+        for attack in ["%253Cscript%253E", "%252e%252e%252f", "%%3C"] {
+            assert!(re.is_match(attack), "missed {attack:?}");
+        }
+    }
+
+    #[test]
     fn the_sql_comment_rule_ignores_a_mime_wildcard() {
         let re = Regex::new(&pattern("942-sqli.toml", 942007)).unwrap();
         // Every HTTP client sends this by default.
