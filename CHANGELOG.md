@@ -6,7 +6,20 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
-## [Unreleased] — will be 0.6.0 (rule set updates)
+## [0.5.6] — 2026-09-06
+
+Three rule and matching faults found by running production traffic, one of them
+a fix that never reached the installations it was written for.
+
+**Upgrading is enough** — a migration corrects the affected rules in your
+database. It matches the exact patterns EasyWAF published, so a rule you have
+edited is left alone.
+
+Also carries the groundwork for 0.6.0's rule updates: the sets now live in the
+`EasyWAF-rules` repository and are published to a signed channel. Nothing in
+this release consumes that channel at runtime; it is a build-time script and a
+file rename, and is listed here because it is in the code, not because there is
+anything to do about it.
 
 ### Changed
 - **`scripts/fetch-rules.sh`** refreshes `rules/` from the published rule
