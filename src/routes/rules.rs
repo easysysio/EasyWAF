@@ -1329,7 +1329,11 @@ pub async fn get_rule_edit_global(
                 wr.pattern,
                 wr.score   as \"score!\",
                 wr.action,
-                wr.enabled as \"enabled!: bool\"
+                wr.enabled as \"enabled!: bool\",
+                wr.external_id,
+                wr.rule_set,
+                wr.cloned_from_external_id,
+                wr.cloned_from_version
          FROM   waf_rules wr
          JOIN   policies  p ON p.id = wr.policy_id
          WHERE  wr.id = ?",
@@ -1352,6 +1356,14 @@ pub async fn get_rule_edit_global(
     };
 
     let mut ctx = Context::new();
+    // An imported rule is shown but not editable, so the page has to say which
+    // it is — a form whose fields silently refuse to save is worse than one
+    // that explains itself.
+    ctx.insert("imported",     &r.external_id.is_some());
+    ctx.insert("external_id",  &r.external_id);
+    ctx.insert("rule_set",     &r.rule_set);
+    ctx.insert("cloned_from",  &r.cloned_from_external_id);
+    ctx.insert("cloned_ver",   &r.cloned_from_version);
     ctx.insert("username", &session.username);
     ctx.insert("title",    "Edit Rule");
     ctx.insert("url",      "/rules");
@@ -1384,6 +1396,33 @@ pub async fn post_rule_update_global(
     let score: i64  = form.score.as_deref().and_then(|s| s.parse().ok()).unwrap_or(5);
     let enabled     = form.enabled.is_some();
 
+    // An imported rule's content is not editable. Updating a set overwrites
+    // every imported rule it owns, so an edit made here would be silently
+    // reverted by the next update — and the administrator would have no way to
+    // know it had happened.
+    //
+    // Cloning is the supported route: it produces an ordinary custom rule that
+    // updates never touch. This makes drift structurally impossible rather than
+    // something to detect later, so applying an update needs no comparison and
+    // has no case where the comparison could be wrong.
+    //
+    // `enabled` is deliberately still writable below for custom rules; for
+    // imported ones the toggle route handles it, since turning a rule off is a
+    // subscription decision rather than a content edit.
+    let imported: Option<i64> =
+        sqlx::query_scalar!("SELECT external_id FROM waf_rules WHERE id = ?", id)
+            .fetch_optional(&state.db)
+            .await?
+            .flatten();
+
+    if imported.is_some() {
+        return Ok(Redirect::to(&format!(
+            "/rules/{id}/edit?error=This+rule+came+from+a+rule+set+and+cannot+be+edited.+\
+             Clone+it+to+make+a+version+you+can+change."
+        ))
+        .into_response());
+    }
+
     sqlx::query!(
         "UPDATE waf_rules
          SET name = ?, description = ?, zone = ?, pattern = ?,
@@ -1396,6 +1435,84 @@ pub async fn post_rule_update_global(
     .await?;
 
     Ok(Redirect::to("/rules").into_response())
+}
+
+// ─── post_rule_clone ─────────────────────────────────────
+
+/// POST /rules/{id}/clone — copy an imported rule into an editable custom one.
+///
+/// The clone is not a special kind of rule: `external_id` is cleared, so it is
+/// an ordinary custom rule that rule-set updates never touch and the editor
+/// treats like any other. The fork point is recorded only so an update notice
+/// can say "your custom rule was forked from SQLi v2, the set is now v4" — a
+/// nudge for a person, never an automatic merge.
+///
+/// The original is left enabled. Disabling it is a separate decision, and
+/// doing it here would mean a click labelled "clone" quietly changed what the
+/// policy enforces.
+pub async fn post_rule_clone(
+    State(state): State<AppState>,
+    jar: SignedCookieJar,
+    Path(id): Path<i64>,
+) -> Result<Response> {
+    if get_session(&jar).is_none() {
+        return Ok(Redirect::to("/login").into_response());
+    }
+
+    let src = sqlx::query!(
+        r#"SELECT policy_id as "policy_id!", name, description, zone, pattern,
+                  score as "score!", action, external_id, rule_set
+           FROM waf_rules WHERE id = ?"#,
+        id
+    )
+    .fetch_optional(&state.db)
+    .await?;
+
+    let Some(src) = src else {
+        return Ok(Redirect::to("/rules?error=No+such+rule").into_response());
+    };
+
+    // Cloning a custom rule is a reasonable thing to want, but it is not what
+    // this button is for and the copy would be indistinguishable from the
+    // original — so it is refused rather than quietly duplicating.
+    let Some(external_id) = src.external_id else {
+        return Ok(Redirect::to(
+            "/rules?error=That+rule+is+already+a+custom+rule+and+can+be+edited+directly",
+        )
+        .into_response());
+    };
+
+    // The version of the set at the moment of cloning, when it is known.
+    let version: Option<i64> = match src.rule_set.as_deref() {
+        Some(set) => sqlx::query_scalar!(
+            "SELECT version FROM policy_rule_sets WHERE policy_id = ? AND set_id = ?",
+            src.policy_id, set
+        )
+        .fetch_optional(&state.db)
+        .await?,
+        None => None,
+    };
+
+    let name = format!("{} (custom)", src.name);
+    let new_id = sqlx::query!(
+        "INSERT INTO waf_rules
+         (policy_id, name, description, zone, pattern, score, action,
+          enabled, rule_set, cloned_from_external_id, cloned_from_version)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)",
+        src.policy_id, name, src.description, src.zone, src.pattern,
+        src.score, src.action, src.rule_set, external_id, version
+    )
+    .execute(&state.db)
+    .await?
+    // Taken from the INSERT's own result rather than a following
+    // `SELECT last_insert_rowid()`: that value is per connection, and a pool
+    // hands the second query to whichever connection is free, so it returned
+    // the id of an unrelated earlier insert and the redirect landed on
+    // somebody else's rule.
+    .last_insert_rowid();
+
+    tracing::info!(from = id, to = new_id, external_id, "Cloned an imported rule");
+    Ok(Redirect::to(&format!("/rules/{new_id}/edit")).into_response())
 }
 
 // ─── post_rule_toggle_global ─────────────────────────────

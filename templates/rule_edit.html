@@ -10,25 +10,58 @@
                 </h4>
             </div>
             <div class="panel-body">
+
+                {% if imported %}
+                <div class="alert alert-info">
+                    <i class="fa fa-lock"></i>
+                    <strong>This rule came from a rule set{% if rule_set %} ({{ rule_set }}){% endif %}.</strong>
+                    Its content cannot be edited: updating the set overwrites every
+                    rule it owns, so a change made here would be reverted the next
+                    time the set is updated, without saying so.
+                    <br><br>
+                    <strong>Clone it</strong> to get a version you can change. The
+                    clone is an ordinary custom rule — updates never touch it — and
+                    you can disable this one alongside it if you want yours to
+                    replace it rather than add to it.
+                    <br><br>
+                    <form method="post" action="/rules/{{ rule.id }}/clone" style="display:inline">
+                        <button type="submit" class="btn btn-primary btn-sm">
+                            <i class="fa fa-copy"></i> Clone to customise
+                        </button>
+                    </form>
+                    <a href="/rules" class="btn btn-default btn-sm">Back to rules</a>
+                </div>
+                {% endif %}
+
+                {% if cloned_from %}
+                <p class="help-block">
+                    <i class="fa fa-code-fork"></i>
+                    Forked from imported rule <code>{{ cloned_from }}</code>{% if cloned_ver %}
+                    at version {{ cloned_ver }}{% endif %}. Nothing merges into it —
+                    this is recorded so you can tell when the set it came from has
+                    moved on.
+                </p>
+                {% endif %}
+
                 <form method="post" action="/rules/{{ rule.id }}/update">
 
                     <div class="form-group">
                         <label>Rule Name</label>
                         <input type="text" class="form-control" name="name"
-                               value="{{ rule.name }}" required>
+                               value="{{ rule.name }}" required {% if imported %}readonly{% endif %}>
                     </div>
 
                     <div class="form-group">
                         <label>Description <small class="text-muted">(optional)</small></label>
                         <input type="text" class="form-control" name="description"
-                               value="{{ rule.description }}">
+                               value="{{ rule.description }}" {% if imported %}readonly{% endif %}>
                     </div>
 
                     <div class="row">
                         <div class="col-sm-4">
                             <div class="form-group">
                                 <label>Zone</label>
-                                <select class="form-control" name="zone">
+                                <select class="form-control" name="zone" {% if imported %}disabled{% endif %}>
                                     <option value="ANY"     {% if rule.zone == "ANY" %}selected{% endif %}>ANY</option>
                                     <option value="URL"     {% if rule.zone == "URL" %}selected{% endif %}>URL</option>
                                     <option value="ARGS"    {% if rule.zone == "ARGS" %}selected{% endif %}>ARGS</option>
@@ -41,13 +74,13 @@
                             <div class="form-group">
                                 <label>Score</label>
                                 <input type="number" class="form-control" name="score"
-                                       value="{{ rule.score }}" min="1" max="100">
+                                       value="{{ rule.score }}" min="1" max="100" {% if imported %}readonly{% endif %}>
                             </div>
                         </div>
                         <div class="col-sm-4">
                             <div class="form-group">
                                 <label>Action</label>
-                                <select class="form-control" name="action">
+                                <select class="form-control" name="action" {% if imported %}disabled{% endif %}>
                                     <option value="score" {% if rule.action == "score" %}selected{% endif %}>score — add to total</option>
                                     <option value="challenge" {% if rule.action == "challenge" %}selected{% endif %}>challenge — show CAPTCHA</option>
                                     <option value="block" {% if rule.action == "block" %}selected{% endif %}>block — instant 403</option>
@@ -59,7 +92,8 @@
                     <div class="form-group">
                         <label>Regex Pattern</label>
                         <input type="text" class="form-control" name="pattern" id="patternInput"
-                               value="{{ rule.pattern }}" required oninput="testPattern()">
+                               value="{{ rule.pattern }}" required oninput="testPattern()"
+                               {% if imported %}readonly{% endif %}>
                         <span class="help-block" id="patternHelp" style="color:#999;font-size:11px">
                             Rust regex syntax. Case-insensitive flag: <code>(?i)</code>
                         </span>
@@ -86,7 +120,7 @@
                         </div>
                     </div>
 
-                    <button type="submit" class="btn btn-success">
+                    <button type="submit" class="btn btn-success" {% if imported %}disabled{% endif %}>
                         <i class="fa fa-save"></i> Save Changes
                     </button>
                     <a href="/rules" class="btn btn-default">Cancel</a>

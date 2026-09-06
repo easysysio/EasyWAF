@@ -216,6 +216,7 @@ async fn main() {
         .route("/rules/create",          post(routes::rules::post_custom_rule_create))
         .route("/rules/{id}/edit",       get(routes::rules::get_rule_edit_global))
         .route("/rules/{id}/update",     post(routes::rules::post_rule_update_global))
+        .route("/rules/{id}/clone",      post(routes::rules::post_rule_clone))
         .route("/rules/{id}/toggle",     post(routes::rules::post_rule_toggle_global))
         .route("/rules/{id}/delete",     post(routes::rules::post_rule_delete_global))
         .route("/geoip",                 get(routes::geoip::get_geoip))

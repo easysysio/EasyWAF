@@ -9,6 +9,29 @@ Version bumps and tags are created only after explicit approval.
 ## [Unreleased] — 0.6.0 (rule set updates)
 
 ### Added
+- **Imported rules are read-only; customising means cloning.** A rule that came
+  from a rule set can no longer have its pattern, score, action, zone,
+  description or name edited. Applying a set update overwrites every imported
+  rule it owns, so an edit made in place would have been reverted by the next
+  update without saying so — the editor previously accepted such changes and
+  saved them.
+
+  **Clone to customise** copies the rule into an ordinary custom rule that
+  updates never touch. It is not a special kind of rule: `external_id` is
+  cleared and the editor treats it like any hand-written one. The original is
+  left enabled, since disabling it is a separate decision and a button labelled
+  "clone" should not quietly change what a policy enforces — disable it
+  alongside if you want yours to replace rather than add.
+
+  This makes drift structurally impossible rather than something to detect at
+  update time: an imported row cannot diverge from what was imported, so
+  applying an update needs no comparison and has no case where the comparison
+  could be wrong.
+
+  A clone records where it forked from and at which version, so an update notice
+  can say "your custom rule came from SQLi v2, the set is now v4". Nothing
+  merges — it is a nudge for a person.
+
 - **Rule sets describe themselves, and EasyWAF records what it holds.** Each
   `.rules.toml` now carries a `[set]` header with its id and version, and
   importing records both which set every rule came from and which version of
