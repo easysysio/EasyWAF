@@ -20,8 +20,9 @@ next minor, so a release's notes stay about its feature.
 
 ## Next patch
 
-**Hostname aliases**, in the next patch after 0.5.2 — which was spent on a
-header-copying fix that broke cookie-based logins. A site matches one `server_name` exactly, so two
+**Hostname aliases.** Deferred twice now: 0.5.2 went to a header-copying fix
+that broke cookie-based logins, and 0.5.4 to two bundled rules that blocked
+ordinary traffic. A site matches one `server_name` exactly, so two
 names for one application means two sites with duplicate settings kept in step
 by hand, and any divergence is a bug that appears on only one name. Traefik
 expresses this as `Host(a) || Host(b)` on one router with a single certificate
@@ -45,7 +46,16 @@ discards them. Recording the score and the matching rules, then showing them
 when a Traffic Monitor row is opened, turns the product's most common failure
 mode from an hour of shell work into a click — and leads naturally into
 disabling the rule, cloning it to tune (0.7.0), or allowlisting the client
-(0.9.0).
+(0.12.0).
+
+Three occasions now, not one. 0.5.4 fixed two more bundled false positives —
+932012 reading `; nc_token=` as "semicolon, then netcat", and 920002 calling
+any two adjacent percent-escapes double encoding — and both took source access
+and a local reproduction of the operator's traffic to identify, because
+Traffic Monitor showed a score of 14 and no indication of what produced it.
+The operator would have diagnosed either in seconds from a row reading
+`932012 (8) + 920002 (6) = 14`. This is the most frequently-hit gap in the
+product and it is still unscheduled.
 
 **Reverse-proxy parity — WebSockets, HTTP/2, path routing, multiple
 upstreams.** Found on 2026-09-04 while checking whether ACME alone would let
