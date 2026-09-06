@@ -216,7 +216,8 @@ $(document).ready(function () {
     $('#trafficTable').DataTable({
         order:     [[0, 'desc']],
         pageLength: 50,
-        responsive: true,
+        // `responsive` needs the DataTables Responsive extension, which is not
+        // loaded — asking for it here did nothing.
         columnDefs: [{ orderable: false, targets: [] }]
     });
 });

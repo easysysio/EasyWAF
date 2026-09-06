@@ -93,7 +93,9 @@
 {% block scripts %}
 <script>
 $(document).ready(function () {
-    $('#dataTables-example').DataTable({ responsive: true });
+    // `responsive` needs the DataTables Responsive extension, which is not
+    // loaded — asking for it here did nothing.
+    $('#dataTables-example').DataTable();
 });
 </script>
 {% endblock %}

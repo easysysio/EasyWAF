@@ -6,6 +6,21 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
+## [Unreleased]
+
+### Fixed
+- **Stray empty boxes beside the table pagination**, on Sites, Certificates,
+  Policies and Traffic Monitor. With DataTables' Bootstrap integration
+  `paginate_button` is the class on the `<li>` and the label lives in a child
+  `<a>`; the stylesheet painted its box on the `<li>`, and Bootstrap floats the
+  `<a>` out of it — so each button rendered twice, once as the real labelled
+  button and once as a small empty bordered box beside it. Measured before and
+  after in a browser: four 22×29 boxes with borders, now 0×0 with none.
+- `responsive: true` was passed to DataTables on four pages without the
+  Responsive extension ever being loaded, so it did nothing. Removed rather
+  than satisfied — nothing depends on it. The identically-named Chart.js option
+  on the dashboard is a different thing and is untouched.
+
 ## [0.5.5] — 2026-09-06
 
 Nothing to do on upgrade. A migration adds one column; events recorded before
