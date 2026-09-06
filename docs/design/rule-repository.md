@@ -145,6 +145,32 @@ correction has to be shipped as SQL that rewrites the exact pattern EasyWAF
 published, matching nothing an operator has edited — which is what migration 012
 does, and which does not scale past a handful.
 
+## What 0.6.0 still needs
+
+Done: the rules repository as the source of truth, `sets.toml` with tiers and
+versions, `publish.sh` producing a signed channel with a hash per set, and
+`fetch-rules.sh` bundling the basic sets into a build after verifying both.
+
+Not done, and this is what makes the release its feature rather than a
+collection of fixes:
+
+* **EasyWAF fetching the manifest itself**, on a schedule, and comparing each
+  set's published version against the version it holds. That comparison is the
+  whole point of the version field.
+* **A notification when a newer version exists**, and applying it when an
+  administrator asks — not automatically. An update that changes what traffic is
+  refused should be a decision, and the 0.5.4 corrections are why: a rule change
+  can unblock an application or break one.
+* **Updating an installed set in place.** Import deliberately skips an
+  `external_id` already present, so applying an update is not the same code path
+  as installing a set, and the difference is the reason migrations 012 and 014
+  had to exist at all.
+* **Recording which version of which set a policy holds.** Nothing in
+  `waf_rules` says today, so there is nothing to compare a manifest against.
+  `rules/SOURCE` records it for the bundle; the database needs the same.
+* **The country database through the same channel**, which is the smaller half
+  and follows once the mechanism exists.
+
 ## Bundling: basic sets, taken from the channel
 
 `sets.toml` marks each set `basic` or `optional`. Basic sets are bundled with
