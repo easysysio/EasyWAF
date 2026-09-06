@@ -55,6 +55,26 @@ Version bumps and tags are created only after explicit approval.
   deleted, since removing something that is currently enforcing is not a
   decision an update should make silently.
 
+- **The rule channel is configurable, and the check can actually be turned
+  off.** Settings gains a Rule Updates panel: whether to check at all, which
+  channel to check, and when the last check happened or why it failed.
+
+  The switch existed in the code from the start of this work but was reachable
+  only by editing the database, which is not a setting — it is a note in a
+  changelog that nobody can act on. An installation with no outbound access
+  needs to stop it looking, and that has to be a checkbox.
+
+  **Pointing the channel elsewhere does not lower the bar.** The signature and
+  hash checks are the same wherever the manifest came from, so a private mirror
+  is a supported thing to run and a hostile one is refused exactly as the
+  default would be. The URL is validated when saved rather than six hours later
+  in a background task, where the only symptom would be a last-check time that
+  never advances.
+
+  An empty channel field means the default, not "no channel" — turning the
+  check off is the checkbox. Conflating the two would leave a ticked box that
+  quietly does nothing.
+
 - **Imported rules are read-only; customising means cloning.** A rule that came
   from a rule set can no longer have its pattern, score, action, zone,
   description or name edited. Applying a set update overwrites every imported

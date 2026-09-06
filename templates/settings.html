@@ -237,6 +237,75 @@
                 </div>
             </div>
 
+            <div class="panel panel-default">
+                <div class="panel-heading"><h4>Rule Updates</h4></div>
+                <div class="panel-body">
+                    <div class="form-group">
+                        <div class="checkbox">
+                            <label>
+                                <input type="checkbox" name="rule_update_check" value="1"
+                                       {% if rule_update_check %}checked{% endif %}>
+                                Check the channel for newer rule sets
+                            </label>
+                        </div>
+                        <p class="help-block">
+                            Looked at on start and every six hours. <strong>Nothing is ever
+                            applied on its own</strong> — the Policy Manager shows which
+                            policies are behind, and applying is a button someone presses.
+                            An auto-applied bad rule is an outage across every site using
+                            that policy.
+                            <br>
+                            Turn it off on an installation with no outbound access, or one
+                            whose rules are managed by hand.
+                        </p>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Channel</label>
+                        <input type="text" class="form-control" name="rule_update_url"
+                               value="{{ rule_update_url }}" spellcheck="false"
+                               style="font-family: monospace; font-size: 12px;"
+                               placeholder="{{ rule_update_default }}">
+                        <p class="help-block">
+                            Where the manifest and the sets are fetched from. Leave it empty
+                            for the default, <code>{{ rule_update_default }}</code>.
+                            <br>
+                            <strong>Pointing this elsewhere does not lower the bar.</strong>
+                            An update is applied only if the manifest carries a valid
+                            signature from the key in <code>rules/key.gpg</code>, which ships
+                            with EasyWAF, and only if the set matches the SHA-256 that signed
+                            manifest gives for it. A channel serving something else is
+                            refused, whoever it belongs to.
+                        </p>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Last Check</label>
+                        <p class="form-control-static">
+                            {% if rule_update_error %}
+                                <span class="text-danger"><i class="fa fa-exclamation-triangle"></i>
+                                    {{ rule_update_error }}</span>
+                                {% if rule_update_checked %}
+                                    <br><small class="text-muted">Last succeeded {{ rule_update_checked }} UTC.
+                                    The versions shown in the Policy Manager are from then.</small>
+                                {% endif %}
+                            {% elif rule_update_checked %}
+                                <span class="text-success"><i class="fa fa-check"></i>
+                                    {{ rule_update_checked }} UTC</span>
+                            {% else %}
+                                <span class="text-muted">Not checked yet</span>
+                            {% endif %}
+                        </p>
+                        <p class="help-block">
+                            A failure is shown here rather than logged every six hours. A WAF
+                            often runs where nothing outbound is allowed, and a proxy that
+                            fills its log with a repository it cannot reach teaches its
+                            operator to stop reading the log.
+                        </p>
+                    </div>
+                </div>
+            </div>
+
             <button type="submit" class="btn btn-success">
                 <i class="fa fa-save"></i> Save Settings
             </button>

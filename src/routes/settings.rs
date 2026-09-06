@@ -84,6 +84,8 @@ pub struct SettingsForm {
     pub acme_email:             Option<String>,
     pub acme_directory:         Option<String>,
     pub trusted_proxies:        Option<String>,
+    pub rule_update_check:      Option<String>,
+    pub rule_update_url:        Option<String>,
 }
 
 // ─── get_settings ────────────────────────────────────────
@@ -140,6 +142,20 @@ pub async fn get_settings(
     ctx.insert("acme_directory", &acme.map(|a| a.directory)
         .unwrap_or_else(|| crate::acme::STAGING_DIRECTORY.to_string()));
     ctx.insert("trusted_proxies", &get_trusted_proxies(&state.db).await);
+
+    // The stored channel is shown as typed, and left blank when it is the
+    // default: a field pre-filled with the default cannot be told apart from
+    // one an operator deliberately set to the same value, and clearing it is
+    // how you go back to the default.
+    let rule_update_url = get_setting(&state.db, crate::rules_update::KEY_URL)
+        .await
+        .unwrap_or_default();
+    let (checked, error) = crate::rules_update::status(&state.db).await;
+    ctx.insert("rule_update_check",   &crate::rules_update::enabled(&state.db).await);
+    ctx.insert("rule_update_url",     &rule_update_url);
+    ctx.insert("rule_update_default", crate::rules_update::DEFAULT_URL);
+    ctx.insert("rule_update_checked", &checked.map(|t| format_utc(&t)).unwrap_or_default());
+    ctx.insert("rule_update_error",   &error.unwrap_or_default());
     ctx.insert("acme_staging",    crate::acme::STAGING_DIRECTORY);
     ctx.insert("acme_production", crate::acme::PRODUCTION_DIRECTORY);
     ctx.insert("tls_ciphers_all",      &crate::tls::all_suite_names());
@@ -272,6 +288,35 @@ pub async fn post_settings_update(
     set_setting(&state.db, KEY_TRUSTED_PROXIES, &proxies).await?;
     crate::forwarded::reload(&state.db).await;
 
+    // The rule channel. Checked before it is stored: a channel that is not a
+    // fetchable URL fails six hours later in a background task, and the only
+    // sign of it would be a "last check" that never advances.
+    //
+    // An empty field means the default, not "no channel" — turning the check
+    // off is the checkbox, and conflating the two would leave a checked box
+    // that quietly does nothing.
+    let channel = form.rule_update_url.as_deref().unwrap_or("").trim().to_string();
+    if !channel.is_empty() {
+        match reqwest::Url::parse(&channel) {
+            Ok(u) if u.scheme() == "http" || u.scheme() == "https" => {}
+            Ok(u)  => return flash_redirect(
+                "/settings",
+                "failed",
+                &format!("Rule channel must be http or https, not '{}'", u.scheme()),
+            ),
+            Err(e) => return flash_redirect(
+                "/settings",
+                "failed",
+                &format!("Rule channel is not a URL: {e}"),
+            ),
+        }
+    }
+    set_setting(&state.db, crate::rules_update::KEY_URL, &channel).await?;
+
+    // An unticked checkbox sends nothing at all, so the absence is the answer.
+    let check = form.rule_update_check.is_some();
+    set_setting(&state.db, crate::rules_update::KEY_ENABLED, if check { "1" } else { "0" }).await?;
+
     set_setting(&state.db, KEY_MANAGEMENT_CERT, &mgmt).await?;
     set_setting(&state.db, KEY_TLS_PROFILE, profile.as_str()).await?;
 
@@ -291,6 +336,20 @@ pub async fn post_settings_update(
         format!("Settings saved — traffic history kept for {} days", days)
     };
     flash_redirect("/settings", "success", &msg)
+}
+
+/// An RFC 3339 timestamp shown the way the rest of the GUI shows times.
+///
+/// Stored as RFC 3339 because that is unambiguous and sorts; displayed without
+/// the offset and the microseconds, which are noise to someone asking whether
+/// the last check was today. An unparseable value is shown as it is rather
+/// than swallowed — if something ever writes a different format, seeing it is
+/// more use than an empty field.
+fn format_utc(raw: &str) -> String {
+    match chrono::DateTime::parse_from_rfc3339(raw) {
+        Ok(t)  => t.naive_utc().format("%Y-%m-%d %H:%M:%S").to_string(),
+        Err(_) => raw.to_string(),
+    }
 }
 
 // ─── DB helpers ──────────────────────────────────────────
