@@ -11,7 +11,13 @@ Version bumps and tags are created only after explicit approval.
 ### Changed
 - **`scripts/fetch-rules.sh`** refreshes `rules/` from the published rule
   channel at `repo.easysys.io/easywaf/rules`, taking only the sets marked
-  `basic`. The bundled rules are a snapshot of that channel rather than a copy
+  `basic`. The channel's manifest is **GPG-signed with the same key that signs
+  the EasySYS packages**, and the script refuses an unsigned or unverifiable
+  one — a rule set decides what traffic is refused, so fetching one over a
+  network without checking it is a supply-chain hole. Each set is then checked
+  against the SHA-256 in the signed manifest, so the signature covers the
+  content and not merely the index. Every set carries a version, recorded in
+  `rules/SOURCE`, which is how an installation will know an update exists. The bundled rules are a snapshot of that channel rather than a copy
   maintained by hand — which is what left one version of a rule corrected and
   another broken for four releases. `rules/SOURCE` records where a snapshot came
   from and a SHA-256 per set.

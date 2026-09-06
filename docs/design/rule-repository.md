@@ -166,8 +166,13 @@ Three things it does deliberately:
 * **The directory is replaced wholesale, not merged.** A set withdrawn upstream,
   because a rule in it was wrong, has to disappear here too rather than live on
   in every subsequent build.
-* **`rules/SOURCE` records where the snapshot came from** and a SHA-256 per set,
-  so a shipped binary can be tied to exactly what it carries.
+* **`rules/SOURCE` records the channel, and each set's id, version and
+  SHA-256**, so a shipped binary can be tied to exactly what it carries.
+* **The signature is required, not preferred.** The manifest is signed with the
+  package key and carries a hash per set, so verifying the manifest and then the
+  hashes covers the content rather than only the index. An unsigned channel is
+  refused unless `EASYWAF_RULES_ALLOW_UNSIGNED=1`, which exists for bringing a
+  channel up and not for routine use.
 
 **On currency versus reproducibility.** Taking the channel's current content
 means a release always ships current rules, at the cost of the same tag

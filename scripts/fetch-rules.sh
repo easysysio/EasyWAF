@@ -50,23 +50,32 @@ fi
 
 # ── Signature ────────────────────────────────────────────
 # A rule set decides what traffic is refused, so an unverified one fetched over
-# the network is a supply-chain hole. The channel is not signed yet; until it
-# is, this warns rather than refuses, and refuses outright when asked to.
-# Once the same GPG key that signs the packages also signs sets.toml, the
-# default here should flip to refusing.
-REQUIRE_SIG="${EASYWAF_RULES_REQUIRE_SIGNATURE:-0}"
-if get "sets.toml.asc" "$TMP/sets.toml.asc" 2>/dev/null; then
-    if command -v gpg >/dev/null && gpg --verify "$TMP/sets.toml.asc" "$TMP/sets.toml" 2>/dev/null; then
+# the network is a supply-chain hole. Refusing is the default; the escape hatch
+# is for bringing a new channel up, not for routine use.
+#
+# The manifest carries a sha256 per set, so a verified manifest covers every
+# file without needing a signature each.
+ALLOW_UNSIGNED="${EASYWAF_RULES_ALLOW_UNSIGNED:-0}"
+if get "sets.toml.asc" "$TMP/sets.toml.asc"; then
+    command -v gpg >/dev/null || { echo "  signature present but gpg is not installed — refusing" >&2; exit 1; }
+    if gpg --verify "$TMP/sets.toml.asc" "$TMP/sets.toml" 2>"$TMP/gpg.err"; then
         echo "  signature: verified"
     else
-        echo "  signature: PRESENT BUT DID NOT VERIFY — refusing" >&2
+        echo "  signature: DID NOT VERIFY — refusing" >&2
+        sed 's/^/    /' "$TMP/gpg.err" >&2
+        echo "    If the key is simply not in your keyring:" >&2
+        echo "      curl -fsSL $BASE/key.gpg | gpg --import" >&2
         exit 1
     fi
-elif [ "$REQUIRE_SIG" = "1" ]; then
-    echo "  signature: absent, and a signature was required — refusing" >&2
-    exit 1
+elif [ "$ALLOW_UNSIGNED" = "1" ]; then
+    echo "  signature: ABSENT, continuing because EASYWAF_RULES_ALLOW_UNSIGNED=1"
 else
-    echo "  signature: none published yet (set EASYWAF_RULES_REQUIRE_SIGNATURE=1 to refuse)"
+    echo >&2
+    echo "  No signature at $BASE/sets.toml.asc — refusing." >&2
+    echo "  Rule sets decide what traffic is refused; an unverified one is not" >&2
+    echo "  worth the convenience. Publish with publish.sh, or set" >&2
+    echo "  EASYWAF_RULES_ALLOW_UNSIGNED=1 if you are bringing a channel up." >&2
+    exit 1
 fi
 
 # ── Which sets are basic ─────────────────────────────────
@@ -100,6 +109,35 @@ while IFS= read -r f; do
     fi
 done < "$TMP/basic"
 
+# Each set is checked against the hash in the manifest that the signature
+# covers. Without this, the signature would prove the index authentic while the
+# sets themselves arrived unverified.
+python3 - "$TMP/sets.toml" "$TMP/new" <<'CHECKSUMS' || exit 1
+import hashlib, re, sys, os
+manifest, newdir = sys.argv[1], sys.argv[2]
+bad = []
+for b in open(manifest).read().split("[[sets]]")[1:]:
+    def v(k):
+        m = re.search(r'^' + k + r'\s*=\s*"([^"]+)"', b, re.M)
+        return m.group(1) if m else None
+    f, want, tier = v("file"), v("sha256"), v("tier")
+    if tier != "basic":
+        continue
+    if not want:
+        bad.append(f + ": manifest carries no sha256")
+        continue
+    local = os.path.join(newdir, os.path.basename(f))
+    got = hashlib.sha256(open(local, "rb").read()).hexdigest()
+    if got != want:
+        bad.append(f + ": sha256 " + got[:12] + " does not match manifest " + want[:12])
+if bad:
+    print("  Content does not match the signed manifest - refusing:", file=sys.stderr)
+    for x in bad:
+        print("    " + x, file=sys.stderr)
+    sys.exit(1)
+print("  checksums: every set matches the signed manifest")
+CHECKSUMS
+
 # Replaced wholesale, not merged: a set withdrawn upstream — because a rule in
 # it was wrong — must disappear here too rather than live on in every build.
 rm -f "$DEST"/*.rules.toml
@@ -111,13 +149,22 @@ cp "$TMP/new"/*.rules.toml "$DEST/"
     echo "source = \"$BASE\""
     echo "taken  = \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\""
     echo
-    for f in "$DEST"/*.rules.toml; do
-        if command -v sha256sum >/dev/null; then h=$(sha256sum "$f" | cut -d' ' -f1)
-        else h=$(shasum -a 256 "$f" | cut -d' ' -f1); fi
-        echo "[[set]]"
-        echo "file   = \"$(basename "$f")\""
-        echo "sha256 = \"$h\""
-    done
+    # Versions come from the manifest: they are what tells an installation an
+    # update exists, so a snapshot has to record which ones it holds.
+    python3 - "$TMP/sets.toml" <<'VERSIONS'
+import re, sys
+for b in open(sys.argv[1]).read().split("[[sets]]")[1:]:
+    def v(k):
+        m = re.search(r'^' + k + r'\s*=\s*"?([^"\n]+)"?', b, re.M)
+        return m.group(1).strip() if m else ""
+    if v("tier") != "basic":
+        continue
+    print("[[set]]")
+    print('id      = "' + v("id") + '"')
+    print("version = " + v("version"))
+    print('file    = "' + v("file").split("/")[-1] + '"')
+    print('sha256  = "' + v("sha256") + '"')
+VERSIONS
 } > "$DEST/SOURCE"
 
 RULES=$(grep -ch '^\[\[rules\]\]' "$DEST"/*.rules.toml | awk '{s+=$1} END {print s}')
