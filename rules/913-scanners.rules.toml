@@ -132,6 +132,13 @@ id          = 913015
 name        = "Scanner: admin path brute-force"
 description = "Common admin, debug, and management paths probed by scanners"
 zone        = "URL"
-pattern     = '(?i)/(admin|wp-admin|phpmyadmin|manager|console|actuator|\.env|\.git|phpinfo\.php|server-status|web\.config)'
+# Anchored at the path root. Unanchored, "/admin" matched anywhere in a URL,
+# so an application's own settings page — Nextcloud's is
+# /index.php/settings/admin — scored 4 every time an administrator opened it.
+# A scanner probes these at the root; an application nests them.
+#
+# The file names stay unanchored: /.env or /.git under any path is worth
+# scoring wherever it appears, because nothing legitimately serves them.
+pattern     = '(?i)(^/(admin|wp-admin|phpmyadmin|manager|console|actuator)(/|\?|$)|/(\.env|\.git(/|$)|phpinfo\.php|server-status|web\.config))'
 score       = 4
 action      = "score"

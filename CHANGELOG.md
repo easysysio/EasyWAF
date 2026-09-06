@@ -8,6 +8,26 @@ Version bumps and tags are created only after explicit approval.
 
 ## [Unreleased]
 
+### Fixed
+- **Migration 012 never reached installations that had EasyWAF longest.** It
+  corrected the two false-positive rules by `external_id`, but the catalogue was
+  renumbered into OWASP bands at 0.3.x — `990xxx` became `913xxx`, and the
+  command-chaining rule moved from `931100` to `932012`. A database imported
+  before that keeps the old ids, so the fix skipped exactly the installations
+  that had been running the broken rule the longest. Migration 014 matches on
+  the pattern instead, which reaches both, and still leaves a rule an operator
+  has edited alone.
+- **Rule 913015 scored an application's own admin pages.** `/(admin|…)` was
+  unanchored, so Nextcloud's `/index.php/settings/admin` matched every time an
+  administrator opened it. Anchored to the path root — a scanner probes these at
+  the root, an application nests them — while `.env`, `.git` and the rest stay
+  unanchored, since nothing legitimately serves those at any depth.
+- **The URL zone ran the path into the query.** It was built as
+  `path + query` with no `?`, so `/admin?c=1` became `/adminc=1`. Any rule
+  anchored to the end of a path stopped matching as soon as a request carried a
+  query, and the join could manufacture a string that appeared in neither the
+  path nor the query — a false match with no source in what the client sent.
+
 ### Changed
 - **`scripts/fetch-rules.sh`** refreshes `rules/` from the published rule
   channel at `repo.easysys.io/easywaf/rules`, taking only the sets marked

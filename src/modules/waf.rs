@@ -156,7 +156,14 @@ impl InspectionModule for WafModule {
         // version joined forms with '\n' and a CRLF-detection rule matched
         // that '\n' on any request carrying a percent-encoded header, having
         // nothing to do with anything the client sent. See zone_text.
-        let raw_url = format!("{}{}", ctx.path, ctx.query.as_deref().unwrap_or(""));
+        // Joined with '?', as a URL is. Concatenating them directly made the
+        // path run into the query — "/admin?c=1" became "/adminc=1" — so a rule
+        // anchored to the end of a path never matched when a query was present,
+        // and the join could manufacture a string appearing in neither half.
+        let raw_url = match ctx.query.as_deref() {
+            Some(q) if !q.is_empty() => format!("{}?{}", ctx.path, q),
+            _                        => ctx.path.clone(),
+        };
         let url     = zone_text(&raw_url, true);
         let args    = zone_text(ctx.query.as_deref().unwrap_or(""), true);
         let body    = zone_text(&String::from_utf8_lossy(&ctx.body), true);
@@ -499,6 +506,32 @@ mod tests {
         // A percent that has itself been encoded is the real thing.
         for attack in ["%253Cscript%253E", "%252e%252e%252f", "%%3C"] {
             assert!(re.is_match(attack), "missed {attack:?}");
+        }
+    }
+
+    #[test]
+    fn admin_probing_is_anchored_to_the_path_root() {
+        let re = Regex::new(&pattern("913-scanners.rules.toml", 913015)).unwrap();
+
+        // An application's own settings page is not someone probing for one.
+        // Unanchored, Nextcloud's /index.php/settings/admin scored 4 every time
+        // an administrator opened it.
+        for benign in [
+            "/index.php/settings/admin",
+            "/index.php/settings/admin/overview",
+            "/settings/admin/serverinfo",
+            "/apps/admin_audit/js/x.js",
+            "/index.php/apps/theming/manager",
+        ] {
+            assert!(!re.is_match(benign), "false positive on {benign:?}");
+        }
+
+        for probe in [
+            "/admin", "/admin/", "/admin?x=1", "/wp-admin/install.php",
+            "/phpmyadmin/", "/manager/html", "/actuator/env",
+            "/.env", "/.git/config", "/phpinfo.php", "/server-status", "/web.config",
+        ] {
+            assert!(re.is_match(probe), "missed {probe:?}");
         }
     }
 

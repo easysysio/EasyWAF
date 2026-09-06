@@ -60,9 +60,26 @@ pub async fn init(database_url: &str) -> SqlitePool {
     run_migration_011(&pool).await;
     run_migration_012(&pool).await;
     run_migration_013(&pool).await;
+    run_migration_014(&pool).await;
 
     info!("Database ready: {}", database_url);
     pool
+}
+
+// ─── run_migration_014 ───────────────────────────────────
+
+/// Correct two rules by pattern, reaching databases that predate the
+/// renumbering and so were missed by 012's match on external_id.
+async fn run_migration_014(pool: &SqlitePool) {
+    let sql = include_str!("../migrations/014_rule_false_positives_by_pattern.sql");
+    match sqlx::raw_sql(sql).execute(pool).await {
+        Ok(r) if r.rows_affected() > 0 => info!(
+            "Migration 014 applied: corrected {} rule(s) that matched ordinary traffic",
+            r.rows_affected()
+        ),
+        Ok(_) => {}
+        Err(e) => tracing::warn!("Migration 014 could not update rule patterns: {}", e),
+    }
 }
 
 // ─── run_migration_013 ───────────────────────────────────
