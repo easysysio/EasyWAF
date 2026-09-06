@@ -78,6 +78,8 @@ pub struct SiteForm {
     pub x_frame_value:  Option<String>,
     pub x_content_type: Option<String>,
     pub xss_protection: Option<String>,
+    /// Create-form only: request a certificate as part of creating the site.
+    pub acme:           Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -135,6 +137,10 @@ pub async fn get_site_new(
     ctx.insert("url",       "/sites");
     ctx.insert("policies",  &policies);
     ctx.insert("certs",     &fetch_certs(&state).await?);
+    // Offering to request a certificate when no contact address is set would be
+    // a checkbox whose only outcome is an error, so the form says what is
+    // missing instead.
+    ctx.insert("acme_configured", &crate::acme::config(&state.db).await?.is_some());
 
     Ok((jar, Html(state.tera.render("site_create.html", &ctx)?)).into_response())
 }
@@ -190,7 +196,7 @@ pub async fn post_site_create(
     let cert_id        = parse_policy_id(&form.cert_id);
     let tls_redirect   = form.tls_redirect.is_some();
 
-    sqlx::query!(
+    let site_id = sqlx::query!(
         "INSERT INTO sites
          (name, server_name, target, listen_port, tls_port, cert_id, tls_redirect,
           waf_policy_id, hsts, x_frame, x_frame_value, x_content_type, xss_protection)
@@ -199,11 +205,86 @@ pub async fn post_site_create(
         waf_policy_id, hsts, x_frame, x_frame_value, x_content_type, xss_protection,
     )
     .execute(&state.db)
-    .await?;
+    .await?
+    // From the INSERT's own result, not a following SELECT last_insert_rowid():
+    // that value is per connection, and the pool would be free to answer the
+    // second query on a different one.
+    .last_insert_rowid();
 
+    // Before any certificate request: HTTP-01 validation arrives on a port that
+    // has to be listening, and the challenge is answered by the proxy.
     announce_site(&state, listen_port, tls_port).await;
 
-    flash_redirect("/sites", "success", &format!("Site {} created successfully", name))
+    if form.acme.is_none() {
+        return flash_redirect("/sites", "success", &format!("Site {} created successfully", name));
+    }
+
+    // The site is created either way. Issuing talks to a CA over the network
+    // and can fail for reasons that have nothing to do with what was typed —
+    // DNS, a closed port 80, the CA's rate limit — and losing the site over
+    // that would mean filling the form in again to retry something the site's
+    // own page already offers a button for.
+    if let Err(e) = request_cert_for_new_site(&state, site_id, &server_name, listen_port).await {
+        return flash_redirect(
+            "/sites",
+            "failed",
+            &format!("Site {name} was created, but no certificate was issued: {e}"),
+        );
+    }
+
+    // An issued certificate with no HTTPS port is served to nobody, and the
+    // renewal will go on quietly refreshing it. Said here rather than left to
+    // be discovered when the site does not answer on 443.
+    let msg = match tls_port {
+        Some(_) => format!("Site {name} created, with a certificate issued for {server_name}"),
+        None    => format!(
+            "Site {name} created and a certificate issued for {server_name} — \
+             set an HTTPS port on the site to serve it"
+        ),
+    };
+    flash_redirect("/sites", "success", &msg)
+}
+
+/// Issue a certificate for a site that has just been created, and assign it.
+///
+/// Split out so the create path and the site page's own button cannot drift:
+/// both end with a certificate stored as an ordinary row in `certs` and the
+/// site pointing at it, which is all anything downstream knows about.
+async fn request_cert_for_new_site(
+    state:       &AppState,
+    site_id:     i64,
+    server_name: &str,
+    listen_port: i64,
+) -> std::result::Result<(), String> {
+    if crate::acme::config(&state.db).await.ok().flatten().is_none() {
+        return Err("set an ACME contact address under Settings, then request one \
+                    from the site's page"
+            .to_string());
+    }
+
+    // Warned before the attempt, not after: what the CA reports for this is a
+    // timeout that reads like a network fault.
+    if listen_port != 80 {
+        tracing::warn!(
+            site = %server_name, port = listen_port,
+            "Requesting a certificate for a site that does not listen on port 80 — \
+             HTTP-01 validation always arrives there"
+        );
+    }
+
+    let cert_id = crate::acme::issue_and_store(&state.db, server_name, server_name)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    sqlx::query!(
+        "UPDATE sites SET cert_id = ?, acme_enabled = 1 WHERE id = ?",
+        cert_id, site_id
+    )
+    .execute(&state.db)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    Ok(())
 }
 
 // ─── get_site_edit ───────────────────────────────────────

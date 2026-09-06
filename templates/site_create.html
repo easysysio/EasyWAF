@@ -112,6 +112,41 @@
                         </p>
                     </div>
 
+                    <div class="form-group">
+                        {% if acme_configured %}
+                        <div class="checkbox">
+                            <label>
+                                <input type="checkbox" name="acme" value="1" id="acme-request">
+                                <strong>Request a Let's Encrypt certificate</strong>
+                                <small class="text-muted">— issued for this hostname and assigned here</small>
+                            </label>
+                        </div>
+                        <p class="help-block">
+                            Saves you creating the site and then coming back to ask for a
+                            certificate. It replaces the selection above; the request happens
+                            when you press Save, so the page will wait for the CA.
+                            <br>
+                            For it to succeed, the hostname must resolve to this host from
+                            the public internet and this host must be reachable on
+                            <strong>port 80</strong> — HTTP-01 validation always arrives
+                            there. Start with the staging directory under
+                            <a href="/settings">Settings</a>.
+                            <br>
+                            <strong>The site is created either way.</strong> If issuing
+                            fails, the site is still there and its own page has a Request
+                            Certificate button to try again.
+                        </p>
+                        {% else %}
+                        <p class="help-block">
+                            <i class="fa fa-info-circle"></i>
+                            <strong>Let's Encrypt is not set up.</strong> Set a contact
+                            address under <a href="/settings">Settings</a> and EasyWAF can
+                            request a certificate for this hostname as part of creating the
+                            site, instead of you assigning one afterwards.
+                        </p>
+                        {% endif %}
+                    </div>
+
                     <div class="checkbox">
                         <label>
                             <input type="checkbox" name="tls_redirect" value="1">
@@ -130,4 +165,22 @@
         </div>
     </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Requesting a certificate assigns the issued one, so a selection made above
+// would be overwritten. Greying it out says that before the save does it.
+(function () {
+    var box = document.getElementById("acme-request");
+    var sel = document.querySelector('select[name="cert_id"]');
+    if (!box || !sel) return;
+    function sync() {
+        sel.disabled = box.checked;
+        sel.style.opacity = box.checked ? 0.5 : "";
+    }
+    box.addEventListener("change", sync);
+    sync();
+})();
+</script>
 {% endblock %}

@@ -55,6 +55,22 @@ Version bumps and tags are created only after explicit approval.
   deleted, since removing something that is currently enforcing is not a
   decision an update should make silently.
 
+- **A new site can request its certificate on the way in.** The create form
+  offers "Request a Let's Encrypt certificate", so a site that needs one no
+  longer has to be saved, found again and edited before it can ask.
+
+  **The site is created either way.** Issuing talks to a CA over the network
+  and fails for reasons that have nothing to do with what was typed — DNS not
+  pointing here yet, port 80 closed, a rate limit — and losing the site to that
+  would mean filling the form in again to retry something the site's own page
+  already has a button for. A failure says the site was created and what went
+  wrong.
+
+  The form does not offer the checkbox when no ACME contact is set; it says
+  what to set instead, because a checkbox whose only possible outcome is an
+  error is worse than no checkbox. Ticking it disables the certificate picker,
+  since the issued certificate is what gets assigned.
+
 ### Changed
 - **Settings is organised into tabs** — General, TLS, Proxy, Rule Updates —
   rather than six panels down one page. Rule Updates made the sixth, and a
