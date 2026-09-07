@@ -8,6 +8,30 @@ Version bumps and tags are created only after explicit approval.
 
 ## [Unreleased]
 
+### Added
+- **A site can answer on more than two ports.** It had exactly two: a required
+  plain-HTTP port and an optional HTTPS one, and `server_name` is `UNIQUE` so
+  the same hostname could not be added twice to work around it. Site settings
+  now take **Additional HTTP Ports** and **Additional HTTPS Ports**, comma
+  separated.
+
+  Every extra port behaves exactly like the primary: same upstream, same
+  policy, same certificate. Nothing about routing changed — `lookup_site`
+  matches on `server_name` alone and never looked at the port, so an extra
+  listener reaches the same site by the same path. The primary pair stays
+  primary because the HTTP-to-HTTPS redirect has to name one port, so one of
+  them has to be the answer.
+
+  A port added binds immediately, as the primary always did. A port **removed**
+  stops being served but its listener stays bound until a restart — a bound
+  socket cannot be handed back mid-process — and the field says so.
+
+  An extra HTTPS port is not bound unless the site has a certificate, for the
+  same reason the primary is not: binding with nothing to present fails every
+  handshake, which reads as a working configuration. Ports that clash with the
+  site's own primary, with the management interface, or with each other are
+  refused with the reason, and refused before anything is written.
+
 ### Fixed
 - **A rule you had just saved appeared to vanish.** Saving from the rule editor
   redirected to the rule list with no message, and the list has no alert markup

@@ -63,9 +63,31 @@ pub async fn init(database_url: &str) -> SqlitePool {
     run_migration_014(&pool).await;
     run_migration_015(&pool).await;
     run_migration_016(&pool).await;
+    run_migration_017(&pool).await;
 
     info!("Database ready: {}", database_url);
     pool
+}
+
+// ─── run_migration_017 ───────────────────────────────────
+
+/// Extra ports a site answers on, beyond its primary pair.
+async fn run_migration_017(pool: &SqlitePool) {
+    let exists: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'site_ports'",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0);
+
+    if exists == 0 {
+        let sql = include_str!("../migrations/017_site_ports.sql");
+        sqlx::raw_sql(sql)
+            .execute(pool)
+            .await
+            .unwrap_or_else(|e| panic!("Migration 017 failed: {}", e));
+        info!("Migration 017 applied: a site can answer on more than one port");
+    }
 }
 
 // ─── run_migration_016 ───────────────────────────────────

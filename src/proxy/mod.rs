@@ -229,6 +229,26 @@ async fn get_listen_ports(db: &SqlitePool) -> Vec<BindRequest> {
         }
     }
 
+    // Extra ports, beyond the primary pair. A TLS one is bound only when the
+    // site has a certificate, for the reason above — binding with nothing to
+    // present fails every handshake, which is harder to diagnose than a port
+    // that is simply not there.
+    let extra = sqlx::query!(
+        r#"SELECT DISTINCT sp.port as "port!", sp.tls as "tls!: bool"
+           FROM   site_ports sp
+           JOIN   sites s ON s.id = sp.site_id
+           WHERE  s.enabled = 1 AND (sp.tls = 0 OR s.cert_id IS NOT NULL)"#
+    )
+    .fetch_all(db)
+    .await
+    .unwrap_or_default();
+
+    for r in extra {
+        if let Some(port) = valid_port(r.port) {
+            out.push(BindRequest { port, tls: r.tls });
+        }
+    }
+
     out.sort_unstable_by_key(|r| (r.port, r.tls));
     out.dedup();
     out

@@ -19,6 +19,7 @@ use axum::{
 };
 use axum_extra::extract::cookie::SignedCookieJar;
 use serde::{Deserialize, Serialize};
+use sqlx::SqlitePool;
 use tera::Context;
 
 // ─── Models ──────────────────────────────────────────────
@@ -80,6 +81,9 @@ pub struct SiteForm {
     pub xss_protection: Option<String>,
     /// Create-form only: request a certificate as part of creating the site.
     pub acme:           Option<String>,
+    /// Extra ports beyond the primary pair, comma or space separated.
+    pub extra_http:     Option<String>,
+    pub extra_https:    Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -196,6 +200,14 @@ pub async fn post_site_create(
     let cert_id        = parse_policy_id(&form.cert_id);
     let tls_redirect   = form.tls_redirect.is_some();
 
+    // Checked before the site exists: a rejected port list should leave nothing
+    // behind to tidy up.
+    let (extra_http, extra_https) =
+        match validated_extra_ports(&form, listen_port, tls_port, &state.config) {
+            Ok(v)  => v,
+            Err(e) => return flash_redirect("/sites", "failed", &e),
+        };
+
     let site_id = sqlx::query!(
         "INSERT INTO sites
          (name, server_name, target, listen_port, tls_port, cert_id, tls_redirect,
@@ -211,9 +223,11 @@ pub async fn post_site_create(
     // second query on a different one.
     .last_insert_rowid();
 
+    save_extra_ports(&state.db, site_id, &extra_http, &extra_https).await?;
+
     // Before any certificate request: HTTP-01 validation arrives on a port that
     // has to be listening, and the challenge is answered by the proxy.
-    announce_site(&state, listen_port, tls_port).await;
+    announce_site(&state, listen_port, tls_port, &extra_http, &extra_https).await;
 
     if form.acme.is_none() {
         return flash_redirect("/sites", "success", &format!("Site {} created successfully", name));
@@ -305,6 +319,9 @@ pub async fn get_site_edit(
     // refused — which is indistinguishable from the button doing nothing.
     ctx.insert("result",    &flash.result.unwrap_or_default());
     ctx.insert("msg",       &flash.msg.unwrap_or_default());
+    let (extra_http, extra_https) = extra_ports_of(&state.db, site.id).await;
+    ctx.insert("extra_http",  &extra_http);
+    ctx.insert("extra_https", &extra_https);
 
     Ok((jar, Html(state.tera.render("site_settings.html", &ctx)?)).into_response())
 }
@@ -350,6 +367,14 @@ pub async fn post_site_update(
     let cert_id      = parse_policy_id(&form.cert_id);
     let tls_redirect = form.tls_redirect.is_some();
 
+    // Before the UPDATE: a rejected port list should leave the site as it was,
+    // not half-saved with the ports refused.
+    let (extra_http, extra_https) =
+        match validated_extra_ports(&form, listen_port, tls_port, &state.config) {
+            Ok(v)  => v,
+            Err(e) => return flash_redirect("/sites", "failed", &e),
+        };
+
     sqlx::query!(
         "UPDATE sites SET
            server_name=?, target=?, listen_port=?, tls_port=?, cert_id=?,
@@ -365,7 +390,13 @@ pub async fn post_site_update(
     .execute(&state.db)
     .await?;
 
-    announce_site(&state, listen_port, tls_port).await;
+    let site_id: i64 =
+        sqlx::query_scalar!(r#"SELECT id as "id!" FROM sites WHERE name = ?"#, name)
+            .fetch_one(&state.db)
+            .await?;
+    save_extra_ports(&state.db, site_id, &extra_http, &extra_https).await?;
+
+    announce_site(&state, listen_port, tls_port, &extra_http, &extra_https).await;
 
     flash_redirect("/sites", "success", &format!("Site {} updated successfully", name))
 }
@@ -407,7 +438,20 @@ pub async fn post_site_toggle(
     .await?;
 
     if enabled {
-        announce_site(&state, site.listen_port, site.tls_port).await;
+        let (http, https) = {
+            let rows = sqlx::query!(
+                r#"SELECT port as "port!", tls as "tls!: bool" FROM site_ports WHERE site_id = ?"#,
+                site.id
+            )
+            .fetch_all(&state.db)
+            .await
+            .unwrap_or_default();
+            (
+                rows.iter().filter(|r| !r.tls).map(|r| r.port).collect::<Vec<_>>(),
+                rows.iter().filter(|r|  r.tls).map(|r| r.port).collect::<Vec<_>>(),
+            )
+        };
+        announce_site(&state, site.listen_port, site.tls_port, &http, &https).await;
     } else {
         // Disabling removes the site from the certificate map: its listener
         // stays bound for the other sites sharing it, but this name should no
@@ -619,7 +663,13 @@ pub async fn post_site_acme(
 /// rebuilt too, since it is resolved synchronously during a TLS handshake and
 /// cannot query the database itself — a new or re-pointed site would otherwise
 /// fail every handshake until the next restart.
-async fn announce_site(state: &AppState, listen_port: i64, tls_port: Option<i64>) {
+async fn announce_site(
+    state: &AppState,
+    listen_port: i64,
+    tls_port: Option<i64>,
+    extra_http: &[i64],
+    extra_https: &[i64],
+) {
     let _ = state
         .port_tx
         .send(crate::proxy::BindRequest { port: listen_port as u16, tls: false })
@@ -632,9 +682,148 @@ async fn announce_site(state: &AppState, listen_port: i64, tls_port: Option<i64>
             .await;
     }
 
+    // Extras bind immediately too, so a port added in the GUI answers without a
+    // restart — the same promise the primary port already made.
+    for (ports, tls) in [(extra_http, false), (extra_https, true)] {
+        for p in ports {
+            let _ = state
+                .port_tx
+                .send(crate::proxy::BindRequest { port: *p as u16, tls })
+                .await;
+        }
+    }
+
     if let Err(e) = crate::tls::reload(&state.db).await {
         tracing::error!("Could not reload site certificates: {}", e);
     }
+}
+
+/// Validate the two extra-port fields, or return the message to show.
+fn validated_extra_ports(
+    form: &SiteForm,
+    listen_port: i64,
+    tls_port: Option<i64>,
+    cfg: &crate::config::Config,
+) -> std::result::Result<(Vec<i64>, Vec<i64>), String> {
+    let (http, bad_http) = parse_port_list(form.extra_http.as_deref().unwrap_or(""));
+    let (https, bad_https) = parse_port_list(form.extra_https.as_deref().unwrap_or(""));
+
+    let bad: Vec<String> = bad_http.into_iter().chain(bad_https).collect();
+    if !bad.is_empty() {
+        return Err(format!(
+            "Not a port number between 1 and 65535: {}",
+            bad.join(", ")
+        ));
+    }
+    if let Some(problem) = port_conflicts(
+        &http, &https, listen_port, tls_port, cfg.proxy.gui_port, cfg.proxy.gui_tls_port,
+    ) {
+        return Err(format!("Extra ports: {problem}"));
+    }
+    Ok((http, https))
+}
+
+/// Parse a list of extra ports: comma or space separated, order irrelevant.
+///
+/// Returns the ports and the entries that were not ports. Rejected rather than
+/// skipped, for the reason the trusted-proxy list is: a port someone believes
+/// is open and is not is exactly the gap this field exists to close.
+fn parse_port_list(raw: &str) -> (Vec<i64>, Vec<String>) {
+    let mut ports = Vec::new();
+    let mut bad   = Vec::new();
+    for token in raw.split([',', ' ', '\n', '\t']).map(str::trim).filter(|t| !t.is_empty()) {
+        match token.parse::<i64>() {
+            Ok(p) if (1..=65535).contains(&p) => {
+                if !ports.contains(&p) {
+                    ports.push(p);
+                }
+            }
+            _ => bad.push(token.to_string()),
+        }
+    }
+    (ports, bad)
+}
+
+/// Replace a site's extra ports.
+///
+/// Rewritten wholesale rather than diffed: the list is short, and a diff would
+/// have to decide what a removed port means for a listener that is already
+/// bound. It means nothing until a restart either way — a bound listener stays
+/// bound for the life of the process, which the GUI says.
+async fn save_extra_ports(
+    db: &SqlitePool,
+    site_id: i64,
+    http: &[i64],
+    https: &[i64],
+) -> Result<()> {
+    sqlx::query!("DELETE FROM site_ports WHERE site_id = ?", site_id)
+        .execute(db)
+        .await?;
+
+    for (ports, tls) in [(http, false), (https, true)] {
+        for port in ports {
+            sqlx::query!(
+                "INSERT INTO site_ports (site_id, port, tls) VALUES (?, ?, ?)
+                 ON CONFLICT(site_id, port, tls) DO NOTHING",
+                site_id, port, tls
+            )
+            .execute(db)
+            .await?;
+        }
+    }
+    Ok(())
+}
+
+/// The extra ports a site holds, for redisplay.
+async fn extra_ports_of(db: &SqlitePool, site_id: i64) -> (String, String) {
+    let rows = sqlx::query!(
+        r#"SELECT port as "port!", tls as "tls!: bool" FROM site_ports
+           WHERE site_id = ? ORDER BY port"#,
+        site_id
+    )
+    .fetch_all(db)
+    .await
+    .unwrap_or_default();
+
+    let join = |tls: bool| {
+        rows.iter()
+            .filter(|r| r.tls == tls)
+            .map(|r| r.port.to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    (join(false), join(true))
+}
+
+/// Reject a port list that clashes with the site's own primary ports or with
+/// the management interface. Returns the first problem found.
+fn port_conflicts(
+    http: &[i64],
+    https: &[i64],
+    listen_port: i64,
+    tls_port: Option<i64>,
+    gui_port: u16,
+    gui_tls_port: u16,
+) -> Option<String> {
+    for p in http.iter().chain(https.iter()) {
+        if *p == listen_port || Some(*p) == tls_port {
+            return Some(format!(
+                "port {p} is already this site's primary port — list only the extra ones"
+            ));
+        }
+        if *p == gui_port as i64 || *p == gui_tls_port as i64 {
+            return Some(format!(
+                "port {p} is the management interface. Serving a site there would take away \
+                 the means of changing it back."
+            ));
+        }
+    }
+    for p in http {
+        if https.contains(p) {
+            return Some(format!("port {p} is listed as both HTTP and HTTPS"));
+        }
+    }
+    None
 }
 
 // ─── Form parsing helpers ─────────────────────────────────

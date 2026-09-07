@@ -145,6 +145,36 @@
                         </p>
                     </div>
 
+
+                    <div class="form-group">
+                        <label>Additional HTTP Ports
+                            <small class="text-muted">(optional — comma separated, e.g. 8080, 8880)</small></label>
+                        <input type="text" class="form-control" name="extra_http"
+                               value="{{ extra_http }}" placeholder="8080, 8880" spellcheck="false">
+                        <p class="help-block">
+                            More ports answering this same site: same upstream, same policy,
+                            same certificate. Routing is by <code>Host:</code> and never looked
+                            at the port, so every one of these behaves exactly like the primary.
+                            <br>
+                            A port added here binds immediately. A port <em>removed</em> here
+                            stops being served but its listener stays bound until EasyWAF
+                            restarts — a bound socket cannot be given back mid-process.
+                        </p>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Additional HTTPS Ports
+                            <small class="text-muted">(optional — needs a certificate, as the main HTTPS port does)</small></label>
+                        <input type="text" class="form-control" name="extra_https"
+                               value="{{ extra_https }}" placeholder="8443" spellcheck="false">
+                        <p class="help-block">
+                            Each presents this site's certificate. Like the primary HTTPS port,
+                            one listed here is not bound at all unless a certificate is
+                            selected — binding with nothing to present fails every handshake,
+                            which looks like a working configuration and is not.
+                        </p>
+                    </div>
+
                     <div class="checkbox">
                         <label>
                             <input type="checkbox" name="tls_redirect" value="1" {% if site.tls_redirect %}checked{% endif %}>
