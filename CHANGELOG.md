@@ -43,6 +43,19 @@ Version bumps and tags are created only after explicit approval.
   one that quietly removed itself in between would return as a false positive
   with nothing left to explain it.
 
+- **`scripts/prune-debris.sh`** finds and removes rule rows left behind by two
+  things that happened before 0.6.6: catalogue numbers renumbered by an early
+  commit, whose old rows stayed enabled beside their replacements, and copies
+  written by the old "Seed defaults" button, removed in 0.6.6 without its rows
+  being removed with it. Both mean two rules match one request and both add
+  their score — how a 4-point request came to score 17.
+
+  The debris is derived from the database and the installed rule files, not
+  from a list of ids: a list taken from one snapshot stops being true the
+  moment a set is reinstalled. Clones are never touched, since a clone is
+  deliberate. The script shows what it found, backs the database up, and
+  deletes nothing until you type yes.
+
 ### Changed
 - **The Create Policy page asks for the policy first, and for rule sets and
   rules as one question instead of two.**
