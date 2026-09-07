@@ -6,6 +6,23 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
+## [Unreleased]
+
+### Fixed
+- **Deleting a policy that sites were using silently removed their
+  protection.** `sites.waf_policy_id` is `ON DELETE SET NULL`, so the delete
+  succeeded and every site holding that policy simply stopped being inspected.
+  Nothing failed, nothing returned an error, no page looked any different — the
+  WAF was just gone.
+
+  That is the worst shape a mistake can take here, because having no protection
+  is indistinguishable from having protection that nothing has attacked yet.
+
+  It is now refused while any site holds it, naming them, the way deleting a
+  certificate in use has been refused since 0.4.3. Deleting a policy nothing
+  uses is unchanged, and deleting one that does not exist now says so instead
+  of reporting success.
+
 ## [0.6.8] — 2026-09-07
 
 ### Fixed

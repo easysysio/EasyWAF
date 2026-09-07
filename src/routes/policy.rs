@@ -360,9 +360,46 @@ pub async fn post_policy_delete(
         return Ok(Redirect::to("/login").into_response());
     }
 
-    sqlx::query!("DELETE FROM policies WHERE name = ?", name)
+    // `sites.waf_policy_id` is ON DELETE SET NULL and sqlx enables foreign keys,
+    // so deleting a policy in use silently unsets it on every site that had it.
+    // Those sites keep serving — they simply stop being inspected. Nothing
+    // fails, nothing 500s, no page looks different; the WAF is just gone.
+    //
+    // That is the worst shape a mistake can take here, because the symptom of
+    // having no protection is indistinguishable from having protection that
+    // nothing has attacked yet. Refused rather than warned about.
+    let in_use: Vec<String> = sqlx::query_scalar!(
+        r#"SELECT s.name as "name!" FROM sites s
+           JOIN policies p ON p.id = s.waf_policy_id
+           WHERE p.name = ? ORDER BY s.name"#,
+        name
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    if !in_use.is_empty() {
+        return flash_redirect(
+            "/policy",
+            "failed",
+            &format!(
+                "'{}' is in use by {}: {}. Assign a different policy there first — \
+                 deleting it would leave {} with no WAF inspection at all.",
+                name,
+                if in_use.len() == 1 { "one site" } else { "these sites" },
+                in_use.join(", "),
+                if in_use.len() == 1 { "it" } else { "them" },
+            ),
+        );
+    }
+
+    let deleted = sqlx::query!("DELETE FROM policies WHERE name = ?", name)
         .execute(&state.db)
-        .await?;
+        .await?
+        .rows_affected();
+
+    if deleted == 0 {
+        return flash_redirect("/policy", "failed", &format!("No policy named '{name}'"));
+    }
 
     flash_redirect("/policy", "success", &format!("Policy {} deleted successfully", name))
 }
