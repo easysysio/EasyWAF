@@ -4,6 +4,62 @@
 <form method="post" action="/policy/create" id="policyForm" onsubmit="collectIds()">
     <!-- Hidden field populated with checked rule external_ids on submit -->
     <input type="hidden" name="ids" id="catalogIds" value="">
+    <input type="hidden" name="set_ids" id="setIds" value="">
+
+    <div class="row">
+        <div class="col-lg-8">
+            <div class="panel panel-default">
+                <div class="panel-heading"><h4><i class="fa fa-th-large"></i> Rule Sets</h4></div>
+                <div class="panel-body">
+                    <p class="help-block" style="margin-top:0">
+                        Installed from the rule channel when the policy is created: each is
+                        fetched, its signature checked and its contents verified against the
+                        signed manifest before a rule is written. Sets can be added or removed
+                        afterwards from the policy's Rule Sets page.
+                        <br>
+                        <strong>Install only what applies.</strong> A set for a stack you do
+                        not run cannot detect anything, and every rule in it is a rule that can
+                        only ever match something legitimate.
+                    </p>
+
+                    {% if check_error %}
+                    <div class="alert alert-warning" style="margin-bottom:10px">
+                        <i class="fa fa-exclamation-triangle"></i>
+                        The channel could not be reached: {{ check_error }}
+                        {% if checked %}<br><small>Showing what was offered as of {{ checked }} UTC.</small>{% endif %}
+                    </div>
+                    {% endif %}
+
+                    {% if offered %}
+                    {% for s in offered %}
+                    <div class="checkbox">
+                        <label>
+                            <input type="checkbox" class="set-chk" value="{{ s.id }}"
+                                   {% if s.tier == "basic" %}checked{% endif %}>
+                            <strong>{{ s.name }}</strong>
+                            {% if s.tier == "basic" %}
+                                <span class="label label-default">basic</span>
+                            {% else %}
+                                <span class="label label-info">{{ s.tier }}</span>
+                            {% endif %}
+                            <small class="text-muted">v{{ s.version }} · <code>{{ s.id }}</code></small>
+                            {% if s.description %}
+                            <br><small class="text-muted" style="margin-left:20px">{{ s.description }}</small>
+                            {% endif %}
+                        </label>
+                    </div>
+                    {% endfor %}
+                    {% else %}
+                    <p class="text-muted">
+                        No sets are available from the channel yet. You can still pick
+                        individual rules below, and install sets later from the policy's
+                        Rule Sets page.
+                    </p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
 
     <div class="row">
         <div class="col-lg-8">
@@ -224,6 +280,14 @@ function collectIds() {
                    .map(function (c) { return c.dataset.id; })
                    .join(',');
     document.getElementById('catalogIds').value = ids;
+
+    // One field, comma separated, the same way the rule ids travel. Repeated
+    // form fields of the same name collapse to one on the way in, so ticking
+    // three sets would have installed only the last.
+    var sets = Array.from(document.querySelectorAll('.set-chk:checked'))
+                    .map(function (c) { return c.value; })
+                    .join(',');
+    document.getElementById('setIds').value = sets;
 }
 
 updateCounts();

@@ -190,6 +190,28 @@ pub async fn catalog(db: &SqlitePool, policy_id: i64) -> Result<Vec<CatalogSet>>
     Ok(out)
 }
 
+/// Every set the channel offers, regardless of what any policy holds.
+///
+/// `catalog()` answers "what does this policy have of each set", which needs a
+/// policy. This answers the question that comes first — what is there to
+/// choose from — for a policy that does not exist yet.
+pub async fn offered(db: &SqlitePool) -> Vec<OfferedSet> {
+    match cached_manifest(db).await {
+        Some(text) => {
+            let mut sets = parse_manifest(&text);
+            // Basic first, then optional, each alphabetically: the ones almost
+            // everyone wants should not be interleaved with the ones almost
+            // nobody does.
+            sets.sort_by(|a, b| {
+                let rank = |t: &str| if t == "basic" { 0 } else { 1 };
+                (rank(&a.tier), a.name.clone()).cmp(&(rank(&b.tier), b.name.clone()))
+            });
+            sets
+        }
+        None => Vec::new(),
+    }
+}
+
 // ─── Available updates ───────────────────────────────────
 
 /// A set a policy holds at an older version than the channel offers.

@@ -226,12 +226,24 @@ pub async fn get_policy_new(
     let catalog = crate::routes::rules::read_catalog_categories(&HashSet::new())?;
     let total_available: usize = catalog.iter().map(|c| c.total).sum();
 
+    // What the channel offers, which is a different question from what is on
+    // disk. Optional sets are published and never bundled, so the catalog above
+    // — read from rules/ — cannot show them at all. Choosing what a policy
+    // contains is exactly when someone wants them, and telling them to create
+    // the policy first and come back is asking them to do it in two steps for
+    // no reason.
+    let offered = crate::rules_update::offered(&state.db).await;
+    let (checked, check_error) = crate::rules_update::status(&state.db).await;
+
     let mut ctx = Context::new();
     ctx.insert("username",        &session.username);
     ctx.insert("title",           "Create Policy");
     ctx.insert("url",             "/policy");
     ctx.insert("catalog",         &catalog);
     ctx.insert("total_available", &total_available);
+    ctx.insert("offered",         &offered);
+    ctx.insert("check_error",     &check_error.unwrap_or_default());
+    ctx.insert("checked",         &checked.unwrap_or_default());
 
     Ok((jar, Html(state.tera.render("policy_create.html", &ctx)?)).into_response())
 }
@@ -277,10 +289,48 @@ pub async fn post_policy_create(
 
     let added = crate::routes::rules::add_rules_by_external_ids(&state, policy_id, &ids).await?;
 
+    // Sets chosen on the form, installed through the same verified path the
+    // Rule Sets page uses — signature before anything is read, hash before
+    // anything is written. Nothing is trusted more for arriving during
+    // creation.
+    //
+    // A set that fails is reported and the policy still exists. Discarding a
+    // policy because one set could not be fetched would throw away the part
+    // that succeeded, and the fix is to press Install again rather than to
+    // fill the form in twice.
+    let mut installed = 0usize;
+    let mut failed: Vec<String> = Vec::new();
+    let chosen: Vec<String> = raw
+        .get("set_ids")
+        .map(|v| {
+            v.split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+
+    for set_id in chosen {
+        match crate::rules_update::apply(&state.db, policy_id, &set_id).await {
+            Ok(_)  => installed += 1,
+            Err(e) => failed.push(format!("{set_id} ({e})")),
+        }
+    }
+
     flash_redirect(
         "/policy",
         "success",
-        &format!("Policy {} created with {} rule(s)", name, added),
+        &match (installed, added, failed.is_empty()) {
+            (0, a, true)  => format!("Policy {name} created with {a} rule(s)"),
+            (i, 0, true)  => format!("Policy {name} created with {i} rule set(s)"),
+            (i, a, true)  => format!("Policy {name} created with {i} rule set(s) and {a} further rule(s)"),
+            (i, _, false) => format!(
+                "Policy {name} created with {i} rule set(s), but these could not be \
+                 installed: {}. Install them from the policy's Rule Sets page.",
+                failed.join("; ")
+            ),
+        },
     )
 }
 

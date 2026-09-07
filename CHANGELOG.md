@@ -8,6 +8,19 @@ Version bumps and tags are created only after explicit approval.
 
 ## [Unreleased]
 
+### Added
+- **Rule sets can be chosen while creating a policy.** The Create Policy page
+  listed rules from the `rules/` directory on disk, and optional sets are never
+  bundled there — so WordPress and Apache could not appear at all, and the only
+  way to get them was to create the policy and then go somewhere else. Choosing
+  what a policy contains is exactly when someone wants them.
+
+  The sets come from the channel manifest, basic ones pre-ticked. Each is
+  installed after the policy exists, through the same verified path the Rule
+  Sets page uses — signature before anything is read, hash before anything is
+  written. A set that fails to install is named and the policy still exists,
+  because discarding it would throw away the sets that did install.
+
 ### Fixed
 - **Deleting a policy that sites were using silently removed their
   protection.** `sites.waf_policy_id` is `ON DELETE SET NULL`, so the delete
