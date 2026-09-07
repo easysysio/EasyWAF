@@ -6,7 +6,7 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
-## [0.6.11] — 2026-09-07
+## [0.6.11] — 2026-09-08
 
 ### Fixed
 - **DetectionOnly now reports what it detected.** It previously reported
