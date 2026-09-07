@@ -6,6 +6,29 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
+## [Unreleased]
+
+### Changed
+- **The site form takes a list of ports per protocol** — "80, 8080" — instead
+  of a single port plus a separate "additional ports" field beside it.
+
+  0.6.5 added extra ports by bolting a second field onto each of the existing
+  single-port ones, which made an implementation detail into something the form
+  asked about: there is a primary port because the HTTP-to-HTTPS redirect has
+  to name one, and that is a storage concern, not a question for whoever is
+  filling in the form. One field per protocol is what someone means when they
+  say a site answers on 80 and 8080.
+
+  The first port listed is still the primary, and is still what a redirect
+  points at. Existing sites read back as one field each, primary first, and
+  nothing about how ports are stored or bound has changed.
+
+  A port repeated within one field collapses; the same port in **both** fields
+  is refused, because that is a contradiction rather than a repetition. Ports
+  are also now checked across both lists at once, which the previous shape
+  could not do — a port named as both the primary and an extra was two fields
+  agreeing with each other.
+
 ## [0.6.9] — 2026-09-07
 
 **Rule sets live in one directory, and installing one no longer needs the

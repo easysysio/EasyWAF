@@ -24,8 +24,19 @@
                     </div>
 
                     <div class="form-group">
-                        <label>Listen Port <small class="text-muted">(port EasyWAF binds for this site — a new port binds immediately; the old one keeps listening until restart)</small></label>
-                        <input type="number" class="form-control" name="listen_port" value="80" min="1" max="65535" required>
+                        <label>HTTP Ports
+                            <small class="text-muted">(one or more, comma separated — e.g. 80, 8080)</small></label>
+                        <input type="text" class="form-control" name="listen_port"
+                               value="80" placeholder="80" spellcheck="false" required>
+                        <p class="help-block">
+                            Every port listed serves this site: same upstream, same policy, same
+                            certificate. Routing is by <code>Host:</code> and never looked at the
+                            port, so they behave identically.
+                            <br>
+                            A port added here binds immediately. A port <em>removed</em> stops
+                            being served but its listener stays bound until EasyWAF restarts — a
+                            bound socket cannot be given back mid-process.
+                        </p>
                     </div>
 
                     <div class="form-group">
@@ -90,9 +101,18 @@
                     </p>
 
                     <div class="form-group">
-                        <label>HTTPS Port <small class="text-muted">(empty = no HTTPS; commonly 443)</small></label>
-                        <input type="number" class="form-control" name="tls_port"
-                               value="" min="1" max="65535" placeholder="443">
+                        <label>HTTPS Ports
+                            <small class="text-muted">(empty = no HTTPS; commonly 443, or 443, 8443)</small></label>
+                        <input type="text" class="form-control" name="tls_port"
+                               value="" placeholder="443" spellcheck="false">
+                        <p class="help-block">
+                            Each presents this site's certificate. A site with an HTTPS port and
+                            no certificate cannot complete a handshake, so the port is not bound
+                            at all rather than bound and failing every connection.
+                            <br>
+                            The first port listed is the one an HTTP-to-HTTPS redirect sends
+                            visitors to, since a redirect has to name one.
+                        </p>
                     </div>
 
                     <div class="form-group">
@@ -149,34 +169,7 @@
                     </div>
 
 
-                    <div class="form-group">
-                        <label>Additional HTTP Ports
-                            <small class="text-muted">(optional — comma separated, e.g. 8080, 8880)</small></label>
-                        <input type="text" class="form-control" name="extra_http"
-                               value="" placeholder="8080, 8880" spellcheck="false">
-                        <p class="help-block">
-                            More ports answering this same site: same upstream, same policy,
-                            same certificate. Routing is by <code>Host:</code> and never looked
-                            at the port, so every one of these behaves exactly like the primary.
-                            <br>
-                            A port added here binds immediately. A port <em>removed</em> here
-                            stops being served but its listener stays bound until EasyWAF
-                            restarts — a bound socket cannot be given back mid-process.
-                        </p>
-                    </div>
 
-                    <div class="form-group">
-                        <label>Additional HTTPS Ports
-                            <small class="text-muted">(optional — needs a certificate, as the main HTTPS port does)</small></label>
-                        <input type="text" class="form-control" name="extra_https"
-                               value="" placeholder="8443" spellcheck="false">
-                        <p class="help-block">
-                            Each presents this site's certificate. Like the primary HTTPS port,
-                            one listed here is not bound at all unless a certificate is
-                            selected — binding with nothing to present fails every handshake,
-                            which looks like a working configuration and is not.
-                        </p>
-                    </div>
 
                     <div class="checkbox">
                         <label>

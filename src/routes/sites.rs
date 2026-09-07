@@ -81,9 +81,6 @@ pub struct SiteForm {
     pub xss_protection: Option<String>,
     /// Create-form only: request a certificate as part of creating the site.
     pub acme:           Option<String>,
-    /// Extra ports beyond the primary pair, comma or space separated.
-    pub extra_http:     Option<String>,
-    pub extra_https:    Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -164,7 +161,6 @@ pub async fn post_site_create(
 
     let name        = form.name.as_deref().unwrap_or("").trim().to_string();
     let server_name = normalize_server_name(&form.server_name);
-    let listen_port = parse_port(&form.listen_port);
 
     if name.is_empty() {
         return flash_redirect("/sites", "failed", "Site name is required");
@@ -196,17 +192,17 @@ pub async fn post_site_create(
     let x_content_type = form.x_content_type.is_some();
     let xss_protection = form.xss_protection.is_some();
     let waf_policy_id  = parse_policy_id(&form.waf_policy_id);
-    let tls_port       = parse_optional_port(&form.tls_port);
     let cert_id        = parse_policy_id(&form.cert_id);
     let tls_redirect   = form.tls_redirect.is_some();
 
     // Checked before the site exists: a rejected port list should leave nothing
     // behind to tidy up.
-    let (extra_http, extra_https) =
-        match validated_extra_ports(&form, listen_port, tls_port, &state.config) {
-            Ok(v)  => v,
-            Err(e) => return flash_redirect("/sites", "failed", &e),
-        };
+    let ports = match validated_ports(&form, &state.config) {
+        Ok(v)  => v,
+        Err(e) => return flash_redirect("/sites", "failed", &e),
+    };
+    let (listen_port, tls_port) = (ports.listen, ports.tls);
+    let (extra_http, extra_https) = (ports.extra_http, ports.extra_https);
 
     let site_id = sqlx::query!(
         "INSERT INTO sites
@@ -319,9 +315,16 @@ pub async fn get_site_edit(
     // refused — which is indistinguishable from the button doing nothing.
     ctx.insert("result",    &flash.result.unwrap_or_default());
     ctx.insert("msg",       &flash.msg.unwrap_or_default());
+    // One field per protocol, primary first, the way it was typed in.
     let (extra_http, extra_https) = extra_ports_of(&state.db, site.id).await;
-    ctx.insert("extra_http",  &extra_http);
-    ctx.insert("extra_https", &extra_https);
+    let join = |first: String, rest: &str| {
+        if rest.is_empty() { first } else { format!("{first}, {rest}") }
+    };
+    ctx.insert("http_ports",  &join(site.listen_port.to_string(), &extra_http));
+    ctx.insert("https_ports", &match site.tls_port {
+        Some(p) => join(p.to_string(), &extra_https),
+        None    => extra_https.clone(),
+    });
 
     Ok((jar, Html(state.tera.render("site_settings.html", &ctx)?)).into_response())
 }
@@ -354,7 +357,6 @@ pub async fn post_site_update(
     let x_content_type = form.x_content_type.is_some();
     let xss_protection = form.xss_protection.is_some();
     let server_name    = normalize_server_name(&form.server_name);
-    let listen_port    = parse_port(&form.listen_port);
     let waf_policy_id  = parse_policy_id(&form.waf_policy_id);
 
     // Normalisation can empty the field (e.g. the user typed only "http://"),
@@ -363,17 +365,17 @@ pub async fn post_site_update(
         return flash_redirect("/sites", "failed", "Hostname is required");
     }
 
-    let tls_port     = parse_optional_port(&form.tls_port);
     let cert_id      = parse_policy_id(&form.cert_id);
     let tls_redirect = form.tls_redirect.is_some();
 
     // Before the UPDATE: a rejected port list should leave the site as it was,
     // not half-saved with the ports refused.
-    let (extra_http, extra_https) =
-        match validated_extra_ports(&form, listen_port, tls_port, &state.config) {
-            Ok(v)  => v,
-            Err(e) => return flash_redirect("/sites", "failed", &e),
-        };
+    let ports = match validated_ports(&form, &state.config) {
+        Ok(v)  => v,
+        Err(e) => return flash_redirect("/sites", "failed", &e),
+    };
+    let (listen_port, tls_port) = (ports.listen, ports.tls);
+    let (extra_http, extra_https) = (ports.extra_http, ports.extra_https);
 
     sqlx::query!(
         "UPDATE sites SET
@@ -698,32 +700,79 @@ async fn announce_site(
     }
 }
 
+/// Split a port list into the primary and the rest.
+///
+/// One field per protocol, comma separated, because "80, 8080" is how someone
+/// thinks about it. The first entry is the primary — `sites.listen_port` and
+/// `sites.tls_port` — and the rest go to `site_ports`.
+///
+/// The split survives only because something has to be primary: the
+/// HTTP-to-HTTPS redirect names one port, and inventing a rule for which of
+/// several would be worse than taking the first. It is a storage detail, and
+/// after this change it is no longer one the form asks anybody about.
+fn split_ports(raw: &str) -> (Option<i64>, Vec<i64>, Vec<String>) {
+    let (ports, bad) = parse_port_list(raw);
+    let mut it = ports.into_iter();
+    let first = it.next();
+    (first, it.collect(), bad)
+}
+
 /// Validate the two extra-port fields, or return the message to show.
-fn validated_extra_ports(
+struct SitePorts {
+    listen:      i64,
+    tls:         Option<i64>,
+    extra_http:  Vec<i64>,
+    extra_https: Vec<i64>,
+}
+
+/// Read both port fields, or return the message to show.
+fn validated_ports(
     form: &SiteForm,
-    listen_port: i64,
-    tls_port: Option<i64>,
     cfg: &crate::config::Config,
-) -> std::result::Result<(Vec<i64>, Vec<i64>), String> {
-    let (http, bad_http) = parse_port_list(form.extra_http.as_deref().unwrap_or(""));
-    let (https, bad_https) = parse_port_list(form.extra_https.as_deref().unwrap_or(""));
+) -> std::result::Result<SitePorts, String> {
+    let (listen_first, extra_http, bad_http) =
+        split_ports(form.listen_port.as_deref().unwrap_or(""));
+    let (tls_first, extra_https, bad_https) =
+        split_ports(form.tls_port.as_deref().unwrap_or(""));
 
     let bad: Vec<String> = bad_http.into_iter().chain(bad_https).collect();
     if !bad.is_empty() {
-        return Err(format!(
-            "Not a port number between 1 and 65535: {}",
-            bad.join(", ")
-        ));
+        return Err(format!("Not a port number between 1 and 65535: {}", bad.join(", ")));
     }
-    if let Some(problem) = port_conflicts(
-        &http, &https, listen_port, tls_port, cfg.proxy.gui_port, cfg.proxy.gui_tls_port,
-    ) {
-        return Err(format!("Extra ports: {problem}"));
+
+    let Some(listen) = listen_first else {
+        return Err("At least one HTTP port is required".to_string());
+    };
+
+    // Checked across both lists at once, which the old shape could not do: a
+    // port named as both the primary and an extra was two fields agreeing, and
+    // now it is one field repeating itself.
+    let mut all: Vec<i64> = vec![listen];
+    all.extend(&extra_http);
+    if let Some(t) = tls_first { all.push(t); }
+    all.extend(&extra_https);
+    for (i, p) in all.iter().enumerate() {
+        if all[..i].contains(p) {
+            return Err(format!("Port {p} is listed twice"));
+        }
+        if *p == cfg.proxy.gui_port as i64 || *p == cfg.proxy.gui_tls_port as i64 {
+            return Err(format!(
+                "Port {p} is the management interface. Serving a site there would take away \
+                 the means of changing it back."
+            ));
+        }
     }
-    Ok((http, https))
+
+    Ok(SitePorts { listen, tls: tls_first, extra_http, extra_https })
 }
 
-/// Parse a list of extra ports: comma or space separated, order irrelevant.
+/// Parse a list of ports: comma or space separated, order significant only in
+/// that the first is the primary.
+///
+/// A repeated port collapses to one — "80, 80" is redundant typing and its
+/// meaning is not in doubt. The same port appearing in *both* fields does not
+/// collapse and is refused, because that is a contradiction rather than a
+/// repetition: a port cannot serve plain HTTP and TLS at once.
 ///
 /// Returns the ports and the entries that were not ports. Rejected rather than
 /// skipped, for the reason the trusted-proxy list is: a port someone believes
@@ -795,36 +844,6 @@ async fn extra_ports_of(db: &SqlitePool, site_id: i64) -> (String, String) {
     (join(false), join(true))
 }
 
-/// Reject a port list that clashes with the site's own primary ports or with
-/// the management interface. Returns the first problem found.
-fn port_conflicts(
-    http: &[i64],
-    https: &[i64],
-    listen_port: i64,
-    tls_port: Option<i64>,
-    gui_port: u16,
-    gui_tls_port: u16,
-) -> Option<String> {
-    for p in http.iter().chain(https.iter()) {
-        if *p == listen_port || Some(*p) == tls_port {
-            return Some(format!(
-                "port {p} is already this site's primary port — list only the extra ones"
-            ));
-        }
-        if *p == gui_port as i64 || *p == gui_tls_port as i64 {
-            return Some(format!(
-                "port {p} is the management interface. Serving a site there would take away \
-                 the means of changing it back."
-            ));
-        }
-    }
-    for p in http {
-        if https.contains(p) {
-            return Some(format!("port {p} is listed as both HTTP and HTTPS"));
-        }
-    }
-    None
-}
 
 // ─── Form parsing helpers ─────────────────────────────────
 
@@ -868,27 +887,10 @@ fn normalize_server_name(raw: &str) -> String {
 }
 
 /// Parse listen_port from the form string.
-/// Falls back to 80 if the field is missing or not a valid port number.
-fn parse_port(raw: &Option<String>) -> i64 {
-    raw.as_deref()
-        .and_then(|s| s.trim().parse::<i64>().ok())
-        .filter(|&p| p > 0 && p <= 65535)
-        .unwrap_or(80)
-}
-
 /// Parse an optional port from the form: empty → None, out of range → None.
 ///
 /// Out of range becomes None rather than a clamped value: a mistyped port
 /// should leave the site without HTTPS, which is visible, rather than
-/// listening somewhere nobody asked for.
-fn parse_optional_port(raw: &Option<String>) -> Option<i64> {
-    raw.as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .and_then(|s| s.parse::<i64>().ok())
-        .filter(|p| *p > 0 && *p <= 65535)
-}
-
 /// Parse waf_policy_id from the form: empty string → None, numeric string → Some(i64).
 fn parse_policy_id(raw: &Option<String>) -> Option<i64> {
     raw.as_deref()
