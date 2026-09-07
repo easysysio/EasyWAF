@@ -6,7 +6,22 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
-## [Unreleased]
+## [0.6.5] — 2026-09-07
+
+**A site can be served on as many ports as you like, and a rule you save stops
+disappearing.**
+
+A site had exactly two ports — one plain, one optional HTTPS — and
+`server_name` is `UNIQUE`, so adding the same hostname twice was not a way
+around it. Site settings now take additional HTTP and HTTPS ports.
+
+The rule list buckets rules by the set they came from, and a clone has none by
+design, so it left the category its original sat in and appeared in *Custom /
+Manual* at the bottom — collapsed, like every group, with no message confirming
+the save. Saving now says what it saved and opens the page on that rule.
+
+**Upgrading is enough.** A migration adds the table for the extra ports; every
+site keeps the ports it had.
 
 ### Added
 - **A site can answer on more than two ports.** It had exactly two: a required
