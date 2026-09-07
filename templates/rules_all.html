@@ -2,6 +2,20 @@
 
 {% block content %}
 
+{% if result == "failed" %}
+<div class="alert alert-danger alert-dismissible">
+    <button type="button" class="close" data-dismiss="alert">&times;</button>
+    {{ msg }}
+</div>
+{% endif %}
+
+{% if result == "success" %}
+<div class="alert alert-success alert-dismissible">
+    <button type="button" class="close" data-dismiss="alert">&times;</button>
+    {{ msg }}
+</div>
+{% endif %}
+
 <!-- ── Stats + search toolbar ─────────────────────────────── -->
 <div class="panel panel-default">
     <div class="panel-body" style="padding:10px 14px;display:flex;flex-wrap:wrap;align-items:center;gap:8px">
@@ -59,6 +73,7 @@
             <tbody>
             {% for r in g.rules %}
                 <tr class="rule-row {% if not r.enabled %}text-muted{% endif %}"
+                    id="rule-{{ r.id }}" data-rule-id="{{ r.id }}"
                     data-text="{{ r.name | lower }} {{ r.pattern | lower }} {{ r.zone | lower }} {{ r.policy_name | lower }}">
                     <td class="text-muted">{{ r.id }}</td>
                     <td><span class="label label-primary">{{ r.policy_name }}</span></td>
@@ -143,5 +158,30 @@ function filterRules() {
         setCatOpen(t, q.length > 0);
     });
 }
+
+// ── Open the page on a rule you just saved ─────────────────
+// Every group is collapsed by default, and a clone is bucketed by external_id
+// — which a clone does not have — so it sits in "Custom / Manual" at the
+// bottom rather than beside the rule it was copied from. Without this, saving
+// a clone returned you to a page where it was nowhere to be seen.
+(function () {
+    var focus = {{ focus }};
+    if (!focus) return;
+    var row = document.getElementById('rule-' + focus);
+    if (!row) return;
+
+    var body = row.closest('.cat-body');
+    if (body) {
+        var toggle = body.parentElement.querySelector('.cat-toggle');
+        if (toggle) setCatOpen(toggle, true);
+    }
+    row.scrollIntoView({ block: 'center' });
+
+    // Brief, and not a colour that means anything: this says "here it is",
+    // not "something is wrong with it".
+    row.style.transition = 'background-color 1.2s ease';
+    row.style.backgroundColor = 'rgba(56, 189, 248, 0.25)';
+    setTimeout(function () { row.style.backgroundColor = ''; }, 1600);
+})();
 </script>
 {% endblock %}

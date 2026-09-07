@@ -15,7 +15,7 @@ use crate::{
     AppState,
 };
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     response::{Html, IntoResponse, Redirect, Response},
     Form,
 };
@@ -1499,9 +1499,19 @@ pub struct RuleDetail {
 /// Render the global rule list, grouped into collapsible category panels.
 /// Categories come from the rule files (via external_id); rules without a
 /// known external_id are placed in a "Custom / Manual" group at the end.
+/// Flash, plus the rule to open the page on.
+#[derive(Debug, Deserialize)]
+pub struct AllRulesQuery {
+    pub result: Option<String>,
+    pub msg:    Option<String>,
+    /// Expand this rule's group and scroll to it.
+    pub focus:  Option<i64>,
+}
+
 pub async fn get_all_rules(
     State(state): State<AppState>,
     jar: SignedCookieJar,
+    Query(q): Query<AllRulesQuery>,
 ) -> Result<Response> {
     let session = match get_session(&jar) {
         Some(s) => s,
@@ -1594,6 +1604,9 @@ pub async fn get_all_rules(
     ctx.insert("groups",        &groups);
     ctx.insert("total_rules",   &total);
     ctx.insert("enabled_rules", &enabled);
+    ctx.insert("result",        &q.result.unwrap_or_default());
+    ctx.insert("msg",           &q.msg.unwrap_or_default());
+    ctx.insert("focus",         &q.focus.unwrap_or(0));
 
     Ok((jar, Html(state.tera.render("rules_all.html", &ctx)?)).into_response())
 }
@@ -1751,7 +1764,17 @@ pub async fn post_rule_update_global(
     .execute(&state.db)
     .await?;
 
-    Ok(Redirect::to("/rules").into_response())
+    // Back to the list with the rule named and pointed at. A clone is bucketed
+    // by external_id, which it does not have, so it leaves the category its
+    // original sits in and lands in "Custom / Manual" at the bottom — collapsed,
+    // like every group. Saving used to redirect here with no message and no
+    // indication of that, so a rule someone had just edited appeared to be gone.
+    Ok(Redirect::to(&format!(
+        "/rules?focus={}&result=success&msg={}",
+        id,
+        urlencoding::encode(&format!("Saved '{}'", form.name.trim()))
+    ))
+    .into_response())
 }
 
 // ─── post_rule_clone ─────────────────────────────────────

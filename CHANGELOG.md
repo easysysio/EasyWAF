@@ -6,6 +6,23 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
+## [Unreleased]
+
+### Fixed
+- **A rule you had just saved appeared to vanish.** Saving from the rule editor
+  redirected to the rule list with no message, and the list has no alert markup
+  to show one — so there was no confirmation that anything had happened.
+
+  Worse for a **clone**. The list buckets rules into category panels derived
+  from `external_id`, and a clone deliberately has none, so it leaves the
+  category its original sits in and lands in *Custom / Manual* — rendered last,
+  and collapsed like every other group. Clone a rule, change it, save, and you
+  were returned to a page where it was nowhere to be seen.
+
+  Saving now says what it saved, and opens the page on that rule: its group is
+  expanded, the row scrolled to and briefly highlighted. Nothing about where
+  clones are filed has changed — the list simply takes you to it.
+
 ## [0.6.4] — 2026-09-06
 
 **Policies that predate 0.6.0 now claim the rule sets they already hold.**
