@@ -65,9 +65,32 @@ pub async fn init(database_url: &str) -> SqlitePool {
     run_migration_016(&pool).await;
     run_migration_017(&pool).await;
     run_migration_018(&pool).await;
+    run_migration_019(&pool).await;
 
     info!("Database ready: {}", database_url);
     pool
+}
+
+// ─── run_migration_019 ───────────────────────────────────
+
+/// What the WAF would have done, so a detected-but-allowed request is
+/// distinguishable from clean traffic.
+async fn run_migration_019(pool: &SqlitePool) {
+    let exists: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM pragma_table_info('traffic_events') WHERE name = 'detection'",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0);
+
+    if exists == 0 {
+        let sql = include_str!("../migrations/019_traffic_detection.sql");
+        sqlx::raw_sql(sql)
+            .execute(pool)
+            .await
+            .unwrap_or_else(|e| panic!("Migration 019 failed: {}", e));
+        info!("Migration 019 applied: traffic records say what the WAF would have done");
+    }
 }
 
 // ─── run_migration_018 ───────────────────────────────────

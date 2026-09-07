@@ -23,7 +23,7 @@
 // per request dominated the cost of matching them.
 // =========================================================
 
-use crate::modules::{Findings, RuleHit, InspectionModule, ModuleDecision, RequestContext};
+use crate::modules::{Detection, Findings, RuleHit, InspectionModule, ModuleDecision, RequestContext};
 use async_trait::async_trait;
 use axum::http::StatusCode;
 use regex::Regex;
@@ -257,7 +257,7 @@ impl InspectionModule for WafModule {
                         &policy,
                         Level::Block,
                         format!("WAF block rule matched: {}", rule.name),
-                        Findings { score, hits },
+                        Findings { score, hits, detection: None },
                     );
                 }
                 // Direct challenge request — remember it but keep scanning, so
@@ -279,13 +279,13 @@ impl InspectionModule for WafModule {
                 &policy,
                 Level::Block,
                 format!("WAF score {} ≥ block threshold {}", total_score, policy.score_threshold),
-                Findings { score: total_score, hits },
+                Findings { score: total_score, hits, detection: None },
             );
         }
 
         if let Some(reason) = challenge_reason {
             return decide(&policy, Level::Challenge, reason,
-                          Findings { score: total_score, hits });
+                          Findings { score: total_score, hits, detection: None });
         }
 
         if policy.challenge_threshold > 0 && total_score >= policy.challenge_threshold {
@@ -293,8 +293,28 @@ impl InspectionModule for WafModule {
                 &policy,
                 Level::Challenge,
                 format!("WAF score {} ≥ challenge threshold {}", total_score, policy.challenge_threshold),
-                Findings { score: total_score, hits },
+                Findings { score: total_score, hits, detection: None },
             );
+        }
+
+        // Rules matched, and the request is allowed anyway — it stayed under
+        // every threshold. That is still worth recording: reconnaissance lives
+        // here, and so does the request that scores 9 against a threshold of
+        // 10. Passing silently threw all of it away, in every mode, which is
+        // why a policy could be quietly one point from blocking real traffic
+        // with nothing to show for it.
+        if !hits.is_empty() {
+            return ModuleDecision::Alert {
+                reason: format!(
+                    "WAF score {} below block threshold {}",
+                    total_score, policy.score_threshold
+                ),
+                findings: Findings {
+                    score: total_score,
+                    hits,
+                    detection: Some(Detection::Observed),
+                },
+            };
         }
 
         ModuleDecision::Pass
@@ -380,8 +400,16 @@ fn decide(
     findings: Findings,
 ) -> ModuleDecision {
     // DetectionOnly still reports what matched. Seeing which rules would have
-    // fired is the entire point of running a policy in that mode.
+    // fired is the entire point of running a policy in that mode — and until
+    // 0.6.11 the Alert produced here was discarded by the proxy, so the mode
+    // reported nothing at all. What would have happened is recorded on the
+    // findings so the traffic record can say it.
     if policy.rule_engine == "DetectionOnly" {
+        let mut findings = findings;
+        findings.detection = Some(match level {
+            Level::Block     => Detection::WouldBlock,
+            Level::Challenge => Detection::WouldChallenge,
+        });
         return ModuleDecision::Alert { reason, findings };
     }
     match level {

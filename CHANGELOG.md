@@ -8,6 +8,38 @@ Version bumps and tags are created only after explicit approval.
 
 ## [0.6.11] — 2026-09-07
 
+### Fixed
+- **DetectionOnly now reports what it detected.** It previously reported
+  nothing at all, which left the mode close to useless.
+
+  The WAF did the work: it matched rules, summed the score, decided the request
+  would have been blocked, and raised an alert saying so. The proxy then threw
+  that away and wrote a traffic record identical to clean traffic — no score,
+  no rules, no reason. `Alert` had carried a comment since it was written
+  saying it would be stored "once the alerting pipeline is wired up", and it
+  never was. In DetectionOnly every request is allowed, so the Traffic
+  Monitor's blocked/allowed filter could not find an attack either, and the
+  dashboard's Blocked figure stayed at zero however hard a site was probed.
+
+  Traffic records now carry what the WAF would have done: **would block**,
+  **would challenge**, or **detected** — the last meaning rules matched and the
+  request was allowed on its merits. The Traffic Monitor shows each as its own
+  verdict, colours a would-block row, and gains two filters for them. The
+  dashboard counts detections separately from passes, gives them their own
+  slice of the verdict chart, and says plainly when requests were served that
+  an enforcing policy would have refused.
+
+- **A request that matched rules but stayed under the threshold left no trace,
+  in every mode** — not just DetectionOnly. The WAF returned early and dropped
+  the hits and the score on the floor. That is where reconnaissance lives, and
+  where the request scoring 9 against a threshold of 10 lives: a policy could
+  sit one point away from blocking real traffic with nothing recorded to show
+  it. Those requests are now logged as **detected**, with their score and the
+  rules that matched, and remain allowed exactly as before.
+
+  Nothing about which requests are blocked changes. This is only about what is
+  recorded on the ones that are not.
+
 ### Changed
 - **The rule-signing key is compiled into the binary**, so an installation can
   no longer be missing the thing it verifies updates against.

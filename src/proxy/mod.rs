@@ -596,6 +596,26 @@ async fn proxy_upgrade(
 
 // ─── handle_request ──────────────────────────────────────
 
+/// Spread an allowed request's detection into the four columns that store it.
+///
+/// A tuple rather than four `Option`s threaded separately: they are only ever
+/// set together, and a request that matched nothing must not record a score of
+/// zero — that would be indistinguishable from one that matched a rule scoring
+/// nothing, and would make "clean" a value rather than an absence.
+fn split_detection(
+    found: Option<(i64, Option<String>, String, String)>,
+) -> (Option<i64>, Option<String>, Option<String>, Option<String>) {
+    match found {
+        Some((score, hits, detection, why)) => (
+            Some(score),
+            hits,
+            Some(detection),
+            if why.is_empty() { None } else { Some(why) },
+        ),
+        None => (None, None, None, None),
+    }
+}
+
 /// Main proxy handler — called for every incoming request on every port.
 /// Flow:
 ///   1. Extract and validate the Host: header.
@@ -774,6 +794,9 @@ async fn handle_request(
                 waf_score:    Some(findings.score),
                 matched_rules: findings.hits_json(),
                 country:      country.clone(),
+                // The request was refused; `blocked` says so. `detection` is
+                // for what would have happened and did not.
+                detection:    None,
             }).await;
         });
         return error_response(status, &reason);
@@ -815,6 +838,7 @@ async fn handle_request(
                     waf_score:    Some(score),
                     matched_rules: hits,
                     country:      country.clone(),
+                    detection:    None,   // it was challenged, not merely detected
                 }).await;
             });
 
@@ -822,6 +846,29 @@ async fn handle_request(
         }
         // Cleared visitor — fall through and forward normally.
     }
+
+    // What the WAF found on a request it is about to allow.
+    //
+    // Until 0.6.11 this was dropped: every allowed request logged a clean
+    // record, whether nothing had matched or a DetectionOnly policy had just
+    // decided it would have blocked. That made DetectionOnly report nothing,
+    // and hid every near-miss in enforcing mode too.
+    //
+    // Computed once here because three paths below forward a request —
+    // WebSocket upgrade, cleared challenge, and the ordinary response.
+    let detected: Option<(i64, Option<String>, String, String)> = match &verdict {
+        PipelineVerdict::Allow { findings, alerts } => findings.detection.map(|d| {
+            let why = alerts
+                .iter()
+                .map(|a| a.reason.as_str())
+                .collect::<Vec<_>>()
+                .join("; ");
+            (findings.score, findings.hits_json(), d.as_str().to_string(), why)
+        }),
+        // A cleared challenge falls through to here. It was challenged, and
+        // the visitor answered; that is not a detection to report again.
+        _ => None,
+    };
 
     // ── 5. Forward to upstream ────────────────────────────
     let path_and_query = match &query {
@@ -863,7 +910,9 @@ async fn handle_request(
         let (h, pth, c) = (host.clone(), path.clone(), country.clone());
         let site_id    = site.id;
         let ip         = client_ip.to_string();
+        let found      = detected.clone();
         tokio::spawn(async move {
+            let (score, hits, detection, why) = split_detection(found);
             log_event(db, TrafficRecord {
                 site_id,
                 client_ip:    ip,
@@ -873,10 +922,11 @@ async fn handle_request(
                 status_code:  status,
                 response_ms:  elapsed,
                 blocked:      false,
-                block_reason: None,
-                waf_score:    None,
-                matched_rules: None,
+                block_reason: why,
+                waf_score:    score,
+                matched_rules: hits,
                 country:      c,
+                detection,
             }).await;
         });
 
@@ -912,7 +962,9 @@ async fn handle_request(
             let elapsed    = started_at.elapsed().as_millis() as i64;
             let db         = state.db.clone();
             let method_str = method.to_string();
+            let found      = detected.clone();
             tokio::spawn(async move {
+                let (score, hits, detection, why) = split_detection(found);
                 log_event(db, TrafficRecord {
                     site_id:      site.id,
                     client_ip:    client_ip.to_string(),
@@ -922,10 +974,11 @@ async fn handle_request(
                     status_code:  502,
                     response_ms:  elapsed,
                     blocked:      false,
-                    block_reason: None,
-                    waf_score:    None,
-                    matched_rules: None,
+                    block_reason: why,
+                    waf_score:    score,
+                    matched_rules: hits,
                     country:      country.clone(),
+                    detection,
                 }).await;
             });
             error_response(StatusCode::BAD_GATEWAY, "Upstream unreachable")
@@ -959,7 +1012,9 @@ async fn handle_request(
             // Log the completed request asynchronously.
             let db         = state.db.clone();
             let method_str = method.to_string();
+            let found      = detected.clone();
             tokio::spawn(async move {
+                let (score, hits, detection, why) = split_detection(found);
                 log_event(db, TrafficRecord {
                     site_id:      site.id,
                     client_ip:    client_ip.to_string(),
@@ -969,10 +1024,11 @@ async fn handle_request(
                     status_code:  status.as_u16() as i64,
                     response_ms:  elapsed,
                     blocked:      false,
-                    block_reason: None,
-                    waf_score:    None,
-                    matched_rules: None,
+                    block_reason: why,
+                    waf_score:    score,
+                    matched_rules: hits,
                     country:      country.clone(),
+                    detection,
                 }).await;
             });
 

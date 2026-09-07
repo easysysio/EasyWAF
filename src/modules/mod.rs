@@ -73,11 +73,47 @@ pub struct RuleHit {
     pub score: i64,
 }
 
+/// What a module would have done, when it did not do it.
+///
+/// A request that matches rules and is still allowed — because it stayed under
+/// the threshold, or because the policy is DetectionOnly — used to leave a
+/// traffic record indistinguishable from clean traffic. That made
+/// DetectionOnly close to useless: the mode exists to show what enforcing
+/// would do, and nothing downstream could tell.
+///
+/// Ordered by severity so `merge` can keep the strongest across modules.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Detection {
+    /// Rules matched, and the request was allowed on its merits — under the
+    /// block threshold, in a policy that is enforcing.
+    Observed,
+    /// Enforcing would have challenged this request.
+    WouldChallenge,
+    /// Enforcing would have refused this request.
+    WouldBlock,
+}
+
+impl Detection {
+    /// The stored form. Kept short and stable: it goes in a database column
+    /// and is matched on by the Traffic Monitor's filter.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Detection::Observed       => "observed",
+            Detection::WouldChallenge => "would_challenge",
+            Detection::WouldBlock     => "would_block",
+        }
+    }
+}
+
 /// What the WAF concluded, beyond the human-readable reason.
 #[derive(Debug, Clone, Default)]
 pub struct Findings {
     pub score: i64,
     pub hits:  Vec<RuleHit>,
+    /// What would have happened had the policy been enforcing. `None` on a
+    /// request that was actually blocked or challenged — the verdict says so
+    /// already — and on one where nothing matched.
+    pub detection: Option<Detection>,
 }
 
 impl Findings {
@@ -86,6 +122,9 @@ impl Findings {
     pub fn merge(&mut self, other: Findings) {
         self.score += other.score;
         self.hits.extend(other.hits);
+        // The strongest wins: if one module would only have observed and
+        // another would have blocked, the request would have been blocked.
+        self.detection = self.detection.max(other.detection);
     }
 
     /// The hits as JSON for storage, or None when nothing matched — so an
@@ -230,13 +269,42 @@ mod tests {
         let mut a = Findings {
             score: 6,
             hits: vec![RuleHit { id: Some(920002), name: "double encoding".into(), score: 6 }],
+            detection: Some(Detection::Observed),
         };
         a.merge(Findings {
             score: 8,
             hits: vec![RuleHit { id: Some(932012), name: "chaining".into(), score: 8 }],
+            detection: Some(Detection::WouldBlock),
         });
         assert_eq!(a.score, 14, "the threshold is a sum, so scores add");
         assert_eq!(a.hits.len(), 2);
+        assert_eq!(
+            a.detection, Some(Detection::WouldBlock),
+            "the strongest outcome wins: one module would only have watched, \
+             the other would have refused"
+        );
+    }
+
+    #[test]
+    fn a_detection_never_weakens_on_merge() {
+        // Order must not decide severity — merging in the other direction has
+        // to reach the same answer.
+        let mut a = Findings { detection: Some(Detection::WouldBlock), ..Findings::default() };
+        a.merge(Findings { detection: Some(Detection::Observed), ..Findings::default() });
+        assert_eq!(a.detection, Some(Detection::WouldBlock));
+
+        let mut b = Findings::default();
+        b.merge(Findings { detection: Some(Detection::Observed), ..Findings::default() });
+        assert_eq!(b.detection, Some(Detection::Observed), "None must not outrank a detection");
+    }
+
+    #[test]
+    fn the_stored_forms_are_distinct_and_stable() {
+        // These strings go in a database column and are matched on by the
+        // Traffic Monitor's filter, so a rename is a migration.
+        assert_eq!(Detection::Observed.as_str(),       "observed");
+        assert_eq!(Detection::WouldChallenge.as_str(), "would_challenge");
+        assert_eq!(Detection::WouldBlock.as_str(),     "would_block");
     }
 
     #[test]
@@ -255,6 +323,7 @@ mod tests {
                 RuleHit { id: Some(932012), name: "RCE: chaining".into(), score: 8 },
                 RuleHit { id: None, name: "a custom rule".into(), score: 3 },
             ],
+            detection: None,
         };
         let json = f.hits_json().expect("some hits");
         let back: Vec<RuleHit> = serde_json::from_str(&json).unwrap();

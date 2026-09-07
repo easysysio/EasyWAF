@@ -55,6 +55,9 @@ pub struct TrafficRecord {
     /// JSON list of the rules that matched; None when none did.
     pub matched_rules: Option<String>,
     pub country:      Option<String>,
+    /// What the WAF would have done, when it did not do it — see
+    /// `modules::Detection`. None on clean traffic and on actual blocks.
+    pub detection:    Option<String>,
 }
 
 /// Insert one traffic record into the DB.
@@ -64,8 +67,9 @@ pub async fn log_event(db: SqlitePool, r: TrafficRecord) {
     let res = sqlx::query!(
         "INSERT INTO traffic_events
          (site_id, client_ip, method, host, path, status_code,
-          response_ms, blocked, block_reason, waf_score, country, matched_rules)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          response_ms, blocked, block_reason, waf_score, country, matched_rules,
+          detection)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         r.site_id,
         r.client_ip,
         r.method,
@@ -78,6 +82,7 @@ pub async fn log_event(db: SqlitePool, r: TrafficRecord) {
         r.waf_score,
         r.country,
         r.matched_rules,
+        r.detection,
     )
     .execute(&db)
     .await;

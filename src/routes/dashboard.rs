@@ -24,6 +24,13 @@ struct TrafficSummary {
     passed:     i64,
     challenged: i64,
     blocked:    i64,
+    /// Allowed, but the WAF matched rules on them. Disjoint from `passed`, so
+    /// the four still sum to `total`.
+    detected:   i64,
+    /// The subset of `detected` that only got through because the policy is
+    /// not enforcing. This is the number DetectionOnly exists to produce, and
+    /// before 0.6.11 nothing recorded it.
+    would_block: i64,
 }
 
 // ─── HourBucket ──────────────────────────────────────────
@@ -97,7 +104,16 @@ pub async fn get_dashboard(
                       CASE WHEN blocked = 0
                             AND block_reason LIKE 'challenge:%'
                            THEN 1 ELSE 0 END
-                  ), 0)                     as "challenged!: i64"
+                  ), 0)                     as "challenged!: i64",
+                  COALESCE(SUM(
+                      CASE WHEN blocked = 0 AND detection IS NOT NULL
+                           THEN 1 ELSE 0 END
+                  ), 0)                     as "detected!: i64",
+                  COALESCE(SUM(
+                      CASE WHEN blocked = 0
+                            AND detection IN ('would_block', 'would_challenge')
+                           THEN 1 ELSE 0 END
+                  ), 0)                     as "would_block!: i64"
            FROM traffic_events
            WHERE timestamp >= ?"#,
         window_start
@@ -107,9 +123,14 @@ pub async fn get_dashboard(
 
     let traffic = TrafficSummary {
         total:      totals.total,
-        passed:     totals.total - totals.blocked - totals.challenged,
+        // Detected requests were allowed, but calling them "passed" alongside
+        // ordinary traffic is what hid them. The four are disjoint and sum to
+        // total, so the verdict chart still adds up.
+        passed:     totals.total - totals.blocked - totals.challenged - totals.detected,
         challenged: totals.challenged,
         blocked:    totals.blocked,
+        detected:   totals.detected,
+        would_block: totals.would_block,
     };
 
     // Per-site breakdown and hourly chart for the same 24-hour window.

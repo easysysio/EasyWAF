@@ -93,7 +93,13 @@ impl InspectionModule for GeoIpModule {
 
         // DetectionOnly records what would have happened without enforcing it.
         if policy.rule_engine == "DetectionOnly" {
-            return ModuleDecision::Alert { reason, findings: Findings::default() };
+            return ModuleDecision::Alert {
+                reason,
+                findings: Findings {
+                    detection: Some(crate::modules::Detection::WouldBlock),
+                    ..Findings::default()
+                },
+            };
         }
         ModuleDecision::Drop { reason, status: StatusCode::FORBIDDEN, findings: Findings::default() }
     }

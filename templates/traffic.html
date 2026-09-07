@@ -20,6 +20,10 @@
             <option value=""  {% if sel_blocked == "" %}selected{% endif %}>All Traffic</option>
             <option value="1" {% if sel_blocked == "1" %}selected{% endif %}>Blocked Only</option>
             <option value="0" {% if sel_blocked == "0" %}selected{% endif %}>Allowed Only</option>
+            {# In DetectionOnly every row is "allowed", so blocked/allowed cannot
+               find the attacks that mode was turned on to find. #}
+            <option value="detected" {% if sel_blocked == "detected" %}selected{% endif %}>Detected (allowed)</option>
+            <option value="would_block" {% if sel_blocked == "would_block" %}selected{% endif %}>Would have been blocked</option>
         </select>
     </div>
 
@@ -112,7 +116,9 @@
             </thead>
             <tbody>
             {% for e in events %}
-                <tr {% if e.blocked %}class="danger"{% endif %}>
+                <tr {% if e.blocked %}class="danger"
+                    {% elif e.detection == "would_block" or e.detection == "would_challenge" %}class="warning"
+                    {% endif %}>
                     <td style="white-space:nowrap">{{ e.timestamp }}</td>
                     <td>{{ e.site_name }}</td>
                     <td><code>{{ e.client_ip }}</code></td>
@@ -155,6 +161,26 @@
                             <span class="label label-danger"
                                   title="{{ e.block_reason | default(value='') }}">
                                 <i class="fa fa-ban"></i> BLOCKED
+                            </span>
+                        {% elif e.detection == "would_block" %}
+                            {# The whole point of DetectionOnly: this request was
+                               served, and enforcing would have refused it. #}
+                            <span class="label label-warning"
+                                  title="Allowed — the policy is not enforcing. {{ e.block_reason | default(value='') }}">
+                                <i class="fa fa-exclamation-triangle"></i> WOULD BLOCK
+                            </span>
+                        {% elif e.detection == "would_challenge" %}
+                            <span class="label label-warning"
+                                  title="Allowed — the policy is not enforcing. {{ e.block_reason | default(value='') }}">
+                                <i class="fa fa-exclamation-triangle"></i> WOULD CHALLENGE
+                            </span>
+                        {% elif e.detection == "observed" %}
+                            {# Matched rules but stayed under the threshold. Where
+                               reconnaissance lives, and the near-miss that is one
+                               point from blocking real traffic. #}
+                            <span class="label label-info"
+                                  title="Allowed on its merits — under the block threshold. {{ e.block_reason | default(value='') }}">
+                                <i class="fa fa-eye"></i> DETECTED
                             </span>
                         {% else %}
                             <span class="label label-success">

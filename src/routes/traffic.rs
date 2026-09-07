@@ -45,6 +45,10 @@ pub struct TrafficEvent {
     pub matched_rules: Vec<crate::modules::RuleHit>,
     pub waf_score:    Option<i64>,
     pub country:      Option<String>,
+    /// What the WAF would have done on a request it allowed: "observed",
+    /// "would_challenge" or "would_block". None on clean traffic and on rows
+    /// written before 0.6.11.
+    pub detection:    Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -82,6 +86,7 @@ struct EventRow {
     response_ms:  Option<i64>,
     blocked:      i64,             // NOT NULL DEFAULT 0
     block_reason: Option<String>,
+    detection:    Option<String>,
     matched_rules: Option<String>,
     waf_score:    Option<i64>,
     country:      Option<String>,
@@ -167,7 +172,7 @@ async fn fetch_events(
                 te.client_ip, te.method, te.host, te.path,
                 te.status_code, te.response_ms,
                 te.blocked, te.block_reason, te.country,
-                te.matched_rules, te.waf_score
+                te.matched_rules, te.waf_score, te.detection
          FROM traffic_events te
          LEFT JOIN sites s ON s.id = te.site_id
          WHERE te.timestamp >= ",
@@ -193,6 +198,7 @@ async fn fetch_events(
         response_ms:  r.response_ms.unwrap_or(0),
         blocked:      r.blocked != 0,
         block_reason: r.block_reason,
+        detection:    r.detection,
         // Stored as JSON; a row written before this existed, or by a version
         // that could not parse, simply shows nothing rather than failing.
         matched_rules: r.matched_rules
@@ -283,6 +289,13 @@ fn apply_blocked_filter(qb: &mut QueryBuilder<sqlx::Sqlite>, blocked: &str) {
     match blocked {
         "1" => { qb.push(" AND te.blocked = 1"); }
         "0" => { qb.push(" AND te.blocked = 0"); }
+        // Allowed, but the WAF had something to say. The reason this filter
+        // exists: in DetectionOnly every row is "allowed", so filtering by
+        // blocked/allowed cannot find the attacks the mode was turned on to
+        // find.
+        "detected"    => { qb.push(" AND te.detection IS NOT NULL"); }
+        // Allowed only because the policy is not enforcing.
+        "would_block" => { qb.push(" AND te.detection IN ('would_block', 'would_challenge')"); }
         _   => {}
     }
 }

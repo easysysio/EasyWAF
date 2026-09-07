@@ -90,6 +90,42 @@
     </div>
 
 </div>
+
+{# A policy in DetectionOnly blocks nothing, so the Blocked figure stays at
+   zero however hard the site is being attacked. This is the number that moves
+   instead. Shown only when there is something to say. #}
+{% if traffic.would_block > 0 %}
+<div class="row">
+    <div class="col-lg-12">
+        <div class="alert alert-warning" style="margin-bottom:20px">
+            <i class="fa fa-exclamation-triangle fa-lg"></i>
+            <strong>{{ traffic.would_block }}</strong>
+            request{% if traffic.would_block != 1 %}s were{% else %} was{% endif %}
+            served in the last 24 hours that an enforcing policy would have
+            refused.
+            {% if traffic.detected > traffic.would_block %}
+            Another {{ traffic.detected - traffic.would_block }} matched rules
+            without reaching a threshold.
+            {% endif %}
+            <a href="/traffic?blocked=would_block" class="alert-link">See them</a> —
+            then set the policy's Rule Engine to <code>On</code> to start
+            refusing them.
+        </div>
+    </div>
+</div>
+{% elif traffic.detected > 0 %}
+<div class="row">
+    <div class="col-lg-12">
+        <div class="alert alert-info" style="margin-bottom:20px">
+            <i class="fa fa-eye"></i>
+            <strong>{{ traffic.detected }}</strong>
+            request{% if traffic.detected != 1 %}s{% endif %} in the last 24
+            hours matched WAF rules without reaching a block threshold.
+            <a href="/traffic?blocked=detected" class="alert-link">See them</a>.
+        </div>
+    </div>
+</div>
+{% endif %}
 <!-- /.row -->
 
 
@@ -202,6 +238,8 @@
 const PASSED  = 'rgba(39,174,96,0.75)';
 const CHALLEN = 'rgba(243,156,18,0.85)';
 const BLOCKED = 'rgba(192,57,43,0.8)';
+// Detected but allowed — its own colour, because it is neither.
+const DETECT  = 'rgba(41,128,185,0.8)';
 const GRID    = 'rgba(127,127,127,0.18)';
 
 // Chart.js paints text in a fixed colour, so read the theme's own text colour
@@ -256,10 +294,10 @@ let verdictChart = null;
     verdictChart = new Chart(el, {
         type: 'doughnut',
         data: {
-            labels: ['Passed', 'Challenged', 'Blocked'],
+            labels: ['Passed', 'Detected', 'Challenged', 'Blocked'],
             datasets: [{
-                data: [{{ traffic.passed }}, {{ traffic.challenged }}, {{ traffic.blocked }}],
-                backgroundColor: [PASSED, CHALLEN, BLOCKED],
+                data: [{{ traffic.passed }}, {{ traffic.detected }}, {{ traffic.challenged }}, {{ traffic.blocked }}],
+                backgroundColor: [PASSED, DETECT, CHALLEN, BLOCKED],
                 borderWidth: 0
             }]
         },
