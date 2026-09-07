@@ -378,16 +378,6 @@ fn host_without_port(host: &str) -> &str {
     host.split(':').next().unwrap_or("")
 }
 
-// ─── app_version ─────────────────────────────────────────
-
-/// Tera function returning the crate version, usable as `{{ version() }}` in
-/// any template.
-///
-/// The About modal used to hard-code the version, which meant Cargo.toml and
-/// the template had to be bumped together — they drifted for the 0.2.0 release,
-/// which shipped a modal still reading 0.1.0. Reading it from the binary keeps
-/// one source of truth.
-
 // ─── warn_if_default_password ────────────────────────────
 
 /// Warn on every start while an account still has the password 0.4.x seeded.

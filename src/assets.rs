@@ -74,7 +74,13 @@ pub fn tera() -> Result<tera::Tera, tera::Error> {
     Ok(tera)
 }
 
-/// `{{ version() }}` — the crate version, shown in the GUI footer.
+/// Tera function returning the crate version, usable as `{{ version() }}` in
+/// any template.
+///
+/// The About modal used to hard-code the version, which meant Cargo.toml and
+/// the template had to be bumped together — they drifted for the 0.2.0 release,
+/// which shipped a modal still reading 0.1.0. Reading it from the binary keeps
+/// one source of truth.
 fn app_version(_args: &std::collections::HashMap<String, tera::Value>) -> tera::Result<tera::Value> {
     Ok(tera::Value::String(env!("CARGO_PKG_VERSION").to_string()))
 }
