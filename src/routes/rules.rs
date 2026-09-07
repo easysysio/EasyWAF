@@ -1359,13 +1359,29 @@ pub async fn get_all_rules(
         None    => return Ok(Redirect::to("/login").into_response()),
     };
 
-    // Build external_id -> (code, title) from the rule files, and remember
-    // the category order so groups appear in a stable sequence.
-    let cats = read_catalog_categories(&HashSet::new())?;
+    // Categories come from what each rule says it belongs to, which the
+    // database records as of the last install or update. The rule files on disk
+    // are a build-time snapshot and go stale the moment a set is updated from
+    // the channel: a rule added in a newer version is not in them, so grouping
+    // by them filed a correctly-installed rule under "Custom / Manual".
+    //
+    // The files are still consulted, but only as a fallback for a rule that has
+    // no set recorded — an installation upgraded from before 0.6.0 whose policy
+    // the adoption in 0.6.4 declined to claim. Those keep the old behaviour
+    // rather than all collapsing into Custom.
+    let set_names = sqlx::query!(
+        r#"SELECT DISTINCT set_id as "set_id!", name as "name!" FROM policy_rule_sets"#
+    )
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+    let name_of: HashMap<String, String> =
+        set_names.into_iter().map(|r| (r.set_id, r.name)).collect();
+
+    // The disk snapshot, for rules with no set recorded.
+    let cats = read_catalog_categories(&HashSet::new()).unwrap_or_default();
     let mut cat_of: HashMap<i64, (String, String)> = HashMap::new();
-    let mut order: Vec<(String, String)> = Vec::new();
     for c in &cats {
-        order.push((c.code.clone(), c.title.clone()));
         for r in &c.rules {
             cat_of.insert(r.external_id, (c.code.clone(), c.title.clone()));
         }
@@ -1381,7 +1397,8 @@ pub async fn get_all_rules(
                 wr.score       as \"score!\",
                 wr.action,
                 wr.enabled     as \"enabled!: bool\",
-                wr.external_id
+                wr.external_id,
+                wr.rule_set
          FROM   waf_rules wr
          JOIN   policies  p ON p.id = wr.policy_id
          ORDER  BY p.name, wr.id"
@@ -1393,11 +1410,35 @@ pub async fn get_all_rules(
     let mut buckets: HashMap<String, Vec<EditorRule>> = HashMap::new();
     let custom_code = "custom".to_string();
 
+    // set_id -> title, so a group can be named without consulting the files.
+    let mut titles: HashMap<String, String> = HashMap::new();
+    // Lowest external_id seen in each group, which orders the bands the way
+    // the catalogue used to: 913 before 920 before 930.
+    let mut lowest: HashMap<String, i64> = HashMap::new();
+
     for r in rows {
-        let code = match r.external_id.and_then(|id| cat_of.get(&id)) {
-            Some((code, _)) => code.clone(),
-            None            => custom_code.clone(),
+        let code = match (&r.rule_set, r.external_id) {
+            // What the rule says it belongs to. Authoritative and current.
+            (Some(set), _) => {
+                titles.entry(set.clone()).or_insert_with(|| {
+                    name_of.get(set).cloned().unwrap_or_else(|| set.clone())
+                });
+                set.clone()
+            }
+            // No set recorded: fall back to the build-time snapshot.
+            (None, Some(id)) => match cat_of.get(&id) {
+                Some((code, title)) => {
+                    titles.entry(code.clone()).or_insert_with(|| title.clone());
+                    code.clone()
+                }
+                None => custom_code.clone(),
+            },
+            (None, None) => custom_code.clone(),
         };
+        if let Some(id) = r.external_id {
+            let e = lowest.entry(code.clone()).or_insert(id);
+            *e = (*e).min(id);
+        }
         buckets.entry(code).or_default().push(EditorRule {
             id:          r.id,
             policy_name: r.policy_name,
@@ -1410,7 +1451,15 @@ pub async fn get_all_rules(
         });
     }
 
-    // Assemble groups in catalog order, then the Custom group last.
+    // Assemble in band order — the lowest rule id in each group — then Custom
+    // last. Ordering by the ids rather than by the order the files happened to
+    // be read keeps a set in its familiar place even when the files are absent.
+    let mut order: Vec<(String, String)> = titles
+        .iter()
+        .map(|(code, title)| (code.clone(), title.clone()))
+        .collect();
+    order.sort_by_key(|(code, _)| lowest.get(code).copied().unwrap_or(i64::MAX));
+
     let mut groups: Vec<EditorGroup> = Vec::new();
     for (code, title) in &order {
         if let Some(rules) = buckets.remove(code) {

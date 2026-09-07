@@ -6,6 +6,27 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
+## [0.6.8] — 2026-09-07
+
+### Fixed
+- **The Rule Editor filed correctly-installed rules under "Custom / Manual".**
+  Its categories were built from the `.rules.toml` files on disk, which are a
+  **build-time snapshot** — `scripts/fetch-rules.sh` writes them when EasyWAF is
+  built, and nothing writes them again. Applying an update from the channel
+  writes to the database and never touches them, so the moment a set is updated
+  the snapshot is behind, and a rule added in the newer version was not in it.
+  The rule enforced correctly; only its group was wrong.
+
+  Grouping now comes from the set each rule records, which the database holds as
+  of the last install or update. Group names come from `policy_rule_sets`, and
+  the order from the lowest rule id in each group — so the familiar 913 → 942
+  band order survives even with no files present at all.
+
+  The files are still consulted, but only as a fallback for a rule with no set
+  recorded: an installation upgraded from before 0.6.0 whose policy the 0.6.4
+  adoption declined to claim. Those keep the grouping they had rather than
+  collapsing into Custom.
+
 ## [0.6.7] — 2026-09-07
 
 ### Fixed
