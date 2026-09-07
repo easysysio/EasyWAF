@@ -62,8 +62,13 @@ fi
 # server is self-consistent. Pinning it here means a compromised channel can
 # serve whatever it likes and still fail verification.
 #
-# The running appliance reads the same rules/key.gpg to verify updates it
-# fetches for itself, so this file is not only a build-time check — it ships.
+# Since 0.6.11 this key is compiled into the binary by include_str!, so it is
+# a BUILD-time input: a release built without it does not compile, which is
+# where a missing trust anchor should be found. It used to be read from disk at
+# run time, and 0.6.0 shipped without it and could verify nothing.
+#
+# A built appliance verifies the updates it fetches for itself against that
+# compiled-in copy, so this file is what the release is built from.
 ALLOW_UNSIGNED="${EASYWAF_RULES_ALLOW_UNSIGNED:-0}"
 KEY="$DEST/key.gpg"
 

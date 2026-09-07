@@ -6,6 +6,36 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
+## [0.6.11] — 2026-09-07
+
+### Changed
+- **The rule-signing key is compiled into the binary**, so an installation can
+  no longer be missing the thing it verifies updates against.
+
+  It was a loose file, read from `rules/key.gpg` relative to the working
+  directory, with no fallback. That made the trust anchor something a build or
+  a package could simply omit — not a theoretical worry: 0.6.0 and 0.6.1
+  shipped without it and could not apply a single rule update. A missing key is
+  now a compile error, which is the right end of the process to find it.
+
+  Nothing about *what* is trusted changes. The key still arrives with the
+  binary, reviewed by whoever cut the release, rather than over the same
+  connection as the thing it vouches for — fetching it from the channel at run
+  time would verify the channel against itself.
+
+  A key placed at `rules/key.gpg` still wins, so an operator pointing EasyWAF
+  at a channel of their own can sign it with their own key without rebuilding.
+  The packages no longer install that file, so its presence is now always
+  somebody's decision — and using it is logged every time, because a
+  substituted trust anchor is exactly the thing that should not be silent.
+
+  Consequently **`rules/` is no longer required at run time.** What the
+  appliance enforces has been read from the local mirror since 0.6.9; the
+  directory now holds only `SOURCE` and the sets that seed that
+  mirror on a first run with no network. Deleting it on a working installation
+  no longer breaks rule updates. The packages still ship the seed, and still
+  recreate the directory on upgrade.
+
 ## [0.6.10] — 2026-09-07
 
 ### Added

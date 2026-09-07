@@ -4,9 +4,10 @@ After=network.target
 
 [Service]
 Type=simple
-# Templates and static assets are compiled into the binary. EasyWAF reads
-# rules/ and config.toml relative to its working directory, and creates
-# easywaf.db there on first run.
+# Templates, static assets and the rule-signing key are compiled into the
+# binary. EasyWAF reads config.toml relative to its working directory, creates
+# easywaf.db there on first run, and mirrors the rule channel to rules-cache/
+# beside it. rules/ holds only the offline seed for that mirror.
 WorkingDirectory=/opt/easywaf
 ExecStart=/usr/bin/easywaf
 Restart=on-failure

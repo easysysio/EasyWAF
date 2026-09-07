@@ -319,20 +319,53 @@ pub fn spawn_check_task(db: SqlitePool) {
 
 // ─── Applying ────────────────────────────────────────────
 
+/// The pinned signing key, compiled into the binary.
+///
+/// It was a loose file until 0.6.11, read from `rules/key.gpg` relative to the
+/// working directory. That made the trust anchor something an installation
+/// could be missing — which is not a theoretical worry: 0.6.0 and 0.6.1 shipped
+/// without it and could not apply a single update. A missing anchor is now a
+/// build error rather than a runtime one, which is the right end to find it.
+///
+/// The key arrives with the binary either way, reviewed by whoever cut the
+/// release, rather than over the same connection as the thing it vouches for.
+/// Fetching it from the channel at run time would verify the channel against
+/// itself.
+const BUNDLED_KEY: &str = include_str!("../rules/key.gpg");
+
+/// Where an operator's own key would sit, if they run their own channel.
+const KEY_OVERRIDE: &str = "rules/key.gpg";
+
 /// The trust anchor: the key the channel is signed with.
 ///
-/// Read from `rules/key.gpg`, which ships beside the bundled sets and is
-/// fetched by `scripts/fetch-rules.sh` — so the key arrives with the binary,
-/// reviewed by whoever cut the release, rather than from the same connection
-/// as the thing it is meant to vouch for. Fetching the key from the channel at
-/// run time would verify the channel against itself.
-fn trusted_key() -> std::result::Result<String, String> {
-    std::fs::read_to_string("rules/key.gpg").map_err(|_| {
-        "No signing key at rules/key.gpg, so nothing can be verified. It ships \
-         with EasyWAF; if this installation was built without one, take the \
-         update as a file instead."
-            .to_string()
-    })
+/// The compiled-in key, unless a file has been deliberately placed — an
+/// operator pointing EasyWAF at a channel of their own signs it with their own
+/// key, and there would otherwise be no way to say so short of rebuilding.
+///
+/// The override is logged every time it is used. A substituted trust anchor is
+/// exactly the thing that must not be silent, and the packages no longer ship
+/// this file, so its presence is always somebody's decision.
+fn trusted_key() -> String {
+    key_from(KEY_OVERRIDE)
+}
+
+/// `trusted_key` with the override path named, so the fallback can be tested
+/// without changing the process's working directory — which the tests run in
+/// parallel with others that read `rules/`.
+fn key_from(override_path: &str) -> String {
+    match std::fs::read_to_string(override_path) {
+        Ok(key) => {
+            tracing::warn!(
+                path = override_path,
+                "Verifying rule updates with a key from disk, not the one built into \
+                 this binary. Remove the file to go back to the pinned key."
+            );
+            key
+        }
+        // Infallible, which is the point: there is no longer a state in which
+        // an installation has nothing to verify against.
+        Err(_) => BUNDLED_KEY.to_string(),
+    }
 }
 
 /// Fetch one set, verified, and install it into a policy.
@@ -342,7 +375,7 @@ fn trusted_key() -> std::result::Result<String, String> {
 /// verified manifest before a single rule is written. Nothing touches the
 /// database until both hold.
 pub async fn apply(db: &SqlitePool, policy_id: i64, set_id: &str) -> std::result::Result<String, String> {
-    let key = trusted_key()?;
+    let key = trusted_key();
 
     // The mirror first. It holds the manifest, its signature and the sets, and
     // is verified here exactly as the network copy would be — reading from disk
@@ -622,7 +655,7 @@ pub fn basic_set_ids() -> Option<std::collections::HashSet<String>> {
 /// Written to a staging directory and renamed into place, so a mirror is never
 /// half a version: an interrupted sync leaves the previous one intact.
 pub async fn sync_cache(db: &SqlitePool) -> std::result::Result<usize, String> {
-    let key = trusted_key()?;
+    let key = trusted_key();
     let base = url(db).await;
     let base = base.trim_end_matches('/');
 
@@ -826,5 +859,48 @@ tier    = "optional"
     fn nonsense_yields_nothing_rather_than_a_panic() {
         assert!(parse_manifest("").is_empty());
         assert!(parse_manifest("<html>404</html>").is_empty());
+    }
+
+    // ── The pinned key ───────────────────────────────────
+
+    #[test]
+    fn the_pinned_key_is_compiled_in_and_parses() {
+        // Embedding the key only helps if the embedded bytes are a usable key.
+        // Otherwise the failure has moved from "no anchor at runtime" to "a
+        // broken anchor at runtime", which is worse for being harder to see.
+        use pgp::composed::{Deserializable, SignedPublicKey};
+
+        assert!(BUNDLED_KEY.contains("BEGIN PGP PUBLIC KEY BLOCK"),
+                "the compiled-in key is not an armoured public key");
+
+        let (key, _) = SignedPublicKey::from_string(BUNDLED_KEY)
+            .expect("the compiled-in key should parse as a PGP public key");
+        assert!(!key.details.users.is_empty(), "the key carries no user id");
+    }
+
+    #[test]
+    fn with_no_key_on_disk_the_pinned_one_is_used() {
+        // The whole point: there is no longer a state in which an installation
+        // has nothing to verify against.
+        let missing = std::env::temp_dir().join("easywaf-no-such-key.gpg");
+        let _ = std::fs::remove_file(&missing);
+
+        let key = key_from(missing.to_str().expect("a utf-8 temp path"));
+        assert_eq!(key, BUNDLED_KEY, "should have fallen back to the pinned key");
+    }
+
+    #[test]
+    fn a_key_placed_on_disk_overrides_the_pinned_one() {
+        // An operator running their own channel signs it with their own key.
+        // Rebuilding the binary should not be the only way to say so.
+        let path = std::env::temp_dir().join("easywaf-override-key.gpg");
+        std::fs::write(&path, "-----BEGIN PGP PUBLIC KEY BLOCK-----\nmine\n")
+            .expect("should be able to write a temp file");
+
+        let key = key_from(path.to_str().expect("a utf-8 temp path"));
+        let _ = std::fs::remove_file(&path);
+
+        assert!(key.contains("mine"), "the file on disk should have won");
+        assert_ne!(key, BUNDLED_KEY);
     }
 }

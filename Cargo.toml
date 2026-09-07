@@ -1,6 +1,6 @@
 [package]
 name = "easywaf"
-version = "0.6.10"
+version = "0.6.11"
 edition = "2024"
 authors = ["Yariv Hakim"]
 description = "EasyWAF - Self-contained Web Application Firewall and Reverse Proxy"
@@ -117,10 +117,15 @@ assets = [
     # Templates and static assets are compiled into the binary. Shipping copies
     # as well would be worse than redundant: someone editing the installed file
     # would see no effect and no error.
+    # The offline seed for the mirror. What the appliance enforces is read from
+    # rules-cache/, which these seed on a first run with no network.
     ["rules/*.rules.toml",            "/opt/easywaf/rules/",                     "644"],
-    # The key every rule update is verified against. Without it the update
-    # mechanism refuses everything, so it is not optional.
-    ["rules/key.gpg",                 "/opt/easywaf/rules/key.gpg",             "644"],
+    # key.gpg is NOT shipped. The key every update is verified against is
+    # compiled into the binary, so an installation cannot be missing its trust
+    # anchor — 0.6.0 and 0.6.1 were, and could not apply a single update. A
+    # file here still wins, so an operator running their own channel can sign
+    # with their own key; because the package no longer writes one, its
+    # presence is always somebody's decision, and it is logged on every use.
     ["rules/SOURCE",                  "/opt/easywaf/rules/SOURCE",              "644"],
     # The manifest, so Import can tell a basic set from an optional one.
     ["rules/sets.toml",               "/opt/easywaf/rules/sets.toml",           "644"],
@@ -155,7 +160,6 @@ assets = [
     # Templates and static assets are compiled into the binary; see the .deb
     # asset list above for why copies are not shipped alongside.
     { source = "rules/*.rules.toml",         dest = "/opt/easywaf/rules/",                 mode = "644" },
-    { source = "rules/key.gpg",              dest = "/opt/easywaf/rules/key.gpg",          mode = "644" },
     { source = "rules/SOURCE",               dest = "/opt/easywaf/rules/SOURCE",           mode = "644" },
     { source = "rules/sets.toml",            dest = "/opt/easywaf/rules/sets.toml",        mode = "644" },
     { source = "config.toml",                dest = "/opt/easywaf/config.toml",            mode = "644" },
