@@ -6,6 +6,21 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
+## [0.6.7] — 2026-09-07
+
+### Fixed
+- **The Rule Editor's group headers counted rows, not rules.** A rule is a row
+  per policy, so two policies holding one set produce two rows for every rule in
+  it — and the header read "36 rules" for a set of 18. It now says *"36 rows
+  across 2 policies"* when more than one is in play, and is unchanged for the
+  ordinary single-policy case.
+
+  Nothing about the rules was wrong, only the number describing them. Each
+  policy's copy is genuinely independent: its own row, its own enabled state,
+  its own edits — disabling a rule in one policy leaves the other untouched,
+  which is the point of policies. The Policy column is what tells the rows
+  apart.
+
 ## [0.6.6] — 2026-09-07
 
 **"Seed defaults" was quietly halving your block threshold.**

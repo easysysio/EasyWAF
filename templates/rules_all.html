@@ -101,7 +101,15 @@
         <strong>{{ g.title }}</strong>
         <span class="label label-default">{{ g.code }}</span>
         <span class="text-muted" style="font-size:12px;margin-left:auto">
-            {{ g.enabled }} enabled / {{ g.total }} rules
+            {# A rule is a row per policy, so with more than one policy these are
+               rows, not rules. Saying which is cheaper than being wrong by a
+               factor of however many policies hold the set. #}
+            {{ g.enabled }} enabled / {{ g.total }}
+            {% if g.policies > 1 %}
+                rows across {{ g.policies }} policies
+            {% else %}
+                rules
+            {% endif %}
         </span>
     </div>
     <div class="table-responsive cat-body" style="display:none">

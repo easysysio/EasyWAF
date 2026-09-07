@@ -1255,6 +1255,14 @@ pub struct EditorGroup {
     pub code:    String, // CRS-style code, or "custom"
     pub total:   usize,
     pub enabled: usize,
+    /// How many policies these rows belong to.
+    ///
+    /// A rule is a row per policy, so two policies holding one set produce two
+    /// rows for every rule in it. The count above is rows, and reading it as
+    /// rules is wrong by exactly that factor — a set of 18 showed as 36. The
+    /// header says how many policies are in play when it is more than one,
+    /// rather than presenting a number that means something else.
+    pub policies: usize,
     pub rules:   Vec<EditorRule>,
 }
 
@@ -1407,20 +1415,32 @@ pub async fn get_all_rules(
     for (code, title) in &order {
         if let Some(rules) = buckets.remove(code) {
             let enabled = rules.iter().filter(|r| r.enabled).count();
+            let policies = rules
+                .iter()
+                .map(|r| r.policy_name.as_str())
+                .collect::<std::collections::HashSet<_>>()
+                .len();
             groups.push(EditorGroup {
                 title:   title.clone(),
                 code:    code.clone(),
                 total:   rules.len(),
                 enabled,
+                policies,
                 rules,
             });
         }
     }
     if let Some(rules) = buckets.remove(&custom_code) {
         let enabled = rules.iter().filter(|r| r.enabled).count();
+        let policies = rules
+            .iter()
+            .map(|r| r.policy_name.as_str())
+            .collect::<std::collections::HashSet<_>>()
+            .len();
         groups.push(EditorGroup {
             title:   "Custom / Manual".to_string(),
             code:    custom_code.clone(),
+            policies,
             total:   rules.len(),
             enabled,
             rules,
