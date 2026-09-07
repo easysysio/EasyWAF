@@ -189,6 +189,15 @@ async fn main() {
         .route("/sites/{name}/acme",     post(routes::sites::post_site_acme))
         .route("/sites/{name}/toggle",   post(routes::sites::post_site_toggle))
         .route("/sites/{name}/delete",   post(routes::sites::post_site_delete))
+        // Rules this one site does not apply. Per site, because the policy is
+        // the thing being shared and so is the wrong place to record that one
+        // site disagrees with it.
+        .route("/sites/{name}/exclusions",
+               get(routes::exclusions::get_site_exclusions))
+        .route("/sites/{name}/exclusions/add",
+               post(routes::exclusions::post_exclusion_add))
+        .route("/sites/{name}/exclusions/{id}/delete",
+               post(routes::exclusions::post_exclusion_delete))
         .route("/account",               get(routes::account::get_account))
         .route("/account/password",      post(routes::account::post_account_password))
         .route("/settings",              get(routes::settings::get_settings))

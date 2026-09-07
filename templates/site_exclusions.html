@@ -1,0 +1,202 @@
+{% extends "layout_default.html" %}
+
+{% block content %}
+
+{% if result == "failed" %}
+<div class="alert alert-danger alert-dismissible">
+    <button type="button" class="close" data-dismiss="alert">&times;</button>
+    {{ msg }}
+</div>
+{% endif %}
+
+{% if result == "success" %}
+<div class="alert alert-success alert-dismissible">
+    <button type="button" class="close" data-dismiss="alert">&times;</button>
+    {{ msg }}
+</div>
+{% endif %}
+
+<div class="row">
+    <div class="col-lg-10">
+
+        <div class="panel panel-default">
+            <div class="panel-heading">
+                <h4>
+                    <i class="fa fa-ban"></i> Rule Exclusions
+                    <small class="text-muted">— site <code>{{ site_name }}</code></small>
+                </h4>
+            </div>
+            <div class="panel-body">
+
+                <p class="help-block" style="margin-top:0">
+                    A rule listed here <strong>does not run for this site</strong>. It
+                    still runs for every other site using
+                    {% if policy_name %}policy <code>{{ policy_name }}</code>{% else %}the same policy{% endif %},
+                    which is the point: a false positive on one site is answered here
+                    rather than by weakening the rule for all of them, or by giving this
+                    site a policy of its own and losing shared rule updates.
+                    <br>
+                    An excluded rule adds no score and can no longer block. Exclude the
+                    narrowest thing that fixes the problem — a path prefix where you can,
+                    the whole site only when the rule is wrong for the whole site.
+                </p>
+
+                {% if not policy_name %}
+                <div class="alert alert-warning">
+                    <i class="fa fa-exclamation-triangle"></i>
+                    This site has no security policy, so no rules run on it and there is
+                    nothing to exclude.
+                    <a href="/sites/{{ site_name }}/edit">Assign a policy</a> first.
+                </div>
+                {% else %}
+
+                {% if exclusions %}
+                <div style="overflow-x:auto">
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th>Rule</th>
+                            <th>Applies to</th>
+                            <th>Why</th>
+                            <th class="text-right"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    {% for e in exclusions %}
+                        <tr>
+                            <td>
+                                {% if e.rule_name %}
+                                    <strong>{{ e.rule_name }}</strong>
+                                {% else %}
+                                    <span class="text-muted"><em>not in this policy</em></span>
+                                {% endif %}
+                                <br><small class="text-muted">
+                                    {% if e.external_id %}
+                                        <code>{{ e.external_id }}</code>
+                                    {% else %}
+                                        custom rule <code>#{{ e.rule_id }}</code>
+                                    {% endif %}
+                                    · added {{ e.created_at }}
+                                </small>
+                            </td>
+                            <td style="white-space:nowrap">
+                                {% if e.path_prefix %}
+                                    paths under <code>{{ e.path_prefix }}</code>
+                                {% else %}
+                                    <span class="label label-warning">the whole site</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if e.note %}
+                                    {{ e.note }}
+                                {% else %}
+                                    <span class="text-muted"><em>no reason recorded</em></span>
+                                {% endif %}
+                            </td>
+                            <td class="text-right" style="white-space:nowrap">
+                                <form method="post"
+                                      action="/sites/{{ site_name }}/exclusions/{{ e.id }}/delete"
+                                      onsubmit="return confirm('Stop excluding this rule for {{ site_name }}?\n\nIt will run again on the next request, and can block.');"
+                                      style="display:inline">
+                                    <button type="submit" class="btn btn-default btn-xs"
+                                            title="The rule applies to this site again">
+                                        <i class="fa fa-undo"></i> Remove
+                                    </button>
+                                </form>
+                            </td>
+                        </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+                </div>
+
+                {# An exclusion whose rule the policy no longer holds is kept, not
+                   cleaned up: the policy can be changed back or the set reinstalled,
+                   and one that removed itself in between would return as a false
+                   positive with nothing left to explain it. #}
+                <p class="help-block">
+                    An exclusion shown as <em>not in this policy</em> names a rule this
+                    site's policy does not currently hold. It is kept rather than
+                    removed — reinstall the set or change the policy back and it applies
+                    again.
+                </p>
+                {% else %}
+                <p class="text-muted">
+                    No exclusions. Every rule in
+                    {% if policy_name %}<code>{{ policy_name }}</code>{% else %}the policy{% endif %}
+                    runs on this site.
+                </p>
+                {% endif %}
+
+                <hr>
+
+                <h5><i class="fa fa-plus"></i> Exclude a rule</h5>
+                <form method="post" action="/sites/{{ site_name }}/exclusions/add"
+                      class="form-horizontal" style="margin-top:12px">
+
+                    <div class="form-group">
+                        <label class="col-sm-2 control-label">Rule</label>
+                        <div class="col-sm-10">
+                            <select class="form-control" name="rule" required>
+                                <option value="">— select a rule —</option>
+                                {% for c in candidates %}
+                                <option value="{{ c.value }}">{{ c.label }}{% if c.set %} [{{ c.set }}]{% endif %}</option>
+                                {% endfor %}
+                            </select>
+                            <span class="help-block">
+                                Only rules this policy holds and has enabled. A rule from a
+                                set is remembered by its catalogue number, so the exclusion
+                                survives the set being removed and installed again.
+                            </span>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="col-sm-2 control-label">Path prefix</label>
+                        <div class="col-sm-10">
+                            <input type="text" class="form-control" name="path_prefix"
+                                   placeholder="/remote.php/dav/">
+                            <span class="help-block">
+                                Optional. The rule stops running only where the request path
+                                starts with this, and keeps running everywhere else on the
+                                site. Leave it empty to exclude the rule across the whole
+                                site. A prefix, not a pattern — an exclusion turns a rule
+                                off, so it should be a thing you can read and be sure about.
+                            </span>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="col-sm-2 control-label">Why</label>
+                        <div class="col-sm-10">
+                            <input type="text" class="form-control" name="note"
+                                   placeholder="Blocks the OAuth redirect_uri on every login">
+                            <span class="help-block">
+                                Worth filling in. An exclusion outlives the incident that
+                                caused it, and an unexplained one is never safe to remove.
+                            </span>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <div class="col-sm-offset-2 col-sm-10">
+                            <button type="submit" class="btn btn-warning">
+                                <i class="fa fa-ban"></i> Exclude this rule
+                            </button>
+                        </div>
+                    </div>
+                </form>
+                {% endif %}
+
+                <hr>
+                <a href="/sites/{{ site_name }}/edit" class="btn btn-default">
+                    <i class="fa fa-cog"></i> Site settings
+                </a>
+                <a href="/sites" class="btn btn-default">Back to sites</a>
+
+            </div>
+        </div>
+
+    </div>
+</div>
+{% endblock %}

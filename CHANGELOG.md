@@ -8,6 +8,41 @@ Version bumps and tags are created only after explicit approval.
 
 ## [0.6.10] — 2026-09-07
 
+### Added
+- **A site can exclude a rule** — Sites → *(a site)* → Rule Exclusions.
+
+  A policy is shared on purpose: several sites use one, and a rule update
+  reaches all of them at once. That left nowhere to say "this rule is wrong for
+  this one site". The answers available were to weaken the rule for every site
+  using the policy, or to give the site a policy of its own and lose the shared
+  updates — both worse than the false positive being answered. This is the
+  third answer.
+
+  An exclusion names one rule, optionally confines it to a path prefix, and
+  records why. An excluded rule does not run on that site: it adds no score and
+  cannot block. Everywhere else the rule is untouched.
+
+  A prefix rather than a pattern, because an exclusion turns a rule *off* — a
+  mistake in it is a hole, and a prefix is something you can read and be sure
+  about. Leaving it empty covers the whole site.
+
+  Rules from a set are remembered by catalogue number, not by database row.
+  Removing a set and installing it again deletes every row and writes new ones
+  with new ids, so an exclusion keyed on the row would have stopped applying at
+  the moment the rule came back — silently, and only in production. Custom
+  rules have no catalogue number and are keyed on the row, which cascades: the
+  rule goes, the exclusion goes with it.
+
+  Because a rule that is enabled and yet silent on one host is the sort of
+  thing found *during* an incident, the rule editor now says which sites
+  exclude it and under what path, and the site settings page says how many
+  exclusions the site has next to the policy it shares.
+
+  An exclusion naming a rule the policy no longer holds is shown as unknown and
+  kept, not deleted. The set can be reinstalled or the policy changed back, and
+  one that quietly removed itself in between would return as a false positive
+  with nothing left to explain it.
+
 ### Changed
 - **The Create Policy page asks for the policy first, and for rule sets and
   rules as one question instead of two.**

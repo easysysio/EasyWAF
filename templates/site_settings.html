@@ -64,6 +64,16 @@
                             </option>
                             {% endfor %}
                         </select>
+                        {# The policy is shared, so this is where someone stands when
+                           they discover it is wrong for this one site. #}
+                        <span class="help-block">
+                            Shared with every other site using it. To stop one rule
+                            running <em>here only</em> — without weakening it for the
+                            others — use
+                            <a href="/sites/{{ site.server_name }}/exclusions">rule
+                            exclusions</a>{% if exclusion_count > 0 %}, of which this
+                            site has <strong>{{ exclusion_count }}</strong>{% endif %}.
+                        </span>
                     </div>
 
                     <div class="panel panel-default">

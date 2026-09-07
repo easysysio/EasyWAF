@@ -1632,6 +1632,32 @@ pub async fn get_rule_edit_global(
     ctx.insert("cloned_from",  &r.cloned_from_external_id);
     ctx.insert("cloned_ver",   &r.cloned_from_version);
 
+    // Sites on which this rule does not actually run.
+    //
+    // A rule that is enabled everywhere and yet silent on one host is the kind
+    // of thing found during an incident rather than before one, so the page
+    // that shows the rule is where it has to be said. Matched the same way the
+    // engine matches: by catalogue number when the rule has one, by row id
+    // when it does not.
+    let excluded_on = sqlx::query!(
+        "SELECT s.server_name as \"server_name!\", e.path_prefix as \"path_prefix!\"
+         FROM   site_rule_exclusions e
+         JOIN   sites s ON s.id = e.site_id
+         WHERE  s.waf_policy_id = ?
+           AND  (   (e.external_id IS NOT NULL AND e.external_id = ?)
+                 OR (e.rule_id     IS NOT NULL AND e.rule_id     = ?))
+         ORDER  BY s.server_name",
+        r.policy_id, r.external_id, id
+    )
+    .fetch_all(&state.db)
+    .await?
+    .into_iter()
+    .map(|row| {
+        serde_json::json!({ "site": row.server_name, "prefix": row.path_prefix })
+    })
+    .collect::<Vec<_>>();
+    ctx.insert("excluded_on", &excluded_on);
+
     // Where the set has got to since the fork. The version was recorded at
     // clone time precisely to answer this, and stopping at "so you can tell
     // when the set has moved on" asks the reader to carry two numbers from two

@@ -6,6 +6,7 @@
 pub mod account;
 pub mod certs;
 pub mod dashboard;
+pub mod exclusions;
 pub mod geoip;
 pub mod login;
 pub mod policy;

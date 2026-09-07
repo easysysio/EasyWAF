@@ -310,6 +310,16 @@ pub async fn get_site_edit(
     ctx.insert("site",      &site);
     ctx.insert("policies",  &policies);
     ctx.insert("certs",     &fetch_certs(&state).await?);
+    // Named on this page because this is where the policy is chosen, and so
+    // where someone stands when they find it is wrong for this one site.
+    let exclusion_count: i64 = sqlx::query_scalar!(
+        "SELECT COUNT(*) as \"c!\" FROM site_rule_exclusions WHERE site_id = ?",
+        site.id
+    )
+    .fetch_one(&state.db)
+    .await
+    .unwrap_or(0);
+    ctx.insert("exclusion_count", &exclusion_count);
     // Requesting a certificate redirects back here. Without this the page came
     // back looking exactly as it did before, whether the CA had issued one or
     // refused — which is indistinguishable from the button doing nothing.

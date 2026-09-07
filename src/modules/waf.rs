@@ -148,6 +148,14 @@ impl InspectionModule for WafModule {
             return ModuleDecision::Pass;
         }
 
+        // Step 3b — which of those this site does not apply.
+        //
+        // Loaded rather than filtered in SQL because the decision needs the
+        // request path, and because a skipped rule is worth logging: a rule
+        // that silently does not run is the kind of thing that is discovered
+        // during an incident rather than before one.
+        let exclusions = get_exclusions(&self.db, ctx.site_id).await;
+
         // Step 4 — build zone content forms from the request.
         // Each zone is a small list of candidate strings — raw, then
         // percent-decoded — matched independently rather than concatenated.
@@ -189,6 +197,20 @@ impl InspectionModule for WafModule {
         let mut hits: Vec<RuleHit> = Vec::new();
 
         for rule in &rules {
+            // A rule this site excludes never runs, and never scores. Checked
+            // before matching so the cost of an exclusion is one string
+            // comparison rather than a regex.
+            if let Some(ex) = exclusions.iter().find(|e| e.silences(rule, &ctx.path)) {
+                tracing::debug!(
+                    rule = %rule.name,
+                    site = %ctx.site_name,
+                    path = %ctx.path,
+                    prefix = %ex.path_prefix,
+                    "WAF rule skipped: excluded for this site"
+                );
+                continue;
+            }
+
             // Select the candidate forms for this rule's zone. A rule matches
             // if it matches ANY one form — never a concatenation of them.
             let targets: Vec<&str> = match rule.zone.as_str() {
@@ -398,6 +420,55 @@ async fn get_site_policy(db: &SqlitePool, site_id: i64) -> Option<PolicyInfo> {
 }
 
 /// Fetch all enabled rules for a policy, ordered by id.
+/// One rule a site does not apply, and where it does not apply it.
+struct Exclusion {
+    external_id: Option<i64>,
+    rule_id:     Option<i64>,
+    path_prefix: String,
+}
+
+impl Exclusion {
+    /// Does this exclusion silence `rule` on `path`?
+    ///
+    /// A catalogue rule is matched by its number, not by its row id, so an
+    /// exclusion survives the set being removed and installed again — which
+    /// rewrites every row with a new id.
+    fn silences(&self, rule: &RuleRow, path: &str) -> bool {
+        let same_rule = match (self.external_id, self.rule_id) {
+            (Some(ext), _) => rule.external_id == Some(ext),
+            (_, Some(id))  => rule.id == id,
+            // The CHECK constraint makes this unreachable from the database.
+            // Treated as matching nothing rather than everything: a row we
+            // cannot read is not grounds for turning a rule off.
+            _ => false,
+        };
+        same_rule && (self.path_prefix.is_empty() || path.starts_with(&self.path_prefix))
+    }
+}
+
+/// Exclusions recorded for this site.
+///
+/// Per site, not per policy: the policy is the thing being shared, so it is
+/// the wrong place to record that one site disagrees with it.
+async fn get_exclusions(db: &SqlitePool, site_id: i64) -> Vec<Exclusion> {
+    sqlx::query!(
+        "SELECT external_id, rule_id, path_prefix as \"path_prefix!\"
+         FROM   site_rule_exclusions
+         WHERE  site_id = ?",
+        site_id
+    )
+    .fetch_all(db)
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .map(|r| Exclusion {
+        external_id: r.external_id,
+        rule_id:     r.rule_id,
+        path_prefix: r.path_prefix,
+    })
+    .collect()
+}
+
 async fn get_rules(db: &SqlitePool, policy_id: i64) -> Vec<RuleRow> {
     let rows = sqlx::query!(
         "SELECT id       as \"id!\",
@@ -431,6 +502,7 @@ async fn get_rules(db: &SqlitePool, policy_id: i64) -> Vec<RuleRow> {
 
 #[cfg(test)]
 mod tests {
+    use super::{Exclusion, RuleRow};
     use regex::Regex;
 
     /// Pull one rule's pattern out of the shipped catalog, so the test checks
@@ -560,5 +632,80 @@ mod tests {
         // Still catches comments used to truncate a query.
         assert!(re.is_match("' OR 1=1 --"));
         assert!(re.is_match("UNION/**/SELECT"));
+    }
+
+    // ── Exclusions ───────────────────────────────────────
+
+    /// A rule as the engine holds it, for the matching tests below.
+    fn rule(id: i64, external_id: Option<i64>) -> RuleRow {
+        RuleRow {
+            id,
+            external_id,
+            name:    "test".into(),
+            zone:    "URL".into(),
+            pattern: ".".into(),
+            score:   5,
+            action:  "score".into(),
+        }
+    }
+
+    fn by_number(external_id: i64, prefix: &str) -> Exclusion {
+        Exclusion { external_id: Some(external_id), rule_id: None, path_prefix: prefix.into() }
+    }
+
+    #[test]
+    fn an_exclusion_silences_only_the_rule_it_names() {
+        let ex = by_number(913015, "");
+        assert!( ex.silences(&rule(1, Some(913015)), "/anything"));
+        assert!(!ex.silences(&rule(2, Some(913016)), "/anything"));
+        assert!(!ex.silences(&rule(3, None),         "/anything"));
+    }
+
+    #[test]
+    fn an_empty_prefix_means_the_whole_site() {
+        let ex = by_number(913015, "");
+        for path in ["/", "/admin", "/deep/nested/path"] {
+            assert!(ex.silences(&rule(1, Some(913015)), path), "{path} should be covered");
+        }
+    }
+
+    #[test]
+    fn a_prefix_confines_the_exclusion_to_that_path() {
+        let ex = by_number(913015, "/remote.php/dav/");
+        assert!( ex.silences(&rule(1, Some(913015)), "/remote.php/dav/files/yariv/x"));
+        // The rule still runs everywhere else on the site, which is the whole
+        // reason for having a prefix at all.
+        assert!(!ex.silences(&rule(1, Some(913015)), "/admin"));
+        assert!(!ex.silences(&rule(1, Some(913015)), "/remote.php/other"));
+    }
+
+    #[test]
+    fn a_catalogue_rule_is_matched_by_number_not_by_row_id() {
+        // Removing a set and installing it again rewrites every row with a new
+        // id. The exclusion has to survive that, or it stops applying at the
+        // moment the rule comes back — silently, and only in production.
+        let ex = by_number(913015, "");
+        assert!(ex.silences(&rule(7,   Some(913015)), "/x"), "before a reinstall");
+        assert!(ex.silences(&rule(914, Some(913015)), "/x"), "after a reinstall");
+    }
+
+    #[test]
+    fn a_custom_rule_is_matched_by_row_id_because_it_has_no_number() {
+        let ex = Exclusion { external_id: None, rule_id: Some(42), path_prefix: "".into() };
+        assert!( ex.silences(&rule(42, None), "/x"));
+        assert!(!ex.silences(&rule(43, None), "/x"));
+        // A row id must never reach across to a catalogue rule that happens to
+        // sit at the same id.
+        assert!(!ex.silences(&rule(43, Some(42)), "/x"));
+    }
+
+    #[test]
+    fn a_row_naming_neither_rule_silences_nothing() {
+        // The CHECK constraint makes this unreachable through the database.
+        // If it were ever reached, the safe reading of "no rule named" is no
+        // rule silenced — not every rule silenced.
+        let ex = Exclusion { external_id: None, rule_id: None, path_prefix: "".into() };
+        assert!(!ex.silences(&rule(1, Some(913015)), "/x"));
+        assert!(!ex.silences(&rule(1, None),         "/x"));
     }
 }
