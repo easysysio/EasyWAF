@@ -6,6 +6,49 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
+## [Unreleased]
+
+### Added
+- **`scripts/modsec2easywaf.py` converts ModSecurity rules into an EasyWAF rule
+  set** — and refuses, loudly and itemised, the ones it cannot convert
+  faithfully.
+
+  Against OWASP CRS 4.7.0's 585 request rules it converts 119 and refuses 313
+  (the rest are `SecAction`/marker directives with no id). The refusals are the
+  honest part: 158 are CRS's own anomaly-scoring comparisons (`@lt`, `@eq`,
+  `@ge`), which EasyWAF does not need because it scores in the engine; 72 need
+  transformations EasyWAF does not apply, such as `t:htmlEntityDecode` and
+  `t:jsDecode`; 57 are chained rules, where several conditions must all hold
+  and EasyWAF has one pattern per rule; the remainder are response-phase rules,
+  `@detectSQLi`/`@detectXSS` (libinjection — a parser, not a pattern), and one
+  possessive quantifier Rust's regex cannot compile.
+
+  A rule that cannot be represented is left out rather than approximated,
+  because a rule that looks present and is bypassable is worse than one that is
+  missing: the missing rule shows up in a coverage report, the bypassable one
+  shows up only to whoever finds the bypass.
+
+  Of the 119 converted, 97 patterns are byte-identical to CRS. Eleven differ
+  only by a leading `(?i)` folded in from `t:lowercase`, five by escaping
+  literal braces that PCRE accepts and Rust's regex rejects, and six are built
+  from `@pm` phrase lists. Nothing else differs.
+
+  ModSecurity can target several variables at once and exclude one of them;
+  EasyWAF's zone is a single choice, so such a rule can only be converted by
+  widening what it inspects. That creates false positives rather than holes —
+  CRS excludes things like `REQUEST_HEADERS:Referer` precisely because they
+  cause them — so widened rules are left out unless `--include-widened` is
+  given, and are marked in the output when they are.
+
+  CRS ids are offset (`--id-base`, default 2000000) because CRS numbering
+  collides with EasyWAF's own bundled sets, which use the same OWASP numbers
+  under a unique index. Scores carry CRS severities across unchanged, so the
+  policy's Score Threshold should be set to 5 to reproduce CRS blocking
+  behaviour; EasyWAF's default of 10 needs two critical hits.
+
+  `--self-test` checks the refusals and both rewrites without needing a copy of
+  CRS.
+
 ## [0.6.11] — 2026-09-08
 
 ### Fixed
