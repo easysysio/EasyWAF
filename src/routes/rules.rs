@@ -1,7 +1,16 @@
 // =========================================================
 // routes/rules.rs — EasyWAF
-// WAF rule management: list, create, toggle, delete, seed,
-// and import from TOML rule files in the rules/ directory.
+// WAF rule management: list, create, toggle, delete, and
+// install from the rule sets in the rules/ directory or the
+// published channel.
+//
+// There was also a "seed defaults" button, which inserted a
+// hardcoded list of rules written in this file. It was a
+// second copy of what the rule sets already carry, and it
+// did not merely drift — a seeded rule and its set
+// counterpart both matched, so the request scored twice and
+// a policy's block threshold was effectively halved for
+// every rule that existed in both. Removed in 0.6.6.
 //
 // Rule files use TOML format. Each file contains an array of
 // [[rules]] tables with fields: id, name, description, zone,
@@ -228,33 +237,6 @@ pub async fn post_rule_delete(
     Ok(Redirect::to(&format!("/policy/{}/rules", policy_name)).into_response())
 }
 
-// ─── post_seed_rules ─────────────────────────────────────
-
-/// Insert the built-in default rule set into a policy.
-/// Existing rules are left untouched — this only adds the defaults
-/// so it is safe to call multiple times (duplicate names are skipped).
-pub async fn post_seed_rules(
-    State(state): State<AppState>,
-    jar: SignedCookieJar,
-    Path(policy_name): Path<String>,
-) -> Result<Response> {
-    if get_session(&jar).is_none() {
-        return Ok(Redirect::to("/login").into_response());
-    }
-
-    let policy_id: i64 = sqlx::query_scalar!(
-        "SELECT id as \"id!\" FROM policies WHERE name = ?",
-        policy_name
-    )
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or_else(|| AppError::NotFound(format!("Policy '{}' not found", policy_name)))?;
-
-    seed_default_rules(&state, policy_id).await?;
-
-    Ok(Redirect::to(&format!("/policy/{}/rules", policy_name)).into_response())
-}
-
 // ─── post_bulk_rules ─────────────────────────────────────
 
 /// Handle the bulk-action form: enable, disable, or delete a set of rules
@@ -364,210 +346,6 @@ async fn fetch_rules(state: &AppState, policy_name: String) -> Result<Vec<Rule>>
         action:      r.action,
         enabled:     r.enabled,
     }).collect())
-}
-
-// ─── Default rule set ─────────────────────────────────────
-
-/// Built-in WAF rules covering the most common attack categories.
-/// Called on new policy creation and from the "Seed defaults" button.
-/// Already-existing rules with the same name are skipped.
-pub async fn seed_default_rules(state: &AppState, policy_id: i64) -> Result<()> {
-    // (name, description, zone, pattern, score, action)
-    let defaults: &[(&str, &str, &str, &str, i64, &str)] = &[
-
-        // ── SQL Injection ────────────────────────────────
-        (
-            "SQLi: UNION SELECT",
-            "Union-based SQL injection attempt",
-            "ANY",
-            r"(?i)union[\s\S]{0,30}select",
-            8, "score",
-        ),
-        (
-            "SQLi: SELECT FROM",
-            "Basic SELECT extraction attempt",
-            "ANY",
-            r"(?i)select[\s\S]{0,50}from[\s\S]{0,50}where",
-            6, "score",
-        ),
-        (
-            "SQLi: DROP / TRUNCATE",
-            "Destructive SQL command — instant block",
-            "ANY",
-            r"(?i)(drop|truncate)\s+(table|database|schema)",
-            10, "block",
-        ),
-        (
-            "SQLi: Stacked queries",
-            "Multiple statements via semicolon",
-            "ANY",
-            r"(?i);\s*(select|insert|update|delete|drop|exec)",
-            7, "score",
-        ),
-        (
-            "SQLi: SLEEP / BENCHMARK",
-            "Time-based blind SQL injection",
-            "ANY",
-            r"(?i)(sleep|benchmark|pg_sleep|waitfor\s+delay)\s*\(",
-            8, "score",
-        ),
-        (
-            "SQLi: Boolean injection",
-            "OR/AND 1=1 style payload",
-            "ANY",
-            r"(?i)'\s*(or|and)\s+[\d']+\s*=\s*[\d']+",
-            6, "score",
-        ),
-        (
-            "SQLi: SQL comment",
-            "SQL comment stripping suffix",
-            "ANY",
-            // /\* and \*/ as standalone alternatives match the "*/" in every
-            // client's default "Accept: */*" header, scoring every request.
-            // The catalog copy of this rule was corrected; this one was missed,
-            // so anyone who pressed Seed got the broken version.
-            r"(?i)(--|#|/\*.*?\*/|;--)",
-            3, "score",
-        ),
-
-        // ── Cross-Site Scripting (XSS) ───────────────────
-        (
-            "XSS: script tag",
-            "Inline script tag injection",
-            "ANY",
-            r"(?i)<\s*script",
-            8, "score",
-        ),
-        (
-            "XSS: javascript: protocol",
-            "javascript: URI in links / forms",
-            "ANY",
-            r"(?i)javascript\s*:",
-            7, "score",
-        ),
-        (
-            "XSS: event handler",
-            "Inline DOM event handler attribute",
-            "ANY",
-            r"(?i)\bon\w+\s*=",
-            6, "score",
-        ),
-        (
-            "XSS: iframe / object",
-            "Embedded resource tags",
-            "ANY",
-            r"(?i)<\s*(iframe|object|embed|applet)",
-            7, "score",
-        ),
-        (
-            "XSS: SVG payload",
-            "SVG-based XSS vector",
-            "ANY",
-            r"(?i)<\s*svg[\s>]",
-            5, "score",
-        ),
-
-        // ── Path Traversal ───────────────────────────────
-        (
-            "Path traversal: ../",
-            "Directory traversal via dot-dot-slash",
-            "URL",
-            r"\.\.[/\\]",
-            6, "score",
-        ),
-        (
-            "Path traversal: URL encoded",
-            "Encoded traversal sequence",
-            "URL",
-            r"(?i)%2e%2e[%2f%5c]",
-            7, "score",
-        ),
-        (
-            "Path traversal: /etc/passwd",
-            "Attempt to read Unix credentials — instant block",
-            "ANY",
-            r"(?i)/etc/(passwd|shadow|hosts|group)",
-            10, "block",
-        ),
-        (
-            "Path traversal: Windows system",
-            "Attempt to read Windows system files — instant block",
-            "ANY",
-            r"(?i)\\windows\\(system32|syswow64)",
-            10, "block",
-        ),
-
-        // ── Remote Code / Command Execution ──────────────
-        (
-            "RCE: PHP dangerous functions",
-            "PHP exec/eval/system family",
-            "ANY",
-            r"(?i)(eval|exec|system|passthru|shell_exec|popen|proc_open)\s*\(",
-            9, "score",
-        ),
-        (
-            "RCE: Shell command injection",
-            "Piped shell commands via special chars",
-            "ANY",
-            r"[;|`]\s*\w+",
-            5, "score",
-        ),
-        (
-            "RCE: Template injection",
-            "Server-side template injection probe",
-            "ANY",
-            r"\$\{.{0,50}\}",
-            6, "score",
-        ),
-        (
-            "RCE: PHP wrapper",
-            "PHP stream wrapper attempt",
-            "ANY",
-            r"(?i)php://(input|filter|data|expect)",
-            8, "score",
-        ),
-
-        // ── Scanner / Recon tools ────────────────────────
-        (
-            "Scanner: known tools in User-Agent",
-            "Common automated attack tools",
-            "HEADERS",
-            r"(?i)(sqlmap|nikto|nmap|masscan|dirbuster|gobuster|wfuzz|burpsuite|acunetix|nessus|openvas)",
-            8, "score",
-        ),
-        (
-            "Scanner: admin path probe",
-            "Brute-force scan of admin/debug paths",
-            "URL",
-            r"(?i)/(admin|phpmyadmin|wp-admin|manager|console|actuator|\.env|\.git|phpinfo)",
-            4, "score",
-        ),
-    ];
-
-    for (name, desc, zone, pattern, score, action) in defaults {
-        // Skip if a rule with this name already exists for this policy.
-        let exists: i64 = sqlx::query_scalar!(
-            "SELECT COUNT(*) FROM waf_rules WHERE policy_id = ? AND name = ?",
-            policy_id, name
-        )
-        .fetch_one(&state.db)
-        .await?;
-
-        if exists > 0 {
-            continue;
-        }
-
-        sqlx::query!(
-            "INSERT INTO waf_rules
-             (policy_id, name, description, zone, pattern, score, action)
-             VALUES (?, ?, ?, ?, ?, ?, ?)",
-            policy_id, name, desc, zone, pattern, score, action,
-        )
-        .execute(&state.db)
-        .await?;
-    }
-
-    Ok(())
 }
 
 // ─── install_set ─────────────────────────────────────────
@@ -1508,6 +1286,61 @@ pub struct AllRulesQuery {
     pub focus:  Option<i64>,
 }
 
+/// A custom rule whose pattern is already matched by an imported one.
+#[derive(Debug, Serialize)]
+pub struct DuplicateRule {
+    pub id:          i64,
+    pub policy_name: String,
+    pub name:        String,
+    pub score:       i64,
+    /// "clone" or "custom" — what the operator should weigh when deciding.
+    pub origin:      String,
+}
+
+/// Custom rules that duplicate an imported one, by pattern, in the same policy.
+///
+/// Every matching rule adds its score, so a duplicate is not cosmetic: the pair
+/// scores twice and the policy's block threshold is effectively halved for that
+/// pattern. A request scoring 8 against a threshold of 10 passes; the same
+/// request scoring 8 twice does not.
+///
+/// Matched on the pattern rather than the name, because the names drifted apart
+/// while the patterns stayed identical — which is exactly how this went
+/// unnoticed.
+///
+/// Listed, never removed. A custom rule is the operator's, and deleting one
+/// because it resembles a shipped rule is not a decision to make on their
+/// behalf.
+async fn duplicate_rules(db: &SqlitePool) -> Vec<DuplicateRule> {
+    sqlx::query!(
+        r#"SELECT c.id          as "id!",
+                  p.name        as "policy_name!",
+                  c.name        as "name!",
+                  c.score       as "score!",
+                  c.cloned_from_external_id
+           FROM   waf_rules c
+           JOIN   policies  p ON p.id = c.policy_id
+           WHERE  c.external_id IS NULL
+             AND  EXISTS (SELECT 1 FROM waf_rules s
+                          WHERE s.policy_id   = c.policy_id
+                            AND s.external_id IS NOT NULL
+                            AND s.pattern     = c.pattern)
+           ORDER BY p.name, c.name"#
+    )
+    .fetch_all(db)
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .map(|r| DuplicateRule {
+        id:          r.id,
+        policy_name: r.policy_name,
+        name:        r.name,
+        score:       r.score,
+        origin:      if r.cloned_from_external_id.is_some() { "clone" } else { "custom" }.to_string(),
+    })
+    .collect()
+}
+
 pub async fn get_all_rules(
     State(state): State<AppState>,
     jar: SignedCookieJar,
@@ -1607,6 +1440,7 @@ pub async fn get_all_rules(
     ctx.insert("result",        &q.result.unwrap_or_default());
     ctx.insert("msg",           &q.msg.unwrap_or_default());
     ctx.insert("focus",         &q.focus.unwrap_or(0));
+    ctx.insert("duplicates",    &duplicate_rules(&state.db).await);
 
     Ok((jar, Html(state.tera.render("rules_all.html", &ctx)?)).into_response())
 }

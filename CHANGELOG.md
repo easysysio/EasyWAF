@@ -6,6 +6,38 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
+## [0.6.6] — 2026-09-07
+
+**"Seed defaults" was quietly halving your block threshold.**
+
+The button inserted 22 rules written directly into the Rust source — a second
+copy of protections the rule sets already carry. It did not merely drift, which
+would have been the usual cost of a second copy. A seeded rule and its set
+counterpart **both matched the same request, and both added their score**, so a
+request scoring 8 against a threshold of 10 — which should pass — scored 16 and
+was blocked. Every rule present in both halved the threshold for its pattern.
+
+**Upgrading is enough to stop it getting worse**, but the duplicates already in
+your database are not removed: a custom rule is yours, and deleting one because
+it resembles a shipped rule is not a decision to make on your behalf. The Rule
+Editor now lists them so you can.
+
+### Removed
+- **The "Seed defaults" button and the hardcoded rules behind it.** Rule sets
+  are how a policy gets rules: import them, or install them from the channel,
+  where they carry an id, a version, and a way to be corrected later. The seeded
+  list had none of that and could never be updated.
+
+### Added
+- **The Rule Editor warns about custom rules that duplicate an installed one**,
+  matched on the pattern rather than the name — the names had drifted apart
+  while the patterns stayed identical, which is exactly how this went unnoticed.
+
+  Each is labelled. **custom** is most likely seeded and safe to delete, since
+  the set version stays and is the one that receives updates. **clone** is a rule
+  you made whose pattern is still identical to its original — either change it,
+  or disable the rule it came from so the clone replaces rather than doubles it.
+
 ## [0.6.5] — 2026-09-07
 
 **A site can be served on as many ports as you like, and a rule you save stops

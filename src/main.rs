@@ -207,7 +207,6 @@ async fn main() {
         .route("/policy/{name}/rules",                get(routes::rules::get_rules))
         .route("/policy/{name}/rules/new",            get(routes::rules::get_rule_new))
         .route("/policy/{name}/rules/create",         post(routes::rules::post_rule_create))
-        .route("/policy/{name}/rules/seed",           post(routes::rules::post_seed_rules))
         .route("/policy/{name}/rules/import",         post(routes::rules::post_import_rules))
         .route("/policy/{name}/rules/bulk",           post(routes::rules::post_bulk_rules))
         .route("/policy/{name}/rules/sets",           get(routes::policy::get_rule_sets))

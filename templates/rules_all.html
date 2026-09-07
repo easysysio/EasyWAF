@@ -37,6 +37,54 @@
     </div>
 </div>
 
+{% if duplicates %}
+<div class="alert alert-warning">
+    <h4 style="margin-top:0">
+        <i class="fa fa-clone"></i>
+        {{ duplicates | length }} custom rule{% if duplicates | length != 1 %}s{% endif %}
+        duplicate{% if duplicates | length == 1 %}s{% endif %} an installed one
+    </h4>
+    <p>
+        These have the same pattern as a rule from an installed set, in the same
+        policy. <strong>Both match, and both add their score</strong> — so a request
+        that would score 8 against a threshold of 10 and pass, scores 16 and is
+        blocked. The threshold is effectively halved for these patterns.
+    </p>
+    <table class="table table-condensed" style="background:transparent;margin-bottom:8px">
+        <thead><tr><th>Policy</th><th>Rule</th><th>Score</th><th>Origin</th><th></th></tr></thead>
+        <tbody>
+        {% for d in duplicates %}
+            <tr>
+                <td>{{ d.policy_name }}</td>
+                <td>{{ d.name }}</td>
+                <td>{{ d.score }}</td>
+                <td>
+                    {% if d.origin == "clone" %}
+                        <span class="label label-info">clone</span>
+                    {% else %}
+                        <span class="label label-default">custom</span>
+                    {% endif %}
+                </td>
+                <td><a href="/rules?focus={{ d.id }}">show</a></td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    <p class="help-block" style="margin-bottom:0">
+        <strong>custom</strong> — most likely left over from the "seed defaults"
+        button removed in 0.6.6, which inserted a hardcoded copy of rules the sets
+        already carry. Safe to delete: the set version stays, and it is the one that
+        receives updates.
+        <br>
+        <strong>clone</strong> — yours, and its pattern is still identical to the
+        original. Either change it, or disable the rule it was cloned from so the
+        clone replaces rather than doubles it.
+        <br>
+        Nothing here is deleted for you. Listed only, because a custom rule is yours.
+    </p>
+</div>
+{% endif %}
+
 {% if total_rules == 0 %}
 <div class="alert alert-info">
     No rules defined in any policy yet. Create a policy and select rules,
