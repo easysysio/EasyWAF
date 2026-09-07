@@ -9,6 +9,34 @@ Version bumps and tags are created only after explicit approval.
 ## [Unreleased]
 
 ### Added
+- **The rule channel is mirrored to disk, and installs read from the mirror.**
+  Every set the channel publishes is copied locally on the same six-hourly
+  schedule as the update check. Installing or updating a set then reads from
+  disk, so it works with the channel unreachable — which for a WAF is the
+  ordinary case, not the exception.
+
+  **The mirror is a cache, not a trust boundary.** The manifest, its signature
+  and the sets are stored together, and the signature and per-set hash are
+  checked *when a set is installed*, exactly as they would be over the network.
+  Verifying at download and trusting the disk afterwards would make that
+  directory a way to install rules — and on a WAF, installing rules is how you
+  switch protection off. Editing a mirrored file does not install anything; it
+  makes the install refuse.
+
+  It lives beside the database, never in `rules/`. That directory is shipped by
+  the packages, so a process writing there would have every upgrade either
+  clobber the mirror or leave dpkg asking about modified files.
+
+  A set the mirror does not have — published since the last sync — is still
+  fetched over the network. A missing or incomplete mirror falls through
+  rather than failing.
+
+  Import and the Rule Library deliberately keep reading the bundled `rules/`.
+  Import installs every set file in the directory it reads, and the mirror holds
+  everything the channel publishes — pointing it there would install WordPress
+  and Apache onto every policy, which is exactly what the optional tier exists
+  to prevent.
+
 - **Rule sets can be chosen while creating a policy.** The Create Policy page
   listed rules from the `rules/` directory on disk, and optional sets are never
   bundled there — so WordPress and Apache could not appear at all, and the only

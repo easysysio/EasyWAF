@@ -30,6 +30,7 @@ pub const KEY_ENABLED:  &str = "rule_update_check";
 const KEY_MANIFEST:     &str = "rule_manifest_cache";
 const KEY_FETCHED:      &str = "rule_manifest_fetched";
 const KEY_ERROR:        &str = "rule_manifest_error";
+const KEY_MIRROR_ERROR: &str = "rule_mirror_error";
 
 pub const DEFAULT_URL: &str = "https://repo.easysys.io/easywaf/rules";
 
@@ -319,6 +320,19 @@ pub fn spawn_check_task(db: SqlitePool) {
     tokio::spawn(async move {
         loop {
             check(&db).await;
+
+            // Mirror after checking, on the same schedule and behind the same
+            // switch. A failure is stored the way a failed check is: an
+            // appliance with no outbound access is the ordinary case, and one
+            // that filled its log every six hours about a repository it cannot
+            // reach would teach its operator to stop reading the log.
+            if enabled(&db).await {
+                match sync_cache(&db).await {
+                    Ok(_)  => set(&db, KEY_MIRROR_ERROR, "").await,
+                    Err(e) => set(&db, KEY_MIRROR_ERROR, &e).await,
+                }
+            }
+
             tokio::time::sleep(CHECK_INTERVAL).await;
         }
     });
@@ -350,6 +364,16 @@ fn trusted_key() -> std::result::Result<String, String> {
 /// database until both hold.
 pub async fn apply(db: &SqlitePool, policy_id: i64, set_id: &str) -> std::result::Result<String, String> {
     let key = trusted_key()?;
+
+    // The mirror first. It holds the manifest, its signature and the sets, and
+    // is verified here exactly as the network copy would be — reading from disk
+    // changes where the bytes come from, not what has to be proved about them.
+    // A mirror that is missing, incomplete or stale falls through to the
+    // network rather than failing.
+    if let Some(result) = apply_from_cache(db, policy_id, set_id, &key).await {
+        return result;
+    }
+
     let base = url(db).await;
     let base = base.trim_end_matches('/');
 
@@ -432,6 +456,191 @@ fn manifest_entry(manifest: &str, set_id: &str) -> Option<ManifestEntry> {
     None
 }
 
+/// Install a set from the on-disk mirror, or `None` if it cannot serve this one.
+///
+/// `None` means "not here, try the network" and is not a failure: a first run
+/// has no mirror, and a set published since the last sync is not in it yet.
+/// `Some(Err(..))` is a real refusal — the mirror exists and does not verify,
+/// which is worth reporting rather than silently reaching past.
+async fn apply_from_cache(
+    db: &SqlitePool,
+    policy_id: i64,
+    set_id: &str,
+    key: &str,
+) -> Option<std::result::Result<String, String>> {
+    let dir = cache_dir();
+    let manifest = std::fs::read(dir.join("sets.toml")).ok()?;
+    let signature = std::fs::read_to_string(dir.join("sets.toml.asc")).ok()?;
+
+    let signer = match crate::pgp_verify::verify_detached(key, &manifest, &signature) {
+        Ok(s)  => s,
+        Err(e) => return Some(Err(format!("the mirrored manifest does not verify: {e}"))),
+    };
+    let manifest = String::from_utf8(manifest).ok()?;
+    let entry = manifest_entry(&manifest, set_id)?;
+
+    let name = std::path::Path::new(&entry.file).file_name()?;
+    let body = std::fs::read(dir.join("sets").join(name)).ok()?;
+
+    let digest: String = {
+        use sha2::{Digest, Sha256};
+        Sha256::digest(&body).iter().map(|b| format!("{b:02x}")).collect()
+    };
+    if digest != entry.sha256 {
+        // Not a fall-through. The file is here and is not what the signed
+        // manifest describes, which is exactly the case worth refusing loudly.
+        return Some(Err(format!(
+            "the mirrored copy of {} does not match the signed manifest: {} rather than {}",
+            entry.file,
+            &digest[..12.min(digest.len())],
+            &entry.sha256[..12.min(entry.sha256.len())]
+        )));
+    }
+
+    let text = match String::from_utf8(body) {
+        Ok(t)  => t,
+        Err(_) => return Some(Err(format!("{} is not valid UTF-8", entry.file))),
+    };
+
+    let count = match crate::routes::rules::install_set(db, policy_id, set_id, entry.version, &text)
+        .await
+    {
+        Ok(c)  => c,
+        Err(e) => return Some(Err(format!("{e}"))),
+    };
+
+    Some(Ok(format!(
+        "{set_id} updated to v{} — {count} rules, signed by {signer}, from the local mirror",
+        entry.version
+    )))
+}
+
+// ─── Local cache ─────────────────────────────────────────
+
+/// Where the channel is mirrored on disk.
+///
+/// Beside the database, never inside `rules/`. That directory is shipped by the
+/// .deb and .rpm, so a process writing there would have every package upgrade
+/// either clobber the mirror or leave dpkg asking about modified files. The
+/// database's directory is already the one place an installation owns and a
+/// package does not.
+pub fn cache_dir() -> std::path::PathBuf {
+    let url = crate::config::database_url();
+    let path = url
+        .strip_prefix("sqlite://")
+        .or_else(|| url.strip_prefix("sqlite:"))
+        .unwrap_or(&url);
+    let parent = std::path::Path::new(path)
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| std::path::Path::new("."));
+    parent.join("rules-cache")
+}
+
+// The mirror is deliberately not used for Import or the Rule Library, which
+// keep reading the bundled `rules/`.
+//
+// Import installs every set file in the directory it reads. The bundle holds
+// only the basic tier, which is what Import means; the mirror holds everything
+// the channel publishes, so pointing Import at it would install WordPress and
+// Apache onto every policy — precisely what the optional tier exists to
+// prevent. The Library and the pre-0.6.0 adoption compare against the version
+// an installation imported from, which is the bundle, not the newest.
+
+/// Mirror the channel to disk: the manifest, its signature, and every set.
+///
+/// The signature and the manifest are stored **beside** the sets rather than
+/// checked once and thrown away. Verifying at download and trusting the disk
+/// afterwards would make this directory a way to install rules — and on a WAF,
+/// installing rules is how you switch protection off. Applying still verifies;
+/// it simply reads what it verifies from here instead of the network.
+///
+/// Written to a staging directory and renamed into place, so a mirror is never
+/// half a version: an interrupted sync leaves the previous one intact.
+pub async fn sync_cache(db: &SqlitePool) -> std::result::Result<usize, String> {
+    let key = trusted_key()?;
+    let base = url(db).await;
+    let base = base.trim_end_matches('/');
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(60))
+        .build()
+        .map_err(|e| format!("{e}"))?;
+    let fetch = |u: String| {
+        let c = client.clone();
+        async move {
+            let r = c.get(&u).send().await.map_err(|e| format!("{u}: {e}"))?;
+            if !r.status().is_success() {
+                return Err(format!("{u}: HTTP {}", r.status()));
+            }
+            r.bytes().await.map(|b| b.to_vec()).map_err(|e| format!("{u}: {e}"))
+        }
+    };
+
+    let manifest = fetch(format!("{base}/sets.toml")).await?;
+    let signature = fetch(format!("{base}/sets.toml.asc")).await?;
+    let signature_text =
+        String::from_utf8(signature).map_err(|_| "the signature is not text".to_string())?;
+
+    // Verified before anything is written, so a channel that cannot prove
+    // itself never reaches the disk at all.
+    crate::pgp_verify::verify_detached(&key, &manifest, &signature_text)?;
+    let manifest_text =
+        String::from_utf8(manifest.clone()).map_err(|_| "the manifest is not text".to_string())?;
+
+    let dir = cache_dir();
+    let stage = dir.with_extension("new");
+    let _ = std::fs::remove_dir_all(&stage);
+    std::fs::create_dir_all(stage.join("sets")).map_err(|e| format!("{}: {e}", stage.display()))?;
+
+    let mut written = 0usize;
+    for set in parse_manifest(&manifest_text) {
+        let Some(entry) = manifest_entry(&manifest_text, &set.id) else { continue };
+        let body = fetch(format!("{base}/{}", entry.file)).await?;
+
+        let digest: String = {
+            use sha2::{Digest, Sha256};
+            Sha256::digest(&body).iter().map(|b| format!("{b:02x}")).collect()
+        };
+        if digest != entry.sha256 {
+            let _ = std::fs::remove_dir_all(&stage);
+            return Err(format!(
+                "{} does not match the signed manifest: {} rather than {}",
+                entry.file,
+                &digest[..12.min(digest.len())],
+                &entry.sha256[..12.min(entry.sha256.len())]
+            ));
+        }
+
+        let name = std::path::Path::new(&entry.file)
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| format!("{}.rules.toml", set.id));
+        std::fs::write(stage.join("sets").join(&name), &body)
+            .map_err(|e| format!("{name}: {e}"))?;
+        written += 1;
+    }
+
+    std::fs::write(stage.join("sets.toml"), &manifest).map_err(|e| format!("sets.toml: {e}"))?;
+    std::fs::write(stage.join("sets.toml.asc"), signature_text.as_bytes())
+        .map_err(|e| format!("sets.toml.asc: {e}"))?;
+
+    // Both under the same parent, so these are renames rather than copies.
+    let old = dir.with_extension("old");
+    let _ = std::fs::remove_dir_all(&old);
+    if dir.exists() {
+        std::fs::rename(&dir, &old).map_err(|e| format!("{}: {e}", dir.display()))?;
+    }
+    if let Err(e) = std::fs::rename(&stage, &dir) {
+        let _ = std::fs::rename(&old, &dir);
+        return Err(format!("{}: {e}", dir.display()));
+    }
+    let _ = std::fs::remove_dir_all(&old);
+
+    tracing::info!(sets = written, dir = %dir.display(), "Mirrored the rule channel to disk");
+    Ok(written)
+}
+
 // ─── Settings ────────────────────────────────────────────
 
 pub async fn enabled(db: &SqlitePool) -> bool {
@@ -446,6 +655,19 @@ pub async fn url(db: &SqlitePool) -> String {
         Some(v) if !v.trim().is_empty() => v.trim().to_string(),
         _                               => DEFAULT_URL.to_string(),
     }
+}
+
+/// What went wrong mirroring the channel to disk, if anything.
+pub async fn mirror_status(db: &SqlitePool) -> (usize, Option<String>) {
+    let sets = std::fs::read_dir(cache_dir().join("sets"))
+        .map(|d| {
+            d.flatten()
+                .filter(|e| e.file_name().to_string_lossy().ends_with(".rules.toml"))
+                .count()
+        })
+        .unwrap_or(0);
+    let error = get(db, KEY_MIRROR_ERROR).await.filter(|v| !v.trim().is_empty());
+    (sets, error)
 }
 
 /// When the manifest was last fetched, and what went wrong if anything.

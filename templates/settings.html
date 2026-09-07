@@ -314,6 +314,35 @@
                     </div>
 
                     <div class="form-group">
+                        <label>Local Mirror</label>
+                        <p class="form-control-static">
+                            {% if mirror_error %}
+                                <span class="text-danger"><i class="fa fa-exclamation-triangle"></i>
+                                    {{ mirror_error }}</span>
+                            {% elif mirrored_sets > 0 %}
+                                <span class="text-success"><i class="fa fa-check"></i>
+                                    {{ mirrored_sets }} sets mirrored</span>
+                            {% else %}
+                                <span class="text-muted">Nothing mirrored yet</span>
+                            {% endif %}
+                        </p>
+                        <p class="help-block">
+                            The channel is copied to <code>{{ mirror_dir }}</code> on the same
+                            schedule as the check above, and installing a set reads from there
+                            rather than the network — so a set can be installed or updated with
+                            the channel unreachable.
+                            <br>
+                            <strong>The copy is not trusted for being local.</strong> The
+                            signature and the per-set hash are checked when a set is installed,
+                            exactly as they would be over the network. Editing a file in that
+                            directory does not install anything; it makes the install refuse.
+                            <br>
+                            A set the mirror does not have — published since the last sync —
+                            is fetched over the network as before.
+                        </p>
+                    </div>
+
+                    <div class="form-group">
                         <label>Last Check</label>
                         <p class="form-control-static">
                             {% if rule_update_error %}

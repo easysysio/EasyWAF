@@ -156,6 +156,10 @@ pub async fn get_settings(
     ctx.insert("rule_update_default", crate::rules_update::DEFAULT_URL);
     ctx.insert("rule_update_checked", &checked.map(|t| format_utc(&t)).unwrap_or_default());
     ctx.insert("rule_update_error",   &error.unwrap_or_default());
+    let (mirrored, mirror_error) = crate::rules_update::mirror_status(&state.db).await;
+    ctx.insert("mirrored_sets",  &mirrored);
+    ctx.insert("mirror_error",   &mirror_error.unwrap_or_default());
+    ctx.insert("mirror_dir",     &crate::rules_update::cache_dir().display().to_string());
     ctx.insert("acme_staging",    crate::acme::STAGING_DIRECTORY);
     ctx.insert("acme_production", crate::acme::PRODUCTION_DIRECTORY);
     ctx.insert("tls_ciphers_all",      &crate::tls::all_suite_names());
