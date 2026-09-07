@@ -6,7 +6,32 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
-## [Unreleased]
+## [0.6.9] — 2026-09-07
+
+**Rule sets live in one directory, and installing one no longer needs the
+network.**
+
+The channel is mirrored to disk on the same six-hourly schedule as the update
+check, and installing or updating a set reads from there — which matters
+because a WAF is often on a segment with no outbound access, and that is
+exactly where the one action worth taking should not require a round trip.
+
+**The mirror is a cache, not a trust boundary.** The manifest, its signature
+and the sets are stored together, and both the signature and the per-set hash
+are checked when a set is installed, exactly as they would be over the network.
+Editing a mirrored file does not install anything; it makes the install refuse.
+
+And there is now **one** directory anything reads rule sets from. The package
+seeds it on first run, the channel refreshes it, and Import, the Rule Library,
+policy creation and the pre-0.6.0 adoption all read it. Before this there were
+two, each authoritative for different callers.
+
+Also: rule sets can be chosen while creating a policy — including the optional
+ones, which the create page could never show — and deleting a policy a site is
+using is refused rather than silently removing that site's protection.
+
+**Upgrading is enough.** The mirror appears on the first start and fills on the
+first sync.
 
 ### Added
 - **There is now one directory rule sets are read from.** The package seeds it,
