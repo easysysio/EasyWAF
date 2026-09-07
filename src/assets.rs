@@ -64,7 +64,19 @@ pub fn tera() -> Result<tera::Tera, tera::Error> {
     }
 
     tera.add_raw_templates(items)?;
+
+    // Registered here rather than by the caller, so every Tera instance built
+    // from this function is complete. The layout every page extends calls
+    // version(), so an instance without it renders nothing at all — and the
+    // failure is at render time, on a page, not at startup.
+    tera.register_function("version", app_version);
+
     Ok(tera)
+}
+
+/// `{{ version() }}` — the crate version, shown in the GUI footer.
+fn app_version(_args: &std::collections::HashMap<String, tera::Value>) -> tera::Result<tera::Value> {
+    Ok(tera::Value::String(env!("CARGO_PKG_VERSION").to_string()))
 }
 
 /// GET /static/{*path} — serve an embedded asset.
@@ -125,6 +137,53 @@ mod tests {
             );
             assert!(!file.data.is_empty(), "{name} is empty");
         }
+    }
+
+    #[test]
+    fn the_traffic_table_renders_every_verdict_state() {
+        // Including detection = null, which is every row written before the
+        // column existed. Tera resolves a missing field at render time, so a
+        // mistake here is not a compile error — it is a 500 on the page an
+        // operator opens when something is going wrong.
+        let tera = tera().expect("templates should build");
+        let mut ctx = tera::Context::new();
+
+        let event = |path: &str, blocked: bool, detection: Option<&str>| {
+            serde_json::json!({
+                "id": 1, "timestamp": "2026-09-07 12:00:00", "site_name": "s",
+                "client_ip": "1.2.3.4", "method": "GET", "host": "h", "path": path,
+                "status_code": 200, "response_ms": 4, "blocked": blocked,
+                "block_reason": null, "matched_rules": [], "waf_score": null,
+                "country": null, "detection": detection,
+            })
+        };
+
+        ctx.insert("events", &vec![
+            event("/pre-0.6.11", false, None),          // the upgrade case
+            event("/clean",      false, None),
+            event("/observed",   false, Some("observed")),
+            event("/would",      false, Some("would_block")),
+            event("/wouldch",    false, Some("would_challenge")),
+            event("/blocked",    true,  None),
+        ]);
+        ctx.insert("stats", &serde_json::json!({
+            "total": 6, "blocked": 1, "allowed": 5, "avg_response": 4 }));
+        ctx.insert("sites",   &Vec::<String>::new());
+        ctx.insert("hourly",  &Vec::<String>::new());
+        ctx.insert("username",    "t");
+        ctx.insert("title",       "Traffic");
+        ctx.insert("url",         "/traffic");
+        ctx.insert("sel_site",    "");
+        ctx.insert("sel_blocked", "");
+        ctx.insert("sel_hours",   &24);
+
+        let html = tera.render("traffic.html", &ctx)
+            .unwrap_or_else(|e| panic!("traffic.html failed to render: {e:#?}"));
+
+        assert!(html.contains("WOULD BLOCK"),   "a would-block row lost its verdict");
+        assert!(html.contains("DETECTED"),      "an observed row lost its verdict");
+        assert!(html.contains("BLOCKED"),       "a blocked row lost its verdict");
+        assert!(html.contains("PASS"),          "a clean row lost its verdict");
     }
 
     #[test]

@@ -38,7 +38,6 @@ use std::net::SocketAddr;
 use axum_extra::extract::cookie::Key;
 use modules::{geoip::GeoIpModule, traffic::TrafficLogger, waf::WafModule, Pipeline};
 use sqlx::SqlitePool;
-use std::collections::HashMap;
 use std::sync::Arc;
 use tera::Tera;
 use tokio::sync::mpsc;
@@ -162,10 +161,8 @@ async fn main() {
     rules_update::spawn_check_task(db.clone());
 
     // ── Build management GUI ──────────────────────────────
-    let mut tera = assets::tera()
+    let tera = assets::tera()
         .unwrap_or_else(|e| panic!("Template loading failed: {}", e));
-    // Exposes {{ version() }} to every template — see app_version().
-    tera.register_function("version", app_version);
     let key = make_key(&secret);
 
     let gui_state = AppState {
@@ -390,9 +387,6 @@ fn host_without_port(host: &str) -> &str {
 /// the template had to be bumped together — they drifted for the 0.2.0 release,
 /// which shipped a modal still reading 0.1.0. Reading it from the binary keeps
 /// one source of truth.
-fn app_version(_args: &HashMap<String, tera::Value>) -> tera::Result<tera::Value> {
-    Ok(tera::Value::String(env!("CARGO_PKG_VERSION").to_string()))
-}
 
 // ─── warn_if_default_password ────────────────────────────
 

@@ -40,6 +40,12 @@ Version bumps and tags are created only after explicit approval.
   Nothing about which requests are blocked changes. This is only about what is
   recorded on the ones that are not.
 
+- **`assets::tera()` now returns a Tera instance that can actually render.**
+  The `version()` function the shared layout calls was registered by `main.rs`
+  afterwards, so the instance the function handed back was incomplete, and any
+  other caller got templates that failed at render time — on a page, not at
+  startup. It is registered where the instance is built.
+
 ### Changed
 - **The rule-signing key is compiled into the binary**, so an installation can
   no longer be missing the thing it verifies updates against.
