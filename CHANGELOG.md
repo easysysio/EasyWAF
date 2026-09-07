@@ -9,6 +9,26 @@ Version bumps and tags are created only after explicit approval.
 ## [Unreleased]
 
 ### Added
+- **There is now one directory rule sets are read from.** The package seeds it,
+  the channel refreshes it, and every reader looks there: Import, the Rule
+  Library, policy creation, the pre-0.6.0 adoption, and installing a set.
+
+  Before this there were two — the packaged `rules/` and the runtime mirror —
+  each authoritative for different callers, with a rule per caller about which
+  to use. Rules like that are learned by being caught out by them, and one of
+  them was subtle enough to be a bug in the first draft of the mirror: pointing
+  Import at the mirror would have installed WordPress and Apache onto every
+  policy, because Import installs every set file in the directory it reads.
+
+  What makes one directory safe is that **Import now filters by tier**, using
+  the manifest that sits beside the sets. The packaged bundle carries one for
+  the first time, written by `scripts/fetch-rules.sh` and filtered to what it
+  bundled; before, the bundle had no manifest, which is exactly why Import could
+  only mean "every file present".
+
+  `key.gpg` stays in the package. The trust anchor must not live where the sync
+  can write.
+
 - **The rule channel is mirrored to disk, and installs read from the mirror.**
   Every set the channel publishes is copied locally on the same six-hourly
   schedule as the update check. Installing or updating a set then reads from
@@ -31,12 +51,6 @@ Version bumps and tags are created only after explicit approval.
   fetched over the network. A missing or incomplete mirror falls through
   rather than failing.
 
-  Import and the Rule Library deliberately keep reading the bundled `rules/`.
-  Import installs every set file in the directory it reads, and the mirror holds
-  everything the channel publishes — pointing it there would install WordPress
-  and Apache onto every policy, which is exactly what the optional tier exists
-  to prevent.
-
 - **Rule sets can be chosen while creating a policy.** The Create Policy page
   listed rules from the `rules/` directory on disk, and optional sets are never
   bundled there — so WordPress and Apache could not appear at all, and the only
@@ -50,6 +64,15 @@ Version bumps and tags are created only after explicit approval.
   because discarding it would throw away the sets that did install.
 
 ### Fixed
+- **A rule taken singly from the Rule Library recorded no set.** It had an
+  `external_id` and no `rule_set`, which is the exact signature of a leftover
+  from a renumbering — so hand-picked rules were indistinguishable from real
+  debris to anything looking for it.
+
+  The set is now recorded as provenance. It deliberately does **not** create a
+  `policy_rule_sets` row: a policy that took three rules out of eighteen chose
+  three, and an update must not arrive and install the other fifteen.
+
 - **Deleting a policy that sites were using silently removed their
   protection.** `sites.waf_policy_id` is `ON DELETE SET NULL`, so the delete
   succeeded and every site holding that policy simply stopped being inspected.

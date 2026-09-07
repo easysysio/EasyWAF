@@ -4,7 +4,7 @@
 [set]
 id      = "owasp-lfi"
 name    = "Local file inclusion"
-version = 1
+version = 2
 
 [[rules]]
 id          = 930001
@@ -83,7 +83,20 @@ id          = 930009
 name        = "LFI: application config files"
 description = "Common configuration files containing credentials"
 zone        = "ANY"
-pattern     = '(?i)(wp-config\.php|\.env|config\.php|settings\.py|database\.yml|secrets\.yml)'
+# The name must end the path — be the thing actually being requested — rather
+# than merely appear in it.
+#
+# Unanchored, this matched any URL containing the words. That is fine until the
+# application puts user data in the path: a Nextcloud file called
+# "config.php.bak" or "wp-config.php reference.txt" is a WebDAV request for
+# somebody's own document, and it scored 7. A file-sync application makes every
+# filename part of the URL, so a rule that scans the whole URL eventually
+# matches a legitimate one.
+#
+# Nothing real is lost. /config/config.php and ?file=../.env still match,
+# because in an actual attempt to read the file the name is where the path
+# stops.
+pattern     = '(?i)/(wp-config\.php|\.env|config\.php|settings\.py|database\.yml|secrets\.yml)(\?|$)'
 score       = 7
 action      = "score"
 

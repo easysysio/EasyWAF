@@ -537,15 +537,100 @@ pub fn cache_dir() -> std::path::PathBuf {
     parent.join("rules-cache")
 }
 
-// The mirror is deliberately not used for Import or the Rule Library, which
-// keep reading the bundled `rules/`.
-//
-// Import installs every set file in the directory it reads. The bundle holds
-// only the basic tier, which is what Import means; the mirror holds everything
-// the channel publishes, so pointing Import at it would install WordPress and
-// Apache onto every policy — precisely what the optional tier exists to
-// prevent. The Library and the pre-0.6.0 adoption compare against the version
-// an installation imported from, which is the bundle, not the newest.
+/// The one directory anything reads rule sets from at runtime.
+///
+/// There is deliberately only one. The package ships `rules/`, that seeds this
+/// on first run, the channel refreshes it, and every reader looks here. The
+/// alternative — a bundle and a mirror, each authoritative for different
+/// callers — needed a rule per caller about which to use, and rules like that
+/// are learned by being caught out by them.
+///
+/// Falls back to the bundle if seeding never managed to run, so a broken or
+/// read-only data directory degrades to the old behaviour instead of leaving
+/// the GUI with no rules to show.
+pub fn rules_source() -> std::path::PathBuf {
+    let cache = cache_dir().join("sets");
+    let usable = std::fs::read_dir(&cache)
+        .map(|mut d| {
+            d.any(|e| {
+                e.ok().is_some_and(|e| {
+                    e.file_name().to_str().is_some_and(|n| n.ends_with(".rules.toml"))
+                })
+            })
+        })
+        .unwrap_or(false);
+    if usable { cache } else { std::path::PathBuf::from("rules") }
+}
+
+/// Copy the packaged sets into the mirror, once, when it is empty.
+///
+/// This is what makes one directory enough. A first run has no network and
+/// therefore no mirror; without a seed every reader would have to fall back to
+/// the bundle, which is the two-source design again with extra steps.
+///
+/// No signature is written. The bundle is trusted because it arrived inside a
+/// package that was itself verified, not because of anything in the directory —
+/// and a seeded mirror therefore cannot satisfy `apply_from_cache`, which wants
+/// a signature. That is correct rather than unfortunate: content that came with
+/// the binary is fine to *import*, and a channel *update* should still be proved
+/// before it overwrites a rule.
+pub fn seed_cache_from_bundle() {
+    let cache = cache_dir();
+    let sets = cache.join("sets");
+    let already = std::fs::read_dir(&sets)
+        .map(|mut d| d.any(|e| e.is_ok()))
+        .unwrap_or(false);
+    if already {
+        return;
+    }
+
+    let bundle = std::path::Path::new("rules");
+    let Ok(entries) = std::fs::read_dir(bundle) else { return };
+
+    if std::fs::create_dir_all(&sets).is_err() {
+        tracing::warn!(dir = %sets.display(), "Could not create the rule directory");
+        return;
+    }
+
+    let mut copied = 0usize;
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(n) = name.to_str() else { continue };
+        if !n.ends_with(".rules.toml") {
+            continue;
+        }
+        if std::fs::copy(entry.path(), sets.join(n)).is_ok() {
+            copied += 1;
+        }
+    }
+
+    // The bundle's own manifest, which is what lets Import tell basic from
+    // optional. Absent on an installation built before the bundle carried one;
+    // Import then falls back to taking everything, which for a bundle that only
+    // ever held basic sets is the same answer.
+    let _ = std::fs::copy(bundle.join("sets.toml"), cache.join("sets.toml"));
+
+    if copied > 0 {
+        tracing::info!(sets = copied, dir = %sets.display(), "Seeded the rule directory from the packaged sets");
+    }
+}
+
+/// Which sets the manifest beside the rules marks as `basic`.
+///
+/// `None` when there is no manifest to read — an older bundle, or a directory
+/// that has never synced. Callers take that to mean "no filter", which is right
+/// for a bundle that only ever contained basic sets.
+pub fn basic_set_ids() -> Option<std::collections::HashSet<String>> {
+    let manifest = std::fs::read_to_string(cache_dir().join("sets.toml"))
+        .or_else(|_| std::fs::read_to_string("rules/sets.toml"))
+        .ok()?;
+    let ids: std::collections::HashSet<String> = parse_manifest(&manifest)
+        .into_iter()
+        .filter(|s| s.tier == "basic")
+        .map(|s| s.id)
+        .collect();
+    if ids.is_empty() { None } else { Some(ids) }
+}
 
 /// Mirror the channel to disk: the manifest, its signature, and every set.
 ///

@@ -122,6 +122,8 @@ assets = [
     # mechanism refuses everything, so it is not optional.
     ["rules/key.gpg",                 "/opt/easywaf/rules/key.gpg",             "644"],
     ["rules/SOURCE",                  "/opt/easywaf/rules/SOURCE",              "644"],
+    # The manifest, so Import can tell a basic set from an optional one.
+    ["rules/sets.toml",               "/opt/easywaf/rules/sets.toml",           "644"],
     ["config.toml",                   "/opt/easywaf/config.toml",               "644"],
     ["packaging/easywaf.service",     "/lib/systemd/system/easywaf.service",    "644"],
     ["CHANGELOG.md",                  "/usr/share/doc/easywaf/CHANGELOG.md",    "644"],
@@ -155,6 +157,7 @@ assets = [
     { source = "rules/*.rules.toml",         dest = "/opt/easywaf/rules/",                 mode = "644" },
     { source = "rules/key.gpg",              dest = "/opt/easywaf/rules/key.gpg",          mode = "644" },
     { source = "rules/SOURCE",               dest = "/opt/easywaf/rules/SOURCE",           mode = "644" },
+    { source = "rules/sets.toml",            dest = "/opt/easywaf/rules/sets.toml",        mode = "644" },
     { source = "config.toml",                dest = "/opt/easywaf/config.toml",            mode = "644" },
     { source = "packaging/easywaf.service",  dest = "/usr/lib/systemd/system/easywaf.service", mode = "644" },
     { source = "CHANGELOG.md",               dest = "/usr/share/doc/easywaf/CHANGELOG.md", mode = "644" },

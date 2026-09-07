@@ -4,7 +4,7 @@
 [set]
 id      = "owasp-xss"
 name    = "Cross-site scripting"
-version = 1
+version = 2
 
 [[rules]]
 id          = 941001
@@ -29,7 +29,15 @@ id          = 941003
 name        = "XSS: inline event handler"
 description = "DOM event handler attributes like onclick=, onload=, onerror="
 zone        = "ANY"
-pattern     = '(?i)\bon\w{2,20}\s*='
+# Was '\bon\w{2,20}\s*=', which matched any parameter whose name begins with
+# "on" — onlyActive=true, onboarding=1 — and scored 7 for it.
+#
+# Two changes. The handler must be one that actually exists, rather than any
+# word starting with "on". And it must be preceded by <, /, a quote or
+# whitespace: an event handler only means anything inside markup, and those are
+# the characters that put it there. A query parameter is preceded by ? or &,
+# and a JSON key by " with a : after it, so neither can match.
+pattern     = '(?i)[<"\x27\s/]on(error|load|click|dblclick|mouseover|mouseout|mousedown|mouseup|mouseenter|focus|focusin|blur|submit|change|input|keydown|keyup|keypress|toggle|animationend|animationstart|transitionend|beforeunload|unload|contextmenu|drag|drop|paste|copy|cut|scroll|wheel|touchstart|touchend|play|pause|ended|invalid|reset|select|search|resize|abort|progress|ratechange|canplay|pointerover|pointerdown|begin|start)\s*='
 score       = 7
 action      = "score"
 

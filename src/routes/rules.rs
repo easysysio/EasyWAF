@@ -468,7 +468,8 @@ pub async fn install_set(
 /// is fixed later heals on its next restart instead of having missed its one
 /// chance.
 pub async fn backfill_rule_sets(db: &SqlitePool) -> Result<()> {
-    let dir = std::path::Path::new("rules");
+    let dir = crate::rules_update::rules_source();
+    let dir = dir.as_path();
     if !dir.exists() {
         return Ok(());
     }
@@ -735,7 +736,8 @@ pub async fn post_import_rules(
     .ok_or_else(|| AppError::NotFound(format!("Policy '{}' not found", policy_name)))?;
 
     // Read all rule sets from the rules/ directory.
-    let rules_dir = std::path::Path::new("rules");
+    let rules_dir = crate::rules_update::rules_source();
+    let rules_dir = rules_dir.as_path();
     if !rules_dir.exists() {
         tracing::warn!("rules/ directory not found — nothing imported");
         return Ok(Redirect::to(&redirect).into_response());
@@ -743,6 +745,7 @@ pub async fn post_import_rules(
 
     let mut imported = 0usize;
     let mut skipped  = 0usize;
+    let basic_only = crate::rules_update::basic_set_ids();
 
     let entries = std::fs::read_dir(rules_dir)
         .map_err(|e| AppError::Internal(format!("Cannot read rules dir: {}", e)))?;
@@ -777,6 +780,21 @@ pub async fn post_import_rules(
                 continue;
             }
         };
+
+        // Import means the basic sets, not every file present. The directory
+        // now holds everything the channel publishes, so without this an
+        // optional set — WordPress, Apache — would be installed onto every
+        // policy that pressed the button, which is the one thing the optional
+        // tier exists to prevent. The tier comes from the manifest beside the
+        // sets; with no manifest there is no filter, which is right for a
+        // bundle that only ever held basic sets.
+        if let Some(basic) = &basic_only
+            && let Some(set) = file.set.as_ref()
+            && !basic.contains(&set.id)
+        {
+            tracing::debug!(set = %set.id, "Skipping an optional set on import");
+            continue;
+        }
 
         // Recorded per rule so "which rules in this policy belong to the SQLi
         // set" is a stored fact rather than arithmetic on the id range — which
@@ -909,9 +927,10 @@ fn category_title(file_stem: &str) -> (String, String) {
 
 /// Read all rule definitions from the rules/ directory into a flat map
 /// keyed by external_id. Used by the catalog POST handler for additions.
-fn read_rule_defs() -> HashMap<i64, RuleFileDef> {
+fn read_rule_defs() -> HashMap<i64, (RuleFileDef, Option<String>)> {
     let mut map = HashMap::new();
-    let dir = std::path::Path::new("rules");
+    let dir = crate::rules_update::rules_source();
+    let dir = dir.as_path();
     if !dir.exists() {
         return map;
     }
@@ -930,8 +949,14 @@ fn read_rule_defs() -> HashMap<i64, RuleFileDef> {
                 Ok(f)  => f,
                 Err(_) => continue,
             };
+            // The set is carried alongside each rule so a rule taken singly
+            // from the library still records where it came from. Without it
+            // those rows have an external_id and no set, which is the exact
+            // signature of a leftover from a renumbering — indistinguishable
+            // from real debris in anything that goes looking for it.
+            let set_id = parsed.set.as_ref().map(|s| s.id.clone());
             for rule in parsed.rules {
-                map.insert(rule.id, rule);
+                map.insert(rule.id, (rule, set_id.clone()));
             }
         }
     }
@@ -943,7 +968,8 @@ fn read_rule_defs() -> HashMap<i64, RuleFileDef> {
 /// Pure file I/O — no database access — so it is reusable by any handler.
 /// Pass an empty set (e.g. for a brand-new policy) to get all rules unchecked.
 pub fn read_catalog_categories(existing: &HashSet<i64>) -> Result<Vec<CatalogCategory>> {
-    let dir = std::path::Path::new("rules");
+    let dir = crate::rules_update::rules_source();
+    let dir = dir.as_path();
     let mut categories = Vec::new();
     if !dir.exists() {
         return Ok(categories);
@@ -1034,8 +1060,8 @@ pub async fn add_rules_by_external_ids(
     let mut added = 0usize;
 
     for id in ids {
-        let def = match defs.get(id) {
-            Some(d) => d,
+        let (def, set_id) = match defs.get(id) {
+            Some(d) => (&d.0, d.1.clone()),
             None    => continue, // unknown id — ignore
         };
 
@@ -1051,11 +1077,15 @@ pub async fn add_rules_by_external_ids(
         }
 
         let desc = def.description.as_deref().unwrap_or("");
+        // rule_set records provenance; it does not make the policy *hold* the
+        // set. That is what policy_rule_sets is for, and it is deliberately not
+        // written here — a policy that took three rules out of eighteen chose
+        // three, and an update must not arrive and install the other fifteen.
         sqlx::query!(
             "INSERT INTO waf_rules
              (policy_id, name, description, zone, pattern, score, action, external_id,
-              imported_pattern, imported_score, imported_action)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              rule_set, imported_pattern, imported_score, imported_action)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             policy_id,
             def.name,
             desc,
@@ -1064,6 +1094,7 @@ pub async fn add_rules_by_external_ids(
             def.score,
             def.action,
             def.id,
+            set_id,
             // What the rule looked like on import — see migration 008.
             def.pattern,
             def.score,
@@ -1178,12 +1209,13 @@ pub async fn post_rules_catalog(
             continue;
         }
         if let Some(def) = defs.get(id) {
+            let (def, set_id) = (&def.0, def.1.clone());
             let desc = def.description.as_deref().unwrap_or("");
             sqlx::query!(
                 "INSERT INTO waf_rules
                  (policy_id, name, description, zone, pattern, score, action, external_id,
-                  imported_pattern, imported_score, imported_action)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                  rule_set, imported_pattern, imported_score, imported_action)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 policy_id,
                 def.name,
                 desc,
@@ -1192,6 +1224,7 @@ pub async fn post_rules_catalog(
                 def.score,
                 def.action,
                 def.id,
+                set_id,
                 // What the rule looked like on import — see migration 008.
                 def.pattern,
                 def.score,

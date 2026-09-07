@@ -1,0 +1,83 @@
+# Written by scripts/fetch-rules.sh — do not edit.
+# The published manifest, filtered to the sets bundled here.
+
+[[sets]]
+id          = "owasp-scanners"
+name        = "Scanner and automated tool detection"
+description = "Identifies well-known attack and reconnaissance tools by their signatures."
+band        = 913
+version     = 2
+file        = "sets/913-scanners.rules.toml"
+sha256  = "0a426c9f476c50a6767d51b4f4c1388bf7aa58a2e1427d382fbd2ef006c86182"
+tier        = "basic"
+
+[[sets]]
+id          = "owasp-protocol"
+name        = "Protocol enforcement"
+description = "Malformed, abusive and evasion-oriented HTTP requests."
+band        = 920
+version     = 1
+file        = "sets/920-protocol.rules.toml"
+sha256  = "66e635d195f4ec14378c517c6ff72e9ca7dc0bbfb737425576353c05c23dd7ac"
+tier        = "basic"
+
+[[sets]]
+id          = "owasp-lfi"
+name        = "Local file inclusion"
+description = "Local file inclusion and path traversal."
+band        = 930
+version     = 2
+file        = "sets/930-lfi.rules.toml"
+sha256  = "49bc6a22a54b9a43575583703dbe3894df16ee3da449c0b34ae58c55f50000f0"
+tier        = "basic"
+
+[[sets]]
+id          = "owasp-rfi"
+name        = "Remote file inclusion"
+description = "Remote file inclusion."
+band        = 931
+version     = 1
+file        = "sets/931-rfi.rules.toml"
+sha256  = "dd73946f42bcdd4a8e2075b3092d1575dc07f8080a172eb2e18b2dad619338d7"
+tier        = "basic"
+
+[[sets]]
+id          = "owasp-rce"
+name        = "Remote code execution"
+description = "Remote code execution and command injection."
+band        = 932
+version     = 2
+file        = "sets/932-rce.rules.toml"
+sha256  = "fa598e6556bf6341e43ae5caf8198378cd9a1cffbf155b4d8f4a651ce52ce623"
+tier        = "basic"
+
+[[sets]]
+id          = "owasp-php"
+name        = "PHP injection"
+description = "PHP injection and PHP-specific attacks."
+band        = 933
+version     = 1
+file        = "sets/933-php.rules.toml"
+sha256  = "40115ee4eca435cc08954dbc7355f7506c85358a3e7b7bbeb5918a7d4aed4285"
+tier        = "basic"
+
+[[sets]]
+id          = "owasp-xss"
+name        = "Cross-site scripting"
+description = "Cross-site scripting."
+band        = 941
+version     = 2
+file        = "sets/941-xss.rules.toml"
+sha256  = "aee30feb8917aaf9f6071c5f18e874ebc3c7855244a2d22f8c546f77d8e36da8"
+tier        = "basic"
+
+[[sets]]
+id          = "owasp-sqli"
+name        = "SQL injection"
+description = "SQL injection."
+band        = 942
+version     = 2
+file        = "sets/942-sqli.rules.toml"
+sha256  = "aec172405b39cde7697359304e933e60ecc6361ae1297ec7522a79d47c6b370a"
+tier        = "basic"
+

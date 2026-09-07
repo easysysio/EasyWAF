@@ -4,7 +4,7 @@
 [set]
 id      = "owasp-scanners"
 name    = "Scanner and automated tool detection"
-version = 1
+version = 2
 
 [[rules]]
 id          = 913001
@@ -142,8 +142,31 @@ zone        = "URL"
 # /index.php/settings/admin — scored 4 every time an administrator opened it.
 # A scanner probes these at the root; an application nests them.
 #
-# The file names stay unanchored: /.env or /.git under any path is worth
-# scoring wherever it appears, because nothing legitimately serves them.
-pattern     = '(?i)(^/(admin|wp-admin|phpmyadmin|manager|console|actuator)(/|\?|$)|/(\.env|\.git(/|$)|phpinfo\.php|server-status|web\.config))'
+# The file names stay unanchored: /.env under any path is worth scoring
+# wherever it appears, because nothing legitimately serves it.
+#
+# .git moved to 913016, which blocks outright rather than scoring. It was
+# matched here as well until then, and one request attributed to two rules for
+# the same reason is harder to read than either alone.
+pattern     = '(?i)(^/(admin|wp-admin|phpmyadmin|manager|console|actuator)(/|\?|$)|/(\.env|phpinfo\.php|server-status|web\.config))'
 score       = 4
 action      = "score"
+
+[[rules]]
+id          = 913016
+name        = "Exposure: .git directory"
+description = "A served .git directory hands over the entire source history, and often credentials with it"
+zone        = "URL"
+# Blocked outright rather than scored. Every other rule in this set describes
+# something suspicious; this one describes something that is never correct. No
+# application serves its own repository, so there is no legitimate request to
+# weigh against — and the cost of getting it wrong is the whole repository,
+# including whatever was committed to it before someone thought better of it.
+#
+# Matches the directory, not the name: /.git, /.git/config, /any/path/.git/HEAD.
+# .gitignore and .gitattributes are deliberately not matched — they leak far
+# less and are occasionally served on purpose, and a blocking rule has to be
+# certain.
+pattern     = '(?i)/\.git(/|\?|$)'
+score       = 10
+action      = "block"

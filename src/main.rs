@@ -155,6 +155,10 @@ async fn main() {
     // Prunes traffic_events on the schedule set in Settings. Off by default.
     modules::traffic::spawn_retention_task(db.clone());
     acme::spawn_renewal_task(db.clone());
+    // Before anything reads rules and before the sync task starts: the
+    // packaged sets become the initial contents of the one directory
+    // everything reads, so a first run with no network still has rules.
+    rules_update::seed_cache_from_bundle();
     rules_update::spawn_check_task(db.clone());
 
     // ── Build management GUI ──────────────────────────────

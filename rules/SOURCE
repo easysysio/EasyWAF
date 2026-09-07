@@ -1,13 +1,13 @@
 # Written by scripts/fetch-rules.sh — do not edit.
 # rules/ is a snapshot of the published rule channel.
 source = "https://repo.easysys.io/easywaf/rules"
-taken  = "2026-09-06T15:53:55Z"
+taken  = "2026-09-07T17:07:40Z"
 
 [[set]]
 id      = "owasp-scanners"
-version = 1
+version = 2
 file    = "913-scanners.rules.toml"
-sha256  = "ed32843c25cdb0e930b8b0bfc2c5d52eea5c8583382012eb96874353df8b2ab6"
+sha256  = "0a426c9f476c50a6767d51b4f4c1388bf7aa58a2e1427d382fbd2ef006c86182"
 [[set]]
 id      = "owasp-protocol"
 version = 1
@@ -15,9 +15,9 @@ file    = "920-protocol.rules.toml"
 sha256  = "66e635d195f4ec14378c517c6ff72e9ca7dc0bbfb737425576353c05c23dd7ac"
 [[set]]
 id      = "owasp-lfi"
-version = 1
+version = 2
 file    = "930-lfi.rules.toml"
-sha256  = "14463f6d49d3b314949d34a02be46ed1f3b9012e28527b2d8a0c3886ff50819d"
+sha256  = "49bc6a22a54b9a43575583703dbe3894df16ee3da449c0b34ae58c55f50000f0"
 [[set]]
 id      = "owasp-rfi"
 version = 1
@@ -25,9 +25,9 @@ file    = "931-rfi.rules.toml"
 sha256  = "dd73946f42bcdd4a8e2075b3092d1575dc07f8080a172eb2e18b2dad619338d7"
 [[set]]
 id      = "owasp-rce"
-version = 1
+version = 2
 file    = "932-rce.rules.toml"
-sha256  = "9017b1fa58a0d92de5d6077f3a8a74332376b44b2d371aa5719c593761eadce7"
+sha256  = "fa598e6556bf6341e43ae5caf8198378cd9a1cffbf155b4d8f4a651ce52ce623"
 [[set]]
 id      = "owasp-php"
 version = 1
@@ -35,11 +35,11 @@ file    = "933-php.rules.toml"
 sha256  = "40115ee4eca435cc08954dbc7355f7506c85358a3e7b7bbeb5918a7d4aed4285"
 [[set]]
 id      = "owasp-xss"
-version = 1
+version = 2
 file    = "941-xss.rules.toml"
-sha256  = "823c7cd6dc40079cd5ffd855e8894bdaeb8f44806edb130a87dc3e6f53f21fec"
+sha256  = "aee30feb8917aaf9f6071c5f18e874ebc3c7855244a2d22f8c546f77d8e36da8"
 [[set]]
 id      = "owasp-sqli"
-version = 1
+version = 2
 file    = "942-sqli.rules.toml"
-sha256  = "526a31c07a13c74190d4d1ec4031db3f0ece09e59b1f8601a803289eae2ff63c"
+sha256  = "aec172405b39cde7697359304e933e60ecc6361ae1297ec7522a79d47c6b370a"

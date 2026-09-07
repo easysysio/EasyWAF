@@ -5,7 +5,7 @@
 [set]
 id      = "owasp-sqli"
 name    = "SQL injection"
-version = 1
+version = 2
 
 [[rules]]
 id          = 942001
@@ -72,7 +72,24 @@ zone        = "ANY"
 # markers as a pair still catches real SQL comments, including the empty-
 # comment whitespace bypass (UNION/**/SELECT), without matching a MIME
 # wildcard.
-pattern     = '(?i)(--|#|/\*.*?\*/|;--)'
+#
+# A bare `--` or `#` anywhere was too little to mean anything. "notes--draft.md"
+# is a filename, "issue #3" is a comment, and both scored 3 on every request
+# that carried them. SQL's own syntax is stricter than that: the line comment
+# is `--` followed by whitespace or the end of the input, which is what makes
+# it truncate the rest of a query.
+#
+# So the marker now has to look like a comment rather than merely contain the
+# characters. `admin'--` and `' OR 1=1 -- ` still match; a hyphenated filename
+# does not.
+#
+# The encoded separators are listed explicitly as well as `\s`. EasyWAF matches
+# the decoded forms too, so `--%20` already reduces to `-- ` and would be
+# caught either way — but a rule that only works because something upstream
+# decoded it for you is a rule that breaks quietly the day that changes. `+` is
+# not covered by decoding at all: it means a space in a query string and stays
+# a plus sign.
+pattern     = '(?i)(--([\s;)&\x27"]|%20|%09|%0a|\+)|--$|#\s*$|/\*.*?\*/|;--)'
 score       = 3
 action      = "score"
 

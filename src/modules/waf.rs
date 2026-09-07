@@ -529,9 +529,25 @@ mod tests {
         for probe in [
             "/admin", "/admin/", "/admin?x=1", "/wp-admin/install.php",
             "/phpmyadmin/", "/manager/html", "/actuator/env",
-            "/.env", "/.git/config", "/phpinfo.php", "/server-status", "/web.config",
+            "/.env", "/phpinfo.php", "/server-status", "/web.config",
         ] {
             assert!(re.is_match(probe), "missed {probe:?}");
+        }
+
+        // .git left this rule for 913016, which blocks rather than scores. One
+        // request attributed to two rules for the same reason is harder to read
+        // than either alone, so it must not be matched in both places.
+        assert!(!re.is_match("/.git/config"), "913015 should no longer match .git");
+
+        let git = Regex::new(&pattern("913-scanners.rules.toml", 913016)).unwrap();
+        for probe in ["/.git", "/.git/", "/.git/config", "/app/.git/HEAD"] {
+            assert!(git.is_match(probe), "913016 missed {probe:?}");
+        }
+        // Narrower than the rule it came from, because it blocks: a repository
+        // served over HTTP and a file merely named .gitignore are not the same
+        // thing.
+        for benign in ["/.gitignore", "/.gitattributes", "/myrepo.git/info/refs"] {
+            assert!(!git.is_match(benign), "913016 false positive on {benign:?}");
         }
     }
 

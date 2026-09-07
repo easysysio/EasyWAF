@@ -4,14 +4,26 @@
 [set]
 id      = "owasp-rce"
 name    = "Remote code execution"
-version = 1
+version = 2
 
 [[rules]]
 id          = 932001
 name        = "RCE: Unix command injection keywords"
 description = "Common Unix reconnaissance and execution commands"
 zone        = "ANY"
-pattern     = '(?i)\b(whoami|id\b|uname|ifconfig|ipconfig|netstat|ps\s+aux|passwd\b|shadow)\b'
+# `id`, `passwd` and `shadow` were in this list and had to come out. "id" is
+# the most common identifier in any web application — /api/items?id=42 and
+# {"id": 7} both scored 6 — and "passwd" and "shadow" are ordinary parameter
+# and CSS words. A rule that fires on `?id=42` is not detecting command
+# injection, it is detecting HTTP.
+#
+# Nothing is lost. The dangerous forms are already covered better elsewhere:
+# 932012 matches these same words after a shell metacharacter, which is what
+# actually makes them injection, and 930-lfi blocks /etc/passwd and /etc/shadow
+# outright.
+#
+# What is left is rare in ordinary traffic and meaningful when it appears.
+pattern     = '(?i)\b(whoami|uname|ifconfig|ipconfig|netstat|ps\s+aux)\b'
 score       = 6
 action      = "score"
 

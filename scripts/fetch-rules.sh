@@ -181,6 +181,32 @@ CHECKSUMS
 rm -f "$DEST"/*.rules.toml
 cp "$TMP/new"/*.rules.toml "$DEST/"
 
+# The manifest, filtered to what was actually taken.
+#
+# EasyWAF copies this directory into its own working copy on first run, and
+# reads tiers from this file to tell a basic set from an optional one. Without
+# it, "import the basic sets" degrades to "import every file present", which is
+# only the same answer for as long as the bundle happens to contain nothing
+# else. The signature is deliberately not copied: the bundle is trusted because
+# it arrived inside a verified package, and a channel update is proved
+# separately when it is applied.
+python3 - "$TMP/sets.toml" > "$DEST/sets.toml" <<'MANIFEST'
+import re, sys
+text = open(sys.argv[1]).read()
+head, *blocks = text.split("[[sets]]")
+out = []
+for b in blocks:
+    def v(k):
+        m = re.search(r'^' + k + r'\s*=\s*"?([^"\n]+)"?', b, re.M)
+        return m.group(1).strip() if m else ""
+    if v("tier") == "basic":
+        out.append(b.rstrip() + "\n")
+print("# Written by scripts/fetch-rules.sh — do not edit.")
+print("# The published manifest, filtered to the sets bundled here.\n")
+for b in out:
+    print("[[sets]]" + b)
+MANIFEST
+
 {
     echo "# Written by scripts/fetch-rules.sh — do not edit."
     echo "# rules/ is a snapshot of the published rule channel."
