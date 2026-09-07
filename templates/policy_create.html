@@ -6,60 +6,6 @@
     <input type="hidden" name="ids" id="catalogIds" value="">
     <input type="hidden" name="set_ids" id="setIds" value="">
 
-    <div class="row">
-        <div class="col-lg-8">
-            <div class="panel panel-default">
-                <div class="panel-heading"><h4><i class="fa fa-th-large"></i> Rule Sets</h4></div>
-                <div class="panel-body">
-                    <p class="help-block" style="margin-top:0">
-                        Installed from the rule channel when the policy is created: each is
-                        fetched, its signature checked and its contents verified against the
-                        signed manifest before a rule is written. Sets can be added or removed
-                        afterwards from the policy's Rule Sets page.
-                        <br>
-                        <strong>Install only what applies.</strong> A set for a stack you do
-                        not run cannot detect anything, and every rule in it is a rule that can
-                        only ever match something legitimate.
-                    </p>
-
-                    {% if check_error %}
-                    <div class="alert alert-warning" style="margin-bottom:10px">
-                        <i class="fa fa-exclamation-triangle"></i>
-                        The channel could not be reached: {{ check_error }}
-                        {% if checked %}<br><small>Showing what was offered as of {{ checked }} UTC.</small>{% endif %}
-                    </div>
-                    {% endif %}
-
-                    {% if offered %}
-                    {% for s in offered %}
-                    <div class="checkbox">
-                        <label>
-                            <input type="checkbox" class="set-chk" value="{{ s.id }}"
-                                   {% if s.tier == "basic" %}checked{% endif %}>
-                            <strong>{{ s.name }}</strong>
-                            {% if s.tier == "basic" %}
-                                <span class="label label-default">basic</span>
-                            {% else %}
-                                <span class="label label-info">{{ s.tier }}</span>
-                            {% endif %}
-                            <small class="text-muted">v{{ s.version }} · <code>{{ s.id }}</code></small>
-                            {% if s.description %}
-                            <br><small class="text-muted" style="margin-left:20px">{{ s.description }}</small>
-                            {% endif %}
-                        </label>
-                    </div>
-                    {% endfor %}
-                    {% else %}
-                    <p class="text-muted">
-                        No sets are available from the channel yet. You can still pick
-                        individual rules below, and install sets later from the policy's
-                        Rule Sets page.
-                    </p>
-                    {% endif %}
-                </div>
-            </div>
-        </div>
-    </div>
 
     <div class="row">
         <div class="col-lg-8">
@@ -127,9 +73,35 @@
         </div>
         <div class="panel-body" style="padding:0">
             <p class="text-muted" style="padding:10px 14px;margin:0;font-size:12px">
-                Optional — pick the rules that apply to your application now.
-                You can change the selection any time after creation.
+                <strong>Tick a heading to take the whole set.</strong> It is installed
+                as a set — recorded, and offered an update when the channel publishes
+                a newer version. Open a heading and tick rules individually to take
+                only those: single rules are copies, and nothing will ever correct
+                them.
+                <br>
+                Basic sets start ticked. An optional set only matters in front of the
+                application it names — one for a stack you do not run cannot detect
+                anything, and can only match something legitimate.
+                <br>
+                All of it can be changed afterwards from the policy's Rule Sets page.
             </p>
+            {% if check_error %}
+            <div class="alert alert-warning" style="margin:0 14px 12px">
+                <i class="fa fa-exclamation-triangle"></i>
+                <strong>The rule channel could not be reached:</strong> {{ check_error }}
+                <br><small>
+                    {% if checked %}
+                    This list is what was last downloaded, on {{ checked }} UTC — sets
+                    published since then are not in it.
+                    {% else %}
+                    Nothing has been downloaded yet, so this list is the basic sets
+                    shipped with the binary. Optional sets are published, never
+                    bundled, and so are missing rather than absent. They can be
+                    installed later from the policy's Rule Sets page.
+                    {% endif %}
+                </small>
+            </div>
+            {% endif %}
         </div>
     </div>
 
@@ -142,16 +114,23 @@
             <!-- stopPropagation so ticking the box does not also toggle the panel -->
             <label style="margin:0;font-weight:bold;cursor:pointer"
                    onclick="event.stopPropagation()">
-                <input type="checkbox" class="cat-master" data-cat="{{ cat.code }}">
+                <input type="checkbox" class="cat-master" data-cat="{{ cat.code }}"
+                       data-set="{{ cat.set_id | default(value='') }}"
+                       {% if cat.tier == "basic" %}checked{% endif %}>
                 {{ cat.title }}
             </label>
+            {% if cat.tier == "basic" %}
+                <span class="label label-default">basic</span>
+            {% elif cat.tier %}
+                <span class="label label-info">{{ cat.tier }}</span>
+            {% endif %}
             <span class="label label-default">{{ cat.code }}</span>
             <span class="text-muted" style="font-size:12px;margin-left:auto">
                 <span class="cat-count" data-cat="{{ cat.code }}">0</span> / {{ cat.total }} selected
             </span>
         </div>
         <!-- Collapsed by default; toggled by the header -->
-        <div class="table-responsive cat-body" style="display:none">
+        <div class="table-responsive cat-body" data-cat="{{ cat.code }}" style="display:none">
             <table class="table table-condensed table-hover" style="font-size:12px;margin-bottom:0">
                 <tbody>
                 {% for r in cat.rules %}
@@ -205,29 +184,52 @@
 {% block scripts %}
 <script>
 // ── Update all counters ───────────────────────────────────
+//
+// A heading is an independent choice — "take this whole set" — not a summary
+// of the boxes under it. It used to be derived from them, which is the right
+// model when the only thing you can pick is rules, and the wrong one now that
+// a set is a different act from the rules that happen to be in it.
 function updateCounts() {
-    var total = document.querySelectorAll('.cat-chk:checked').length;
-    document.getElementById('selCount').textContent = total;
-    document.getElementById('selCountBottom').textContent = total;
+    var total = 0;
 
     document.querySelectorAll('.cat-master').forEach(function (master) {
         var cat   = master.dataset.cat;
         var boxes = document.querySelectorAll('.cat-chk[data-cat="' + cat + '"]');
         var chkd  = document.querySelectorAll('.cat-chk[data-cat="' + cat + '"]:checked');
-        document.querySelector('.cat-count[data-cat="' + cat + '"]').textContent = chkd.length;
-        master.checked       = boxes.length > 0 && chkd.length === boxes.length;
-        master.indeterminate = chkd.length > 0 && chkd.length < boxes.length;
+        var whole = master.checked && master.dataset.set;
+
+        // A file with no [set] block cannot be installed as a set, so its
+        // heading has nothing to mean but "all of these" — the old behaviour,
+        // kept for that one case rather than leaving an inert checkbox.
+        if (!master.dataset.set) {
+            master.checked = boxes.length > 0 && chkd.length === boxes.length;
+            master.indeterminate = chkd.length > 0 && chkd.length < boxes.length;
+        }
+
+        var n = whole ? boxes.length : chkd.length;
+        total += n;
+        document.querySelector('.cat-count[data-cat="' + cat + '"]').textContent = n;
+
+        // Taking the set already takes every rule in it, so the individual
+        // boxes have nothing left to say. Disabled rather than hidden: the
+        // rules are still worth reading before deciding.
+        boxes.forEach(function (c) { c.disabled = !!whole; });
+        var body = document.querySelector('.cat-body[data-cat="' + cat + '"]');
+        if (body) { body.style.opacity = whole ? 0.55 : ''; }
     });
+
+    document.getElementById('selCount').textContent = total;
+    document.getElementById('selCountBottom').textContent = total;
 }
 
 // ── Per-category master checkbox ──────────────────────────
 document.querySelectorAll('.cat-master').forEach(function (master) {
     master.addEventListener('change', function () {
-        var cat = this.dataset.cat;
-        var on  = this.checked;
-        document.querySelectorAll('.cat-chk[data-cat="' + cat + '"]').forEach(function (c) {
-            c.checked = on;
-        });
+        if (!master.dataset.set) {
+            var on = master.checked;
+            document.querySelectorAll('.cat-chk[data-cat="' + master.dataset.cat + '"]')
+                    .forEach(function (c) { c.checked = on; });
+        }
         updateCounts();
     });
 });
@@ -239,7 +241,15 @@ document.querySelectorAll('.cat-chk').forEach(function (chk) {
 
 // ── Select / clear all ────────────────────────────────────
 function selectAll(on) {
-    document.querySelectorAll('.cat-chk').forEach(function (c) { c.checked = on; });
+    // Whole sets, since that is what All means once a heading is a set.
+    document.querySelectorAll('.cat-master').forEach(function (m) {
+        if (m.dataset.set) { m.checked = on; }
+    });
+    // Cleared, not ticked: a set that is taken whole does not also want its
+    // rules listed individually, and a heading with no set ticks its own.
+    document.querySelectorAll('.cat-chk').forEach(function (c) {
+        c.checked = on && !document.querySelector('.cat-master[data-cat="' + c.dataset.cat + '"]').dataset.set;
+    });
     updateCounts();
 }
 
@@ -276,18 +286,20 @@ function filterRules() {
 
 // ── Collect checked ids before submit ─────────────────────
 function collectIds() {
-    var ids = Array.from(document.querySelectorAll('.cat-chk:checked'))
-                   .map(function (c) { return c.dataset.id; })
-                   .join(',');
-    document.getElementById('catalogIds').value = ids;
-
-    // One field, comma separated, the same way the rule ids travel. Repeated
-    // form fields of the same name collapse to one on the way in, so ticking
-    // three sets would have installed only the last.
-    var sets = Array.from(document.querySelectorAll('.set-chk:checked'))
-                    .map(function (c) { return c.value; })
-                    .join(',');
-    document.getElementById('setIds').value = sets;
+    // A ticked heading means the whole set, and the set is then installed as a
+    // set rather than as a pile of rules that happens to be all of it. Its
+    // individual boxes are deliberately not sent: doing both would install the
+    // set and then re-add every rule in it, which is the same rules twice
+    // through two different mechanisms.
+    var sets = [], ids = [];
+    document.querySelectorAll('.cat-master').forEach(function (m) {
+        var whole = m.checked && m.dataset.set;
+        if (whole) { sets.push(m.dataset.set); return; }
+        document.querySelectorAll('.cat-chk[data-cat="' + m.dataset.cat + '"]:checked')
+                .forEach(function (c) { ids.push(c.dataset.id); });
+    });
+    document.getElementById('catalogIds').value = ids.join(',');
+    document.getElementById('setIds').value = sets.join(',');
 }
 
 updateCounts();

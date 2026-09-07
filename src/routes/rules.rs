@@ -889,6 +889,15 @@ pub struct CatalogRule {
 pub struct CatalogCategory {
     pub title:       String, // friendly name, e.g. "SQL Injection"
     pub code:        String, // numeric CRS-style prefix, e.g. "942"
+    /// The set these rules belong to, when the file declares one.
+    ///
+    /// Carried so a category can be chosen whole. Taking every rule in a set
+    /// one at a time and installing the set are not the same act: the second
+    /// records what the policy holds and can be offered updates, the first
+    /// leaves eighteen rules that nothing will ever correct.
+    pub set_id:      Option<String>,
+    /// `basic` or `optional`, for labelling. Empty when unknown.
+    pub tier:        String,
     pub total:       usize,
     pub added_count: usize,
     pub rules:       Vec<CatalogRule>,
@@ -975,6 +984,18 @@ pub fn read_catalog_categories(existing: &HashSet<i64>) -> Result<Vec<CatalogCat
         return Ok(categories);
     }
 
+    // Tiers come from the manifest beside the sets, so an optional set can be
+    // labelled as one rather than sitting unmarked among the rest.
+    let tiers: HashMap<String, String> = {
+        let manifest = std::fs::read_to_string(crate::rules_update::cache_dir().join("sets.toml"))
+            .or_else(|_| std::fs::read_to_string("rules/sets.toml"))
+            .unwrap_or_default();
+        crate::rules_update::parse_manifest(&manifest)
+            .into_iter()
+            .map(|s| (s.id, s.tier))
+            .collect()
+    };
+
     // Collect and sort rule sets so categories appear in a stable order.
     let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(dir)
         .map_err(|e| AppError::Internal(format!("Cannot read rules dir: {}", e)))?
@@ -1022,7 +1043,12 @@ pub fn read_catalog_categories(existing: &HashSet<i64>) -> Result<Vec<CatalogCat
         }
 
         let total = rules.len();
-        categories.push(CatalogCategory { title, code, total, added_count, rules });
+        let set_id = parsed.set.as_ref().map(|s| s.id.clone());
+        let tier = set_id
+            .as_ref()
+            .and_then(|id| tiers.get(id).cloned())
+            .unwrap_or_default();
+        categories.push(CatalogCategory { title, code, set_id, tier, total, added_count, rules });
     }
 
     Ok(categories)

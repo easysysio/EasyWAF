@@ -6,9 +6,34 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
-## [Unreleased]
+## [0.6.10] — 2026-09-07
 
 ### Changed
+- **The Create Policy page asks for the policy first, and for rule sets and
+  rules as one question instead of two.**
+
+  It used to open with a list of rule sets, put the policy's own settings —
+  name, mode, thresholds — below that, and then list every rule again
+  underneath, so a set could be chosen twice through two different controls
+  that did not know about each other. Naming the thing being created is the
+  first step, so it is now the first panel.
+
+  Below it, one list. Ticking a heading takes the whole set: it is installed as
+  a set, recorded, and offered an update when the channel publishes a newer
+  version. Opening a heading and ticking rules individually takes copies, which
+  are never updated. Both were always true; the page previously expressed the
+  first through a separate panel and the second through this one, which is why
+  it read as two questions.
+
+  A heading is now an independent choice rather than a summary of the boxes
+  under it, so a set taken whole no longer also sends its rules as individual
+  copies — which would have installed the same rules twice, by two mechanisms,
+  with only one of them updatable. While a set is taken whole its rule boxes
+  are disabled rather than hidden, since the rules are still worth reading.
+
+  Basic sets start ticked. Optional sets are listed and labelled, and are no
+  longer only reachable after the policy exists.
+
 - **The site form takes a list of ports per protocol** — "80, 8080" — instead
   of a single port plus a separate "additional ports" field beside it.
 

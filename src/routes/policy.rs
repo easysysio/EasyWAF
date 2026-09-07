@@ -226,13 +226,11 @@ pub async fn get_policy_new(
     let catalog = crate::routes::rules::read_catalog_categories(&HashSet::new())?;
     let total_available: usize = catalog.iter().map(|c| c.total).sum();
 
-    // What the channel offers, which is a different question from what is on
-    // disk. Optional sets are published and never bundled, so the catalog above
-    // — read from rules/ — cannot show them at all. Choosing what a policy
-    // contains is exactly when someone wants them, and telling them to create
-    // the policy first and come back is asking them to do it in two steps for
-    // no reason.
-    let offered = crate::rules_update::offered(&state.db).await;
+    // The catalog above is read from the downloaded mirror, so it already
+    // holds every set the channel publishes, optional ones included. What the
+    // channel could not deliver is still worth saying here: with no successful
+    // fetch the list is the bundle, which is the basic sets and nothing else,
+    // and an optional set is then missing rather than absent.
     let (checked, check_error) = crate::rules_update::status(&state.db).await;
 
     let mut ctx = Context::new();
@@ -241,7 +239,6 @@ pub async fn get_policy_new(
     ctx.insert("url",             "/policy");
     ctx.insert("catalog",         &catalog);
     ctx.insert("total_available", &total_available);
-    ctx.insert("offered",         &offered);
     ctx.insert("check_error",     &check_error.unwrap_or_default());
     ctx.insert("checked",         &checked.unwrap_or_default());
 
