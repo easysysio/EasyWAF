@@ -300,6 +300,26 @@ def escape_literal_braces(pattern):
     return "".join(out)
 
 
+# Strings no detection rule should match. Used as a backstop: whatever the
+# action list said, a pattern that fires on all of these is not a detection,
+# and would score every request on every site using the policy.
+BENIGN = ["/index.html", "hello", "id", "1", "en-GB", "application/json"]
+
+
+def matches_ordinary_traffic(pattern):
+    """True when a pattern fires on everything benign thrown at it.
+
+    Python's regex is not Rust's, but for the trivially-broad patterns this is
+    meant to catch — `.`, `.*`, `^` — they agree, and a false alarm here costs
+    one refused rule rather than a rule that scores every request.
+    """
+    try:
+        rx = re.compile(pattern)
+    except re.error:
+        return False
+    return all(rx.search(b) for b in BENIGN)
+
+
 def portable(pattern):
     """Reject a PCRE the Rust regex crate cannot compile."""
     for rx, why in UNSUPPORTED_RE:
@@ -352,6 +372,27 @@ def convert(paths, id_base, include_widened, set_id, set_name):
             if str(phases[0]) not in ("1", "2", "request"):
                 stats["response phase"] += 1
                 skipped.append((label, f"phase {phases[0]} inspects the response"))
+                continue
+
+            # A rule that deliberately does not act is bookkeeping, not a
+            # detection. CRS 921170 is `@rx .` with pass,nolog,setvar — it
+            # matches every parameter name to count them, and the detection is
+            # a later rule that reads the count. Converted naively it becomes a
+            # rule that scores on every request that has a parameter at all.
+            disruptive = {"block", "deny", "drop", "redirect", "proxy"}
+            if "pass" in actions and not (disruptive & set(actions)):
+                stats["bookkeeping (pass)"] += 1
+                skipped.append((label, "pass/setvar bookkeeping, not a detection: it "
+                                       "feeds a later rule rather than acting"))
+                continue
+            if "nolog" in actions and not (disruptive & set(actions)):
+                stats["nolog"] += 1
+                skipped.append((label, "nolog: not meant to be reported, so not a detection"))
+                continue
+            if not msg:
+                stats["no msg"] += 1
+                skipped.append((label, "no msg: nothing to name the rule, so nothing an "
+                                       "operator could review it by"))
                 continue
 
             op = operator.strip()
@@ -409,6 +450,12 @@ def convert(paths, id_base, include_widened, set_id, set_name):
             if any(t in CASE_TRANSFORMS for t in transforms) \
                and not pattern.startswith("(?i)"):
                 pattern = "(?i)" + pattern
+
+            if matches_ordinary_traffic(pattern):
+                stats["matches ordinary traffic"] += 1
+                skipped.append((label, "pattern matches ordinary traffic — it would "
+                                       "score every request"))
+                continue
 
             fixed = escape_literal_braces(pattern)
             if fixed != pattern:
@@ -514,6 +561,16 @@ SecRule ARGS "@rx {{.*?}}" \
 # Phrase list.
 SecRule REQUEST_HEADERS "@pm nikto nmap" \
     "id:100010,phase:2,t:none,msg:'Tools',severity:'WARNING'"
+
+# Refused: bookkeeping. This is CRS 921170's shape — it matches every
+# parameter name to count them, and a later rule reads the count. Converted
+# naively it scores on every request that has a parameter.
+SecRule ARGS_NAMES "@rx ." \
+    "id:100011,phase:2,pass,nolog,setvar:'tx.paramcounter_%{MATCHED_VAR_NAME}=+1'"
+
+# Refused by the backstop even though it declares itself a detection.
+SecRule ARGS "@rx .*" \
+    "id:100012,phase:2,block,t:none,msg:'Far too broad',severity:'CRITICAL'"
 """
 
 
@@ -536,7 +593,9 @@ def self_test():
         check(stats["converted"] == 3, f"expected 3 exact conversions, got {stats['converted']}")
         for rid, why in [("100002", "chain"), ("100003", "transformation"),
                          ("100004", "lookahead"), ("100005", "response phase"),
-                         ("100006", "@detectSQLi"), ("100008", "widening")]:
+                         ("100006", "@detectSQLi"), ("100008", "widening"),
+                         ("100011", "pass/setvar bookkeeping"),
+                         ("100012", "matches ordinary traffic")]:
             check(rid in refused, f"{rid} ({why}) should have been refused")
 
         check("'(?i)/etc/passwd'" in toml, "exact pattern not carried through verbatim")

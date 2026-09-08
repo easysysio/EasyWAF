@@ -46,6 +46,14 @@ Version bumps and tags are created only after explicit approval.
   policy's Score Threshold should be set to 5 to reproduce CRS blocking
   behaviour; EasyWAF's default of 10 needs two critical hits.
 
+  Rules that only exist to feed a later rule are refused too. CRS 921170 is
+  `@rx .` against every parameter name with `pass,nolog,setvar` — it counts
+  parameters, and a different rule reads the count. Converted as a detection it
+  scores on every request carrying a parameter at all. A pattern that matches
+  ordinary traffic is refused as a backstop regardless of what its actions
+  claimed, so a misread action list cannot produce a rule that scores
+  everything.
+
   `--self-test` checks the refusals and both rewrites without needing a copy of
   CRS.
 
