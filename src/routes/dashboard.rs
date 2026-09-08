@@ -148,6 +148,25 @@ pub async fn get_dashboard(
     ctx.insert("site_traffic",   &site_traffic);
     ctx.insert("chart",          &chart);
 
+    // Sites that are enabled and serving with no policy attached.
+    //
+    // WafModule and GeoIpModule both return Pass outright when a site has no
+    // waf_policy_id, so such a site is proxied without any inspection at all.
+    // Until 0.7.0 nothing in the GUI said so, and the sites list rendered it as
+    // a muted "None" — which reads as a neutral absence rather than as the only
+    // state in which the product does nothing.
+    let unprotected = sqlx::query!(
+        r#"SELECT name as "name!" FROM sites
+           WHERE enabled = 1 AND waf_policy_id IS NULL
+           ORDER BY name"#
+    )
+    .fetch_all(&state.db)
+    .await?
+    .into_iter()
+    .map(|r| r.name)
+    .collect::<Vec<_>>();
+    ctx.insert("unprotected_sites", &unprotected);
+
     Ok((jar, Html(state.tera.render("dashboard.html", &ctx)?)).into_response())
 }
 

@@ -6,6 +6,30 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
+## [Unreleased]
+
+### Added
+- **A site with no policy attached now says so** — on the dashboard, in the
+  sites list, and next to the control that causes it.
+
+  It is the one state in which EasyWAF inspects nothing at all: `WafModule` and
+  `GeoIpModule` both return `Pass` outright when `sites.waf_policy_id` is
+  `NULL`, so such a site is proxied straight through with no WAF rules and no
+  country rules. Requests are still logged, so Traffic Monitor shows them —
+  every one allowed — which makes the site look healthy rather than
+  uninspected.
+
+  Nothing in the GUI said this. The sites list rendered it as a muted "None",
+  which reads as a neutral absence rather than as the only configuration in
+  which the product does nothing. It now reads **Not inspected**, the dashboard
+  names every active site in that state, and the site settings page explains it
+  beside the policy selector.
+
+  Found while re-scoping IP allow/block lists, where the same gap is the reason
+  that release moved from 0.13.0 to 0.9.0: rule exclusions cannot close it,
+  because they live inside the WAF module and so exist only where a policy
+  does.
+
 ## [0.7.0] — 2026-09-08
 
 ### Added

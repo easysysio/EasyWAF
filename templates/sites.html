@@ -48,7 +48,14 @@
                             {% if site.waf_policy_id %}
                                 <span class="label label-info"><i class="fa fa-shield"></i> Protected</span>
                             {% else %}
-                                <span class="text-muted">None</span>
+                                {# "None" in grey read as a neutral absence. It is not:
+                                   with no policy the WAF and country rules both return
+                                   Pass outright, so nothing about this site is
+                                   inspected at all. #}
+                                <span class="label label-warning"
+                                      title="No policy: requests to this site are proxied without any inspection — no WAF rules, no country rules.">
+                                    <i class="fa fa-exclamation-triangle"></i> Not inspected
+                                </span>
                             {% endif %}
                         </td>
                         <td>

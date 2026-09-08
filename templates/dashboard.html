@@ -91,6 +91,29 @@
 
 </div>
 
+{# A site with no policy is the one state in which EasyWAF inspects nothing at
+   all — both modules return Pass before looking at the request. It was visible
+   only as a muted "None" in the sites list until 0.7.0. #}
+{% if unprotected_sites %}
+<div class="row">
+    <div class="col-lg-12">
+        <div class="alert alert-danger" style="margin-bottom:20px">
+            <i class="fa fa-exclamation-triangle fa-lg"></i>
+            <strong>{{ unprotected_sites | length }}</strong>
+            active site{% if unprotected_sites | length != 1 %}s are{% else %} is{% endif %}
+            being proxied with <strong>no inspection at all</strong> — no WAF rules
+            and no country rules, because no policy is attached:
+            {% for s in unprotected_sites %}<a href="/sites/{{ s }}/edit"
+               class="alert-link"><code>{{ s }}</code></a>{% if not loop.last %}, {% endif %}{% endfor %}.
+            <br>
+            <small>Attach a policy on each site's settings page. Requests are still
+            logged, so these appear in Traffic Monitor — every one of them
+            allowed.</small>
+        </div>
+    </div>
+</div>
+{% endif %}
+
 {# A policy in DetectionOnly blocks nothing, so the Blocked figure stays at
    zero however hard the site is being attacked. This is the number that moves
    instead. Shown only when there is something to say. #}

@@ -220,6 +220,64 @@ mod tests {
     }
 
     #[test]
+    fn a_site_with_no_policy_is_reported_as_uninspected() {
+        // The one state in which EasyWAF inspects nothing: both modules return
+        // Pass before looking at the request. It showed only as a muted "None"
+        // in the sites list, which reads as a neutral absence. These assertions
+        // exist so it cannot quietly become one again.
+        let tera = tera().expect("templates should build");
+
+        // Dashboard: names the sites, and says nothing when there are none.
+        let mut ctx = tera::Context::new();
+        for (k, v) in [("username", "t"), ("title", "Dashboard"), ("url", "/")] {
+            ctx.insert(k, v);
+        }
+        for k in ["sites_number", "certs_number", "policy_number"] { ctx.insert(k, &0); }
+        ctx.insert("traffic", &serde_json::json!({
+            "total": 0, "passed": 0, "challenged": 0, "blocked": 0,
+            "detected": 0, "would_block": 0 }));
+        ctx.insert("site_traffic", &Vec::<String>::new());
+        ctx.insert("chart", &Vec::<String>::new());
+
+        ctx.insert("unprotected_sites", &vec!["docs.example", "repo.example"]);
+        let html = tera.render("dashboard.html", &ctx).expect("dashboard renders");
+        assert!(html.contains("no inspection at all"), "the warning is missing");
+        assert!(html.contains("docs.example") && html.contains("repo.example"),
+                "the warning does not name the sites");
+
+        ctx.insert("unprotected_sites", &Vec::<String>::new());
+        let clean = tera.render("dashboard.html", &ctx).expect("dashboard renders");
+        assert!(!clean.contains("no inspection at all"),
+                "the warning shows when every site has a policy");
+
+        // Site settings: the same fact, next to the control that causes it.
+        let mut sctx = tera::Context::new();
+        for (k, v) in [("username", "t"), ("title", "Site"), ("url", "/sites"),
+                       ("result", ""), ("msg", ""),
+                       ("http_ports", "80"), ("https_ports", "")] {
+            sctx.insert(k, v);
+        }
+        sctx.insert("policies", &Vec::<String>::new());
+        sctx.insert("certs",    &Vec::<String>::new());
+        sctx.insert("exclusion_count", &0);
+        let site = |pid: Option<i64>| serde_json::json!({
+            "id": 1, "name": "s", "server_name": "s.example", "target": "http://a",
+            "enabled": true, "listen_port": 80, "tls_port": null, "cert_id": null,
+            "tls_redirect": false, "waf_policy_id": pid, "hsts": false,
+            "x_frame": false, "x_frame_value": "SAMEORIGIN",
+            "x_content_type": false, "xss_protection": false });
+
+        sctx.insert("site", &site(None));
+        let none = tera.render("site_settings.html", &sctx).expect("site settings render");
+        assert!(none.contains("This site is not inspected"), "no warning without a policy");
+
+        sctx.insert("site", &site(Some(3)));
+        let with = tera.render("site_settings.html", &sctx).expect("site settings render");
+        assert!(!with.contains("This site is not inspected"),
+                "the warning shows on a site that does have a policy");
+    }
+
+    #[test]
     fn a_path_that_climbs_out_finds_nothing() {
         assert!(Static::get("../Cargo.toml").is_none());
         assert!(Static::get("/etc/passwd").is_none());

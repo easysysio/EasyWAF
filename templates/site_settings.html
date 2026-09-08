@@ -55,6 +55,18 @@
 
                     <div class="form-group">
                         <label>WAF Policy</label>
+                        {% if not site.waf_policy_id %}
+                        {# Said here because this is the control that causes it, and
+                           because nothing else in the GUI ever mentioned it. #}
+                        <div class="alert alert-warning" style="margin-bottom:8px">
+                            <i class="fa fa-exclamation-triangle"></i>
+                            <strong>This site is not inspected.</strong>
+                            With no policy attached, requests are proxied straight
+                            through: no WAF rules run, and country rules do not either.
+                            Traffic is still logged, so Traffic Monitor will show
+                            requests — every one of them allowed.
+                        </div>
+                        {% endif %}
                         <select class="form-control" name="waf_policy_id">
                             <option value="">None</option>
                             {% for p in policies %}
