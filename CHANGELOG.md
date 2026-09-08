@@ -6,7 +6,7 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
-## [Unreleased]
+## [0.7.1] — 2026-09-08
 
 ### Fixed
 - **Excluding a rule from Traffic Monitor failed with "invalid digit found in
