@@ -143,7 +143,9 @@
             <i class="fa fa-eye"></i>
             <strong>{{ traffic.detected }}</strong>
             request{% if traffic.detected != 1 %}s{% endif %} in the last 24
-            hours matched WAF rules without reaching a block threshold.
+            hours matched WAF rules and were allowed, because the score stayed
+            under the block threshold. That is enforcement working, not
+            enforcement off — but it is where reconnaissance lives.
             <a href="/traffic?blocked=detected" class="alert-link">See them</a>.
         </div>
     </div>
@@ -317,7 +319,7 @@ let verdictChart = null;
     verdictChart = new Chart(el, {
         type: 'doughnut',
         data: {
-            labels: ['Passed', 'Detected', 'Challenged', 'Blocked'],
+            labels: ['Passed', 'Scored', 'Challenged', 'Blocked'],
             datasets: [{
                 data: [{{ traffic.passed }}, {{ traffic.detected }}, {{ traffic.challenged }}, {{ traffic.blocked }}],
                 backgroundColor: [PASSED, DETECT, CHALLEN, BLOCKED],

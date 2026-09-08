@@ -36,8 +36,8 @@
             <option value="0" {% if sel_blocked == "0" %}selected{% endif %}>Allowed Only</option>
             {# In DetectionOnly every row is "allowed", so blocked/allowed cannot
                find the attacks that mode was turned on to find. #}
-            <option value="detected" {% if sel_blocked == "detected" %}selected{% endif %}>Detected (allowed)</option>
-            <option value="would_block" {% if sel_blocked == "would_block" %}selected{% endif %}>Would have been blocked</option>
+            <option value="detected" {% if sel_blocked == "detected" %}selected{% endif %}>Scored, allowed (under threshold)</option>
+            <option value="would_block" {% if sel_blocked == "would_block" %}selected{% endif %}>Would have been blocked (detection only)</option>
         </select>
     </div>
 
@@ -191,10 +191,16 @@
                         {% elif e.detection == "observed" %}
                             {# Matched rules but stayed under the threshold. Where
                                reconnaissance lives, and the near-miss that is one
-                               point from blocking real traffic. #}
+                               point from blocking real traffic.
+
+                               Labelled SCORED, not DETECTED. "Detected" read as
+                               "DetectionOnly", so an enforcing policy showing these
+                               looked like it had stopped enforcing — when what they
+                               mean is the opposite: the rules ran, added score, and
+                               the total did not reach the threshold. #}
                             <span class="label label-info"
-                                  title="Allowed on its merits — under the block threshold. {{ e.block_reason | default(value='') }}">
-                                <i class="fa fa-eye"></i> DETECTED
+                                  title="Rules matched and added score, but the total stayed under this policy's block threshold — so the request was allowed. This is normal on an enforcing policy. {{ e.block_reason | default(value='') }}">
+                                <i class="fa fa-eye"></i> SCORED{% if e.waf_score %} {{ e.waf_score }}{% endif %}
                             </span>
                         {% else %}
                             <span class="label label-success">

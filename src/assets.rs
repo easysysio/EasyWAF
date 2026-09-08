@@ -201,7 +201,11 @@ mod tests {
             .unwrap_or_else(|e| panic!("traffic.html failed to render: {e:#?}"));
 
         assert!(html.contains("WOULD BLOCK"),   "a would-block row lost its verdict");
-        assert!(html.contains("DETECTED"),      "an observed row lost its verdict");
+        // Deliberately not the word "detected": it read as "DetectionOnly", so an
+        // enforcing policy showing these looked like it had stopped enforcing.
+        assert!(html.contains("SCORED"),        "an observed row lost its verdict");
+        assert!(!html.contains("DETECTED"),
+                "the ambiguous label is back — it reads as DetectionOnly");
         assert!(html.contains("BLOCKED"),       "a blocked row lost its verdict");
         assert!(html.contains("PASS"),          "a clean row lost its verdict");
         // The chart's three series must all reach the page, or an hour of

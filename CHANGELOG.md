@@ -6,6 +6,28 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
+## [Unreleased]
+
+### Changed
+- **A sub-threshold match is labelled SCORED rather than DETECTED**, and shows
+  the score it reached.
+
+  On an enforcing policy the label read as though the policy had stopped
+  enforcing — "detected" is one word away from DetectionOnly. It means the
+  opposite: the rules ran, added score, and the total did not reach the block
+  threshold, so the request was allowed on its merits. That is enforcement
+  working.
+
+  Only DetectionOnly produces **would block** and **would challenge**; those
+  come from `decide()`, which is reached only in that mode. A sub-threshold
+  match is produced on a path that runs in every mode, which is why it appears
+  under enforcement and always did — 0.6.11 simply made it visible for the
+  first time.
+
+  The Traffic Monitor filter and the dashboard's wording and chart legend say
+  the same thing, and the dashboard now states outright that these rows are
+  enforcement working rather than enforcement off.
+
 ## [0.7.2] — 2026-09-08
 
 ### Fixed
