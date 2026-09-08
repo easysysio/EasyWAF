@@ -7,6 +7,7 @@
 // hosts can bind separate TCP ports (e.g. 80, 8080).
 // =========================================================
 
+use crate::routes::flash_redirect;
 use crate::{
     auth::get_session,
     error::{AppError, Result},
@@ -910,8 +911,3 @@ fn parse_policy_id(raw: &Option<String>) -> Option<i64> {
 
 // ─── Flash redirect helper ───────────────────────────────
 
-/// Redirect to path with URL-encoded flash message query params.
-fn flash_redirect(path: &str, result: &str, msg: &str) -> Result<Response> {
-    let msg_enc = urlencoding::encode(msg).into_owned();
-    Ok(Redirect::to(&format!("{}?result={}&msg={}", path, result, msg_enc)).into_response())
-}

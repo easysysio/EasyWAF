@@ -14,6 +14,7 @@
 // cleartext — worse than the default it replaces.
 // =========================================================
 
+use crate::routes::flash_redirect;
 use crate::{auth::get_session, error::Result, AppState};
 use axum::{
     extract::{Query, State},
@@ -183,7 +184,3 @@ pub async fn is_default_password(db: &SqlitePool, username: &str) -> bool {
 
 // ─── Flash redirect helper ───────────────────────────────
 
-fn flash_redirect(path: &str, result: &str, msg: &str) -> Result<Response> {
-    let msg_enc = urlencoding::encode(msg).into_owned();
-    Ok(Redirect::to(&format!("{}?result={}&msg={}", path, result, msg_enc)).into_response())
-}

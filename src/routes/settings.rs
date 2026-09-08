@@ -11,6 +11,7 @@
 // failing the request.
 // =========================================================
 
+use crate::routes::flash_redirect;
 use crate::{auth::get_session, error::Result, AppState};
 use axum::{
     extract::{Query, State},
@@ -471,8 +472,3 @@ async fn set_setting(db: &SqlitePool, key: &str, value: &str) -> Result<()> {
 
 // ─── Flash redirect helper ───────────────────────────────
 
-/// Redirect to path with URL-encoded flash message query params.
-fn flash_redirect(path: &str, result: &str, msg: &str) -> Result<Response> {
-    let msg_enc = urlencoding::encode(msg).into_owned();
-    Ok(Redirect::to(&format!("{}?result={}&msg={}", path, result, msg_enc)).into_response())
-}

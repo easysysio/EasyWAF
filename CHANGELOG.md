@@ -8,6 +8,25 @@ Version bumps and tags are created only after explicit approval.
 
 ## [Unreleased]
 
+### Fixed
+- **Excluding a rule from Traffic Monitor failed with "invalid digit found in
+  string".** The exclusion was saved; it was the redirect back that broke, so
+  the page which would have confirmed it never rendered.
+
+  The button returns to `/traffic?site=…&blocked=…&hours=24` so the filter you
+  were looking at survives. `flash_redirect` then appended its message with a
+  `?` unconditionally, producing a second one, so `hours` arrived as
+  `24?result=success&msg=…` and axum rejected the request before any handler
+  ran.
+
+  The helper existed as **seven identical private copies**, one per route
+  module, and every one of them assumed the path had no query string. They are
+  now one implementation that picks the separator by looking, with the
+  Traffic Monitor URL as a test case.
+
+  If you pressed the button before this fix, the exclusions are there — check
+  the policy's Rule Exclusions page rather than adding them again.
+
 ### Added
 - **A site with no policy attached now says so** — on the dashboard, in the
   sites list, and next to the control that causes it.

@@ -18,6 +18,7 @@
 // implicitly.
 // =========================================================
 
+use crate::routes::flash_redirect;
 use crate::{auth::get_session, error::Result, AppState};
 use axum::{
     extract::{Path, Query, State},
@@ -560,10 +561,6 @@ fn parse_rule_ref(raw: &str) -> Option<(Option<i64>, Option<i64>)> {
     }
 }
 
-fn flash_redirect(path: &str, result: &str, msg: &str) -> Result<Response> {
-    let msg_enc = urlencoding::encode(msg).into_owned();
-    Ok(Redirect::to(&format!("{}?result={}&msg={}", path, result, msg_enc)).into_response())
-}
 
 #[cfg(test)]
 mod tests {
