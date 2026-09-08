@@ -20,7 +20,9 @@
 
 set -euo pipefail
 
-DB="${1:-/var/lib/easywaf/easywaf.db}"
+# The packages set WorkingDirectory=/opt/easywaf and the database is created
+# there on first run, so that is the default rather than a guess.
+DB="${1:-/opt/easywaf/easywaf.db}"
 [ -f "$DB" ] || { echo "No database at $DB"; echo "Usage: $0 [database] [rules-dir]"; exit 1; }
 
 # Where EasyWAF itself looks: the mirror beside the database, else the bundle.
