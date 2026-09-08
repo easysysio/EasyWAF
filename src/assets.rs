@@ -278,6 +278,46 @@ mod tests {
     }
 
     #[test]
+    fn the_exclusions_page_is_reachable_from_the_menu() {
+        // The page existed in 0.7.0 and was reachable only from an unlabelled
+        // icon on the policy list. Someone looking for it in the Security
+        // Policy menu, which is where it was asked for, did not find it.
+        let tera = tera().expect("templates should build");
+        let mut ctx = tera::Context::new();
+        for (k, v) in [("username", "t"), ("title", "Rule Exclusions"),
+                       ("url", "/exclusions"), ("sel_policy", ""),
+                       ("result", ""), ("msg", "")] {
+            ctx.insert(k, v);
+        }
+        ctx.insert("policies", &vec!["prod", "staging"]);
+        ctx.insert("exclusions", &vec![serde_json::json!({
+            "id": 1, "site_name": "cloud.example", "policy_name": "prod",
+            "rule_label": "Scanner probe", "external_id": 913015,
+            "path_prefix": "", "client_cidr": "203.0.113.0/24",
+            "note": "office range", "created_at": "2026-09-08 10:00:00" })]);
+
+        let html = tera.render("policy_exclusions.html", &ctx).expect("renders");
+        // Tera escapes "/" as &#x2F; in HTML, so these are matched on the
+        // parts that survive escaping rather than on the literal URLs.
+        assert!(html.contains("203.0.113.0"), "the client block is not shown");
+        assert!(html.contains("prod"), "the policy column is missing");
+        assert!(html.contains("exclusions") && html.contains("remove"),
+                "no way to un-exclude");
+        assert!(html.contains("Scanner probe") && html.contains("cloud.example"),
+                "the exclusion row did not render");
+
+        // The menu entry that makes the page findable at all — it was reachable
+        // only from an unlabelled icon before.
+        assert!(html.contains("Rule Exclusions</a>"),
+                "the Security Policy menu has no Rule Exclusions entry");
+
+        // And the empty state, so an installation with none says so.
+        ctx.insert("exclusions", &Vec::<String>::new());
+        let empty = tera.render("policy_exclusions.html", &ctx).expect("renders");
+        assert!(empty.contains("No exclusions"), "the empty state is missing");
+    }
+
+    #[test]
     fn a_path_that_climbs_out_finds_nothing() {
         assert!(Static::get("../Cargo.toml").is_none());
         assert!(Static::get("/etc/passwd").is_none());

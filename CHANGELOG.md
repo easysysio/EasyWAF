@@ -6,6 +6,23 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
+## [Unreleased]
+
+### Fixed
+- **Rule Exclusions now appears in the Security Policy menu.** It was asked for
+  there and never put there: 0.7.0 reached the page only through an unlabelled
+  icon on the policy list and a button on a policy's rules page, so someone
+  looking in the menu did not find it.
+
+  The obstacle was that the page was per policy — `/policy/{name}/exclusions` —
+  and a menu entry needs one URL. So it is now one page at `/exclusions`
+  listing every rule that is not running anywhere, with a policy column and a
+  dropdown to narrow it. That is also the better question: what is not running
+  is the thing worth asking, and *under which policy* is the narrowing rather
+  than the question.
+
+  Removing an exclusion returns to whatever filter was in view.
+
 ## [0.7.1] — 2026-09-08
 
 ### Fixed

@@ -293,6 +293,8 @@ pub async fn post_exclusion_add(
 pub struct PolicyExclusion {
     pub id:          i64,
     pub site_name:   String,
+    /// Which policy the site uses, so the unfiltered list can be read.
+    pub policy_name: String,
     pub rule_label:  String,
     pub external_id: Option<i64>,
     pub path_prefix: String,
@@ -301,7 +303,7 @@ pub struct PolicyExclusion {
     pub created_at:  String,
 }
 
-/// Every exclusion affecting a policy's rules, across all the sites using it.
+/// Every exclusion, or only those affecting one policy's rules.
 ///
 /// Exclusions are stored per site, because a site is what an exclusion is
 /// about. They are *read* per policy here because that is how someone thinks
@@ -310,11 +312,15 @@ pub struct PolicyExclusion {
 /// than about any one site.
 pub async fn list_for_policy(
     state: &AppState,
-    policy_id: i64,
+    policy_id: Option<i64>,
 ) -> Result<Vec<PolicyExclusion>> {
+    // `policy_id IS NULL` in the bind makes the filter optional without a
+    // second query: with no policy given, every row passes and the rule name
+    // is resolved through whichever policy the site actually uses.
     let rows = sqlx::query!(
         r#"SELECT e.id          as "id!",
                   s.server_name as "site_name!",
+                  COALESCE(p.name, '(no policy)') as "policy_name!",
                   e.external_id,
                   e.rule_id,
                   e.path_prefix as "path_prefix!",
@@ -324,12 +330,13 @@ pub async fn list_for_policy(
                   r.name        as "rule_name?"
            FROM   site_rule_exclusions e
            JOIN   sites s ON s.id = e.site_id
+           LEFT   JOIN policies p ON p.id = s.waf_policy_id
            LEFT   JOIN waf_rules r
-                  ON  r.policy_id = ?
+                  ON  r.policy_id = s.waf_policy_id
                   AND (   (e.external_id IS NOT NULL AND r.external_id = e.external_id)
                        OR (e.rule_id     IS NOT NULL AND r.id          = e.rule_id))
-           WHERE  s.waf_policy_id = ?
-           ORDER  BY s.server_name, e.id DESC"#,
+           WHERE  (? IS NULL OR s.waf_policy_id = ?)
+           ORDER  BY p.name, s.server_name, e.id DESC"#,
         policy_id, policy_id
     )
     .fetch_all(&state.db)
@@ -338,8 +345,9 @@ pub async fn list_for_policy(
     Ok(rows
         .into_iter()
         .map(|r| PolicyExclusion {
-            id:        r.id,
-            site_name: r.site_name,
+            id:          r.id,
+            site_name:   r.site_name,
+            policy_name: r.policy_name,
             rule_label: match (r.rule_name, r.external_id, r.rule_id) {
                 (Some(n), _, _)       => n,
                 (None, Some(ext), _)  => format!("rule {ext} (not in this policy)"),
@@ -355,74 +363,92 @@ pub async fn list_for_policy(
         .collect())
 }
 
-// ─── post_policy_exclusion_delete ────────────────────────
+// ─── post_exclusion_remove ───────────────────────────────
 
-/// Remove an exclusion from the policy-wide list.
-///
-/// Scoped to the policy, so an id from one policy's page cannot delete an
-/// exclusion belonging to a site that uses a different policy.
-pub async fn post_policy_exclusion_delete(
+#[derive(Debug, Deserialize)]
+pub struct RemoveForm {
+    /// The filter that was in view, so removing one does not lose the list.
+    pub policy: Option<String>,
+}
+
+/// Remove an exclusion, from wherever it was listed.
+pub async fn post_exclusion_remove(
     State(state): State<AppState>,
     jar: SignedCookieJar,
-    Path((policy_name, id)): Path<(String, i64)>,
+    Path(id): Path<i64>,
+    Form(form): Form<RemoveForm>,
 ) -> Result<Response> {
     if get_session(&jar).is_none() {
         return Ok(Redirect::to("/login").into_response());
     }
 
-    let back = format!("/policy/{policy_name}/exclusions");
+    let back = match form.policy.as_deref().filter(|p| !p.is_empty()) {
+        Some(p) => format!("/exclusions?policy={}", urlencoding::encode(p)),
+        None    => "/exclusions".to_string(),
+    };
 
-    let done = sqlx::query!(
-        "DELETE FROM site_rule_exclusions
-         WHERE id = ?
-           AND site_id IN (SELECT s.id FROM sites s
-                           JOIN policies p ON p.id = s.waf_policy_id
-                           WHERE p.name = ?)",
-        id, policy_name
-    )
-    .execute(&state.db)
-    .await?;
+    let done = sqlx::query!("DELETE FROM site_rule_exclusions WHERE id = ?", id)
+        .execute(&state.db)
+        .await?;
 
     if done.rows_affected() == 0 {
         return flash_redirect(&back, "failed", "That exclusion no longer exists.");
     }
 
-    tracing::info!(policy = %policy_name, exclusion = id, "Rule exclusion removed");
+    tracing::info!(exclusion = id, "Rule exclusion removed");
     flash_redirect(&back, "success",
                    "Exclusion removed — the rule applies again from the next request.")
 }
 
-// ─── get_policy_exclusions ───────────────────────────────
+// ─── get_exclusions ──────────────────────────────────────
 
-pub async fn get_policy_exclusions(
+#[derive(Debug, Deserialize)]
+pub struct ExclusionsQuery {
+    /// Narrow to one policy. Absent means every exclusion in the installation.
+    pub policy: Option<String>,
+    pub result: Option<String>,
+    pub msg:    Option<String>,
+}
+
+/// Every rule that is not running, anywhere — optionally narrowed to a policy.
+///
+/// One page rather than one per policy. A menu entry needs a single URL, and
+/// the question people actually ask is "what is not running", not "what is not
+/// running under this particular policy" — that is the narrowing, not the
+/// question. The per-policy links pass `?policy=`.
+pub async fn get_exclusions(
     State(state): State<AppState>,
     jar: SignedCookieJar,
-    Path(policy_name): Path<String>,
-    Query(flash): Query<FlashQuery>,
+    Query(q): Query<ExclusionsQuery>,
 ) -> Result<Response> {
     let session = match get_session(&jar) {
         Some(s) => s,
         None    => return Ok(Redirect::to("/login").into_response()),
     };
 
-    let policy_id: i64 = match sqlx::query_scalar!(
-        "SELECT id FROM policies WHERE name = ?", policy_name
-    )
-    .fetch_optional(&state.db)
-    .await?
-    {
-        Some(Some(id)) => id,
-        _ => return Ok(Redirect::to("/policy").into_response()),
+    let wanted = q.policy.clone().unwrap_or_default();
+    let policy_id: Option<i64> = if wanted.is_empty() {
+        None
+    } else {
+        sqlx::query_scalar!("SELECT id FROM policies WHERE name = ?", wanted)
+            .fetch_optional(&state.db)
+            .await?
+            .flatten()
     };
 
+    let policies = sqlx::query_scalar!("SELECT name FROM policies ORDER BY name")
+        .fetch_all(&state.db)
+        .await?;
+
     let mut ctx = Context::new();
-    ctx.insert("username",    &session.username);
-    ctx.insert("title",       "Rule Exclusions");
-    ctx.insert("url",         "/policy");
-    ctx.insert("policy_name", &policy_name);
-    ctx.insert("exclusions",  &list_for_policy(&state, policy_id).await?);
-    ctx.insert("result",      &flash.result.unwrap_or_default());
-    ctx.insert("msg",         &flash.msg.unwrap_or_default());
+    ctx.insert("username",   &session.username);
+    ctx.insert("title",      "Rule Exclusions");
+    ctx.insert("url",        "/exclusions");
+    ctx.insert("policies",   &policies);
+    ctx.insert("sel_policy", &wanted);
+    ctx.insert("exclusions", &list_for_policy(&state, policy_id).await?);
+    ctx.insert("result",     &q.result.unwrap_or_default());
+    ctx.insert("msg",        &q.msg.unwrap_or_default());
 
     Ok((jar, Html(state.tera.render("policy_exclusions.html", &ctx)?)).into_response())
 }

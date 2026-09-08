@@ -19,9 +19,17 @@
     <div class="col-lg-11">
         <div class="panel panel-default">
             <div class="panel-heading">
-                <h4>
-                    <i class="fa fa-ban"></i> Rule Exclusions
-                    <small class="text-muted">— policy <code>{{ policy_name }}</code></small>
+                <h4 style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+                    <span><i class="fa fa-ban"></i> Rule Exclusions</span>
+                    <form method="get" action="/exclusions" style="margin:0">
+                        <select name="policy" class="form-control input-sm"
+                                onchange="this.form.submit()" style="width:auto;display:inline-block">
+                            <option value="">every policy</option>
+                            {% for p in policies %}
+                            <option value="{{ p }}" {% if sel_policy == p %}selected{% endif %}>{{ p }}</option>
+                            {% endfor %}
+                        </select>
+                    </form>
                 </h4>
             </div>
             <div class="panel-body">
@@ -43,6 +51,7 @@
                     <thead>
                         <tr>
                             <th>Rule</th>
+                            <th>Policy</th>
                             <th>Site</th>
                             <th>Clients</th>
                             <th>Paths</th>
@@ -59,6 +68,7 @@
                                 <br><small class="text-muted"><code>{{ e.external_id }}</code></small>
                                 {% endif %}
                             </td>
+                            <td style="white-space:nowrap"><code>{{ e.policy_name }}</code></td>
                             <td style="white-space:nowrap"><code>{{ e.site_name }}</code></td>
                             <td style="white-space:nowrap">
                                 {% if e.client_cidr %}
@@ -85,9 +95,10 @@
                             </td>
                             <td class="text-right" style="white-space:nowrap">
                                 <form method="post"
-                                      action="/policy/{{ policy_name }}/exclusions/{{ e.id }}/delete"
+                                      action="/exclusions/{{ e.id }}/remove"
                                       onsubmit="return confirm('Stop excluding {{ e.rule_label }} on {{ e.site_name }}?\n\nThe rule will run again from the next request, and can block.');"
                                       style="display:inline">
+                                    <input type="hidden" name="policy" value="{{ sel_policy }}">
                                     <button type="submit" class="btn btn-default btn-xs"
                                             title="The rule applies again">
                                         <i class="fa fa-undo"></i> Un-exclude
@@ -108,7 +119,8 @@
                 </p>
                 {% else %}
                 <p class="text-muted">
-                    No exclusions. Every rule in this policy runs on every site using it.
+                    No exclusions{% if sel_policy %} under <code>{{ sel_policy }}</code>{% endif %}.
+                    Every rule runs on every site.
                     <br>
                     <small>The usual way one appears is from
                     <a href="/traffic">Traffic Monitor</a>: find the request that was
@@ -117,13 +129,13 @@
                 {% endif %}
 
                 <hr>
-                <a href="/policy/{{ policy_name }}/rules" class="btn btn-default">
-                    <i class="fa fa-list"></i> This policy's rules
+                <a href="/policy" class="btn btn-default">
+                    <i class="fa fa-shield"></i> Policy Manager
                 </a>
                 <a href="/traffic" class="btn btn-default">
                     <i class="fa fa-exchange"></i> Traffic Monitor
                 </a>
-                <a href="/policy" class="btn btn-default">Back to policies</a>
+
 
             </div>
         </div>
