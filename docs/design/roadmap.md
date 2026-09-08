@@ -10,9 +10,9 @@ next minor, so a release's notes stay about its feature.
 | 0.5.0 | ACME / Let's Encrypt (see [acme.md](acme.md)) — **released 2026-09-05** |
 | 0.6.0 | Updating the rule sets and the country database (see [rule-repository.md](rule-repository.md)) |
 | 0.7.0 | User management and roles |
-| 0.8.0 | Load balancing across upstreams, with health checks (see [load-balancing.md](load-balancing.md)) |
-| 0.9.0 | Backup, restore and configuration export (see [backup-restore.md](backup-restore.md)) |
-| 0.10.0 | Flow logs over syslog, audit log on disk |
+| 0.8.0 | Flow logs over syslog, audit log on disk (see [logging.md](logging.md)) |
+| 0.9.0 | Load balancing across upstreams, with health checks (see [load-balancing.md](load-balancing.md)) |
+| 0.10.0 | Backup, restore and configuration export (see [backup-restore.md](backup-restore.md)) |
 | 0.11.0 | Configuration sync between nodes — HA (see [ha-config-sync.md](ha-config-sync.md)) |
 | 0.12.0 | IP allow/block lists, addable with one click from Traffic Monitor (see [ip-lists.md](ip-lists.md)) |
 | 0.13.0 | Per-site rate limiting (see [rate-limiting.md](rate-limiting.md)) |
@@ -196,12 +196,12 @@ schema-agnostic, so it neither depends on the rule model nor churns as the
 schema grows. Only the structured export has to wait.
 
 **Node sync follows export and logging, and precedes rate limiting and
-learning.** It is 0.9.0's export applied continuously — the same question of
+learning.** It is 0.10.0's export applied continuously — the same question of
 what constitutes this appliance's configuration, expressed portably — so
 building the two apart would produce two definitions of that, drifting. The
 traffic half of high availability is deliberately not built: each node records
-what it saw and EasyLog (0.10.0) aggregates it, which is why both prerequisites
-sit immediately before.
+what it saw and EasyLog (0.8.0) aggregates it, which is why logging was moved
+ahead of it rather than left to follow.
 
 It comes *before* rate limiting and learning because both change meaning on
 more than one node, and that is cheaper to design in than to retrofit. Counters

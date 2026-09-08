@@ -1,7 +1,7 @@
 # Design note — load balancing and upstream health
 
-Status: planned for **0.8.0** — see [roadmap.md](roadmap.md), after rule updates
-(0.6.0) and deliberately *before* backup/export (0.9.0).
+Status: planned for **0.9.0** — see [roadmap.md](roadmap.md), after rule updates
+(0.6.0) and flow logs (0.8.0), and deliberately *before* backup/export (0.10.0).
 
 ## The gap
 
@@ -105,7 +105,7 @@ and learned URL sets.
 **The GUI should show rotation state**, since a silently ejected backend is
 exactly the thing an operator needs to see and has no other way to learn.
 
-## Why 0.8.0
+## Why 0.9.0
 
 **Before backup/export**, for the same reason export sits after rule updates: it
 changes what a core object *is*. An export written while a site has one `target`

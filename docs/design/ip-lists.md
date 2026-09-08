@@ -1,7 +1,7 @@
 # Design note — IP allow/block lists, added from Traffic Monitor
 
 Status: planned for **0.12.0** — see [roadmap.md](roadmap.md), after flow logs
-(0.10.0) and node configuration sync (0.11.0).
+(0.8.0) and node configuration sync (0.11.0).
 
 ## The case that motivated this
 
