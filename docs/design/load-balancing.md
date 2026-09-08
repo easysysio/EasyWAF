@@ -1,7 +1,14 @@
 # Design note — load balancing and upstream health
 
-Status: planned for **0.11.0** — see [roadmap.md](roadmap.md), after rule updates
-(0.6.0) and flow logs (0.10.0), and deliberately *before* backup/export (0.12.0).
+Status: planned for **0.12.0** — see [roadmap.md](roadmap.md), after rule updates
+(0.6.0) and flow logs (0.11.0), and deliberately *before* backup/export (0.13.0).
+
+Proxy performance (0.10.0) was placed ahead of this on 2026-09-08 for the same
+kind of reason this sits before export. That release makes request bodies
+stream rather than being buffered whole, which is a property of the request
+path this release rewrites — adding upstream selection and health checks to a
+buffering proxy and then making it stream means doing the harder half twice.
+See [proxy-performance.md](proxy-performance.md).
 
 ## The gap
 
@@ -95,7 +102,7 @@ column on `traffic_events` and should land with the feature rather than after
 it.
 
 **Health state is per node and must never sync.** When configuration sync
-arrives (0.13.0), the *list* of upstreams is shared configuration; which of them
+arrives (0.14.0), the *list* of upstreams is shared configuration; which of them
 are currently in rotation is a local observation — node A may reach a backend
 node B cannot, and copying that judgement between them would take a working
 backend out of rotation everywhere because one node has a network problem. It
@@ -105,7 +112,7 @@ and learned URL sets.
 **The GUI should show rotation state**, since a silently ejected backend is
 exactly the thing an operator needs to see and has no other way to learn.
 
-## Why 0.11.0
+## Why 0.12.0
 
 **Before backup/export**, for the same reason export sits after rule updates: it
 changes what a core object *is*. An export written while a site has one `target`
