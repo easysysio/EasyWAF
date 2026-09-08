@@ -1,14 +1,14 @@
 # Design note — flow logs over syslog, audit log on disk
 
-Status: planned for **0.8.0** — see [roadmap.md](roadmap.md). It follows TLS
-(0.4.0), ACME (0.5.0), the update work (0.6.0) and users and roles (0.7.0) — the
+Status: planned for **0.9.0** — see [roadmap.md](roadmap.md). It follows TLS
+(0.4.0), ACME (0.5.0), the update work (0.6.0) and users and roles (0.8.0) — the
 audit log deliberately comes after roles, since a trail recording that "admin
 did X" says little when every operator is `admin`.
 
 Moved ahead of load balancing and backup/export on 2026-09-08. Both of those
 change what a core object *is* — a site's upstream becomes a pool, and export
 has to encode that — whereas logging observes the objects rather than reshaping
-them, so it neither blocks them nor is invalidated by them. Node sync (0.11.0)
+them, so it neither blocks them nor is invalidated by them. Node sync (0.12.0)
 also depends on it: the traffic half of high availability is deliberately not
 built, and each node instead records what it saw for EasyLog to aggregate, so
 the aggregation should exist before the nodes do.

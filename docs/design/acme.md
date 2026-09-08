@@ -107,7 +107,7 @@ is an outage scheduled for thirty days after that.
 
 ## Leave room for more than one node
 
-Configuration sync (0.11.0) will replicate certificates between nodes, and if
+Configuration sync (0.12.0) will replicate certificates between nodes, and if
 every node renews independently they duplicate issuance and hit exactly the
 rate limits above. This release does not implement that, but it must not
 foreclose it: renewal should read a flag that says whether this node renews,

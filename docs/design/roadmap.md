@@ -9,14 +9,15 @@ next minor, so a release's notes stay about its feature.
 | 0.4.0 | TLS termination, certificate management, self-service password change — **released 2026-09-04** |
 | 0.5.0 | ACME / Let's Encrypt (see [acme.md](acme.md)) — **released 2026-09-05** |
 | 0.6.0 | Updating the rule sets and the country database (see [rule-repository.md](rule-repository.md)) |
-| 0.7.0 | User management and roles |
-| 0.8.0 | Flow logs over syslog, audit log on disk (see [logging.md](logging.md)) |
-| 0.9.0 | Load balancing across upstreams, with health checks (see [load-balancing.md](load-balancing.md)) |
-| 0.10.0 | Backup, restore and configuration export (see [backup-restore.md](backup-restore.md)) |
-| 0.11.0 | Configuration sync between nodes — HA (see [ha-config-sync.md](ha-config-sync.md)) |
-| 0.12.0 | IP allow/block lists, addable with one click from Traffic Monitor (see [ip-lists.md](ip-lists.md)) |
-| 0.13.0 | Per-site rate limiting (see [rate-limiting.md](rate-limiting.md)) |
-| 0.14.0 | Learning and hardening modes — URL allowlisting (see [url-learning.md](url-learning.md)) |
+| 0.7.0 | Rule exclusions narrowed to a client, added from Traffic Monitor |
+| 0.8.0 | User management and roles |
+| 0.9.0 | Flow logs over syslog, audit log on disk (see [logging.md](logging.md)) |
+| 0.10.0 | Load balancing across upstreams, with health checks (see [load-balancing.md](load-balancing.md)) |
+| 0.11.0 | Backup, restore and configuration export (see [backup-restore.md](backup-restore.md)) |
+| 0.12.0 | Configuration sync between nodes — HA (see [ha-config-sync.md](ha-config-sync.md)) |
+| 0.13.0 | IP allow/block lists, addable with one click from Traffic Monitor (see [ip-lists.md](ip-lists.md)) |
+| 0.14.0 | Per-site rate limiting (see [rate-limiting.md](rate-limiting.md)) |
+| 0.15.0 | Learning and hardening modes — URL allowlisting (see [url-learning.md](url-learning.md)) |
 
 ## Next patch
 
@@ -35,9 +36,11 @@ Recorded so they are not lost. No version assigned — these are worth doing,
 not yet ordered against each other.
 
 **Rule attribution — done in 0.5.5.** Traffic Monitor shows the score and
-every rule that contributed to it. Kept in mind for what follows: it is what
-makes disabling a rule, cloning it to tune (0.6.0) and allowlisting a client
-(0.12.0) reachable in one click from the row that prompted them.
+every rule that contributed to it. It is what makes disabling a rule, cloning
+it to tune (0.6.0), excluding it for the client it wrongly blocked (0.7.0) and
+allowlisting that client outright (0.13.0) reachable in one click from the row
+that prompted them. Two of the four are done; the prediction held, which is why
+the remaining two are expected to reuse the same row.
 
 **Reverse-proxy parity — WebSockets, HTTP/2, path routing, multiple
 upstreams.** Found on 2026-09-04 while checking whether ACME alone would let
@@ -115,7 +118,7 @@ govern. One release is a marginal increase on a retrofit already sized at 40
 call sites, and the argument for roles-first is about *cost growth*, not about
 correctness, so paying slightly more later to get real traffic sooner is a
 trade worth taking once. It is not a licence to keep deferring it: everything
-after 0.7.0 assumes roles exist.
+after 0.8.0 assumes roles exist.
 
 **Rule updates moved ahead of user management on 2026-09-06, reversing the
 argument below a second time.** The day EasyWAF took production traffic it
@@ -135,7 +138,7 @@ rule fix is a WAF whose mistakes are permanent.
 The same cost applies as before: the authorization retrofit grows by another
 release, and rule sets, their versions and their provenance become more state
 for roles to govern. Accepted for the same reason and with the same caveat —
-everything after 0.7.0 assumes roles exist, and this is the last time that
+everything after 0.8.0 assumes roles exist, and this is the last time that
 argument gets deferred.
 
 **User management comes next, and before everything except TLS, ACME and rule
@@ -196,11 +199,11 @@ schema-agnostic, so it neither depends on the rule model nor churns as the
 schema grows. Only the structured export has to wait.
 
 **Node sync follows export and logging, and precedes rate limiting and
-learning.** It is 0.10.0's export applied continuously — the same question of
+learning.** It is 0.11.0's export applied continuously — the same question of
 what constitutes this appliance's configuration, expressed portably — so
 building the two apart would produce two definitions of that, drifting. The
 traffic half of high availability is deliberately not built: each node records
-what it saw and EasyLog (0.8.0) aggregates it, which is why logging was moved
+what it saw and EasyLog (0.9.0) aggregates it, which is why logging was moved
 ahead of it rather than left to follow.
 
 It comes *before* rate limiting and learning because both change meaning on
@@ -224,7 +227,7 @@ while it is still moving.
 **IP lists and rate limiting sit before it, adjacent to each other, and each
 still self-contained.** Both are identity/volume signals rather than payload
 inspection, both share a pipeline position — checked early, before GeoIP and
-WAF, and both must respect the allowlist override from 0.12.0 — and both are
+WAF, and both must respect the allowlist override from 0.13.0 — and both are
 easy slots to pull forward if an urgent need shows up, since neither assumes
 anything from the releases ahead of it. They stay two releases rather than one
 because they differ enough in shape: an IP list is a set lookup, rate limiting
@@ -232,7 +235,7 @@ is a counter with a time window and its own state-management questions.
 
 ## What 0.1.0 already left in place
 
-The schema anticipated most of 0.4.0, 0.5.0 and 0.7.0:
+The schema anticipated most of 0.4.0, 0.5.0 and 0.8.0:
 
 * `certs` — `cert_pem`, `key_pem`, `domain`, `not_before`, `not_after`,
   `acme_domain`, `acme_expires`
@@ -259,7 +262,7 @@ survives unchanged into a multi-user world, while closing the unchangeable
 `admin`/`admin` gap now rather than two releases out. The README presently tells
 operators to firewall port 8080 as a workaround for its absence.
 
-## Constraints to settle before coding 0.7.0 (users and roles)
+## Constraints to settle before coding 0.8.0 (users and roles)
 
 **Which roles, minimally.** Two to begin with — `admin` (everything) and
 `viewer` (dashboard, traffic, the read-only pages) — adding an `operator` tier
