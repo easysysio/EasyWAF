@@ -24,6 +24,9 @@ pub struct TrafficFilter {
     pub site:    Option<String>, // site name, empty = all
     pub blocked: Option<String>, // "1" blocked only · "0" allowed only · else all
     pub hours:   Option<i64>,    // lookback window in hours (1–720, default 24)
+    /// One hour, as "YYYY-MM-DD HH:00" in UTC — the form the charts group by.
+    /// Set by clicking a bar; narrows everything on the page to that hour.
+    pub hour:    Option<String>,
     // Set when an exclusion was just added from a row on this page.
     pub result:  Option<String>,
     pub msg:     Option<String>,
@@ -151,9 +154,13 @@ pub async fn get_traffic(
     let blocked_sel = filter.blocked.as_deref().unwrap_or("").trim().to_string();
 
     let sites  = fetch_sites(&state).await?;
+    // "YYYY-MM-DD HH:00" as the charts group by; anything else selects nothing
+    // rather than being interpreted loosely.
+    let hour_sel = filter.hour.as_deref().unwrap_or("").trim().to_string();
+
     let exclusions = fetch_exclusions(&state).await?;
-    let events = fetch_events(&state, &exclusions, &cutoff, &site_sel, &blocked_sel).await?;
-    let stats  = fetch_stats(&state, &cutoff, &site_sel, &blocked_sel).await?;
+    let events = fetch_events(&state, &exclusions, &cutoff, &site_sel, &blocked_sel, &hour_sel).await?;
+    let stats  = fetch_stats(&state, &cutoff, &site_sel, &blocked_sel, &hour_sel).await?;
     let chart  = fetch_chart(&state, &cutoff, &site_sel, &blocked_sel).await?;
 
     let mut ctx = Context::new();
@@ -167,6 +174,7 @@ pub async fn get_traffic(
     ctx.insert("sel_site",    &site_sel);
     ctx.insert("sel_blocked", &blocked_sel);
     ctx.insert("sel_hours",   &hours);
+    ctx.insert("sel_hour",    &hour_sel);
     ctx.insert("result",      &filter.result.clone().unwrap_or_default());
     ctx.insert("msg",         &filter.msg.clone().unwrap_or_default());
 
@@ -253,6 +261,7 @@ async fn fetch_events(
     cutoff:  &str,
     site:    &str,
     blocked: &str,
+    hour:    &str,
 ) -> Result<Vec<TrafficEvent>> {
     let mut qb: QueryBuilder<sqlx::Sqlite> = QueryBuilder::new(
         "SELECT te.id,
@@ -270,6 +279,7 @@ async fn fetch_events(
 
     apply_site_filter(&mut qb, site);
     apply_blocked_filter(&mut qb, blocked);
+    apply_hour_filter(&mut qb, hour);
 
     qb.push(" ORDER BY te.timestamp DESC LIMIT 1000");
 
@@ -322,6 +332,7 @@ async fn fetch_stats(
     cutoff:  &str,
     site:    &str,
     blocked: &str,
+    hour:    &str,
 ) -> Result<TrafficStats> {
     let mut qb: QueryBuilder<sqlx::Sqlite> = QueryBuilder::new(
         "SELECT COUNT(*) AS total,
@@ -335,6 +346,7 @@ async fn fetch_stats(
 
     apply_site_filter(&mut qb, site);
     apply_blocked_filter(&mut qb, blocked);
+    apply_hour_filter(&mut qb, hour);
 
     let row: StatsRow = qb.build_query_as().fetch_one(&state.db).await?;
     let blocked_n = row.blocked.unwrap_or(0);
@@ -350,6 +362,11 @@ async fn fetch_stats(
 // ─── fetch_chart ─────────────────────────────────────────
 
 /// Per-hour request/block counts for the Chart.js bar chart.
+///
+/// Note what this does *not* take: the hour filter. Narrowing the chart to the
+/// hour someone just clicked would leave a single bar and no way back — the
+/// chart is how the hour is chosen, so it has to keep showing the others. The
+/// selected hour is highlighted in the page instead.
 async fn fetch_chart(
     state:   &AppState,
     cutoff:  &str,
@@ -390,6 +407,18 @@ async fn fetch_chart(
 
 // ─── Filter helpers ──────────────────────────────────────
 
+/// Narrow to a single hour, in the form the charts group by.
+///
+/// Bound rather than interpolated, and compared against the same
+/// `strftime` expression the charts use, so a bar and the rows it stands for
+/// cannot disagree about which rows they are.
+fn apply_hour_filter(qb: &mut QueryBuilder<sqlx::Sqlite>, hour: &str) {
+    if !hour.is_empty() {
+        qb.push(" AND strftime('%Y-%m-%d %H:00', te.timestamp) = ");
+        qb.push_bind(hour.to_string());
+    }
+}
+
 fn apply_site_filter(qb: &mut QueryBuilder<sqlx::Sqlite>, site: &str) {
     if !site.is_empty() {
         qb.push(" AND s.name = ");
@@ -408,6 +437,16 @@ fn apply_blocked_filter(qb: &mut QueryBuilder<sqlx::Sqlite>, blocked: &str) {
         "detected"    => { qb.push(" AND te.detection IS NOT NULL"); }
         // Allowed only because the policy is not enforcing.
         "would_block" => { qb.push(" AND te.detection IN ('would_block', 'would_challenge')"); }
+        // The two remaining slices of the dashboard's verdict chart. Clicking
+        // one should land on the rows it counted, which needs the same
+        // definition the chart used: passed is what is left after the other
+        // three, and challenged is an unblocked row whose reason says so.
+        "passed" => {
+            qb.push(" AND te.blocked = 0 AND te.detection IS NULL                       AND (te.block_reason IS NULL OR te.block_reason NOT LIKE 'challenge:%')");
+        }
+        "challenged" => {
+            qb.push(" AND te.blocked = 0 AND te.block_reason LIKE 'challenge:%'");
+        }
         _   => {}
     }
 }
@@ -466,5 +505,60 @@ mod tests {
         // honest answer is "not known to be excluded" rather than a guess.
         let list = vec![excl(913015, "", None)];
         assert!(!already_excluded(Some(&list), None, "/x", "203.0.113.9"));
+    }
+}
+
+#[cfg(test)]
+mod filter_tests {
+    use super::*;
+
+    /// Build the WHERE clause a filter produces, so the four verdict values the
+    /// dashboard's chart can be clicked on are checked against the definitions
+    /// the chart counted with. A slice that lands on the wrong rows is worse
+    /// than one that does not link anywhere.
+    fn clause(blocked: &str, hour: &str) -> String {
+        let mut qb: QueryBuilder<sqlx::Sqlite> = QueryBuilder::new("SELECT 1 WHERE 1=1");
+        apply_blocked_filter(&mut qb, blocked);
+        apply_hour_filter(&mut qb, hour);
+        qb.into_sql()
+    }
+
+    #[test]
+    fn every_verdict_slice_maps_to_a_filter() {
+        // The dashboard chart's slices, in the order its onClick indexes them.
+        for (f, expect) in [
+            ("passed",      "detection IS NULL"),
+            ("detected",    "detection IS NOT NULL"),
+            ("challenged",  "challenge:%"),
+            ("1",           "blocked = 1"),
+        ] {
+            let c = clause(f, "");
+            assert!(c.contains(expect), "{f} produced {c}, expected it to mention {expect}");
+        }
+    }
+
+    #[test]
+    fn passed_excludes_the_other_three_slices() {
+        // Otherwise the four slices overlap and their counts do not add to the
+        // total the chart was drawn from.
+        let c = clause("passed", "");
+        assert!(c.contains("blocked = 0"),          "passed includes blocked rows");
+        assert!(c.contains("detection IS NULL"),    "passed includes scored rows");
+        assert!(c.contains("NOT LIKE 'challenge:%'"), "passed includes challenged rows");
+    }
+
+    #[test]
+    fn an_hour_narrows_by_the_same_expression_the_chart_groups_by() {
+        // The chart groups with strftime('%Y-%m-%d %H:00', te.timestamp). If
+        // the filter used anything else, a bar and the rows it stands for could
+        // disagree about which rows they are.
+        let c = clause("", "2026-09-08 14:00");
+        assert!(c.contains("strftime('%Y-%m-%d %H:00', te.timestamp)"),
+                "the hour filter does not match the chart's grouping: {c}");
+    }
+
+    #[test]
+    fn no_hour_adds_no_condition() {
+        assert_eq!(clause("", ""), "SELECT 1 WHERE 1=1");
     }
 }

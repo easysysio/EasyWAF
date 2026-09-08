@@ -42,6 +42,11 @@ struct TrafficSummary {
 struct HourBucket {
     /// Hour label in UTC, "HH:00" — matches the timestamps stored by SQLite.
     hour:       String,
+    /// The same hour as "YYYY-MM-DD HH:00", which is what Traffic Monitor
+    /// filters on. Computed here already to look the counts up; without it the
+    /// chart knows which bar was clicked but not which hour it stands for, and
+    /// "14:00" alone is ambiguous across a 24-hour window that spans midnight.
+    key:        String,
     passed:     i64,
     challenged: i64,
     blocked:    i64,
@@ -266,6 +271,7 @@ async fn fetch_hourly_traffic(state: &AppState, window_start: &str) -> Result<Ve
         let (total, challenged, blocked) = counts.get(&key).copied().unwrap_or((0, 0, 0));
         out.push(HourBucket {
             hour:       slot.format("%H:00").to_string(),
+            key:        key.clone(),
             passed:     total - blocked - challenged,
             challenged,
             blocked,

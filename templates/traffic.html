@@ -16,8 +16,22 @@
 </div>
 {% endif %}
 
+{% if sel_hour %}
+{# An hour filter is set by clicking a bar, so nothing in the form above shows
+   it. Without saying so, the page looks like it is showing the whole window
+   and simply has very little traffic in it. #}
+<div class="alert alert-info" style="padding:8px 12px">
+    <i class="fa fa-clock-o"></i>
+    Showing only the hour beginning <strong>{{ sel_hour }} UTC</strong>.
+    <a href="/traffic?site={{ sel_site }}&blocked={{ sel_blocked }}&hours={{ sel_hours }}"
+       class="alert-link" style="margin-left:8px">Show the whole window</a>
+</div>
+{% endif %}
+
 <!-- ── Filter bar ─────────────────────────────────────────── -->
 <form method="get" action="/traffic" class="form-inline well well-sm" style="margin-bottom:16px">
+    {# Carried through the form so changing site or verdict keeps the hour. #}
+    {% if sel_hour %}<input type="hidden" name="hour" value="{{ sel_hour }}">{% endif %}
     <div class="form-group" style="margin-right:8px">
         <label class="sr-only">Site</label>
         <select class="form-control input-sm" name="site">
@@ -336,9 +350,25 @@ $(document).ready(function () {
         options: {
             responsive:        true,
             interaction:       { mode: 'index', intersect: false },
+            // Clicking a bar narrows the table to that hour, keeping whatever
+            // site and verdict filters are applied. The chart is deliberately
+            // not narrowed with it — the chart is how the hour is chosen, so it
+            // has to keep showing the others.
+            onClick: function (evt, elements) {
+                if (!elements.length) return;
+                var b = raw[elements[0].index];
+                if (!b) return;
+                var p = new URLSearchParams(window.location.search);
+                p.set('hour', b.hour);
+                window.location = '/traffic?' + p.toString();
+            },
+            onHover: function (evt, elements) {
+                evt.native.target.style.cursor = elements.length ? 'pointer' : 'default';
+            },
             plugins: {
                 legend:  { position: 'top' },
-                tooltip: { mode: 'index' }
+                tooltip: { mode: 'index',
+                           callbacks: { footer: function () { return 'Click to see this hour'; } } }
             },
             scales: {
                 x: { stacked: true },

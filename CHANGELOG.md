@@ -8,6 +8,23 @@ Version bumps and tags are created only after explicit approval.
 
 ## [Unreleased]
 
+### Added
+- **The charts are clickable, and each click is a filter.**
+
+  - **Traffic Monitor** — clicking a bar narrows the table to that hour, keeping
+    whatever site and verdict filters are applied. The chart itself is not
+    narrowed: it is how the hour is chosen, so it has to keep showing the
+    others. A banner says which hour is selected and offers the way back,
+    because nothing in the filter form shows it otherwise and the page would
+    look like a quiet window rather than a filtered one.
+  - **Dashboard, requests per hour** — clicking a bar opens Traffic Monitor on
+    that hour. The full `YYYY-MM-DD HH:00` key travels with each bucket, since
+    `14:00` alone is ambiguous across a window that crosses midnight.
+  - **Dashboard, verdicts** — clicking a slice opens Traffic Monitor on those
+    requests. Two filter values were missing for this: *passed* and
+    *challenged*. They use the same definitions the chart counted with, so the
+    four slices are disjoint and land on exactly the rows they stood for.
+
 ### Changed
 - **A sub-threshold match is labelled SCORED rather than DETECTED**, and shows
   the score it reached.

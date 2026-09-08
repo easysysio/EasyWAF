@@ -298,9 +298,22 @@ let verdictChart = null;
         options: {
             responsive:  true,
             interaction: { mode: 'index', intersect: false },
+            // A bar stands for an hour of traffic; clicking it should show that
+            // traffic rather than leaving the reader to reconstruct the filter.
+            // The full "YYYY-MM-DD HH:00" key travels with each bucket because
+            // "14:00" alone is ambiguous over a window that crosses midnight.
+            onClick: function (evt, elements) {
+                if (!elements.length) return;
+                var key = raw[elements[0].index] && raw[elements[0].index].key;
+                if (key) window.location = '/traffic?hour=' + encodeURIComponent(key);
+            },
+            onHover: function (evt, elements) {
+                evt.native.target.style.cursor = elements.length ? 'pointer' : 'default';
+            },
             plugins: {
                 legend:  { position: 'top', labels: { color: textColor() } },
-                tooltip: { mode: 'index' }
+                tooltip: { mode: 'index',
+                           callbacks: { footer: function () { return 'Click to see this hour'; } } }
             },
             scales: {
                 x: { stacked: true, ticks: { color: textColor() }, grid: { color: GRID } },
@@ -329,7 +342,21 @@ let verdictChart = null;
         options: {
             responsive: true,
             cutout: '58%',
-            plugins: { legend: { position: 'bottom', labels: { color: textColor() } } }
+            // Each slice counts rows the Traffic Monitor can select, so clicking
+            // one lands on exactly those rows. The order matches the labels
+            // above, and the filter values match apply_blocked_filter.
+            onClick: function (evt, elements) {
+                if (!elements.length) return;
+                var f = ['passed', 'detected', 'challenged', '1'][elements[0].index];
+                if (f) window.location = '/traffic?blocked=' + f;
+            },
+            onHover: function (evt, elements) {
+                evt.native.target.style.cursor = elements.length ? 'pointer' : 'default';
+            },
+            plugins: {
+                legend: { position: 'bottom', labels: { color: textColor() } },
+                tooltip: { callbacks: { footer: function () { return 'Click to see these requests'; } } }
+            }
         }
     });
 }());
