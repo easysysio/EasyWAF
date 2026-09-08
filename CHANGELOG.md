@@ -6,7 +6,7 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
-## [Unreleased]
+## [0.7.3] — 2026-09-08
 
 ### Added
 - **The charts are clickable, and each click is a filter.**
