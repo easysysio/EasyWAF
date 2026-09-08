@@ -91,6 +91,7 @@ pub async fn get_rules(
     State(state): State<AppState>,
     jar: SignedCookieJar,
     Path(policy_name): Path<String>,
+    Query(flash): Query<crate::routes::policy::FlashQuery>,
 ) -> Result<Response> {
     let session = match get_session(&jar) {
         Some(s) => s,
@@ -111,6 +112,33 @@ pub async fn get_rules(
     ctx.insert("rules",         &rules);
     ctx.insert("total_rules",   &total_rules);
     ctx.insert("enabled_rules", &enabled_rules);
+
+    // Custom rules are per policy, and an administrator who has written or
+    // cloned a set of them usually wants the same protection on their other
+    // policies. Copying is how every other set reaches a policy, so it is how
+    // these do too.
+    let custom_count: i64 = sqlx::query_scalar!(
+        r#"SELECT COUNT(*) as "n!: i64" FROM waf_rules
+           WHERE policy_id = (SELECT id FROM policies WHERE name = ?)
+             AND external_id IS NULL"#,
+        policy.name
+    )
+    .fetch_one(&state.db)
+    .await
+    .unwrap_or(0);
+    let others = sqlx::query!(
+        r#"SELECT id as "id!", name FROM policies WHERE name != ? ORDER BY name"#,
+        policy.name
+    )
+    .fetch_all(&state.db)
+    .await?
+    .into_iter()
+    .map(|r| serde_json::json!({ "id": r.id, "name": r.name }))
+    .collect::<Vec<_>>();
+    ctx.insert("custom_count",   &custom_count);
+    ctx.insert("other_policies", &others);
+    ctx.insert("result", &flash.result.unwrap_or_default());
+    ctx.insert("msg",    &flash.msg.unwrap_or_default());
 
     Ok((jar, Html(state.tera.render("policy_rules.html", &ctx)?)).into_response())
 }
@@ -608,11 +636,12 @@ pub async fn uninstall_set(
     policy_id: i64,
     set_id: &str,
 ) -> Result<(usize, usize)> {
-    // `external_id IS NOT NULL` is what separates the two: an imported rule has
-    // one, a clone has it cleared precisely so that updates ignore it.
+    // Clones are no longer in the set, so they are counted by where they came
+    // from. They are kept: a clone is the administrator's own rule, and
+    // removing a set should not delete work that merely started there.
     let clones: i64 = sqlx::query_scalar!(
         r#"SELECT COUNT(*) as "n!: i64" FROM waf_rules
-           WHERE policy_id = ? AND rule_set = ? AND external_id IS NULL"#,
+           WHERE policy_id = ? AND cloned_from_set = ? AND external_id IS NULL"#,
         policy_id, set_id
     )
     .fetch_one(db)
@@ -1598,6 +1627,7 @@ pub async fn get_rule_edit_global(
                 wr.enabled as \"enabled!: bool\",
                 wr.external_id,
                 wr.rule_set,
+                wr.cloned_from_set,
                 wr.cloned_from_external_id,
                 wr.cloned_from_version,
                 wr.policy_id as \"policy_id!\"
@@ -1662,7 +1692,9 @@ pub async fn get_rule_edit_global(
     // clone time precisely to answer this, and stopping at "so you can tell
     // when the set has moved on" asks the reader to carry two numbers from two
     // pages in their head — which is the same as not recording it.
-    let set_now: Option<i64> = match (&r.rule_set, r.cloned_from_version) {
+    let origin_set = r.cloned_from_set.clone().or_else(|| r.rule_set.clone());
+    ctx.insert("origin_set", &origin_set);
+    let set_now: Option<i64> = match (&origin_set, r.cloned_from_version) {
         (Some(set), Some(_)) => sqlx::query_scalar!(
             "SELECT version FROM policy_rule_sets WHERE policy_id = ? AND set_id = ?",
             r.policy_id, set
@@ -1778,6 +1810,143 @@ pub async fn post_rule_update_global(
 /// The original is left enabled. Disabling it is a separate decision, and
 /// doing it here would mean a click labelled "clone" quietly changed what the
 /// policy enforces.
+/// Redirect back to a rules page carrying a flash message.
+fn rules_flash(path: &str, result: &str, msg: &str) -> Result<Response> {
+    Ok(Redirect::to(&format!(
+        "{path}?result={result}&msg={}", urlencoding::encode(msg)
+    )).into_response())
+}
+
+// ─── share_custom_rules ──────────────────────────────────
+
+/// Copy a policy's custom rules into another policy.
+///
+/// Copies, not references. That is how every set already reaches a policy —
+/// installing one writes its rules into that policy — and it is what lets the
+/// two diverge afterwards, which is the point of having separate policies.
+///
+/// A rule is skipped when the target already holds one with the same zone and
+/// pattern. That is exactly the condition under which both would match the
+/// same request and both would add their score, which is how a 4-point request
+/// came to score 17 in this project's own history. Pressing the button twice
+/// therefore copies nothing the second time.
+///
+/// Returns (copied, skipped).
+async fn share_custom_rules(
+    db: &SqlitePool,
+    from_policy: i64,
+    to_policy: i64,
+) -> Result<(usize, usize)> {
+    let rules = sqlx::query!(
+        r#"SELECT name, description as "description!", zone, pattern,
+                  score as "score!", action, enabled as "enabled!: i64",
+                  cloned_from_set, cloned_from_external_id, cloned_from_version
+           FROM   waf_rules
+           WHERE  policy_id = ? AND external_id IS NULL
+           ORDER  BY id"#,
+        from_policy
+    )
+    .fetch_all(db)
+    .await?;
+
+    let (mut copied, mut skipped) = (0usize, 0usize);
+    for r in rules {
+        let clash: i64 = sqlx::query_scalar!(
+            r#"SELECT COUNT(*) as "n!: i64" FROM waf_rules
+               WHERE policy_id = ? AND zone = ? AND pattern = ?"#,
+            to_policy, r.zone, r.pattern
+        )
+        .fetch_one(db)
+        .await?;
+        if clash > 0 {
+            skipped += 1;
+            continue;
+        }
+
+        // external_id stays NULL: the copy is a custom rule in the target too,
+        // so no update will ever overwrite it. Provenance travels with it, so
+        // a rule that began as a clone still says what it was forked from.
+        sqlx::query!(
+            "INSERT INTO waf_rules
+             (policy_id, name, description, zone, pattern, score, action, enabled,
+              rule_set, cloned_from_set, cloned_from_external_id, cloned_from_version)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)",
+            to_policy, r.name, r.description, r.zone, r.pattern, r.score,
+            r.action, r.enabled, r.cloned_from_set, r.cloned_from_external_id,
+            r.cloned_from_version
+        )
+        .execute(db)
+        .await?;
+        copied += 1;
+    }
+
+    tracing::info!(from_policy, to_policy, copied, skipped, "Copied custom rules");
+    Ok((copied, skipped))
+}
+
+// ─── post_share_custom_rules ─────────────────────────────
+
+pub async fn post_share_custom_rules(
+    State(state): State<AppState>,
+    jar: SignedCookieJar,
+    Path(policy_name): Path<String>,
+    Form(form): Form<HashMap<String, String>>,
+) -> Result<Response> {
+    if get_session(&jar).is_none() {
+        return Ok(Redirect::to("/login").into_response());
+    }
+
+    let back = format!("/policy/{policy_name}/rules");
+
+    let from: i64 = match sqlx::query_scalar!(
+        "SELECT id FROM policies WHERE name = ?", policy_name
+    )
+    .fetch_optional(&state.db)
+    .await?
+    {
+        Some(Some(id)) => id,
+        _ => return Ok(Redirect::to("/policy").into_response()),
+    };
+
+    // Comma-separated, because a repeated form field collapses to its last
+    // value when collected into a HashMap — three ticked policies would have
+    // meant one.
+    let targets: Vec<i64> = form
+        .get("targets")
+        .map(|v| v.split(',').filter_map(|p| p.trim().parse().ok()).collect())
+        .unwrap_or_default();
+
+    if targets.is_empty() {
+        return rules_flash(&back, "failed", "Select at least one policy to copy into.");
+    }
+
+    let (mut copied, mut skipped, mut into) = (0usize, 0usize, 0usize);
+    for target in targets {
+        if target == from {
+            continue;
+        }
+        let (c, s) = share_custom_rules(&state.db, from, target).await?;
+        copied += c;
+        skipped += s;
+        into += 1;
+    }
+
+    let msg = match (copied, skipped) {
+        (0, 0) => "There were no custom rules to copy.".to_string(),
+        (0, s) => format!(
+            "Nothing copied — all {s} rule(s) are already present, by pattern, in \
+             the policies selected. Copying them again would have made both match \
+             the same request and both add their score."
+        ),
+        (c, 0) => format!("Copied {c} custom rule(s) into {into} policy(ies)."),
+        (c, s) => format!(
+            "Copied {c} custom rule(s) into {into} policy(ies). {s} were skipped \
+             because a rule with the same pattern was already there."
+        ),
+    };
+    rules_flash(&back, "success", &msg)
+}
+
 pub async fn post_rule_clone(
     State(state): State<AppState>,
     jar: SignedCookieJar,
@@ -1822,11 +1991,17 @@ pub async fn post_rule_clone(
     };
 
     let name = format!("{} (custom)", src.name);
+    // rule_set is left NULL: a clone is a custom rule, and belongs to no set.
+    // It inherited the origin's set id until 0.6.12, which made it a member of
+    // that set for everything that reads the column — it grouped under the set
+    // in the rule list, and kept pointing at it after the set was uninstalled.
+    // Where it came from is provenance, and lives in cloned_from_set.
     let new_id = sqlx::query!(
         "INSERT INTO waf_rules
          (policy_id, name, description, zone, pattern, score, action,
-          enabled, rule_set, cloned_from_external_id, cloned_from_version)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)",
+          enabled, rule_set, cloned_from_set, cloned_from_external_id,
+          cloned_from_version)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 1, NULL, ?, ?, ?)",
         src.policy_id, name, src.description, src.zone, src.pattern,
         src.score, src.action, src.rule_set, external_id, version
     )
@@ -1974,3 +2149,4 @@ pub async fn post_custom_rule_create(
 
     Ok(Redirect::to("/rules").into_response())
 }
+

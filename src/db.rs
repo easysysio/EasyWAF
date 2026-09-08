@@ -66,9 +66,31 @@ pub async fn init(database_url: &str) -> SqlitePool {
     run_migration_017(&pool).await;
     run_migration_018(&pool).await;
     run_migration_019(&pool).await;
+    run_migration_020(&pool).await;
 
     info!("Database ready: {}", database_url);
     pool
+}
+
+// ─── run_migration_020 ───────────────────────────────────
+
+/// Move clones out of the set they were forked from and into custom.
+async fn run_migration_020(pool: &SqlitePool) {
+    let exists: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM pragma_table_info('waf_rules') WHERE name = 'cloned_from_set'",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0);
+
+    if exists == 0 {
+        let sql = include_str!("../migrations/020_clone_origin_set.sql");
+        sqlx::raw_sql(sql)
+            .execute(pool)
+            .await
+            .unwrap_or_else(|e| panic!("Migration 020 failed: {}", e));
+        info!("Migration 020 applied: a cloned rule is a custom rule");
+    }
 }
 
 // ─── run_migration_019 ───────────────────────────────────

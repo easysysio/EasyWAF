@@ -36,13 +36,16 @@
                 {% if cloned_from %}
                 <p class="help-block">
                     <i class="fa fa-code-fork"></i>
-                    Forked from imported rule <code>{{ cloned_from }}</code>{% if cloned_ver %}
-                    at version {{ cloned_ver }}{% endif %}. Nothing merges into it.
+                    Forked from imported rule <code>{{ cloned_from }}</code>{% if origin_set %}
+                    in <code>{{ origin_set }}</code>{% endif %}{% if cloned_ver %}
+                    at version {{ cloned_ver }}{% endif %}. This is a custom rule: it
+                    belongs to no set, so an update never touches it and removing the
+                    set it came from never deletes it.
                     {% if set_moved_on %}
                     <br>
                     <strong class="text-warning">
                         <i class="fa fa-exclamation-triangle"></i>
-                        {% if rule_set %}<code>{{ rule_set }}</code> is{% else %}That set is{% endif %}
+                        {% if origin_set %}<code>{{ origin_set }}</code> is{% else %}That set is{% endif %}
                         now at version {{ set_now }}.</strong>
                     This copy is from version {{ cloned_ver }}, so any correction made to
                     the original since then is not in it. Compare them and decide — the

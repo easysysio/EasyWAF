@@ -2,6 +2,59 @@
 
 {% block content %}
 
+{% if result == "failed" %}
+<div class="alert alert-danger alert-dismissible">
+    <button type="button" class="close" data-dismiss="alert">&times;</button>
+    {{ msg }}
+</div>
+{% endif %}
+{% if result == "success" %}
+<div class="alert alert-success alert-dismissible">
+    <button type="button" class="close" data-dismiss="alert">&times;</button>
+    {{ msg }}
+</div>
+{% endif %}
+
+{# Custom rules belong to one policy, because every rule does. Someone who has
+   written or cloned a few usually wants them on their other policies too, and
+   copying is how a set reaches a policy anyway. #}
+{% if custom_count > 0 and other_policies %}
+<div class="panel panel-default" style="margin-bottom:12px">
+    <div class="panel-heading" style="cursor:pointer" onclick="
+        var b = document.getElementById('shareBody');
+        b.style.display = b.style.display === 'none' ? '' : 'none';">
+        <strong><i class="fa fa-share-square-o"></i> Use these custom rules in another policy</strong>
+        <span class="text-muted" style="font-size:12px;margin-left:8px">
+            {{ custom_count }} custom rule{% if custom_count != 1 %}s{% endif %} in
+            <code>{{ policy.name }}</code>
+        </span>
+    </div>
+    <div class="panel-body" id="shareBody" style="display:none">
+        <p class="help-block" style="margin-top:0">
+            Copies them in, the same way installing a set copies its rules — after
+            which the two policies are independent and can be edited apart. A rule
+            is skipped when the target policy already has one with the same zone and
+            pattern, because both would then match the same request and both would
+            add their score.
+        </p>
+        <form method="post" action="/policy/{{ policy.name }}/rules/share"
+              onsubmit="return collectTargets()">
+            <input type="hidden" name="targets" id="shareTargets">
+            {% for p in other_policies %}
+            <label class="checkbox-inline" style="margin-right:14px">
+                <input type="checkbox" class="share-chk" value="{{ p.id }}"> {{ p.name }}
+            </label>
+            {% endfor %}
+            <div style="margin-top:10px">
+                <button type="submit" class="btn btn-primary btn-sm">
+                    <i class="fa fa-copy"></i> Copy custom rules
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endif %}
+
 <!-- ── Top toolbar ────────────────────────────────────────── -->
 <div class="row" style="margin-bottom:10px">
     <div class="col-sm-8">
@@ -262,5 +315,18 @@ $(document).ready(function () {
     };
 
 });
+
+// Comma-separated into one field: a repeated form field collapses to its last
+// value on the server, so three ticked policies would have meant one.
+function collectTargets() {
+    var picked = Array.from(document.querySelectorAll('.share-chk:checked'))
+                      .map(function (c) { return c.value; });
+    if (picked.length === 0) {
+        alert('Select at least one policy to copy into.');
+        return false;
+    }
+    document.getElementById('shareTargets').value = picked.join(',');
+    return true;
+}
 </script>
 {% endblock %}

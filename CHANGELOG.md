@@ -8,7 +8,38 @@ Version bumps and tags are created only after explicit approval.
 
 ## [Unreleased]
 
+### Changed
+- **A cloned rule is a custom rule, and no longer sits in the set it came
+  from.** It used to inherit the origin's set id, which made it a member of
+  that set for everything that reads the column: it grouped under the set in
+  the rule list rather than under Custom, and it kept pointing at the set even
+  after the set was uninstalled — so a policy could show rules belonging to
+  something it no longer held.
+
+  `rule_set` was doing two jobs, membership and provenance. Provenance now has
+  its own column, so a clone belongs to no set while still recording which set
+  and which version it was forked from — the rule editor still says when that
+  set has moved on since. Existing clones are moved across by the migration;
+  the set id is not lost, it moves to the column that means what it actually
+  was.
+
 ### Added
+- **A policy's custom rules can be copied into another policy** — the panel at
+  the top of the policy's rules page.
+
+  Custom rules belong to one policy, because every rule does, and someone who
+  has written or cloned a few usually wants them on their other policies.
+  Copying is how a set already reaches a policy: installing one writes its
+  rules in, and the copies then diverge freely, which is the point of having
+  separate policies.
+
+  A rule is skipped when the target already holds one with the same zone and
+  pattern. That is exactly when both would match a request and both would add
+  their score, so pressing the button twice copies nothing the second time.
+  Copies keep their provenance, so a rule that began as a clone still says what
+  it was forked from, and stay custom in the target — no update will overwrite
+  them.
+
 - **`scripts/modsec2easywaf.py` converts ModSecurity rules into an EasyWAF rule
   set** — and refuses, loudly and itemised, the ones it cannot convert
   faithfully.

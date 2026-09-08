@@ -231,6 +231,10 @@ async fn main() {
         .route("/rules/{id}/edit",       get(routes::rules::get_rule_edit_global))
         .route("/rules/{id}/update",     post(routes::rules::post_rule_update_global))
         .route("/rules/{id}/clone",      post(routes::rules::post_rule_clone))
+        // A policy's custom rules, copied into another policy — the same way
+        // installing a set copies its rules in.
+        .route("/policy/{name}/rules/share",
+               post(routes::rules::post_share_custom_rules))
         .route("/rules/{id}/toggle",     post(routes::rules::post_rule_toggle_global))
         .route("/rules/{id}/delete",     post(routes::rules::post_rule_delete_global))
         .route("/geoip",                 get(routes::geoip::get_geoip))
