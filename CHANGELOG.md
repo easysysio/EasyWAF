@@ -6,6 +6,41 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
+## [Unreleased]
+
+### Added
+- **A rule exclusion can name the clients it applies to**, and the usual way to
+  create one is now a button on the Traffic Monitor row that showed the block.
+
+  Exclusions were scoped by site and optionally by path. That answers "this
+  rule is wrong for this application", but not the case that actually turns up
+  most often: the rule is right, and one client trips it — an office range, a
+  monitoring probe, a colleague whose password manager sends something that
+  looks like an injection. Narrowing by client is the smallest exclusion that
+  fixes such a case; the rule keeps protecting the site from everyone else,
+  which a site-wide or even a path-wide exclusion does not.
+
+  An address or a CIDR block, parsed by the same code that reads the trusted
+  proxy list, so `203.0.113.9`, `203.0.113.0/24`, `::1` and `fd00::/8` all
+  work. No block means every client, which is what every existing exclusion
+  means and what the engine did before the column existed.
+
+  **From Traffic Monitor**, each rule listed against a request now carries an
+  *exclude for this IP* button. The point of showing which rules produced a
+  verdict is that the fix should be reachable from there; retyping the site,
+  the rule number and the address into another page is where diagnosing a
+  false positive gets abandoned. It creates the narrowest exclusion available —
+  this rule, this client, every path — and a rule that is *already* excluded
+  for that client is marked as such instead of being offered again.
+
+  **Under Security Policy**, a new Rule Exclusions page lists every rule not
+  running across the sites using that policy, with the client and path each
+  covers and a button to remove it. Exclusions are stored per site, because a
+  site is what one is about; they are listed per policy because that is the
+  question worth asking afterwards — which of my rules are not actually in
+  force, and where. Exclusions that name *every client* or *the whole site* are
+  labelled, since those are the widest forms.
+
 ## [0.6.12] — 2026-09-08
 
 ### Fixed

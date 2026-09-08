@@ -200,7 +200,7 @@ impl InspectionModule for WafModule {
             // A rule this site excludes never runs, and never scores. Checked
             // before matching so the cost of an exclusion is one string
             // comparison rather than a regex.
-            if let Some(ex) = exclusions.iter().find(|e| e.silences(rule, &ctx.path)) {
+            if let Some(ex) = exclusions.iter().find(|e| e.silences(rule, &ctx.path, ctx.client_ip)) {
                 tracing::debug!(
                     rule = %rule.name,
                     site = %ctx.site_name,
@@ -448,20 +448,25 @@ async fn get_site_policy(db: &SqlitePool, site_id: i64) -> Option<PolicyInfo> {
 }
 
 /// Fetch all enabled rules for a policy, ordered by id.
-/// One rule a site does not apply, and where it does not apply it.
+/// One rule a site does not apply, and where and for whom it does not apply.
 struct Exclusion {
     external_id: Option<i64>,
     rule_id:     Option<i64>,
     path_prefix: String,
+    /// The clients this covers. `None` is every client, which is what a row
+    /// written before 0.6.13 means and what the engine did before the column
+    /// existed. A block that fails to parse is treated as matching nobody —
+    /// see `get_exclusions`.
+    client:      Option<crate::forwarded::Cidr>,
 }
 
 impl Exclusion {
-    /// Does this exclusion silence `rule` on `path`?
+    /// Does this exclusion silence `rule` on `path` for `client`?
     ///
     /// A catalogue rule is matched by its number, not by its row id, so an
     /// exclusion survives the set being removed and installed again — which
     /// rewrites every row with a new id.
-    fn silences(&self, rule: &RuleRow, path: &str) -> bool {
+    fn silences(&self, rule: &RuleRow, path: &str, client: std::net::IpAddr) -> bool {
         let same_rule = match (self.external_id, self.rule_id) {
             (Some(ext), _) => rule.external_id == Some(ext),
             (_, Some(id))  => rule.id == id,
@@ -470,7 +475,19 @@ impl Exclusion {
             // cannot read is not grounds for turning a rule off.
             _ => false,
         };
-        same_rule && (self.path_prefix.is_empty() || path.starts_with(&self.path_prefix))
+        if !same_rule {
+            return false;
+        }
+        if !(self.path_prefix.is_empty() || path.starts_with(&self.path_prefix)) {
+            return false;
+        }
+        // An exclusion with no block covers every client. One with a block
+        // covers only what it names, so the rule keeps protecting the site
+        // from everyone else — which is the point of narrowing by client.
+        match self.client {
+            Some(cidr) => cidr.contains(client),
+            None       => true,
+        }
     }
 }
 
@@ -480,7 +497,7 @@ impl Exclusion {
 /// the wrong place to record that one site disagrees with it.
 async fn get_exclusions(db: &SqlitePool, site_id: i64) -> Vec<Exclusion> {
     sqlx::query!(
-        "SELECT external_id, rule_id, path_prefix as \"path_prefix!\"
+        "SELECT external_id, rule_id, path_prefix as \"path_prefix!\", client_cidr
          FROM   site_rule_exclusions
          WHERE  site_id = ?",
         site_id
@@ -489,10 +506,29 @@ async fn get_exclusions(db: &SqlitePool, site_id: i64) -> Vec<Exclusion> {
     .await
     .unwrap_or_default()
     .into_iter()
-    .map(|r| Exclusion {
-        external_id: r.external_id,
-        rule_id:     r.rule_id,
-        path_prefix: r.path_prefix,
+    .filter_map(|r| {
+        // A stored block that no longer parses would otherwise widen the
+        // exclusion to every client — turning a narrow tuning into a hole
+        // silently. The row is dropped and said aloud instead.
+        let client = match r.client_cidr.as_deref() {
+            None | Some("") => None,
+            Some(raw) => match crate::forwarded::Cidr::parse(raw) {
+                Some(c) => Some(c),
+                None => {
+                    tracing::warn!(
+                        cidr = raw,
+                        "Ignoring a rule exclusion whose client block cannot be parsed"
+                    );
+                    return None;
+                }
+            },
+        };
+        Some(Exclusion {
+            external_id: r.external_id,
+            rule_id:     r.rule_id,
+            path_prefix: r.path_prefix,
+            client,
+        })
     })
     .collect()
 }
@@ -678,33 +714,49 @@ mod tests {
     }
 
     fn by_number(external_id: i64, prefix: &str) -> Exclusion {
-        Exclusion { external_id: Some(external_id), rule_id: None, path_prefix: prefix.into() }
+        Exclusion {
+            external_id: Some(external_id),
+            rule_id: None,
+            path_prefix: prefix.into(),
+            client: None,
+        }
+    }
+
+    fn ip(s: &str) -> std::net::IpAddr { s.parse().expect("a literal address") }
+
+    fn for_client(external_id: i64, cidr: &str) -> Exclusion {
+        Exclusion {
+            external_id: Some(external_id),
+            rule_id: None,
+            path_prefix: String::new(),
+            client: crate::forwarded::Cidr::parse(cidr),
+        }
     }
 
     #[test]
     fn an_exclusion_silences_only_the_rule_it_names() {
         let ex = by_number(913015, "");
-        assert!( ex.silences(&rule(1, Some(913015)), "/anything"));
-        assert!(!ex.silences(&rule(2, Some(913016)), "/anything"));
-        assert!(!ex.silences(&rule(3, None),         "/anything"));
+        assert!( ex.silences(&rule(1, Some(913015)), "/anything", ip("203.0.113.9")));
+        assert!(!ex.silences(&rule(2, Some(913016)), "/anything", ip("203.0.113.9")));
+        assert!(!ex.silences(&rule(3, None),         "/anything", ip("203.0.113.9")));
     }
 
     #[test]
     fn an_empty_prefix_means_the_whole_site() {
         let ex = by_number(913015, "");
         for path in ["/", "/admin", "/deep/nested/path"] {
-            assert!(ex.silences(&rule(1, Some(913015)), path), "{path} should be covered");
+            assert!(ex.silences(&rule(1, Some(913015)), path, ip("203.0.113.9")), "{path} should be covered");
         }
     }
 
     #[test]
     fn a_prefix_confines_the_exclusion_to_that_path() {
         let ex = by_number(913015, "/remote.php/dav/");
-        assert!( ex.silences(&rule(1, Some(913015)), "/remote.php/dav/files/yariv/x"));
+        assert!( ex.silences(&rule(1, Some(913015)), "/remote.php/dav/files/yariv/x", ip("203.0.113.9")));
         // The rule still runs everywhere else on the site, which is the whole
         // reason for having a prefix at all.
-        assert!(!ex.silences(&rule(1, Some(913015)), "/admin"));
-        assert!(!ex.silences(&rule(1, Some(913015)), "/remote.php/other"));
+        assert!(!ex.silences(&rule(1, Some(913015)), "/admin", ip("203.0.113.9")));
+        assert!(!ex.silences(&rule(1, Some(913015)), "/remote.php/other", ip("203.0.113.9")));
     }
 
     #[test]
@@ -713,18 +765,75 @@ mod tests {
         // id. The exclusion has to survive that, or it stops applying at the
         // moment the rule comes back — silently, and only in production.
         let ex = by_number(913015, "");
-        assert!(ex.silences(&rule(7,   Some(913015)), "/x"), "before a reinstall");
-        assert!(ex.silences(&rule(914, Some(913015)), "/x"), "after a reinstall");
+        assert!(ex.silences(&rule(7,   Some(913015)), "/x", ip("203.0.113.9")), "before a reinstall");
+        assert!(ex.silences(&rule(914, Some(913015)), "/x", ip("203.0.113.9")), "after a reinstall");
     }
 
     #[test]
     fn a_custom_rule_is_matched_by_row_id_because_it_has_no_number() {
-        let ex = Exclusion { external_id: None, rule_id: Some(42), path_prefix: "".into() };
-        assert!( ex.silences(&rule(42, None), "/x"));
-        assert!(!ex.silences(&rule(43, None), "/x"));
+        let ex = Exclusion { external_id: None, rule_id: Some(42), path_prefix: "".into(), client: None };
+        assert!( ex.silences(&rule(42, None), "/x", ip("203.0.113.9")));
+        assert!(!ex.silences(&rule(43, None), "/x", ip("203.0.113.9")));
         // A row id must never reach across to a catalogue rule that happens to
         // sit at the same id.
-        assert!(!ex.silences(&rule(43, Some(42)), "/x"));
+        assert!(!ex.silences(&rule(43, Some(42)), "/x", ip("203.0.113.9")));
+    }
+
+    #[test]
+    fn a_client_block_confines_the_exclusion_to_that_client() {
+        // The case this exists for: a rule is right, and one client trips it.
+        // Everyone else must still be protected by it.
+        let ex = for_client(913015, "203.0.113.0/24");
+        assert!( ex.silences(&rule(1, Some(913015)), "/admin", ip("203.0.113.9")));
+        assert!( ex.silences(&rule(1, Some(913015)), "/admin", ip("203.0.113.255")));
+        assert!(!ex.silences(&rule(1, Some(913015)), "/admin", ip("203.0.114.1")),
+                "an address outside the block must still be caught by the rule");
+        assert!(!ex.silences(&rule(1, Some(913015)), "/admin", ip("198.51.100.7")));
+    }
+
+    #[test]
+    fn a_single_address_excludes_only_that_address() {
+        let ex = for_client(913015, "192.168.1.50");
+        assert!( ex.silences(&rule(1, Some(913015)), "/x", ip("192.168.1.50")));
+        assert!(!ex.silences(&rule(1, Some(913015)), "/x", ip("192.168.1.51")));
+    }
+
+    #[test]
+    fn no_client_block_still_means_every_client() {
+        // Every row written before the column existed means this, so the
+        // absence of a block must not start meaning "nobody".
+        let ex = by_number(913015, "");
+        for addr in ["203.0.113.9", "192.168.1.50", "::1"] {
+            assert!(ex.silences(&rule(1, Some(913015)), "/x", ip(addr)),
+                    "{addr} should be covered by an exclusion naming no client");
+        }
+    }
+
+    #[test]
+    fn a_v4_client_is_not_matched_by_a_v6_block_or_the_reverse() {
+        // Cidr::contains refuses to cross families; asserted here because an
+        // exclusion crossing them would be a hole rather than a mismatch.
+        let v6 = for_client(913015, "::/0");
+        assert!(!v6.silences(&rule(1, Some(913015)), "/x", ip("203.0.113.9")));
+        let v4 = for_client(913015, "0.0.0.0/0");
+        assert!(!v4.silences(&rule(1, Some(913015)), "/x", ip("::1")));
+    }
+
+    #[test]
+    fn the_client_block_narrows_rather_than_replaces_the_path() {
+        // Both conditions must hold. An exclusion naming a path and a client
+        // applies where they intersect, not where either matches.
+        let ex = Exclusion {
+            external_id: Some(913015),
+            rule_id: None,
+            path_prefix: "/admin/".into(),
+            client: crate::forwarded::Cidr::parse("203.0.113.0/24"),
+        };
+        assert!( ex.silences(&rule(1, Some(913015)), "/admin/x", ip("203.0.113.9")));
+        assert!(!ex.silences(&rule(1, Some(913015)), "/other",   ip("203.0.113.9")),
+                "right client, wrong path");
+        assert!(!ex.silences(&rule(1, Some(913015)), "/admin/x", ip("198.51.100.7")),
+                "right path, wrong client");
     }
 
     #[test]
@@ -732,8 +841,8 @@ mod tests {
         // The CHECK constraint makes this unreachable through the database.
         // If it were ever reached, the safe reading of "no rule named" is no
         // rule silenced — not every rule silenced.
-        let ex = Exclusion { external_id: None, rule_id: None, path_prefix: "".into() };
-        assert!(!ex.silences(&rule(1, Some(913015)), "/x"));
-        assert!(!ex.silences(&rule(1, None),         "/x"));
+        let ex = Exclusion { external_id: None, rule_id: None, path_prefix: "".into(), client: None };
+        assert!(!ex.silences(&rule(1, Some(913015)), "/x", ip("203.0.113.9")));
+        assert!(!ex.silences(&rule(1, None),         "/x", ip("203.0.113.9")));
     }
 }

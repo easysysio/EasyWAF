@@ -24,6 +24,9 @@ pub struct TrafficFilter {
     pub site:    Option<String>, // site name, empty = all
     pub blocked: Option<String>, // "1" blocked only · "0" allowed only · else all
     pub hours:   Option<i64>,    // lookback window in hours (1–720, default 24)
+    // Set when an exclusion was just added from a row on this page.
+    pub result:  Option<String>,
+    pub msg:     Option<String>,
 }
 
 // ─── Output models ───────────────────────────────────────
@@ -42,13 +45,27 @@ pub struct TrafficEvent {
     pub blocked:      bool,
     pub block_reason: Option<String>,
     /// The rules that produced the verdict, ready to render.
-    pub matched_rules: Vec<crate::modules::RuleHit>,
+    pub matched_rules: Vec<EventRule>,
     pub waf_score:    Option<i64>,
     pub country:      Option<String>,
     /// What the WAF would have done on a request it allowed: "observed",
     /// "would_challenge" or "would_block". None on clean traffic and on rows
     /// written before 0.6.11.
     pub detection:    Option<String>,
+}
+
+/// One rule that produced a verdict, as the Traffic Monitor shows it.
+///
+/// A `RuleHit` plus whether this site already excludes the rule for this
+/// client. Without that, the page offers "exclude this" on a rule that is
+/// already excluded, and the row gives no hint why a rule that is listed as
+/// having matched is no longer acting.
+#[derive(Debug, Serialize)]
+pub struct EventRule {
+    pub id:       Option<i64>,
+    pub name:     String,
+    pub score:    i64,
+    pub excluded: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -89,6 +106,7 @@ struct EventRow {
     path:         Option<String>,
     status_code:  Option<i64>,
     response_ms:  Option<i64>,
+    site_id:      Option<i64>,
     blocked:      i64,             // NOT NULL DEFAULT 0
     block_reason: Option<String>,
     detection:    Option<String>,
@@ -133,7 +151,8 @@ pub async fn get_traffic(
     let blocked_sel = filter.blocked.as_deref().unwrap_or("").trim().to_string();
 
     let sites  = fetch_sites(&state).await?;
-    let events = fetch_events(&state, &cutoff, &site_sel, &blocked_sel).await?;
+    let exclusions = fetch_exclusions(&state).await?;
+    let events = fetch_events(&state, &exclusions, &cutoff, &site_sel, &blocked_sel).await?;
     let stats  = fetch_stats(&state, &cutoff, &site_sel, &blocked_sel).await?;
     let chart  = fetch_chart(&state, &cutoff, &site_sel, &blocked_sel).await?;
 
@@ -148,6 +167,8 @@ pub async fn get_traffic(
     ctx.insert("sel_site",    &site_sel);
     ctx.insert("sel_blocked", &blocked_sel);
     ctx.insert("sel_hours",   &hours);
+    ctx.insert("result",      &filter.result.clone().unwrap_or_default());
+    ctx.insert("msg",         &filter.msg.clone().unwrap_or_default());
 
     Ok((jar, Html(state.tera.render("traffic.html", &ctx)?)).into_response())
 }
@@ -165,8 +186,70 @@ async fn fetch_sites(state: &AppState) -> Result<Vec<SiteOption>> {
 // ─── fetch_events ────────────────────────────────────────
 
 /// Load up to 1000 most-recent events matching the filter.
+/// One site's exclusions, in the form the coverage check needs.
+struct SiteExclusion {
+    external_id: Option<i64>,
+    path_prefix: String,
+    client:      Option<crate::forwarded::Cidr>,
+}
+
+/// Every exclusion, keyed by site, so the page can mark rules that are
+/// already excluded rather than offering to exclude them twice.
+///
+/// Loaded once for the page rather than per row: a thousand rows would
+/// otherwise be a thousand queries to answer one question about a handful of
+/// exclusions.
+async fn fetch_exclusions(
+    state: &AppState,
+) -> Result<std::collections::HashMap<i64, Vec<SiteExclusion>>> {
+    let rows = sqlx::query!(
+        r#"SELECT site_id as "site_id!", external_id,
+                  path_prefix as "path_prefix!", client_cidr
+           FROM   site_rule_exclusions"#
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    let mut out: std::collections::HashMap<i64, Vec<SiteExclusion>> = Default::default();
+    for r in rows {
+        out.entry(r.site_id).or_default().push(SiteExclusion {
+            external_id: r.external_id,
+            path_prefix: r.path_prefix,
+            client: r.client_cidr.as_deref()
+                .filter(|c| !c.is_empty())
+                .and_then(crate::forwarded::Cidr::parse),
+        });
+    }
+    Ok(out)
+}
+
+/// Does this site already exclude `rule` for this request?
+///
+/// Deliberately the same three conditions the engine applies in
+/// `waf::Exclusion::silences` — rule, path, client — so the page cannot claim
+/// a rule is excluded when the engine would still run it.
+fn already_excluded(
+    excls: Option<&Vec<SiteExclusion>>,
+    rule_id: Option<i64>,
+    path: &str,
+    client_ip: &str,
+) -> bool {
+    let (Some(list), Some(rid)) = (excls, rule_id) else { return false };
+    let parsed: Option<std::net::IpAddr> = client_ip.parse().ok();
+    list.iter().any(|e| {
+        e.external_id == Some(rid)
+            && (e.path_prefix.is_empty() || path.starts_with(&e.path_prefix))
+            && match (e.client, parsed) {
+                (None, _)            => true,
+                (Some(c), Some(ip))  => c.contains(ip),
+                (Some(_), None)      => false,
+            }
+    })
+}
+
 async fn fetch_events(
     state:   &AppState,
+    exclusions: &std::collections::HashMap<i64, Vec<SiteExclusion>>,
     cutoff:  &str,
     site:    &str,
     blocked: &str,
@@ -177,7 +260,7 @@ async fn fetch_events(
                 COALESCE(s.name, '[deleted]') AS site_name,
                 te.client_ip, te.method, te.host, te.path,
                 te.status_code, te.response_ms,
-                te.blocked, te.block_reason, te.country,
+                te.site_id, te.blocked, te.block_reason, te.country,
                 te.matched_rules, te.waf_score, te.detection
          FROM traffic_events te
          LEFT JOIN sites s ON s.id = te.site_id
@@ -192,7 +275,12 @@ async fn fetch_events(
 
     let rows: Vec<EventRow> = qb.build_query_as().fetch_all(&state.db).await?;
 
-    Ok(rows.into_iter().map(|r| TrafficEvent {
+    Ok(rows.into_iter().map(|r| {
+      // Taken before the struct consumes them; both are needed to decide
+      // whether an exclusion already covers each rule below.
+      let path = r.path.clone().unwrap_or_default();
+      let ip   = r.client_ip.clone().unwrap_or_default();
+      TrafficEvent {
         id:           r.id,
         timestamp:    r.timestamp,
         site_name:    r.site_name,
@@ -207,12 +295,22 @@ async fn fetch_events(
         detection:    r.detection,
         // Stored as JSON; a row written before this existed, or by a version
         // that could not parse, simply shows nothing rather than failing.
-        matched_rules: r.matched_rules
-            .as_deref()
-            .and_then(|j| serde_json::from_str(j).ok())
-            .unwrap_or_default(),
+        // Each hit is then marked with whether the site already excludes it
+        // for this client, so the page does not offer to exclude it again.
+        matched_rules: {
+            let hits: Vec<crate::modules::RuleHit> = r.matched_rules
+                .as_deref()
+                .and_then(|j| serde_json::from_str(j).ok())
+                .unwrap_or_default();
+            let site_excls = r.site_id.and_then(|id| exclusions.get(&id));
+            hits.into_iter().map(|h| EventRule {
+                excluded: already_excluded(site_excls, h.id, &path, &ip),
+                id: h.id, name: h.name, score: h.score,
+            }).collect()
+        },
         waf_score:    r.waf_score,
         country:      r.country,
+      }
     }).collect())
 }
 
@@ -314,3 +412,59 @@ fn apply_blocked_filter(qb: &mut QueryBuilder<sqlx::Sqlite>, blocked: &str) {
     }
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn excl(ext: i64, prefix: &str, cidr: Option<&str>) -> SiteExclusion {
+        SiteExclusion {
+            external_id: Some(ext),
+            path_prefix: prefix.into(),
+            client: cidr.and_then(crate::forwarded::Cidr::parse),
+        }
+    }
+
+    /// The page's check must apply the same three conditions the engine does in
+    /// `waf::Exclusion::silences` — rule, path, client. If it is looser, the
+    /// Traffic Monitor marks a rule as excluded that the engine still runs; if
+    /// it is tighter, it offers to add an exclusion that already exists.
+    #[test]
+    fn the_marker_agrees_with_the_engine_on_all_three_conditions() {
+        let list = vec![excl(913015, "/admin/", Some("203.0.113.0/24"))];
+        let l = Some(&list);
+
+        assert!( already_excluded(l, Some(913015), "/admin/x", "203.0.113.9"));
+        assert!(!already_excluded(l, Some(913016), "/admin/x", "203.0.113.9"), "wrong rule");
+        assert!(!already_excluded(l, Some(913015), "/other",   "203.0.113.9"), "wrong path");
+        assert!(!already_excluded(l, Some(913015), "/admin/x", "198.51.100.7"), "wrong client");
+    }
+
+    #[test]
+    fn an_exclusion_naming_no_client_covers_every_client() {
+        let list = vec![excl(913015, "", None)];
+        for ip in ["203.0.113.9", "192.168.1.1", "::1"] {
+            assert!(already_excluded(Some(&list), Some(913015), "/x", ip), "{ip}");
+        }
+    }
+
+    #[test]
+    fn a_client_scoped_exclusion_never_matches_an_unreadable_address() {
+        // A stored row could carry something that is not an address — an empty
+        // client_ip on an old event, say. Marking a rule excluded on the
+        // strength of an address nobody can read would be a claim the engine
+        // will not honour.
+        let list = vec![excl(913015, "", Some("203.0.113.0/24"))];
+        assert!(!already_excluded(Some(&list), Some(913015), "/x", ""));
+        assert!(!already_excluded(Some(&list), Some(913015), "/x", "not-an-ip"));
+    }
+
+    #[test]
+    fn a_custom_rule_with_no_catalogue_number_is_never_marked() {
+        // The Traffic Monitor stores a hit's catalogue number, and a custom
+        // rule has none. Without a number there is nothing to compare, so the
+        // honest answer is "not known to be excluded" rather than a guess.
+        let list = vec![excl(913015, "", None)];
+        assert!(!already_excluded(Some(&list), None, "/x", "203.0.113.9"));
+    }
+}

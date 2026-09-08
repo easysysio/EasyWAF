@@ -2,6 +2,20 @@
 
 {% block content %}
 
+{% if result == "failed" %}
+<div class="alert alert-danger alert-dismissible">
+    <button type="button" class="close" data-dismiss="alert">&times;</button>
+    {{ msg }}
+</div>
+{% endif %}
+{% if result == "success" %}
+<div class="alert alert-success alert-dismissible">
+    <button type="button" class="close" data-dismiss="alert">&times;</button>
+    {{ msg }}
+    <a href="/policy" class="alert-link">Manage exclusions</a>
+</div>
+{% endif %}
+
 <!-- ── Filter bar ─────────────────────────────────────────── -->
 <form method="get" action="/traffic" class="form-inline well well-sm" style="margin-bottom:16px">
     <div class="form-group" style="margin-right:8px">
@@ -203,6 +217,29 @@
                                 {% if h.id %}<code>{{ h.id }}</code>{% endif %}
                                 {{ h.name }}
                                 <span class="text-muted">+{{ h.score }}</span>
+                                {# The fix belongs on the row that showed the problem.
+                                   Retyping the site, rule and address into another page
+                                   is where diagnosing a false positive gets abandoned. #}
+                                {% if h.excluded %}
+                                    <span class="label label-info" style="font-weight:normal"
+                                          title="This site already excludes this rule for this client, so it did not act here.">
+                                        <i class="fa fa-ban"></i> excluded for this IP
+                                    </span>
+                                {% elif h.id %}
+                                <form method="post" action="/exclusions/from-traffic"
+                                      style="display:inline"
+                                      onsubmit="return confirm('Stop rule {{ h.id }} running for {{ e.client_ip }} on {{ e.host }}?\n\nEvery other client is still checked by it. You can undo this from the policy\'s exclusions list.');">
+                                    <input type="hidden" name="host"      value="{{ e.host }}">
+                                    <input type="hidden" name="client_ip" value="{{ e.client_ip }}">
+                                    <input type="hidden" name="rule"      value="{{ h.id }}">
+                                    <input type="hidden" name="rule_name" value="{{ h.name }}">
+                                    <input type="hidden" name="back"      value="/traffic?site={{ sel_site }}&blocked={{ sel_blocked }}&hours={{ sel_hours }}">
+                                    <button type="submit" class="btn btn-link btn-xs" style="padding:0 4px"
+                                            title="False positive? Stop this rule running for this client only.">
+                                        exclude for this IP
+                                    </button>
+                                </form>
+                                {% endif %}
                             </div>
                             {% endfor %}
                         {% elif e.block_reason %}

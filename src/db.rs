@@ -67,9 +67,32 @@ pub async fn init(database_url: &str) -> SqlitePool {
     run_migration_018(&pool).await;
     run_migration_019(&pool).await;
     run_migration_020(&pool).await;
+    run_migration_021(&pool).await;
 
     info!("Database ready: {}", database_url);
     pool
+}
+
+// ─── run_migration_021 ───────────────────────────────────
+
+/// Which clients a rule exclusion applies to.
+async fn run_migration_021(pool: &SqlitePool) {
+    let exists: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM pragma_table_info('site_rule_exclusions')
+         WHERE name = 'client_cidr'",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0);
+
+    if exists == 0 {
+        let sql = include_str!("../migrations/021_exclusion_client_ip.sql");
+        sqlx::raw_sql(sql)
+            .execute(pool)
+            .await
+            .unwrap_or_else(|e| panic!("Migration 021 failed: {}", e));
+        info!("Migration 021 applied: an exclusion can name a client address");
+    }
 }
 
 // ─── run_migration_020 ───────────────────────────────────

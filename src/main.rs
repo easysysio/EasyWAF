@@ -195,6 +195,14 @@ async fn main() {
                post(routes::exclusions::post_exclusion_add))
         .route("/sites/{name}/exclusions/{id}/delete",
                post(routes::exclusions::post_exclusion_delete))
+        // One click from the traffic row that showed the block.
+        .route("/exclusions/from-traffic",
+               post(routes::exclusions::post_exclusion_from_traffic))
+        // Every rule not running, across the sites using one policy.
+        .route("/policy/{name}/exclusions",
+               get(routes::exclusions::get_policy_exclusions))
+        .route("/policy/{name}/exclusions/{id}/delete",
+               post(routes::exclusions::post_policy_exclusion_delete))
         .route("/account",               get(routes::account::get_account))
         .route("/account/password",      post(routes::account::post_account_password))
         .route("/settings",              get(routes::settings::get_settings))

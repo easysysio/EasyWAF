@@ -44,6 +44,8 @@ pub struct Exclusion {
     /// not something to clean up automatically; see `load`.
     pub rule_name:   Option<String>,
     pub path_prefix: String,
+    /// The clients this covers; empty means every client.
+    pub client_cidr: String,
     pub note:        String,
     pub created_at:  String,
 }
@@ -64,6 +66,8 @@ pub struct ExclusionForm {
     /// One field rather than two, because the form offers one list.
     pub rule:        String,
     pub path_prefix: String,
+    /// An address or CIDR block, or empty for every client.
+    pub client_cidr: String,
     pub note:        String,
 }
 
@@ -97,6 +101,7 @@ async fn load(state: &AppState, site_id: i64, policy_id: Option<i64>) -> Result<
                 e.external_id,
                 e.rule_id,
                 e.path_prefix as \"path_prefix!\",
+                e.client_cidr,
                 e.note        as \"note!\",
                 e.created_at  as \"created_at!\",
                 r.name        as \"rule_name?\"
@@ -120,6 +125,7 @@ async fn load(state: &AppState, site_id: i64, policy_id: Option<i64>) -> Result<
             rule_id:     r.rule_id,
             rule_name:   r.rule_name,
             path_prefix: r.path_prefix,
+            client_cidr: r.client_cidr.unwrap_or_default(),
             note:        r.note,
             created_at:  r.created_at,
         })
@@ -231,12 +237,26 @@ pub async fn post_exclusion_add(
             "A path prefix must start with \"/\" — leave it empty to cover the whole site.",
         );
     }
+    // Parsed before storing, not after. A block the engine cannot read would
+    // be dropped at match time and the exclusion would silently cover nobody —
+    // or, had it defaulted the other way, everybody.
+    let client = form.client_cidr.trim();
+    if !client.is_empty() && crate::forwarded::Cidr::parse(client).is_none() {
+        return flash_redirect(
+            &back,
+            "failed",
+            &format!("\"{client}\" is not an address or CIDR block. Use 203.0.113.9, \
+                      203.0.113.0/24, or leave it empty for every client."),
+        );
+    }
+    let client_opt = if client.is_empty() { None } else { Some(client) };
     let note = form.note.trim();
 
     let inserted = sqlx::query!(
-        "INSERT INTO site_rule_exclusions (site_id, external_id, rule_id, path_prefix, note)
-         VALUES (?, ?, ?, ?, ?)",
-        site_id, external_id, rule_id, prefix, note
+        "INSERT INTO site_rule_exclusions
+         (site_id, external_id, rule_id, path_prefix, client_cidr, note)
+         VALUES (?, ?, ?, ?, ?, ?)",
+        site_id, external_id, rule_id, prefix, client_opt, note
     )
     .execute(&state.db)
     .await;
@@ -244,10 +264,11 @@ pub async fn post_exclusion_add(
     match inserted {
         Ok(_) => {
             tracing::info!(site = %name, rule = %form.rule, prefix, "Rule excluded for a site");
-            let where_ = if prefix.is_empty() {
-                "the whole site".to_string()
-            } else {
-                format!("paths under {prefix}")
+            let where_ = match (prefix.is_empty(), client_opt) {
+                (true,  None)    => "the whole site".to_string(),
+                (false, None)    => format!("paths under {prefix}"),
+                (true,  Some(c)) => format!("client {c}"),
+                (false, Some(c)) => format!("paths under {prefix} from {c}"),
             };
             flash_redirect(
                 &back,
@@ -261,6 +282,231 @@ pub async fn post_exclusion_add(
             flash_redirect(&back, "failed", "That rule is already excluded for that path.")
         }
         Err(e) => flash_redirect(&back, "failed", &format!("Could not save the exclusion: {e}")),
+    }
+}
+
+// ─── policy_exclusions ───────────────────────────────────
+
+/// One exclusion as the policy-wide list shows it.
+#[derive(Debug, Serialize)]
+pub struct PolicyExclusion {
+    pub id:          i64,
+    pub site_name:   String,
+    pub rule_label:  String,
+    pub external_id: Option<i64>,
+    pub path_prefix: String,
+    pub client_cidr: String,
+    pub note:        String,
+    pub created_at:  String,
+}
+
+/// Every exclusion affecting a policy's rules, across all the sites using it.
+///
+/// Exclusions are stored per site, because a site is what an exclusion is
+/// about. They are *read* per policy here because that is how someone thinks
+/// about them afterwards: a policy is the set of rules, and "which of my rules
+/// are not actually running, and where" is a question about the policy rather
+/// than about any one site.
+pub async fn list_for_policy(
+    state: &AppState,
+    policy_id: i64,
+) -> Result<Vec<PolicyExclusion>> {
+    let rows = sqlx::query!(
+        r#"SELECT e.id          as "id!",
+                  s.server_name as "site_name!",
+                  e.external_id,
+                  e.rule_id,
+                  e.path_prefix as "path_prefix!",
+                  e.client_cidr,
+                  e.note        as "note!",
+                  e.created_at  as "created_at!",
+                  r.name        as "rule_name?"
+           FROM   site_rule_exclusions e
+           JOIN   sites s ON s.id = e.site_id
+           LEFT   JOIN waf_rules r
+                  ON  r.policy_id = ?
+                  AND (   (e.external_id IS NOT NULL AND r.external_id = e.external_id)
+                       OR (e.rule_id     IS NOT NULL AND r.id          = e.rule_id))
+           WHERE  s.waf_policy_id = ?
+           ORDER  BY s.server_name, e.id DESC"#,
+        policy_id, policy_id
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|r| PolicyExclusion {
+            id:        r.id,
+            site_name: r.site_name,
+            rule_label: match (r.rule_name, r.external_id, r.rule_id) {
+                (Some(n), _, _)       => n,
+                (None, Some(ext), _)  => format!("rule {ext} (not in this policy)"),
+                (None, _, Some(id))   => format!("custom rule #{id} (deleted)"),
+                _                     => "unknown rule".to_string(),
+            },
+            external_id: r.external_id,
+            path_prefix: r.path_prefix,
+            client_cidr: r.client_cidr.unwrap_or_default(),
+            note:        r.note,
+            created_at:  r.created_at,
+        })
+        .collect())
+}
+
+// ─── post_policy_exclusion_delete ────────────────────────
+
+/// Remove an exclusion from the policy-wide list.
+///
+/// Scoped to the policy, so an id from one policy's page cannot delete an
+/// exclusion belonging to a site that uses a different policy.
+pub async fn post_policy_exclusion_delete(
+    State(state): State<AppState>,
+    jar: SignedCookieJar,
+    Path((policy_name, id)): Path<(String, i64)>,
+) -> Result<Response> {
+    if get_session(&jar).is_none() {
+        return Ok(Redirect::to("/login").into_response());
+    }
+
+    let back = format!("/policy/{policy_name}/exclusions");
+
+    let done = sqlx::query!(
+        "DELETE FROM site_rule_exclusions
+         WHERE id = ?
+           AND site_id IN (SELECT s.id FROM sites s
+                           JOIN policies p ON p.id = s.waf_policy_id
+                           WHERE p.name = ?)",
+        id, policy_name
+    )
+    .execute(&state.db)
+    .await?;
+
+    if done.rows_affected() == 0 {
+        return flash_redirect(&back, "failed", "That exclusion no longer exists.");
+    }
+
+    tracing::info!(policy = %policy_name, exclusion = id, "Rule exclusion removed");
+    flash_redirect(&back, "success",
+                   "Exclusion removed — the rule applies again from the next request.")
+}
+
+// ─── get_policy_exclusions ───────────────────────────────
+
+pub async fn get_policy_exclusions(
+    State(state): State<AppState>,
+    jar: SignedCookieJar,
+    Path(policy_name): Path<String>,
+    Query(flash): Query<FlashQuery>,
+) -> Result<Response> {
+    let session = match get_session(&jar) {
+        Some(s) => s,
+        None    => return Ok(Redirect::to("/login").into_response()),
+    };
+
+    let policy_id: i64 = match sqlx::query_scalar!(
+        "SELECT id FROM policies WHERE name = ?", policy_name
+    )
+    .fetch_optional(&state.db)
+    .await?
+    {
+        Some(Some(id)) => id,
+        _ => return Ok(Redirect::to("/policy").into_response()),
+    };
+
+    let mut ctx = Context::new();
+    ctx.insert("username",    &session.username);
+    ctx.insert("title",       "Rule Exclusions");
+    ctx.insert("url",         "/policy");
+    ctx.insert("policy_name", &policy_name);
+    ctx.insert("exclusions",  &list_for_policy(&state, policy_id).await?);
+    ctx.insert("result",      &flash.result.unwrap_or_default());
+    ctx.insert("msg",         &flash.msg.unwrap_or_default());
+
+    Ok((jar, Html(state.tera.render("policy_exclusions.html", &ctx)?)).into_response())
+}
+
+// ─── post_exclusion_from_traffic ─────────────────────────
+
+/// Form behind the Traffic Monitor's "exclude for this IP" button.
+#[derive(Debug, Deserialize)]
+pub struct FromTrafficForm {
+    /// The traffic row this came from, so the message can name it back.
+    pub host:      String,
+    pub client_ip: String,
+    /// Catalogue number of the rule that matched.
+    pub rule:      i64,
+    pub rule_name: String,
+    /// Where to return to, preserving whatever filter was applied.
+    pub back:      Option<String>,
+}
+
+/// Exclude one rule for one client, from the row that showed the block.
+///
+/// The whole point of the Traffic Monitor showing which rules produced a
+/// verdict is that the fix should be reachable from there. Diagnosing a false
+/// positive and then retyping the site, the rule number and the address into
+/// another page is where the diagnosis gets abandoned.
+///
+/// Deliberately the narrowest exclusion available: this rule, this client,
+/// every path. Not the site, not the rule everywhere — those are a decision
+/// someone can still make on the exclusions page, having seen this one first.
+pub async fn post_exclusion_from_traffic(
+    State(state): State<AppState>,
+    jar: SignedCookieJar,
+    Form(form): Form<FromTrafficForm>,
+) -> Result<Response> {
+    if get_session(&jar).is_none() {
+        return Ok(Redirect::to("/login").into_response());
+    }
+
+    let back = form.back.clone().unwrap_or_else(|| "/traffic".to_string());
+
+    // The address comes from a traffic row, so it is already an address the
+    // proxy resolved — but it is parsed again rather than trusted, because it
+    // arrives here through a form field like any other.
+    let client = form.client_ip.trim();
+    if crate::forwarded::Cidr::parse(client).is_none() {
+        return flash_redirect(&back, "failed",
+            &format!("\"{client}\" is not an address this can exclude."));
+    }
+
+    let site = sqlx::query!(
+        "SELECT id as \"id!\", server_name FROM sites WHERE server_name = ?",
+        form.host
+    )
+    .fetch_optional(&state.db)
+    .await?;
+
+    let Some(site) = site else {
+        return flash_redirect(&back, "failed",
+            &format!("No site named {} — it may have been deleted.", form.host));
+    };
+
+    let note = format!("Excluded from Traffic Monitor: {} was blocked for {}",
+                       client, form.rule_name);
+
+    let done = sqlx::query!(
+        "INSERT INTO site_rule_exclusions
+         (site_id, external_id, rule_id, path_prefix, client_cidr, note)
+         VALUES (?, ?, NULL, '', ?, ?)",
+        site.id, form.rule, client, note
+    )
+    .execute(&state.db)
+    .await;
+
+    match done {
+        Ok(_) => {
+            tracing::info!(site = %site.server_name, rule = form.rule, client,
+                           "Rule excluded for a client from Traffic Monitor");
+            flash_redirect(&back, "success", &format!(
+                "Rule {} no longer runs for {} on {}. Every other client is still \
+                 checked by it.", form.rule, client, site.server_name))
+        }
+        Err(e) if e.to_string().contains("UNIQUE") => flash_redirect(&back, "failed",
+            &format!("Rule {} is already excluded for {} on {}.",
+                     form.rule, client, site.server_name)),
+        Err(e) => flash_redirect(&back, "failed", &format!("Could not save it: {e}")),
     }
 }
 

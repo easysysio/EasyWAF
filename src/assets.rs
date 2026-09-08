@@ -159,8 +159,14 @@ mod tests {
                 "id": 1, "timestamp": "2026-09-07 12:00:00", "site_name": "s",
                 "client_ip": "1.2.3.4", "method": "GET", "host": "h", "path": path,
                 "status_code": 200, "response_ms": 4, "blocked": blocked,
-                "block_reason": null, "matched_rules": [], "waf_score": null,
-                "country": null, "detection": detection,
+                "block_reason": null, "waf_score": 9, "country": null,
+                "detection": detection,
+                // One rule already excluded for this client and one not, so
+                // both the marker and the offer to exclude are rendered.
+                "matched_rules": [
+                    {"id": 913015, "name": "Scanner probe", "score": 4, "excluded": false},
+                    {"id": 942100, "name": "SQLi union",    "score": 5, "excluded": true},
+                ],
             })
         };
 
@@ -188,6 +194,8 @@ mod tests {
         ctx.insert("sel_site",    "");
         ctx.insert("sel_blocked", "");
         ctx.insert("sel_hours",   &24);
+        ctx.insert("result",      "success");
+        ctx.insert("msg",         "Rule excluded.");
 
         let html = tera.render("traffic.html", &ctx)
             .unwrap_or_else(|e| panic!("traffic.html failed to render: {e:#?}"));
@@ -201,6 +209,14 @@ mod tests {
         for series in ["'Allowed'", "'Detected'", "'Blocked'"] {
             assert!(html.contains(series), "the chart is missing its {series} series");
         }
+        // The fix has to be reachable from the row that showed the problem,
+        // and a rule already excluded must say so instead of offering again.
+        assert!(html.contains("exclude for this IP"),
+                "no way to exclude a rule from the row that matched it");
+        assert!(html.contains("excluded for this IP"),
+                "an already-excluded rule is not marked as such");
+        assert!(html.contains("/exclusions/from-traffic"),
+                "the exclude button posts nowhere");
     }
 
     #[test]

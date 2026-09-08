@@ -122,6 +122,14 @@
                                title="Rule Sets — install, update or remove published sets">
                                 <i class="fa fa-th-large fa-2x"></i>
                             </a>
+                            {# Which of this policy's rules are not actually running.
+                               A rule that is enabled and yet silent somewhere is worth
+                               being able to find without an incident to prompt it. #}
+                            <a href="/policy/{{ pol.name }}/exclusions"
+                               class="btn btn-link" style="padding:0;margin-right:8px"
+                               title="Rule Exclusions — rules not running, and for which clients">
+                                <i class="fa fa-ban fa-2x"></i>
+                            </a>
                             <form method="post" action="/policy/{{ pol.name }}/delete"
                                   onsubmit="return confirm('Delete policy {{ pol.name }}?');"
                                   style="display:inline">

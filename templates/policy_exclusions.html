@@ -1,0 +1,132 @@
+{% extends "layout_default.html" %}
+
+{% block content %}
+
+{% if result == "failed" %}
+<div class="alert alert-danger alert-dismissible">
+    <button type="button" class="close" data-dismiss="alert">&times;</button>
+    {{ msg }}
+</div>
+{% endif %}
+{% if result == "success" %}
+<div class="alert alert-success alert-dismissible">
+    <button type="button" class="close" data-dismiss="alert">&times;</button>
+    {{ msg }}
+</div>
+{% endif %}
+
+<div class="row">
+    <div class="col-lg-11">
+        <div class="panel panel-default">
+            <div class="panel-heading">
+                <h4>
+                    <i class="fa fa-ban"></i> Rule Exclusions
+                    <small class="text-muted">— policy <code>{{ policy_name }}</code></small>
+                </h4>
+            </div>
+            <div class="panel-body">
+
+                <p class="help-block" style="margin-top:0">
+                    Every rule that is <strong>not running</strong> somewhere, across the
+                    sites using this policy. An excluded rule adds no score and cannot
+                    block, for the clients and paths listed here — and keeps protecting
+                    everything else.
+                    <br>
+                    Exclusions are stored per site, because a site is what one is about.
+                    They are listed per policy because this is the question worth asking
+                    afterwards: which of my rules are not actually in force, and where.
+                </p>
+
+                {% if exclusions %}
+                <div style="overflow-x:auto">
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th>Rule</th>
+                            <th>Site</th>
+                            <th>Clients</th>
+                            <th>Paths</th>
+                            <th>Why</th>
+                            <th class="text-right"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    {% for e in exclusions %}
+                        <tr>
+                            <td>
+                                <strong>{{ e.rule_label }}</strong>
+                                {% if e.external_id %}
+                                <br><small class="text-muted"><code>{{ e.external_id }}</code></small>
+                                {% endif %}
+                            </td>
+                            <td style="white-space:nowrap"><code>{{ e.site_name }}</code></td>
+                            <td style="white-space:nowrap">
+                                {% if e.client_cidr %}
+                                    <code>{{ e.client_cidr }}</code>
+                                {% else %}
+                                    {# Worth flagging: this is the widest form. #}
+                                    <span class="label label-warning">every client</span>
+                                {% endif %}
+                            </td>
+                            <td style="white-space:nowrap">
+                                {% if e.path_prefix %}
+                                    under <code>{{ e.path_prefix }}</code>
+                                {% else %}
+                                    <span class="label label-warning">the whole site</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if e.note %}
+                                    <small>{{ e.note }}</small>
+                                {% else %}
+                                    <small class="text-muted"><em>no reason recorded</em></small>
+                                {% endif %}
+                                <br><small class="text-muted">added {{ e.created_at }}</small>
+                            </td>
+                            <td class="text-right" style="white-space:nowrap">
+                                <form method="post"
+                                      action="/policy/{{ policy_name }}/exclusions/{{ e.id }}/delete"
+                                      onsubmit="return confirm('Stop excluding {{ e.rule_label }} on {{ e.site_name }}?\n\nThe rule will run again from the next request, and can block.');"
+                                      style="display:inline">
+                                    <button type="submit" class="btn btn-default btn-xs"
+                                            title="The rule applies again">
+                                        <i class="fa fa-undo"></i> Un-exclude
+                                    </button>
+                                </form>
+                            </td>
+                        </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+                </div>
+
+                <p class="help-block">
+                    A rule shown as <em>not in this policy</em> is one the policy no
+                    longer holds. The exclusion is kept rather than removed — reinstall
+                    the set and it applies again, which is better than rediscovering the
+                    false positive that caused it.
+                </p>
+                {% else %}
+                <p class="text-muted">
+                    No exclusions. Every rule in this policy runs on every site using it.
+                    <br>
+                    <small>The usual way one appears is from
+                    <a href="/traffic">Traffic Monitor</a>: find the request that was
+                    wrongly blocked and exclude that one rule for that one client.</small>
+                </p>
+                {% endif %}
+
+                <hr>
+                <a href="/policy/{{ policy_name }}/rules" class="btn btn-default">
+                    <i class="fa fa-list"></i> This policy's rules
+                </a>
+                <a href="/traffic" class="btn btn-default">
+                    <i class="fa fa-exchange"></i> Traffic Monitor
+                </a>
+                <a href="/policy" class="btn btn-default">Back to policies</a>
+
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
