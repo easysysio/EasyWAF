@@ -64,6 +64,11 @@ pub struct HourBucket {
     pub hour:    String,
     pub total:   i64,
     pub blocked: i64,
+    /// Allowed, but the WAF matched rules on them. Charted apart from the rest
+    /// of "allowed": without this, filtering to Detected paints those hours
+    /// green as ordinary traffic, which is the opposite of what the filter was
+    /// selected to show.
+    pub detected: i64,
 }
 
 #[derive(Debug, Serialize)]
@@ -101,9 +106,10 @@ struct StatsRow {
 
 #[derive(sqlx::FromRow)]
 struct HourRow {
-    hour:    Option<String>, // strftime result; None if no rows
-    total:   i64,
-    blocked: Option<i64>,
+    hour:     Option<String>, // strftime result; None if no rows
+    total:    i64,
+    blocked:  Option<i64>,
+    detected: Option<i64>,
 }
 
 // ─── get_traffic ─────────────────────────────────────────
@@ -129,7 +135,7 @@ pub async fn get_traffic(
     let sites  = fetch_sites(&state).await?;
     let events = fetch_events(&state, &cutoff, &site_sel, &blocked_sel).await?;
     let stats  = fetch_stats(&state, &cutoff, &site_sel, &blocked_sel).await?;
-    let chart  = fetch_chart(&state, &cutoff, &site_sel).await?;
+    let chart  = fetch_chart(&state, &cutoff, &site_sel, &blocked_sel).await?;
 
     let mut ctx = Context::new();
     ctx.insert("username",    &session.username);
@@ -247,14 +253,17 @@ async fn fetch_stats(
 
 /// Per-hour request/block counts for the Chart.js bar chart.
 async fn fetch_chart(
-    state:  &AppState,
-    cutoff: &str,
-    site:   &str,
+    state:   &AppState,
+    cutoff:  &str,
+    site:    &str,
+    blocked: &str,
 ) -> Result<Vec<HourBucket>> {
     let mut qb: QueryBuilder<sqlx::Sqlite> = QueryBuilder::new(
         "SELECT strftime('%Y-%m-%d %H:00', te.timestamp) AS hour,
                 COUNT(*) AS total,
-                SUM(CASE WHEN te.blocked = 1 THEN 1 ELSE 0 END) AS blocked
+                SUM(CASE WHEN te.blocked = 1 THEN 1 ELSE 0 END) AS blocked,
+                SUM(CASE WHEN te.blocked = 0 AND te.detection IS NOT NULL
+                         THEN 1 ELSE 0 END) AS detected
          FROM traffic_events te
          LEFT JOIN sites s ON s.id = te.site_id
          WHERE te.timestamp >= ",
@@ -262,6 +271,10 @@ async fn fetch_chart(
     qb.push_bind(cutoff);
 
     apply_site_filter(&mut qb, site);
+    // The chart took the site and the time window but not the verdict, so
+    // choosing Blocked Only changed the table underneath a graph that carried
+    // on showing everything — two answers to one question on one page.
+    apply_blocked_filter(&mut qb, blocked);
 
     qb.push(" GROUP BY hour ORDER BY hour ASC");
 
@@ -269,9 +282,10 @@ async fn fetch_chart(
 
     Ok(rows.into_iter().filter_map(|r| {
         r.hour.map(|h| HourBucket {
-            hour:    h,
-            total:   r.total,
-            blocked: r.blocked.unwrap_or(0),
+            hour:     h,
+            total:    r.total,
+            blocked:  r.blocked.unwrap_or(0),
+            detected: r.detected.unwrap_or(0),
         })
     }).collect())
 }
@@ -299,3 +313,4 @@ fn apply_blocked_filter(qb: &mut QueryBuilder<sqlx::Sqlite>, blocked: &str) {
         _   => {}
     }
 }
+

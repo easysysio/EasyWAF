@@ -8,6 +8,18 @@ Version bumps and tags are created only after explicit approval.
 
 ## [Unreleased]
 
+### Fixed
+- **The Traffic Monitor's graph now follows the verdict filter.** It took the
+  site and the time window but not the verdict, so choosing *Blocked Only*
+  changed the table while the graph above it carried on showing everything —
+  two answers to one question on one page.
+
+  The graph also gained a **Detected** series. Without one, filtering to
+  *Detected (allowed)* drew those hours green as ordinary traffic, which is the
+  opposite of what selecting that filter is asking to see. The three series are
+  disjoint and sum to each hour's total, matching the dashboard's verdict
+  split.
+
 ### Changed
 - **A cloned rule is a custom rule, and no longer sits in the set it came
   from.** It used to inherit the origin's set id, which made it a member of

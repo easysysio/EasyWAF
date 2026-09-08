@@ -175,7 +175,13 @@ mod tests {
         ctx.insert("stats", &serde_json::json!({
             "total": 6, "blocked": 1, "allowed": 5, "avg_response": 4 }));
         ctx.insert("sites",   &Vec::<String>::new());
-        ctx.insert("hourly",  &Vec::<String>::new());
+        // Chart data too, so the chart block is rendered rather than skipped —
+        // it reads fields off each bucket, and a missing one is a render-time
+        // failure, not a compile-time one.
+        ctx.insert("chart", &vec![
+            serde_json::json!({ "hour": "2026-09-08 10:00", "total": 9, "blocked": 2, "detected": 3 }),
+            serde_json::json!({ "hour": "2026-09-08 11:00", "total": 4, "blocked": 0, "detected": 0 }),
+        ]);
         ctx.insert("username",    "t");
         ctx.insert("title",       "Traffic");
         ctx.insert("url",         "/traffic");
@@ -190,6 +196,11 @@ mod tests {
         assert!(html.contains("DETECTED"),      "an observed row lost its verdict");
         assert!(html.contains("BLOCKED"),       "a blocked row lost its verdict");
         assert!(html.contains("PASS"),          "a clean row lost its verdict");
+        // The chart's three series must all reach the page, or an hour of
+        // detected traffic is drawn as ordinary traffic.
+        for series in ["'Allowed'", "'Detected'", "'Blocked'"] {
+            assert!(html.contains(series), "the chart is missing its {series} series");
+        }
     }
 
     #[test]

@@ -255,7 +255,11 @@ $(document).ready(function () {
     if (!raw || raw.length === 0) return;
 
     const labels   = raw.map(function(b) { return b.hour.slice(11, 16); }); // HH:MM
-    const allowed  = raw.map(function(b) { return b.total - b.blocked; });
+    // Three disjoint series that sum to the hour's total. Detected is split out
+    // of allowed: those requests were served, but calling them plain traffic is
+    // what hid them in the first place.
+    const allowed  = raw.map(function(b) { return b.total - b.blocked - b.detected; });
+    const detected = raw.map(function(b) { return b.detected; });
     const blocked  = raw.map(function(b) { return b.blocked; });
 
     new Chart(document.getElementById('trafficChart'), {
@@ -268,6 +272,13 @@ $(document).ready(function () {
                     data:            allowed,
                     backgroundColor: 'rgba(39,174,96,0.7)',
                     borderColor:     'rgba(39,174,96,1)',
+                    borderWidth:     1,
+                },
+                {
+                    label:           'Detected',
+                    data:            detected,
+                    backgroundColor: 'rgba(41,128,185,0.7)',
+                    borderColor:     'rgba(41,128,185,1)',
                     borderWidth:     1,
                 },
                 {
