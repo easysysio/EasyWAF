@@ -1,7 +1,7 @@
 # Design note — backup, restore, and configuration export
 
-Status: planned for **0.11.0** — see [roadmap.md](roadmap.md), after rule
-updates (0.6.0), flow logs (0.9.0) and load balancing (0.10.0).
+Status: planned for **0.12.0** — see [roadmap.md](roadmap.md), after rule
+updates (0.6.0), flow logs (0.10.0) and load balancing (0.11.0).
 
 ## The problem
 
@@ -90,7 +90,7 @@ should be settled before coding:
 
 **Replace or merge?** Both are legitimate — "make this instance match that
 file" versus "add these sites to what is here" — and they are different
-features with different failure modes. Pick one for 0.11.0 and say which; a
+features with different failure modes. Pick one for 0.12.0 and say which; a
 restore that silently does the other loses data.
 
 **What identifies an object across instances?** Not `id`: autoincrement values
@@ -110,7 +110,7 @@ hand back to an operator who has just recovered from an outage.
 database swapped in at the end. A half-applied configuration on a security
 appliance is worse than a failed restore, because it looks like success.
 
-## Why 0.11.0
+## Why 0.12.0
 
 **After 0.6.0, because 0.6.0 decides what a rule *is*.** That release makes
 vendor rules immutable and turns edits into clones held as custom rules. An
@@ -120,9 +120,14 @@ the distinction that matters: which rules came from a vendor set at which
 version, and which are genuinely this installation's own. Only the second kind
 needs to travel in full; the first is a reference to a set that can be fetched.
 
-**Before IP lists, rate limiting and learning**, so those three are designed
-with an export format already in place rather than retrofitted into one. That
-is also why it should not go later: each of them adds exportable state.
+**Before rate limiting and learning**, so those two are designed with an export
+format already in place rather than retrofitted into one. That is also why it
+should not go later: each of them adds exportable state.
+
+IP lists moved ahead of this release on 2026-09-08, so their state is one the
+export has to accommodate rather than one shaped around it. That is a smaller
+cost than it sounds — an IP list is a flat table of addresses with a note and a
+timestamp, which is the easiest kind of state to export.
 
 **It displaces flow logs by one release**, which is the cheapest thing to
 displace — the logging work has a cross-repository dependency (see
@@ -132,6 +137,6 @@ release it lands in.
 It is not earlier than 0.6.0 mainly because of the rule-model point above. The
 counter-argument is real and worth recording: every release it waits is another
 release in which a lost host means a lost configuration. If that becomes urgent
-before 0.11.0, **the snapshot half can be pulled forward on its own** — it is
+before 0.12.0, **the snapshot half can be pulled forward on its own** — it is
 schema-agnostic, so it neither depends on the rule model nor churns when the
 schema changes. The structured export is the half that must wait.
