@@ -6,7 +6,7 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
-## [Unreleased]
+## [0.7.2] — 2026-09-08
 
 ### Fixed
 - **Rule Exclusions now appears in the Security Policy menu.** It was asked for
