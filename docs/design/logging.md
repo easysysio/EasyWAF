@@ -1,6 +1,6 @@
 # Design note — flow logs over syslog, audit log on disk
 
-Status: planned for **0.9.0** — see [roadmap.md](roadmap.md). It follows TLS
+Status: **shipped in 0.9.0** — see [roadmap.md](roadmap.md). It follows TLS
 (0.4.0), ACME (0.5.0), the update work (0.6.0) and users and roles (0.8.0) — the
 audit log deliberately comes after roles, since a trail recording that "admin
 did X" says little when every operator is `admin`.
@@ -24,12 +24,13 @@ log and the audit trail already in place is what makes either debuggable.
 The EasyLog parser question below is cross-repository and can be settled in
 parallel, well before then.
 
-## What EasyWAF does today
+## What EasyWAF did before this
 
-Everything goes to stdout through `tracing`, which systemd captures into the
-journal. There are no log files, no rotation, and **no audit trail at all** —
-22 state-changing POST handlers, none of which record who performed the action.
-A traffic event is written to the `traffic_events` table and nowhere else.
+Everything went to stdout through `tracing`, which systemd captures into the
+journal. There were no log files, no rotation, and **no audit trail at all** —
+22 state-changing POST handlers, none of which recorded who performed the
+action. A traffic event was written to the `traffic_events` table and nowhere
+else.
 
 ## Decisions taken
 
@@ -118,6 +119,23 @@ handler remembering to say so. That is the same reasoning that made
 authorisation an extractor in 0.8.0: a trail that depends on thirty-seven
 handlers each calling a function is a trail with holes in it, and the holes are
 exactly where somebody did something they should not have.
+
+Signing out is the one GET the layer treats as state-changing — it is a link
+rather than a form, and a trail with sign-ins but no sign-outs leaves every
+session looking open.
+
+Signing in is the one case the layer cannot read on its own: the account is in
+the request body, which it deliberately does not parse, and a refused attempt
+answers 200 with the form again. The handler attaches the name and the outcome
+to its response, and the layer prefers that when it is there. It is an escape
+hatch for what the router cannot see, not the interface — everything else is
+derived from the request and the response.
+
+Refusals are recorded, not only successes: a viewer's POST to an
+administrator's page is a line saying `result=refused`, which is the line
+somebody reviewing the trail is looking for. A save the handler rejected
+carries the reason it showed on screen, read back out of the flash redirect, so
+the trail says *why* rather than showing a 303 that looks like a success.
 
 What must appear:
 

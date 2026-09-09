@@ -12,6 +12,8 @@ Version bumps and tags are created only after explicit approval.
 - Flow logs over syslog: one line per proxied request, sent to a collector with the site, client, method, path, verdict, score and rules. Off by default.
 - Settings › Logging: the syslog collector's address and port, applied to the running proxy on save rather than at the next restart.
 - Logging configuration in `config.toml`: the directory the audit log is written to — `/var/log/easywaf` on every installation, created by the systemd unit — and how many days of files are kept.
+- Audit log: every change made through the management interface is written to `/var/log/easywaf/audit.log` with the account, the client address, the outcome and — when a save was refused — the reason.
+- Sign-ins, failed sign-ins and sign-outs appear in the audit log, a failed one naming the account that was tried.
 - `docs/design/easylog-easywaf-type.md` — the wire format EasyWAF emits, specified for EasyLog to implement a parser against.
 
 ### Fixed

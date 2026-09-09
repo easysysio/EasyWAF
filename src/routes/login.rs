@@ -4,6 +4,7 @@
 // =========================================================
 
 use crate::{
+    audit,
     auth::{clear_session, get_session, set_session, SessionData},
     error::Result,
     AppState,
@@ -73,6 +74,10 @@ pub async fn post_login(
     jar: SignedCookieJar,
     Form(form): Form<LoginForm>,
 ) -> Result<Response> {
+    // The audit layer cannot see either half of this on its own: the account
+    // is in the request body, which it does not read, and a refused sign-in
+    // answers 200 with the form again — the same status as anything else that
+    // renders a page. Both are attached to the response instead.
     match verify_credentials(&state.db, &form.user, &form.pass).await {
         Some(session) => {
             // Recorded so the account list can show a dormant account, which
@@ -89,15 +94,28 @@ pub async fn post_login(
             }
             tracing::info!(user = %session.username, role = %session.role, "Signed in");
             let jar = set_session(jar, &session);
-            Ok((jar, Redirect::to("/")).into_response())
+            let mut res = (jar, Redirect::to("/")).into_response();
+            res.extensions_mut().insert(audit::Note::sign_in(&form.user, true));
+            Ok(res)
         }
-        None => render_login(&state, "failed", "Bad username or password", jar).await,
+        None => {
+            let mut res =
+                render_login(&state, "failed", "Bad username or password", jar).await?;
+            // The name as typed, escaped when it is written: a failed sign-in
+            // is the one line in the trail whose account is attacker-chosen.
+            res.extensions_mut().insert(audit::Note::sign_in(&form.user, false));
+            Ok(res)
+        }
     }
 }
 
 // ─── get_logout ──────────────────────────────────────────
 
 /// GET /logout — Clear session and redirect to login.
+///
+/// Recorded by the audit layer, which treats this one GET as state-changing:
+/// it is a link rather than a form, and a trail with sign-ins but no sign-outs
+/// leaves every session looking open.
 pub async fn get_logout(jar: SignedCookieJar) -> impl IntoResponse {
     let jar = clear_session(jar);
     (jar, Redirect::to("/login"))

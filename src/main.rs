@@ -10,6 +10,7 @@
 
 mod assets;
 mod acme;
+mod audit;
 mod auth;
 mod cert;
 mod challenge;
@@ -282,6 +283,12 @@ async fn main() {
         // so the browser always revalidates — a stale cached stylesheet after
         // an upgrade looks like a broken GUI.
         .route("/static/{*path}", get(assets::serve_static))
+        // Last, so it wraps every route above it: the audit trail is a
+        // property of the router, not something each handler remembers.
+        .layer(axum::middleware::from_fn_with_state(
+            gui_state.clone(),
+            audit::record,
+        ))
         .with_state(gui_state);
 
     // ── Management interface: TLS, with plain HTTP redirecting to it ──
@@ -338,7 +345,13 @@ async fn main() {
     };
 
     info!("Management GUI listening on https://{} (certificate '{}')", tls_addr, cert_name);
-    if let Err(e) = server.serve(app.into_make_service()).await {
+    // with_connect_info, so the audit trail can say where a change came from.
+    // The management interface is reached directly — there is no proxy in
+    // front of it to forward an address — so the peer is the client.
+    if let Err(e) = server
+        .serve(app.into_make_service_with_connect_info::<SocketAddr>())
+        .await
+    {
         tracing::error!("Management GUI server error: {}", e);
         std::process::exit(1);
     }

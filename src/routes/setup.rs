@@ -156,7 +156,15 @@ pub async fn post_setup(
     // To the login page rather than straight in: signing in proves the password
     // was stored as typed, at the moment it is still fresh in mind, instead of
     // at the next session when it is not.
-    flash_redirect("/login", "success", "Account created — sign in to continue")
+    let mut res = flash_redirect("/login", "success", "Account created — sign in to continue")?;
+    // Nobody is signed in during setup, so the audit layer has no name to
+    // record. The first account is the one line in the trail where knowing
+    // which account was created matters most.
+    res.extensions_mut().insert(crate::audit::Note {
+        user:   Some(username.to_string()),
+        result: Some("ok".to_string()),
+    });
+    Ok(res)
 }
 
 // ─── Flash redirect helper ───────────────────────────────
