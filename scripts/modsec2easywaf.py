@@ -338,7 +338,7 @@ def toml_string(value):
     return '"' + escaped + '"'
 
 
-def convert(paths, id_base, include_widened, set_id, set_name):
+def convert(paths, id_base, include_widened, set_id, set_name, max_paranoia=1):
     rules, skipped, stats = [], [], Counter()
     seen_ids = set()
 
@@ -366,6 +366,23 @@ def convert(paths, id_base, include_widened, set_id, set_name):
 
             if not rid:
                 stats["no id"] += 1
+                continue
+
+            # CRS paranoia level. Levels above 1 are opt-in upstream: CRS ships
+            # at level 1 and an operator raises it deliberately, accepting more
+            # false positives for more coverage. Converting them all made 53%
+            # of the output always-on rules that CRS itself would not run —
+            # which is a false-positive generator wearing a rule set's clothes.
+            level = 1
+            for tag in actions.get("tag", []):
+                m = re.match(r"paranoia-level/(\d)", tag)
+                if m:
+                    level = int(m.group(1))
+            if level > max_paranoia:
+                stats[f"paranoia level {level}"] += 1
+                skipped.append((label, f"CRS paranoia level {level}; this conversion "
+                                       f"takes up to {max_paranoia}, which is what CRS "
+                                       f"runs by default"))
                 continue
 
             phases = actions.get("phase") or ["2"]
@@ -472,6 +489,7 @@ def convert(paths, id_base, include_widened, set_id, set_name):
             seen_ids.add(new_id)
 
             rules.append({
+                "paranoia": level,
                 "id": new_id, "orig": rid, "name": msg or f"ModSecurity {rid}",
                 "zone": zone, "pattern": pattern, "score": score,
                 "severity": severity, "widened": widened,
@@ -501,7 +519,8 @@ def convert(paths, id_base, include_widened, set_id, set_name):
         "",
     ]
     for r in rules:
-        note = f"Converted from ModSecurity rule {r['orig']} (severity {r['severity']})"
+        note = (f"Converted from ModSecurity rule {r['orig']} "
+                f"(severity {r['severity']}, CRS paranoia level {r['paranoia']})")
         if r["transforms"]:
             note += f"; original transforms t:{','.join(r['transforms'])}"
         if r["widened"]:
@@ -640,6 +659,9 @@ def main():
                     help="offset added to every rule id (default 2000000)")
     ap.add_argument("--include-widened", action="store_true",
                     help="also convert rules whose scope EasyWAF can only widen")
+    ap.add_argument("--max-paranoia", type=int, default=1, metavar="N",
+                    help="highest CRS paranoia level to convert (default 1, which "
+                         "is what CRS itself runs unless told otherwise)")
     ap.add_argument("--self-test", action="store_true",
                     help="check the refusals and rewrites, then exit")
     args, _ = ap.parse_known_args()
@@ -647,8 +669,8 @@ def main():
         return self_test()
     args = ap.parse_args()
 
-    toml, skipped, stats = convert(args.files, args.id_base,
-                                   args.include_widened, args.set_id, args.set_name)
+    toml, skipped, stats = convert(args.files, args.id_base, args.include_widened,
+                                   args.set_id, args.set_name, args.max_paranoia)
 
     if args.out:
         with open(args.out, "w", encoding="utf-8") as fh:

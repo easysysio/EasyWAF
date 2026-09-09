@@ -6,6 +6,11 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
+## [Unreleased]
+
+### Fixed
+- `scripts/modsec2easywaf.py` converted CRS rules of every paranoia level. CRS runs level 1 by default and higher levels are opt-in, so 53% of the output was rules CRS itself would not run. It now takes `--max-paranoia`, default 1.
+
 ## [0.8.1] — 2026-09-09
 
 ### Fixed
