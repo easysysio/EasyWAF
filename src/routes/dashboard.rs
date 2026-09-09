@@ -140,7 +140,7 @@ pub async fn get_dashboard(
     let chart        = fetch_hourly_traffic(&state, &window_start).await?;
 
     let mut ctx = Context::new();
-    ctx.insert("username",       &session.username);
+    crate::routes::who_context(&mut ctx, &session);
     ctx.insert("title",          "Dashboard");
     ctx.insert("url",            "/");
     ctx.insert("sites_number",   &sites_count);

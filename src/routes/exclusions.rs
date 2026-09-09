@@ -188,7 +188,7 @@ pub async fn get_site_exclusions(
     };
 
     let mut ctx = Context::new();
-    ctx.insert("username",    &session.username);
+    crate::routes::who_context(&mut ctx, &session);
     ctx.insert("title",       "Rule Exclusions");
     ctx.insert("url",         "/sites");
     ctx.insert("site_name",   &name);
@@ -431,7 +431,7 @@ pub async fn get_exclusions(
         .await?;
 
     let mut ctx = Context::new();
-    ctx.insert("username",   &session.username);
+    crate::routes::who_context(&mut ctx, &session);
     ctx.insert("title",      "Rule Exclusions");
     ctx.insert("url",        "/exclusions");
     ctx.insert("policies",   &policies);

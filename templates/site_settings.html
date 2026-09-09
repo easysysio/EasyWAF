@@ -20,7 +20,7 @@
         <div class="panel panel-default">
             <div class="panel-heading"><h4>Site Settings — {{ site.name }}</h4></div>
             <div class="panel-body">
-                <form method="post" action="/sites/{{ site.name }}/update">
+                <form class="admin-only" method="post" action="/sites/{{ site.name }}/update">
 
                     <div class="form-group">
                         <label>Site Name</label>
@@ -223,7 +223,7 @@
                     Set the contact address under <a href="/settings">Settings</a> first, and
                     start with the staging directory.
                 </p>
-                <form method="post" action="/sites/{{ site.name }}/acme"
+                <form class="admin-only" method="post" action="/sites/{{ site.name }}/acme"
                       onsubmit="return confirm('Request a Let\'s Encrypt certificate for {{ site.server_name }}?');">
                     <button type="submit" class="btn btn-primary">
                         <i class="fa fa-refresh"></i> Request Certificate

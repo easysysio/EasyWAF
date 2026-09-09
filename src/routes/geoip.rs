@@ -26,7 +26,7 @@ pub async fn get_geoip(
 ) -> Result<Response> {
 
     let mut ctx = Context::new();
-    ctx.insert("username", &session.username);
+    crate::routes::who_context(&mut ctx, &session);
     ctx.insert("title", "GeoLocation Rules");
     ctx.insert("url", "/geoip");
     ctx.insert("result", "");

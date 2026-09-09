@@ -102,7 +102,7 @@
                                 {% endif %}
                             </td>
                             <td class="text-right" style="white-space:nowrap">
-                                <form method="post"
+                                <form class="admin-only" method="post"
                                       action="/sites/{{ site_name }}/exclusions/{{ e.id }}/delete"
                                       onsubmit="return confirm('Stop excluding this rule for {{ site_name }}?\n\nIt will run again on the next request, and can block.');"
                                       style="display:inline">
@@ -140,7 +140,7 @@
 
                 <h5><i class="fa fa-plus"></i> Exclude a rule</h5>
                 <form method="post" action="/sites/{{ site_name }}/exclusions/add"
-                      class="form-horizontal" style="margin-top:12px">
+                      class="form-horizontal admin-only" style="margin-top:12px">
 
                     <div class="form-group">
                         <label class="col-sm-2 control-label">Rule</label>

@@ -100,7 +100,7 @@
                                 <small class="text-muted">({{ pol.enabled_count }} enabled)</small>
                             {% else %}
                                 <a href="/policy/{{ pol.name }}/rules/catalog"
-                                   class="btn btn-xs btn-primary">
+                                   class="btn btn-xs btn-primary admin-only">
                                     <i class="fa fa-book"></i> Select rules
                                 </a>
                             {% endif %}
@@ -130,7 +130,7 @@
                                title="Rule Exclusions — rules not running, and for which clients">
                                 <i class="fa fa-ban fa-2x"></i>
                             </a>
-                            <form method="post" action="/policy/{{ pol.name }}/delete"
+                            <form class="admin-only" method="post" action="/policy/{{ pol.name }}/delete"
                                   onsubmit="return confirm('Delete policy {{ pol.name }}?');"
                                   style="display:inline">
                                 <button type="submit" class="btn btn-link" style="padding:0">
@@ -146,7 +146,7 @@
     </div>
 </div>
 
-<a href="/policy/new" class="btn btn-primary">
+<a href="/policy/new" class="btn btn-primary admin-only">
     <i class="fa fa-plus"></i> Create Policy
 </a>
 

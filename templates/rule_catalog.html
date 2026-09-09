@@ -2,7 +2,7 @@
 
 {% block content %}
 
-<form method="post" action="/policy/{{ policy.name }}/rules/catalog" id="catalogForm"
+<form class="admin-only" method="post" action="/policy/{{ policy.name }}/rules/catalog" id="catalogForm"
       onsubmit="collectIds()">
     <!-- Hidden field populated with checked external_ids on submit -->
     <input type="hidden" name="ids" id="catalogIds" value="">

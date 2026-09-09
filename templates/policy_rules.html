@@ -37,7 +37,7 @@
             pattern, because both would then match the same request and both would
             add their score.
         </p>
-        <form method="post" action="/policy/{{ policy.name }}/rules/share"
+        <form class="admin-only" method="post" action="/policy/{{ policy.name }}/rules/share"
               onsubmit="return collectTargets()">
             <input type="hidden" name="targets" id="shareTargets">
             {% for p in other_policies %}
@@ -64,13 +64,13 @@
         <a href="/exclusions?policy={{ policy.name }}" class="btn btn-default btn-sm" style="margin-left:6px">
             <i class="fa fa-ban"></i> Exclusions
         </a>
-        <a href="/policy/{{ policy.name }}/rules/catalog" class="btn btn-default btn-sm" style="margin-left:6px">
+        <a href="/policy/{{ policy.name }}/rules/catalog" class="btn btn-default btn-sm admin-only" style="margin-left:6px">
             <i class="fa fa-book"></i> Select from Rule Library
         </a>
-        <a href="/policy/{{ policy.name }}/rules/new" class="btn btn-success btn-sm" style="margin-left:6px">
+        <a href="/policy/{{ policy.name }}/rules/new" class="btn btn-success btn-sm admin-only" style="margin-left:6px">
             <i class="fa fa-plus"></i> Add Rule
         </a>
-        <form method="post" action="/policy/{{ policy.name }}/rules/import"
+        <form class="admin-only" method="post" action="/policy/{{ policy.name }}/rules/import"
               style="display:inline;margin-left:6px"
               onsubmit="return confirm('Import OWASP rules from rules/ directory?');">
             <button type="submit" class="btn btn-warning btn-sm">
@@ -123,7 +123,7 @@
 </div>
 
 <!-- ── Bulk-action form wraps the table ───────────────────── -->
-<form method="post" action="/policy/{{ policy.name }}/rules/bulk" id="bulkForm">
+<form class="admin-only" method="post" action="/policy/{{ policy.name }}/rules/bulk" id="bulkForm">
     <!-- Single comma-separated IDs field populated by JS before submit.
          We use one field (not repeated checkbox fields) because
          serde_urlencoded does not map repeated keys into Vec<T>. -->
@@ -216,7 +216,7 @@
                                     <i class="fa fa-play"></i>
                                 {% endif %}
                             </a>
-                            <form id="toggleForm{{ r.id }}" method="post"
+                            <form class="admin-only" id="toggleForm{{ r.id }}" method="post"
                                   action="/policy/{{ policy.name }}/rules/{{ r.id }}/toggle"
                                   style="display:none"></form>
                             <!-- Per-row delete -->
@@ -226,7 +226,7 @@
                                           document.getElementById('delForm{{ r.id }}').submit();">
                                 <i class="fa fa-trash"></i>
                             </a>
-                            <form id="delForm{{ r.id }}" method="post"
+                            <form class="admin-only" id="delForm{{ r.id }}" method="post"
                                   action="/policy/{{ policy.name }}/rules/{{ r.id }}/delete"
                                   style="display:none"></form>
                         </td>

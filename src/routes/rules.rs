@@ -102,7 +102,7 @@ pub async fn get_rules(
     let enabled_rules = rules.iter().filter(|r| r.enabled).count();
 
     let mut ctx = Context::new();
-    ctx.insert("username",      &session.username);
+    crate::routes::who_context(&mut ctx, &session);
     ctx.insert("title",         "WAF Rules");
     ctx.insert("url",           "/policy");
     ctx.insert("policy",        &policy);
@@ -153,7 +153,7 @@ pub async fn get_rule_new(
     let policy = fetch_policy_header(&state, &policy_name).await?;
 
     let mut ctx = Context::new();
-    ctx.insert("username", &session.username);
+    crate::routes::who_context(&mut ctx, &session);
     ctx.insert("title",    "Add Rule");
     ctx.insert("url",      "/policy");
     ctx.insert("policy",   &policy);
@@ -1173,7 +1173,7 @@ pub async fn get_rules_catalog(
     let total_added:     usize = catalog.iter().map(|c| c.added_count).sum();
 
     let mut ctx = Context::new();
-    ctx.insert("username",        &session.username);
+    crate::routes::who_context(&mut ctx, &session);
     ctx.insert("title",           "Rule Library");
     ctx.insert("url",             "/policy");
     ctx.insert("policy",          &policy);
@@ -1564,7 +1564,7 @@ pub async fn get_all_rules(
     let enabled: usize = groups.iter().map(|g| g.enabled).sum();
 
     let mut ctx = Context::new();
-    ctx.insert("username",      &session.username);
+    crate::routes::who_context(&mut ctx, &session);
     ctx.insert("title",         "Rule Editor");
     ctx.insert("url",           "/rules");
     ctx.insert("groups",        &groups);
@@ -1687,7 +1687,7 @@ pub async fn get_rule_edit_global(
     );
     ctx.insert("set_now",      &set_now);
     ctx.insert("set_moved_on", &set_moved_on);
-    ctx.insert("username", &session.username);
+    crate::routes::who_context(&mut ctx, &session);
     ctx.insert("title",    "Edit Rule");
     ctx.insert("url",      "/rules");
     ctx.insert("rule",     &rule);
@@ -2053,7 +2053,7 @@ pub async fn get_custom_rule_new(
         .await?;
 
     let mut ctx = Context::new();
-    ctx.insert("username", &session.username);
+    crate::routes::who_context(&mut ctx, &session);
     ctx.insert("title",    "Add Custom Rule");
     ctx.insert("url",      "/rules");
     ctx.insert("policies", &policies);

@@ -44,6 +44,21 @@
     <link rel="apple-touch-icon" href="/static/apple-touch-icon.png?v=1">
 
     <link rel="stylesheet" href="/static/css/easywaf.css?v=5">
+<style>
+/* Controls a viewer cannot use are not offered to one.
+ *
+ * The route's extractor is what actually refuses — this only stops the page
+ * advertising a 403. Marking is deliberate rather than blanket: changing your
+ * own password is a form on an ordinary page and must stay reachable.
+ *
+ * Fails safe in both directions. A control that should be marked and is not
+ * still gets refused on click, which is where this stood before; and a page
+ * that omits is_admin renders as a viewer rather than as an administrator,
+ * because every use site defaults it to false. */
+{% if not is_admin | default(value=false) %}
+.admin-only { display: none !important; }
+{% endif %}
+</style>
 </head>
 <body>
 <div id="wrapper">
@@ -74,7 +89,14 @@
         <ul class="nav navbar-right navbar-top-links">
             <li class="dropdown">
                 <a class="dropdown-toggle" data-toggle="dropdown" href="#">
-                    <i class="fa fa-user fa-fw"></i> {{ username }} <b class="caret"></b>
+                    <i class="fa fa-user fa-fw"></i> {{ username }}
+                    {# Worth stating rather than leaving to be inferred from which
+                       buttons are missing: a viewer who does not know they are one
+                       reads an absent control as a broken page. #}
+                    {% if is_admin | default(value=false) %}{% else %}
+                        <span class="label label-default" title="You can see everything here but change nothing.">viewer</span>
+                    {% endif %}
+                    <b class="caret"></b>
                 </a>
                 <ul class="dropdown-menu dropdown-user">
                     <li><a href="/account"><i class="fa fa-key fa-fw"></i> Change Password</a></li>
@@ -120,7 +142,9 @@
                 <li>
                     <a href="#"><i class="fa fa-certificate fa-fw"></i> Certificates <span class="fa arrow"></span></a>
                     <ul class="nav nav-second-level">
+{% if is_admin | default(value=false) %}
                         <li><a href="/certs"><i class="fa fa-certificate"></i> Certificate Manager</a></li>
+                        {% endif %}
                     </ul>
                 </li>
                 <li>
@@ -135,9 +159,18 @@
                 <li>
                     <a href="#"><i class="fa fa-cog fa-fw"></i> Settings <span class="fa arrow"></span></a>
                     <ul class="nav nav-second-level">
+                        {# Offered only to those who may use them. The route's own
+                           extractor is what refuses; this stops the menu from
+                           advertising a 403. Defaulting to false means a page that
+                           somehow omits the flag renders as a viewer rather than
+                           offering controls it should not. #}
+                        {% if is_admin | default(value=false) %}
                         <li><a href="/settings"><i class="fa fa-sliders"></i> General</a></li>
+                        {% endif %}
                         <li><a href="/account"><i class="fa fa-key"></i> Change Password</a></li>
+                        {% if is_admin | default(value=false) %}
                         <li><a href="/accounts"><i class="fa fa-users"></i> Accounts</a></li>
+                        {% endif %}
                     </ul>
                 </li>
             </ul>

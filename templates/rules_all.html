@@ -23,7 +23,7 @@
         <span class="text-muted" style="font-size:12px">
             {{ total_rules }} rules · {{ enabled_rules }} enabled
         </span>
-        <a href="/rules/new" class="btn btn-success btn-sm" style="margin-left:auto">
+        <a href="/rules/new" class="btn btn-success btn-sm admin-only" style="margin-left:auto">
             <i class="fa fa-plus"></i> Add Custom Rule
         </a>
         <input type="text" class="form-control input-sm" id="ruleSearch"
@@ -160,7 +160,7 @@
                            onclick="event.preventDefault(); document.getElementById('tg{{ r.id }}').submit();">
                             {% if r.enabled %}<i class="fa fa-pause"></i>{% else %}<i class="fa fa-play"></i>{% endif %}
                         </a>
-                        <form id="tg{{ r.id }}" method="post"
+                        <form class="admin-only" id="tg{{ r.id }}" method="post"
                               action="/rules/{{ r.id }}/toggle" style="display:none"></form>
                         <a href="#" class="btn btn-xs btn-danger" title="Delete"
                            onclick="event.preventDefault();
@@ -168,7 +168,7 @@
                                       document.getElementById('dl{{ r.id }}').submit();">
                             <i class="fa fa-trash"></i>
                         </a>
-                        <form id="dl{{ r.id }}" method="post"
+                        <form class="admin-only" id="dl{{ r.id }}" method="post"
                               action="/rules/{{ r.id }}/delete" style="display:none"></form>
                     </td>
                 </tr>

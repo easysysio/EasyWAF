@@ -118,7 +118,7 @@ pub async fn get_settings(
         .await?;
 
     let mut ctx = Context::new();
-    ctx.insert("username",       &session.username);
+    crate::routes::who_context(&mut ctx, &session);
     ctx.insert("title",          "Settings");
     ctx.insert("url",            "/settings");
     ctx.insert("retention_days",      &retention_days);

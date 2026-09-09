@@ -104,7 +104,7 @@ pub async fn get_sites(
     let policies = fetch_policies(&state).await?;
 
     let mut ctx = Context::new();
-    ctx.insert("username",  &session.username);
+    crate::routes::who_context(&mut ctx, &session);
     ctx.insert("title",     "Site Management");
     ctx.insert("url",       "/sites");
     ctx.insert("sites",     &sites);
@@ -128,7 +128,7 @@ pub async fn get_site_new(
     let policies = fetch_policies(&state).await?;
 
     let mut ctx = Context::new();
-    ctx.insert("username",  &session.username);
+    crate::routes::who_context(&mut ctx, &session);
     ctx.insert("title",     "Create Site");
     ctx.insert("url",       "/sites");
     ctx.insert("policies",  &policies);
@@ -294,7 +294,7 @@ pub async fn get_site_edit(
     let policies = fetch_policies(&state).await?;
 
     let mut ctx = Context::new();
-    ctx.insert("username",  &session.username);
+    crate::routes::who_context(&mut ctx, &session);
     ctx.insert("title",     "Site Settings");
     ctx.insert("url",       "/sites");
     ctx.insert("site",      &site);

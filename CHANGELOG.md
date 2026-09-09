@@ -9,6 +9,25 @@ Version bumps and tags are created only after explicit approval.
 ## [Unreleased]
 
 ### Added
+- **The interface reflects the role.** A viewer no longer sees Settings,
+  Certificates or Accounts in the menu, nor the certificate card on the
+  dashboard, and the controls that change things are not offered — 32 of them
+  across twelve pages. The header says `viewer` beside the username, because
+  someone who does not know they are one reads a missing button as a broken
+  page.
+
+  This is presentation, not enforcement: the route's extractor is what refuses,
+  and it is unchanged. So it fails safe twice over. A control that should be
+  marked and is not still gets refused on click, which is exactly where things
+  stood before; and a page that somehow renders without knowing the role shows
+  the viewer's interface rather than the administrator's, because every use
+  site defaults to `false`.
+
+  Actions are hidden with a stylesheet, but the dashboard's certificate card is
+  omitted server-side instead — it carries a count, and sending data a viewer
+  may not see and then covering it with CSS is not the same thing as declining
+  to offer a button.
+
 - **Account management** — Settings › Accounts, administrators only.
 
   Create accounts, change a role, reset a password, sign an account out of

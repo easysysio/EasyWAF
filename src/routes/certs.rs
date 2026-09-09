@@ -70,7 +70,7 @@ pub async fn get_certs(
     let certs = fetch_certs(&state).await?;
 
     let mut ctx = Context::new();
-    ctx.insert("username", &session.username);
+    crate::routes::who_context(&mut ctx, &session);
     ctx.insert("title",    "Certificate Management");
     ctx.insert("url",      "/certs");
     ctx.insert("certs",    &certs);
@@ -90,7 +90,7 @@ pub async fn get_cert_new(
 ) -> Result<Response> {
 
     let mut ctx = Context::new();
-    ctx.insert("username", &session.username);
+    crate::routes::who_context(&mut ctx, &session);
     ctx.insert("title",    "Add Certificate");
     ctx.insert("url",      "/certs");
     // A rejected pair redirects back here. Without this the form returned
@@ -327,7 +327,7 @@ pub async fn get_cert_acme(
 ) -> Result<Response> {
 
     let mut ctx = Context::new();
-    ctx.insert("username", &session.username);
+    crate::routes::who_context(&mut ctx, &session);
     ctx.insert("title",    "Request Certificate");
     ctx.insert("url",      "/certs");
     // Said on arrival rather than on submit: a form that cannot succeed should
@@ -436,7 +436,7 @@ pub async fn get_cert_detail(
     };
 
     let mut ctx = Context::new();
-    ctx.insert("username", &session.username);
+    crate::routes::who_context(&mut ctx, &session);
     ctx.insert("title",    &format!("Certificate: {}", row.name));
     ctx.insert("url",      "/certs");
     ctx.insert("name",     &row.name);

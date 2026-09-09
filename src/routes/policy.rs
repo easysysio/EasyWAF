@@ -154,7 +154,7 @@ pub async fn get_rule_sets(
     let (checked, error) = crate::rules_update::status(&state.db).await;
 
     let mut ctx = Context::new();
-    ctx.insert("username",    &session.username);
+    crate::routes::who_context(&mut ctx, &session);
     ctx.insert("title",       "Rule Sets");
     ctx.insert("url",         "/policy");
     ctx.insert("policy_name", &name);
@@ -184,7 +184,7 @@ pub async fn get_policies(
     let policies = fetch_policies(&state).await?;
 
     let mut ctx = Context::new();
-    ctx.insert("username",  &session.username);
+    crate::routes::who_context(&mut ctx, &session);
     ctx.insert("title",     "Policy Manager");
     ctx.insert("url",       "/policy");
     ctx.insert("policies",  &policies);
@@ -222,7 +222,7 @@ pub async fn get_policy_new(
     let (checked, check_error) = crate::rules_update::status(&state.db).await;
 
     let mut ctx = Context::new();
-    ctx.insert("username",        &session.username);
+    crate::routes::who_context(&mut ctx, &session);
     ctx.insert("title",           "Create Policy");
     ctx.insert("url",             "/policy");
     ctx.insert("catalog",         &catalog);
@@ -329,7 +329,7 @@ pub async fn get_policy_edit(
     let policy = fetch_policy(&state, &name).await?;
 
     let mut ctx = Context::new();
-    ctx.insert("username", &session.username);
+    crate::routes::who_context(&mut ctx, &session);
     ctx.insert("title",    "Policy Settings");
     ctx.insert("url",      "/policy");
     ctx.insert("policy",   &policy);

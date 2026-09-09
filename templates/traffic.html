@@ -246,7 +246,7 @@
                                         <i class="fa fa-ban"></i> excluded for this IP
                                     </span>
                                 {% elif h.id %}
-                                <form method="post" action="/exclusions/from-traffic"
+                                <form class="admin-only" method="post" action="/exclusions/from-traffic"
                                       style="display:inline"
                                       onsubmit="return confirm('Stop rule {{ h.id }} running for {{ e.client_ip }} on {{ e.host }}?\n\nEvery other client is still checked by it. You can undo this from the policy\'s exclusions list.');">
                                     <input type="hidden" name="host"      value="{{ e.host }}">

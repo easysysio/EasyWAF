@@ -161,7 +161,7 @@ pub async fn get_traffic(
     let chart  = fetch_chart(&state, &cutoff, &site_sel, &blocked_sel).await?;
 
     let mut ctx = Context::new();
-    ctx.insert("username",    &session.username);
+    crate::routes::who_context(&mut ctx, &session);
     ctx.insert("title",       "Traffic Monitor");
     ctx.insert("url",         "/traffic");
     ctx.insert("sites",       &sites);

@@ -59,7 +59,7 @@
                             {% endif %}
                         </td>
                         <td>
-                            <form method="post" action="/sites/{{ site.name }}/toggle"
+                            <form class="admin-only" method="post" action="/sites/{{ site.name }}/toggle"
                                   {% if site.enabled %}onsubmit="return confirm('Disable {{ site.name }}? Requests for {{ site.server_name }} will stop being proxied.');"{% endif %}
                                   style="display:inline">
                                 {% if site.enabled %}
@@ -80,7 +80,7 @@
                             </form>
                         </td>
                         <td>
-                            <form method="post" action="/sites/{{ site.name }}/delete"
+                            <form class="admin-only" method="post" action="/sites/{{ site.name }}/delete"
                                   onsubmit="return confirm('Delete site {{ site.name }}?');"
                                   style="display:inline">
                                 <button type="submit" class="btn btn-link" style="padding:0">
@@ -96,7 +96,7 @@
     </div>
 </div>
 
-<a href="/sites/new" class="btn btn-primary">
+<a href="/sites/new" class="btn btn-primary admin-only">
     <i class="fa fa-plus"></i> Create Site
 </a>
 

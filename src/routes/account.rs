@@ -66,7 +66,7 @@ pub async fn get_account(
     let using_default = is_default_password(&state.db, &session.username).await;
 
     let mut ctx = Context::new();
-    ctx.insert("username",       &session.username);
+    crate::routes::who_context(&mut ctx, &session);
     ctx.insert("title",          "Account");
     ctx.insert("url",            "/account");
     ctx.insert("using_default",  &using_default);

@@ -94,7 +94,7 @@
                                 <br><small class="text-muted">added {{ e.created_at }}</small>
                             </td>
                             <td class="text-right" style="white-space:nowrap">
-                                <form method="post"
+                                <form class="admin-only" method="post"
                                       action="/exclusions/{{ e.id }}/remove"
                                       onsubmit="return confirm('Stop excluding {{ e.rule_label }} on {{ e.site_name }}?\n\nThe rule will run again from the next request, and can block.');"
                                       style="display:inline">

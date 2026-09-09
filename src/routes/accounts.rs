@@ -152,7 +152,7 @@ pub async fn get_accounts(
     let admin_count = accounts.iter().filter(|a| a.role == ROLE_ADMIN && a.enabled).count();
 
     let mut ctx = Context::new();
-    ctx.insert("username",    &session.username);
+    crate::routes::who_context(&mut ctx, &session);
     ctx.insert("title",       "Accounts");
     ctx.insert("url",         "/accounts");
     ctx.insert("accounts",    &accounts);

@@ -17,6 +17,25 @@ pub mod setup;
 pub mod sites;
 pub mod traffic;
 
+// ─── who_context ─────────────────────────────────────────
+
+/// Tell the page who is looking at it.
+///
+/// Inserted through one helper rather than by each handler remembering three
+/// `ctx.insert` calls, for the same reason authorisation became an extractor:
+/// the thing every page must do should not be the thing every page can forget.
+///
+/// Templates read `is_admin` to decide whether to *offer* an action. That is
+/// presentation only — the extractor on the route is what refuses it — so a
+/// page that somehow arrived without this renders as a viewer rather than
+/// breaking or, worse, offering controls it should not. Hence
+/// `default(value=false)` at every use site.
+pub fn who_context(ctx: &mut tera::Context, session: &crate::auth::SessionData) {
+    ctx.insert("username", &session.username);
+    ctx.insert("role",     &session.role);
+    ctx.insert("is_admin", &session.is_admin());
+}
+
 // ─── flash_redirect ──────────────────────────────────────
 
 /// Redirect to `path`, carrying a one-shot message for the page to render.
