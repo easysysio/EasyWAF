@@ -6,12 +6,6 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
-## [Unreleased]
-
-### Changed
-- Release pages now list every commit in the release with its author and hash,
-  generated from git rather than written by hand.
-
 ## [0.8.0] — 2026-09-09
 
 ### Added
