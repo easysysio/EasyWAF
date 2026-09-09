@@ -311,8 +311,14 @@ impl DailyFile {
 /// something that would otherwise split a field, so ordinary lines stay
 /// readable by eye.
 pub fn field(value: &str) -> String {
+    // A backslash counts as dirty even alone. Escaping only has meaning inside
+    // quotes, so a bare value carrying one would reach a parser unescaped and
+    // its meaning would depend on whether that parser happened to be looking.
+    // Quoting it removes the question.
     let dirty = value.is_empty()
-        || value.contains(|c: char| c.is_whitespace() || c == '"' || c == '=');
+        || value.contains(|c: char| {
+            c.is_whitespace() || c == '"' || c == '=' || c == '\\'
+        });
     if dirty {
         format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
     } else {
@@ -398,5 +404,91 @@ mod tests {
         }
         let dropped = l.dropped.load(Ordering::Relaxed);
         assert!(dropped >= 48, "expected most of 50 to be dropped, got {dropped}");
+    }
+}
+
+#[cfg(test)]
+mod wire_format_tests {
+    use super::*;
+
+    /// The escaping the `easywaf` log type specification promises EasyLog.
+    ///
+    /// See docs/design/easylog-easywaf-type.md §3. A parser is being written
+    /// against these rules in another repository, so they are a contract
+    /// rather than an implementation detail.
+    #[test]
+    fn the_escaping_matches_what_the_spec_promises() {
+        // Bare when it cannot split a line.
+        assert_eq!(field("/index.php"), "/index.php");
+        assert_eq!(field("203.0.113.9"), "203.0.113.9");
+        assert_eq!(field("would_block"), "would_block");
+
+        // Quoted when it could.
+        assert_eq!(field("/search?q=a b"), "\"/search?q=a b\"");
+        assert_eq!(field(""), "\"\"");
+
+        // Backslash first, then quote — the order matters, or an escaped
+        // backslash would have its escape re-escaped.
+        assert_eq!(field(r#"/x=1&y="2""#), r#""/x=1&y=\"2\"""#);
+        assert_eq!(field(r"a\b"), r#""a\\b""#);
+    }
+
+    /// Parse a logfmt line exactly as §5 of the specification requires, so the
+    /// test checks what a conforming consumer will actually see rather than
+    /// what the emitted string looks like.
+    fn parse(line: &str) -> std::collections::HashMap<String, String> {
+        let (mut out, mut buf, mut quoted, mut esc) =
+            (std::collections::HashMap::new(), String::new(), false, false);
+        let mut toks = Vec::new();
+        for ch in line.chars() {
+            if esc { buf.push(ch); esc = false; }
+            else if ch == '\\' && quoted { buf.push(ch); esc = true; }
+            else if ch == '"' { quoted = !quoted; buf.push(ch); }
+            else if ch.is_whitespace() && !quoted {
+                if !buf.is_empty() { toks.push(std::mem::take(&mut buf)); }
+            } else { buf.push(ch); }
+        }
+        if !buf.is_empty() { toks.push(buf); }
+        for t in toks {
+            let Some((k, v)) = t.split_once('=') else { continue };
+            let v = if v.len() >= 2 && v.starts_with('"') && v.ends_with('"') {
+                v[1..v.len()-1].replace("\\\"", "\"").replace("\\\\", "\\")
+            } else { v.to_string() };
+            out.insert(k.to_string(), v);
+        }
+        out
+    }
+
+    #[test]
+    fn an_attacker_controlled_path_cannot_forge_a_field() {
+        // A path reaches the log from the wire. If it could close its own value
+        // it could inject verdict=passed into a line describing a block — a log
+        // that lies is worse than one that is missing.
+        for hostile in [
+            r#"/x" verdict=passed junk="#,
+            r#"/a b" client=10.0.0.1 x=""#,
+            r#"/back\slash"#,
+            r#"/quote"and=more"#,
+        ] {
+            let line = format!("verdict=blocked path={} status=403", field(hostile));
+            let f = parse(&line);
+            assert_eq!(f.get("verdict").map(String::as_str), Some("blocked"),
+                       "verdict was overwritten by {hostile:?} → {line}");
+            assert_eq!(f.get("path").map(String::as_str), Some(hostile),
+                       "path did not round-trip: {line}");
+            assert_eq!(f.get("status").map(String::as_str), Some("403"),
+                       "trailing fields lost to {hostile:?} → {line}");
+        }
+    }
+
+    #[test]
+    fn clipping_is_visible_and_at_the_documented_lengths() {
+        // §3: path at 512, reason at 256, marked with U+2026.
+        let long = "a".repeat(1000);
+        assert_eq!(clip(&long, 512).chars().count(), 513);
+        assert_eq!(clip(&long, 256).chars().count(), 257);
+        assert!(clip(&long, 512).ends_with('…'));
+        // And a value under the limit is untouched, not marked.
+        assert_eq!(clip("/short", 512), "/short");
     }
 }

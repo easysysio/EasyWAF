@@ -15,6 +15,7 @@ Version bumps and tags are created only after explicit approval.
 
 ### Added
 - Logging configuration in `config.toml`: a log directory, daily rotation with `keep_days`, and an optional syslog collector for flow lines.
+- `docs/design/easylog-easywaf-type.md` — the wire format EasyWAF emits, specified for EasyLog to implement a parser against.
 
 ## [0.8.1] — 2026-09-09
 
