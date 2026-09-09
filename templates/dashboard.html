@@ -26,12 +26,6 @@
         </div>
     </div>
 
-    {# Certificates are administrator-only, so the card that links there is too.
-       Omitted server-side rather than hidden with CSS, unlike the action
-       controls elsewhere: this one carries a number. Hiding an action a viewer
-       cannot invoke is presentation, but sending data they may not see and
-       covering it with a stylesheet is not. #}
-    {% if is_admin | default(value=false) %}
     <div class="col-lg-3 col-md-6">
         <div class="panel panel-primary">
             <div class="panel-heading">
@@ -52,7 +46,6 @@
             </a>
         </div>
     </div>
-    {% endif %}
 
     <div class="col-lg-3 col-md-6">
         <div class="panel panel-red">

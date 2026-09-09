@@ -53,7 +53,7 @@
                                 <i class="fa fa-trash fa-2x text-muted" style="opacity:.3"
                                    title="{% if cert.is_management %}This certificate serves the management interface and cannot be deleted{% else %}In use by {{ cert.used_by | join(sep=", ") }} — assign a different certificate there first{% endif %}"></i>
                             {% else %}
-                            <form method="post" action="/certs/{{ cert.name }}/delete"
+                            <form class="admin-only" method="post" action="/certs/{{ cert.name }}/delete"
                                   onsubmit="return confirm('Delete certificate {{ cert.name }}?');"
                                   style="display:inline">
                                 <button type="submit" class="btn btn-link" style="padding:0">
@@ -70,10 +70,10 @@
     </div>
 </div>
 
-<a href="/certs/new" class="btn btn-primary">
+<a href="/certs/new" class="btn btn-primary admin-only">
     <i class="fa fa-upload"></i> Upload Certificate
 </a>
-<a href="/certs/request" class="btn btn-primary">
+<a href="/certs/request" class="btn btn-primary admin-only">
     <i class="fa fa-certificate"></i> Request from Let's Encrypt
 </a>
 

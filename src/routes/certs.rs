@@ -6,7 +6,7 @@
 // =========================================================
 
 use crate::routes::flash_redirect;
-use crate::{auth::{Admin}, error::Result, AppState};
+use crate::{auth::{Admin, Viewer}, error::Result, AppState};
 use axum::{
     extract::{Path, Query, State},
     response::{Html, IntoResponse, Response},
@@ -63,7 +63,7 @@ pub struct FlashQuery {
 pub async fn get_certs(
     State(state): State<AppState>,
     jar: SignedCookieJar,
-    Admin(session): Admin,
+    Viewer(session): Viewer,
     Query(flash): Query<FlashQuery>,
 ) -> Result<Response> {
 
@@ -416,7 +416,7 @@ pub async fn post_cert_acme(
 pub async fn get_cert_detail(
     State(state): State<AppState>,
     jar: SignedCookieJar,
-    Admin(session): Admin,
+    Viewer(session): Viewer,
     Path(name): Path<String>,
 ) -> Result<Response> {
 

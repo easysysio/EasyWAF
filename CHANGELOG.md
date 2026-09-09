@@ -68,11 +68,17 @@ Version bumps and tags are created only after explicit approval.
   compile error, it was an unauthenticated page.
 
   **What a viewer can reach:** the dashboard, traffic, sites, policies, rules,
-  GeoIP and exclusions, read-only, plus their own password. **Settings and
-  certificates are administrator-only** — certificates expose private-key
-  metadata, and settings holds the rule-channel URL and the trusted-proxy list,
-  which decides whose `X-Forwarded-For` is believed. Every write is
-  administrator-only.
+  GeoIP, exclusions and certificates, read-only, plus their own password.
+  **Settings is administrator-only** — it holds the rule-channel URL and the
+  trusted-proxy list, which decides whose `X-Forwarded-For` is believed. Every
+  write is administrator-only.
+
+  Certificate *reading* is deliberately open to viewers: the list and the
+  detail page render public X.509 metadata — subject, issuer, dates, serial,
+  fingerprint — and the private key is never rendered anywhere, only a boolean
+  saying whether one is stored. Knowing what a certificate is and when it
+  expires is exactly the sort of thing a read-only account exists to check.
+  Uploading, requesting and deleting stay administrator-only.
 
   A viewer reaching an administrator page gets a 403 that explains why, rather
   than a redirect to a login form they are already past — being bounced to a
