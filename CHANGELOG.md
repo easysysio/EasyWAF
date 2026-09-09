@@ -6,7 +6,7 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
-## [Unreleased]
+## [0.8.1] — 2026-09-09
 
 ### Fixed
 - Signing in after a session ended looped between the login page and the dashboard until the browser gave up with ERR_TOO_MANY_REDIRECTS. The login page decided "already signed in" from the cookie alone while every other page checked the database.
