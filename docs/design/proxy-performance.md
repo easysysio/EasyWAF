@@ -116,6 +116,20 @@ reached well before CPU saturates. It is listed last on purpose: §2 removes
 most of those queries, and tuning a pool before removing the load on it is
 tuning the wrong thing.
 
+## The other half of this release
+
+[request-transformations.md](request-transformations.md) adds three decoders —
+`htmlEntityDecode`, `jsDecode`, `cssDecode` — so that CRS rules written against
+decoded text can be converted at all. Twenty-six paranoia-1 rules are refused
+today for want of them, Log4Shell among them.
+
+It shares this release because it pulls the same lever the other way: three
+more candidate forms is roughly +35% on matching, against a caching change that
+removes most of the 431µs this note is about. Together the release is still
+several times faster; apart, one of them ships a slower engine with no offset
+and the other leaves the coverage gap open for a release. It is also one
+measurement pass instead of two.
+
 ## What this is not
 
 Not a rewrite. Each item is independently shippable and independently
