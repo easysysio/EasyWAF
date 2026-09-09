@@ -6,6 +6,12 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
+## [Unreleased]
+
+### Fixed
+- Signing in after a session ended looped between the login page and the dashboard until the browser gave up with ERR_TOO_MANY_REDIRECTS. The login page decided "already signed in" from the cookie alone while every other page checked the database.
+- Logging out did not always remove the session cookie: the removal did not name the path the cookie was set with, so the browser kept it.
+
 ## [0.8.0] — 2026-09-09
 
 ### Added

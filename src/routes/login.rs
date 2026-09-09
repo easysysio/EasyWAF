@@ -34,8 +34,16 @@ pub async fn get_login(
     State(state): State<AppState>,
     jar: SignedCookieJar,
 ) -> Result<Response> {
-    // Already logged in → go to dashboard.
-    if get_session(&jar).is_some() {
+    // Validated against the database, not merely decoded.
+    //
+    // Deciding "already signed in" from the cookie alone, while every other
+    // page decides it from the database, is what produced a redirect loop in
+    // 0.8.0: this page sent the holder of a stale cookie to the dashboard, and
+    // the dashboard sent them back here. A cookie goes stale whenever a
+    // session is ended — a password change, a role change, a suspension — so
+    // the loop was reachable by ordinary use, and the only escape was clearing
+    // cookies by hand.
+    if crate::auth::authenticate(&state.db, &jar).await.is_some() {
         return Ok(Redirect::to("/").into_response());
     }
 
@@ -45,6 +53,15 @@ pub async fn get_login(
     if crate::routes::setup::needs_setup(&state.db).await {
         return Ok(Redirect::to("/setup").into_response());
     }
+
+    // A cookie that did not authenticate is spent — an ended session, a
+    // suspended or deleted account. Dropped here so the browser stops
+    // presenting it, rather than carrying it to every subsequent request.
+    let jar = if get_session(&jar).is_some() {
+        crate::auth::clear_session(jar)
+    } else {
+        jar
+    };
     render_login(&state, "", "", jar).await
 }
 

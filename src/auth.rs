@@ -226,7 +226,20 @@ pub fn set_session(jar: SignedCookieJar, data: &SessionData) -> SignedCookieJar 
 
 /// Remove the session cookie from the jar.
 pub fn clear_session(jar: SignedCookieJar) -> SignedCookieJar {
-    jar.remove(Cookie::from(SESSION_COOKIE))
+    // The removal has to match how the cookie was set. A browser keys a cookie
+    // on name, domain and path, so removing one without naming the path clears
+    // a cookie scoped to the *current* path and leaves the "/"-scoped one in
+    // place — the session survives a logout, which is how a stale cookie came
+    // to sit in a browser long enough to produce a redirect loop.
+    jar.remove(removal_cookie())
+}
+
+/// The cookie handed to `remove`, built separately so the path it carries can
+/// be asserted. Returning a jar hides it, and the path is the whole point.
+fn removal_cookie() -> Cookie<'static> {
+    let mut cookie = Cookie::from(SESSION_COOKIE);
+    cookie.set_path("/");
+    cookie
 }
 
 // ─── Extractors ──────────────────────────────────────────
@@ -451,5 +464,33 @@ mod tests {
             serde_json::from_str(r#"{"user_id":1,"username":"yariv"}"#).unwrap();
         assert_eq!(old.role, ROLE_ADMIN);
         assert_eq!(old.epoch, 0);
+    }
+}
+
+#[cfg(test)]
+mod cookie_tests {
+    use super::*;
+
+    /// The removal cookie must carry the same path the session was set with.
+    ///
+    /// A browser keys a cookie on name, domain and path, so a removal that
+    /// does not name the path clears one scoped to the *current* path and
+    /// leaves the "/"-scoped session in place. That is how a signed-out
+    /// browser kept presenting a session, and how a stale cookie survived long
+    /// enough to deadlock the login page against the dashboard.
+    #[test]
+    fn the_removal_cookie_matches_the_path_the_session_is_set_with() {
+        let jar = set_session(
+            SignedCookieJar::new(make_key(&"k".repeat(64))),
+            &SessionData {
+                user_id: 1, username: "yariv".into(),
+                role: ROLE_ADMIN.into(), epoch: 0,
+            },
+        );
+        let issued = jar.get(SESSION_COOKIE).expect("a session cookie");
+        assert_eq!(issued.path(), Some("/"), "the session is not set at the root");
+        assert_eq!(removal_cookie().path(), issued.path(),
+                   "the removal names a different path, so the browser keeps the session");
+        assert_eq!(removal_cookie().name(), SESSION_COOKIE);
     }
 }
