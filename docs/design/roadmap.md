@@ -8,10 +8,10 @@ next minor, so a release's notes stay about its feature.
 |---|---|
 | 0.4.0 | TLS termination, certificate management, self-service password change — **released 2026-09-04** |
 | 0.5.0 | ACME / Let's Encrypt (see [acme.md](acme.md)) — **released 2026-09-05** |
-| 0.6.0 | Updating the rule sets and the country database (see [rule-repository.md](rule-repository.md)) |
-| 0.7.0 | Rule exclusions narrowed to a client, added from Traffic Monitor |
-| 0.8.0 | User management and roles |
-| 0.9.0 | Flow logs over syslog, audit log on disk (see [logging.md](logging.md)) |
+| 0.6.0 | Updating the rule sets and the country database (see [rule-repository.md](rule-repository.md)) — **released 2026-09-06** |
+| 0.7.0 | Rule exclusions narrowed to a client, added from Traffic Monitor — **released 2026-09-08** |
+| 0.8.0 | User management and roles — **released 2026-09-09** |
+| 0.9.0 | Flow logs over syslog, audit log on disk (see [logging.md](logging.md)) — **released 2026-09-09** |
 | 0.10.0 | IP allow/block lists, addable with one click from Traffic Monitor (see [ip-lists.md](ip-lists.md)) |
 | 0.11.0 | Engine: streaming bodies and cached rules (see [proxy-performance.md](proxy-performance.md)), plus the decoders CRS rules assume (see [request-transformations.md](request-transformations.md)) |
 | 0.12.0 | Load balancing across upstreams, with health checks (see [load-balancing.md](load-balancing.md)) |

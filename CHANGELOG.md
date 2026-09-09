@@ -6,7 +6,7 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
-## [Unreleased]
+## [0.9.0] — 2026-09-09
 
 ### Added
 - Flow logs over syslog: one line per proxied request, sent to a collector with the site, client, method, path, verdict, score and rules. Off by default.
