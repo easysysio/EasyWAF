@@ -66,6 +66,9 @@ pub struct AppState {
     /// Send a port number here to make the proxy bind a new listener at
     /// runtime — no restart needed. The proxy ignores already-bound ports.
     pub port_tx:  mpsc::Sender<proxy::BindRequest>,
+    /// Flow lines to a collector, and the audit trail to disk. Cloning is
+    /// cheap: everything that can block lives in the task behind it.
+    pub logger:   logging::Logger,
 }
 
 /// Required so SignedCookieJar can extract the Key from AppState.
@@ -148,6 +151,10 @@ async fn main() {
     }
 
     // ── Start proxy server (background task) ──────────────
+    // Started before anything that logs, so a log directory that cannot be
+    // opened is reported once at boot rather than on the first request.
+    let logger = logging::init(&cfg.logging);
+
     let proxy_state = proxy::ProxyState {
         db:         db.clone(),
         pipeline:   pipeline.clone(),
@@ -155,6 +162,7 @@ async fn main() {
         secret:     secret.clone(),
         challenges: challenge::ChallengeStore::new(),
         is_tls:     false,
+        logger:     logger.clone(),
     };
     tokio::spawn(async move {
         proxy::start(proxy_state, port_rx).await;
@@ -181,6 +189,7 @@ async fn main() {
         config:  Arc::new(cfg.clone()),
         key,
         port_tx,
+        logger:  logger.clone(),
     };
 
     let app = Router::new()

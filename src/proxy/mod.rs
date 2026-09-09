@@ -105,6 +105,9 @@ pub struct ProxyState {
     /// and needs to know which it is on to avoid redirecting an HTTPS request
     /// to itself forever.
     pub is_tls:     bool,
+    /// Flow lines to the collector. Cloned per request into the spawned
+    /// logging task, never awaited on the request path.
+    pub logger:     crate::logging::Logger,
 }
 
 // ─── SiteRow ─────────────────────────────────────────────
@@ -778,15 +781,17 @@ async fn handle_request(
         // Log the blocked request asynchronously so we don't delay the response.
         let elapsed    = started_at.elapsed().as_millis() as i64;
         let db         = state.db.clone();
+            let logger     = state.logger.clone();
         let method_str = method.to_string();
         let reason_log = reason.clone();
         tokio::spawn(async move {
-            log_event(db, TrafficRecord {
+            log_event(db, logger, TrafficRecord {
                 site_id:      site.id,
                 client_ip:    client_ip.to_string(),
                 method:       method_str,
                 host:         host.clone(),
                 path:         path.clone(),
+                query:        query.clone(),
                 status_code:  status.as_u16() as i64,
                 response_ms:  elapsed,
                 blocked:      true,
@@ -814,6 +819,7 @@ async fn handle_request(
             // Log the challenge asynchronously.
             let elapsed    = started_at.elapsed().as_millis() as i64;
             let db         = state.db.clone();
+            let logger     = state.logger.clone();
             let method_str = method.to_string();
             let reason_log = format!("challenge: {}", reason);
             // Copied out before the spawn: the verdict is borrowed here, and a
@@ -825,12 +831,13 @@ async fn handle_request(
             let path_l     = path.clone();
             let ip_l       = client_ip.to_string();
             tokio::spawn(async move {
-                log_event(db, TrafficRecord {
+                log_event(db, logger, TrafficRecord {
                     site_id:      site.id,
                     client_ip:    ip_l,
                     method:       method_str,
                     host:         host_l,
                     path:         path_l,
+                    query:        query.clone(),
                     status_code:  200,
                     response_ms:  elapsed,
                     blocked:      false,
@@ -871,6 +878,10 @@ async fn handle_request(
     };
 
     // ── 5. Forward to upstream ────────────────────────────
+    // Kept because `query` is consumed below and the flow line still needs it:
+    // a query string is where most of what a WAF matches actually lives.
+    let qs = query.clone();
+
     let path_and_query = match &query {
         Some(q) => format!("{}?{}", path, q),
         None    => path.clone(),
@@ -904,6 +915,7 @@ async fn handle_request(
         // Monitor, which is worse than useless when someone is trying to work
         // out whether their traffic is reaching the site.
         let db         = state.db.clone();
+            let logger     = state.logger.clone();
         let method_str = method.to_string();
         let status     = resp.status().as_u16() as i64;
         let elapsed    = started_at.elapsed().as_millis() as i64;
@@ -913,12 +925,13 @@ async fn handle_request(
         let found      = detected.clone();
         tokio::spawn(async move {
             let (score, hits, detection, why) = split_detection(found);
-            log_event(db, TrafficRecord {
+            log_event(db, logger, TrafficRecord {
                 site_id,
                 client_ip:    ip,
                 method:       method_str,
                 host:         h,
                 path:         pth,
+                query:        query.clone(),
                 status_code:  status,
                 response_ms:  elapsed,
                 blocked:      false,
@@ -961,16 +974,18 @@ async fn handle_request(
             tracing::warn!(upstream = %upstream_url, error = %e, "upstream unreachable");
             let elapsed    = started_at.elapsed().as_millis() as i64;
             let db         = state.db.clone();
+            let logger     = state.logger.clone();
             let method_str = method.to_string();
             let found      = detected.clone();
             tokio::spawn(async move {
                 let (score, hits, detection, why) = split_detection(found);
-                log_event(db, TrafficRecord {
+                log_event(db, logger, TrafficRecord {
                     site_id:      site.id,
                     client_ip:    client_ip.to_string(),
                     method:       method_str,
                     host,
                     path,
+                    query:        qs.clone(),
                     status_code:  502,
                     response_ms:  elapsed,
                     blocked:      false,
@@ -1011,16 +1026,18 @@ async fn handle_request(
 
             // Log the completed request asynchronously.
             let db         = state.db.clone();
+            let logger     = state.logger.clone();
             let method_str = method.to_string();
             let found      = detected.clone();
             tokio::spawn(async move {
                 let (score, hits, detection, why) = split_detection(found);
-                log_event(db, TrafficRecord {
+                log_event(db, logger, TrafficRecord {
                     site_id:      site.id,
                     client_ip:    client_ip.to_string(),
                     method:       method_str,
                     host,
                     path,
+                    query:        qs.clone(),
                     status_code:  status.as_u16() as i64,
                     response_ms:  elapsed,
                     blocked:      false,

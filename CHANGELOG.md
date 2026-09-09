@@ -14,6 +14,7 @@ Version bumps and tags are created only after explicit approval.
 ## [Unreleased]
 
 ### Added
+- Flow logs over syslog: one line per proxied request, sent to a collector when `logging.syslog.enabled` is set. Off by default.
 - Logging configuration in `config.toml`: a log directory, daily rotation with `keep_days`, and an optional syslog collector for flow lines.
 - `docs/design/easylog-easywaf-type.md` — the wire format EasyWAF emits, specified for EasyLog to implement a parser against.
 
