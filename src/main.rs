@@ -19,6 +19,7 @@ mod error;
 mod forwarded;
 mod geo;
 mod modules;
+mod logging;
 mod pgp_verify;
 mod proxy;
 mod routes;

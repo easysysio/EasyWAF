@@ -33,19 +33,28 @@ A traffic event is written to the `traffic_events` table and nowhere else.
 
 ## Decisions taken
 
-* **Syslog carries flow logs only** — one line per proxied request. EasyWAF's
-  own operational chatter is not forwarded.
-* **The audit log is a file** under `/var/log/easywaf/`, not syslog and not the
-  database.
+* **Flow logs go to syslog only** — one line per proxied request, sent to a
+  collector, off by default.
+* **The audit log is a local file only** — not syslog, not the database.
 * Operational logging stays on stdout / the journal, which is what a
   systemd-managed service should do and what `journalctl -u easywaf` already
-  gives.
+  gives. EasyWAF's own chatter is never forwarded.
 
-The reasoning for the split: flow logs are a stream that belongs in a collector
-— EasyLog exists to hold and chart exactly that. The audit log is evidence
-about the appliance itself, and evidence is least useful when it can only be
-read from the machine it accuses; keeping it as a local file means it survives
-the collector being unreachable, which is precisely when it matters.
+**There is deliberately no local flow file.** An earlier draft had one, on the
+grounds that a proxy which can only say what it did while a collector is
+reachable cannot be debugged during an outage. That argument is already
+answered: every proxied request is written to `traffic_events` and shown in
+Traffic Monitor with its verdict, score, and the rules that produced it. A
+`flow.log` beside the database would be the same data in a worse format, aged
+out on a different schedule. Syslog's job is to get the stream *off the box* —
+to hold more history than an appliance should, and to chart several appliances
+together — not to duplicate what is already local.
+
+The audit log is the other way round, and stays a file. It is evidence about
+the appliance itself, and evidence is least useful when it can only be read
+from the machine it accuses; a local file survives the collector being
+unreachable, which is precisely when it matters. Sending it as well is a
+defensible future option; sending it *instead* is not.
 
 ## 1. Flow logs over syslog
 
@@ -79,20 +88,38 @@ Option 2 is the one worth building: those fields are the entire point of a WAF,
 and EasyLog's log types are self-contained modules designed to be added. It is
 cross-repository work and should be planned as such.
 
-**Configuration** (`config.toml`, since it is needed before the GUI is up):
+**Configuration** (`config.toml`, since logging must work before the GUI is up
+and before the database is readable):
 
 ```toml
-[syslog]
-enabled  = false          # off by default; sending traffic off-box is opt-in
-host     = ""             # collector address, e.g. "10.0.0.9"
+[logging]
+dir       = "/var/log/easywaf"  # audit.log lives here
+keep_days = 14                  # daily rotation, then delete
+
+[logging.syslog]
+enabled  = false                # sending traffic off-box is opt-in
+host     = ""                   # collector address, e.g. "10.0.0.9"
 port     = 514
 protocol = "udp"
 ```
 
+Both sinks share one bounded channel and one drop counter, for the same reason:
+a slow disk must not stall the proxy any more than a slow collector may.
+
 ## 2. Audit log
 
-`/var/log/easywaf/audit.log`, one line per state-changing action, with the
-account and the client address. What must appear:
+`audit.log` in the log directory, one line per state-changing action, with the
+account and the client address.
+
+**Recorded by middleware on the management router, not by each handler.** Every
+state-changing route is a POST behind the `Admin` extractor, so the router
+knows the account, the path, the client address and the outcome without any
+handler remembering to say so. That is the same reasoning that made
+authorisation an extractor in 0.8.0: a trail that depends on thirty-seven
+handlers each calling a function is a trail with holes in it, and the holes are
+exactly where somebody did something they should not have.
+
+What must appear:
 
 * sign-ins, failed sign-ins, sign-outs
 * site create / update / delete / enable / disable
