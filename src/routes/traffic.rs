@@ -6,10 +6,10 @@
 // DataTables for the sortable event log.
 // =========================================================
 
-use crate::{auth::get_session, error::Result, AppState};
+use crate::{auth::{Viewer}, error::Result, AppState};
 use axum::{
     extract::{Query, State},
-    response::{Html, IntoResponse, Redirect, Response},
+    response::{Html, IntoResponse, Response},
 };
 use axum_extra::extract::cookie::SignedCookieJar;
 use chrono::Utc;
@@ -138,12 +138,9 @@ struct HourRow {
 pub async fn get_traffic(
     State(state): State<AppState>,
     jar: SignedCookieJar,
+    Viewer(session): Viewer,
     Query(filter): Query<TrafficFilter>,
 ) -> Result<Response> {
-    let session = match get_session(&jar) {
-        Some(s) => s,
-        None    => return Ok(Redirect::to("/login").into_response()),
-    };
 
     let hours  = filter.hours.unwrap_or(24).max(1).min(720);
     let cutoff = (Utc::now() - chrono::Duration::hours(hours))

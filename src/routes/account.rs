@@ -15,10 +15,10 @@
 // =========================================================
 
 use crate::routes::flash_redirect;
-use crate::{auth::get_session, error::Result, AppState};
+use crate::{auth::{Admin, Viewer}, error::Result, AppState};
 use axum::{
     extract::{Query, State},
-    response::{Html, IntoResponse, Redirect, Response},
+    response::{Html, IntoResponse, Response},
     Form,
 };
 use axum_extra::extract::cookie::SignedCookieJar;
@@ -57,12 +57,9 @@ pub struct PasswordForm {
 pub async fn get_account(
     State(state): State<AppState>,
     jar: SignedCookieJar,
+    Viewer(session): Viewer,
     Query(flash): Query<FlashQuery>,
 ) -> Result<Response> {
-    let session = match get_session(&jar) {
-        Some(s) => s,
-        None    => return Ok(Redirect::to("/login").into_response()),
-    };
 
     // Shown as a warning on the page itself. An operator who never reads the
     // release notes still meets it at the one screen that can fix it.
@@ -90,13 +87,10 @@ pub async fn get_account(
 /// real operator out.
 pub async fn post_account_password(
     State(state): State<AppState>,
-    jar: SignedCookieJar,
+    _jar: SignedCookieJar,
+    Admin(session): Admin,
     Form(form): Form<PasswordForm>,
 ) -> Result<Response> {
-    let session = match get_session(&jar) {
-        Some(s) => s,
-        None    => return Ok(Redirect::to("/login").into_response()),
-    };
 
     let stored = match password_hash(&state.db, &session.username).await {
         Some(h) => h,

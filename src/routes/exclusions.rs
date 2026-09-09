@@ -19,7 +19,7 @@
 // =========================================================
 
 use crate::routes::flash_redirect;
-use crate::{auth::get_session, error::Result, AppState};
+use crate::{auth::{Admin, Viewer}, error::Result, AppState};
 use axum::{
     extract::{Path, Query, State},
     response::{Html, IntoResponse, Redirect, Response},
@@ -171,13 +171,10 @@ async fn candidates(state: &AppState, policy_id: Option<i64>) -> Result<Vec<Cand
 pub async fn get_site_exclusions(
     State(state): State<AppState>,
     jar: SignedCookieJar,
+    Viewer(session): Viewer,
     Path(name): Path<String>,
     Query(flash): Query<FlashQuery>,
 ) -> Result<Response> {
-    let session = match get_session(&jar) {
-        Some(s) => s,
-        None    => return Ok(Redirect::to("/login").into_response()),
-    };
 
     let Some((site_id, policy_id)) = site_and_policy(&state, &name).await? else {
         return Ok(Redirect::to("/sites").into_response());
@@ -208,13 +205,11 @@ pub async fn get_site_exclusions(
 
 pub async fn post_exclusion_add(
     State(state): State<AppState>,
-    jar: SignedCookieJar,
+    _jar: SignedCookieJar,
+    _: Admin,
     Path(name): Path<String>,
     Form(form): Form<ExclusionForm>,
 ) -> Result<Response> {
-    if get_session(&jar).is_none() {
-        return Ok(Redirect::to("/login").into_response());
-    }
 
     let back = format!("/sites/{name}/exclusions");
 
@@ -374,13 +369,11 @@ pub struct RemoveForm {
 /// Remove an exclusion, from wherever it was listed.
 pub async fn post_exclusion_remove(
     State(state): State<AppState>,
-    jar: SignedCookieJar,
+    _jar: SignedCookieJar,
+    _: Admin,
     Path(id): Path<i64>,
     Form(form): Form<RemoveForm>,
 ) -> Result<Response> {
-    if get_session(&jar).is_none() {
-        return Ok(Redirect::to("/login").into_response());
-    }
 
     let back = match form.policy.as_deref().filter(|p| !p.is_empty()) {
         Some(p) => format!("/exclusions?policy={}", urlencoding::encode(p)),
@@ -419,12 +412,9 @@ pub struct ExclusionsQuery {
 pub async fn get_exclusions(
     State(state): State<AppState>,
     jar: SignedCookieJar,
+    Viewer(session): Viewer,
     Query(q): Query<ExclusionsQuery>,
 ) -> Result<Response> {
-    let session = match get_session(&jar) {
-        Some(s) => s,
-        None    => return Ok(Redirect::to("/login").into_response()),
-    };
 
     let wanted = q.policy.clone().unwrap_or_default();
     let policy_id: Option<i64> = if wanted.is_empty() {
@@ -480,12 +470,10 @@ pub struct FromTrafficForm {
 /// someone can still make on the exclusions page, having seen this one first.
 pub async fn post_exclusion_from_traffic(
     State(state): State<AppState>,
-    jar: SignedCookieJar,
+    _jar: SignedCookieJar,
+    _: Admin,
     Form(form): Form<FromTrafficForm>,
 ) -> Result<Response> {
-    if get_session(&jar).is_none() {
-        return Ok(Redirect::to("/login").into_response());
-    }
 
     let back = form.back.clone().unwrap_or_else(|| "/traffic".to_string());
 
@@ -541,12 +529,10 @@ pub async fn post_exclusion_from_traffic(
 
 pub async fn post_exclusion_delete(
     State(state): State<AppState>,
-    jar: SignedCookieJar,
+    _jar: SignedCookieJar,
+    _: Admin,
     Path((name, id)): Path<(String, i64)>,
 ) -> Result<Response> {
-    if get_session(&jar).is_none() {
-        return Ok(Redirect::to("/login").into_response());
-    }
 
     let back = format!("/sites/{name}/exclusions");
 

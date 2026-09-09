@@ -5,10 +5,10 @@
 // was passed, challenged and blocked over the last 24 hours.
 // =========================================================
 
-use crate::{auth::get_session, error::Result, AppState};
+use crate::{auth::{Viewer}, error::Result, AppState};
 use axum::{
     extract::State,
-    response::{Html, IntoResponse, Redirect, Response},
+    response::{Html, IntoResponse, Response},
 };
 use axum_extra::extract::cookie::SignedCookieJar;
 use chrono::{DateTime, Duration, Timelike, Utc};
@@ -77,11 +77,8 @@ struct SiteTraffic {
 pub async fn get_dashboard(
     State(state): State<AppState>,
     jar: SignedCookieJar,
+    Viewer(session): Viewer,
 ) -> Result<Response> {
-    let session = match get_session(&jar) {
-        Some(s) => s,
-        None    => return Ok(Redirect::to("/login").into_response()),
-    };
 
     // Summary counts.
     let sites_count: i64 =

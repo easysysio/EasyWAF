@@ -12,10 +12,10 @@
 // =========================================================
 
 use crate::routes::flash_redirect;
-use crate::{auth::get_session, error::Result, AppState};
+use crate::{auth::{Admin}, error::Result, AppState};
 use axum::{
     extract::{Query, State},
-    response::{Html, IntoResponse, Redirect, Response},
+    response::{Html, IntoResponse, Response},
     Form,
 };
 use axum_extra::extract::cookie::SignedCookieJar;
@@ -95,12 +95,9 @@ pub struct SettingsForm {
 pub async fn get_settings(
     State(state): State<AppState>,
     jar: SignedCookieJar,
+    Admin(session): Admin,
     Query(flash): Query<FlashQuery>,
 ) -> Result<Response> {
-    let session = match get_session(&jar) {
-        Some(s) => s,
-        None    => return Ok(Redirect::to("/login").into_response()),
-    };
 
     let retention_days      = get_retention_days(&state.db).await;
     let maintenance_message = get_maintenance_message(&state.db).await;
@@ -178,12 +175,10 @@ pub async fn get_settings(
 /// value that was typed is never silently changed into something else.
 pub async fn post_settings_update(
     State(state): State<AppState>,
-    jar: SignedCookieJar,
+    _jar: SignedCookieJar,
+    _: Admin,
     Form(form): Form<SettingsForm>,
 ) -> Result<Response> {
-    if get_session(&jar).is_none() {
-        return Ok(Redirect::to("/login").into_response());
-    }
 
     let raw = form.traffic_retention_days.as_deref().unwrap_or("").trim().to_string();
 

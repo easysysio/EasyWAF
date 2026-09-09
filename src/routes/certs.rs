@@ -6,10 +6,10 @@
 // =========================================================
 
 use crate::routes::flash_redirect;
-use crate::{auth::get_session, error::Result, AppState};
+use crate::{auth::{Admin}, error::Result, AppState};
 use axum::{
     extract::{Path, Query, State},
-    response::{Html, IntoResponse, Redirect, Response},
+    response::{Html, IntoResponse, Response},
     Form,
 };
 use axum_extra::extract::cookie::SignedCookieJar;
@@ -63,12 +63,9 @@ pub struct FlashQuery {
 pub async fn get_certs(
     State(state): State<AppState>,
     jar: SignedCookieJar,
+    Admin(session): Admin,
     Query(flash): Query<FlashQuery>,
 ) -> Result<Response> {
-    let session = match get_session(&jar) {
-        Some(s) => s,
-        None    => return Ok(Redirect::to("/login").into_response()),
-    };
 
     let certs = fetch_certs(&state).await?;
 
@@ -88,12 +85,9 @@ pub async fn get_certs(
 pub async fn get_cert_new(
     State(state): State<AppState>,
     jar: SignedCookieJar,
+    Admin(session): Admin,
     Query(flash): Query<FlashQuery>,
 ) -> Result<Response> {
-    let session = match get_session(&jar) {
-        Some(s) => s,
-        None    => return Ok(Redirect::to("/login").into_response()),
-    };
 
     let mut ctx = Context::new();
     ctx.insert("username", &session.username);
@@ -112,12 +106,10 @@ pub async fn get_cert_new(
 
 pub async fn post_cert_create(
     State(state): State<AppState>,
-    jar: SignedCookieJar,
+    _jar: SignedCookieJar,
+    _: Admin,
     Form(form): Form<CertForm>,
 ) -> Result<Response> {
-    if get_session(&jar).is_none() {
-        return Ok(Redirect::to("/login").into_response());
-    }
 
     let name = form.name.trim().to_string();
     if name.is_empty() {
@@ -193,12 +185,10 @@ pub async fn post_cert_create(
 
 pub async fn post_cert_delete(
     State(state): State<AppState>,
-    jar: SignedCookieJar,
+    _jar: SignedCookieJar,
+    _: Admin,
     Path(name): Path<String>,
 ) -> Result<Response> {
-    if get_session(&jar).is_none() {
-        return Ok(Redirect::to("/login").into_response());
-    }
 
     // The management interface is served with this one. Deleting it leaves the
     // GUI running on a certificate that no longer exists anywhere, and the next
@@ -332,12 +322,9 @@ fn parse_cert_pem(pem: &str) -> (Option<String>, Option<String>, Option<String>)
 pub async fn get_cert_acme(
     State(state): State<AppState>,
     jar: SignedCookieJar,
+    Admin(session): Admin,
     Query(flash): Query<FlashQuery>,
 ) -> Result<Response> {
-    let session = match get_session(&jar) {
-        Some(s) => s,
-        None    => return Ok(Redirect::to("/login").into_response()),
-    };
 
     let mut ctx = Context::new();
     ctx.insert("username", &session.username);
@@ -362,12 +349,10 @@ pub async fn get_cert_acme(
 /// needs one for a name that is not a site yet.
 pub async fn post_cert_acme(
     State(state): State<AppState>,
-    jar: SignedCookieJar,
+    _jar: SignedCookieJar,
+    _: Admin,
     Form(form): Form<AcmeForm>,
 ) -> Result<Response> {
-    if get_session(&jar).is_none() {
-        return Ok(Redirect::to("/login").into_response());
-    }
 
     // Trimmed the same way a site's server name is, so a pasted URL does not
     // become a domain nobody can issue for.
@@ -431,12 +416,9 @@ pub async fn post_cert_acme(
 pub async fn get_cert_detail(
     State(state): State<AppState>,
     jar: SignedCookieJar,
+    Admin(session): Admin,
     Path(name): Path<String>,
 ) -> Result<Response> {
-    let session = match get_session(&jar) {
-        Some(s) => s,
-        None    => return Ok(Redirect::to("/login").into_response()),
-    };
 
     let row = sqlx::query!(
         "SELECT name as \"name!\", cert_pem, key_pem, acme_domain,

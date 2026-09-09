@@ -19,7 +19,7 @@
 // =========================================================
 
 use crate::{
-    auth::get_session,
+    auth::{Admin, Viewer},
     error::{AppError, Result},
     AppState,
 };
@@ -90,13 +90,10 @@ pub struct BulkForm {
 pub async fn get_rules(
     State(state): State<AppState>,
     jar: SignedCookieJar,
+    Viewer(session): Viewer,
     Path(policy_name): Path<String>,
     Query(flash): Query<crate::routes::policy::FlashQuery>,
 ) -> Result<Response> {
-    let session = match get_session(&jar) {
-        Some(s) => s,
-        None    => return Ok(Redirect::to("/login").into_response()),
-    };
 
     let policy = fetch_policy_header(&state, &policy_name).await?;
     let rules  = fetch_rules(&state, policy.name.clone()).await?;
@@ -149,12 +146,9 @@ pub async fn get_rules(
 pub async fn get_rule_new(
     State(state): State<AppState>,
     jar: SignedCookieJar,
+    Viewer(session): Viewer,
     Path(policy_name): Path<String>,
 ) -> Result<Response> {
-    let session = match get_session(&jar) {
-        Some(s) => s,
-        None    => return Ok(Redirect::to("/login").into_response()),
-    };
 
     let policy = fetch_policy_header(&state, &policy_name).await?;
 
@@ -173,13 +167,11 @@ pub async fn get_rule_new(
 /// Validates pattern is a valid regex before saving.
 pub async fn post_rule_create(
     State(state): State<AppState>,
-    jar: SignedCookieJar,
+    _jar: SignedCookieJar,
+    _: Admin,
     Path(policy_name): Path<String>,
     Form(form): Form<RuleForm>,
 ) -> Result<Response> {
-    if get_session(&jar).is_none() {
-        return Ok(Redirect::to("/login").into_response());
-    }
 
     let redirect = format!("/policy/{}/rules", policy_name);
 
@@ -227,12 +219,10 @@ pub async fn post_rule_create(
 /// Toggle a rule's enabled flag on/off.
 pub async fn post_rule_toggle(
     State(state): State<AppState>,
-    jar: SignedCookieJar,
+    _jar: SignedCookieJar,
+    _: Admin,
     Path((policy_name, rule_id)): Path<(String, i64)>,
 ) -> Result<Response> {
-    if get_session(&jar).is_none() {
-        return Ok(Redirect::to("/login").into_response());
-    }
 
     // Flip the enabled bit: 1 → 0, 0 → 1.
     sqlx::query!(
@@ -251,12 +241,10 @@ pub async fn post_rule_toggle(
 /// Delete a rule permanently.
 pub async fn post_rule_delete(
     State(state): State<AppState>,
-    jar: SignedCookieJar,
+    _jar: SignedCookieJar,
+    _: Admin,
     Path((policy_name, rule_id)): Path<(String, i64)>,
 ) -> Result<Response> {
-    if get_session(&jar).is_none() {
-        return Ok(Redirect::to("/login").into_response());
-    }
 
     sqlx::query!("DELETE FROM waf_rules WHERE id = ?", rule_id)
         .execute(&state.db)
@@ -271,13 +259,11 @@ pub async fn post_rule_delete(
 /// identified by their IDs. Silently ignores empty ID lists.
 pub async fn post_bulk_rules(
     State(state): State<AppState>,
-    jar: SignedCookieJar,
+    _jar: SignedCookieJar,
+    _: Admin,
     Path(policy_name): Path<String>,
     Form(form): Form<BulkForm>,
 ) -> Result<Response> {
-    if get_session(&jar).is_none() {
-        return Ok(Redirect::to("/login").into_response());
-    }
 
     let redirect = format!("/policy/{}/rules", policy_name);
 
@@ -747,12 +733,10 @@ fn is_rule_file(path: &std::path::Path) -> bool {
 /// This makes repeated imports fully idempotent — safe to run many times.
 pub async fn post_import_rules(
     State(state): State<AppState>,
-    jar: SignedCookieJar,
+    _jar: SignedCookieJar,
+    _: Admin,
     Path(policy_name): Path<String>,
 ) -> Result<Response> {
-    if get_session(&jar).is_none() {
-        return Ok(Redirect::to("/login").into_response());
-    }
 
     let redirect = format!("/policy/{}/rules", policy_name);
 
@@ -1169,12 +1153,9 @@ pub async fn add_rules_by_external_ids(
 pub async fn get_rules_catalog(
     State(state): State<AppState>,
     jar: SignedCookieJar,
+    Viewer(session): Viewer,
     Path(policy_name): Path<String>,
 ) -> Result<Response> {
-    let session = match get_session(&jar) {
-        Some(s) => s,
-        None    => return Ok(Redirect::to("/login").into_response()),
-    };
 
     let policy = fetch_policy_header(&state, &policy_name).await?;
 
@@ -1219,13 +1200,11 @@ pub struct CatalogForm {
 /// (no external_id) are never touched.
 pub async fn post_rules_catalog(
     State(state): State<AppState>,
-    jar: SignedCookieJar,
+    _jar: SignedCookieJar,
+    _: Admin,
     Path(policy_name): Path<String>,
     Form(form): Form<CatalogForm>,
 ) -> Result<Response> {
-    if get_session(&jar).is_none() {
-        return Ok(Redirect::to("/login").into_response());
-    }
 
     let redirect = format!("/policy/{}/rules", policy_name);
 
@@ -1440,12 +1419,9 @@ async fn duplicate_rules(db: &SqlitePool) -> Vec<DuplicateRule> {
 pub async fn get_all_rules(
     State(state): State<AppState>,
     jar: SignedCookieJar,
+    Viewer(session): Viewer,
     Query(q): Query<AllRulesQuery>,
 ) -> Result<Response> {
-    let session = match get_session(&jar) {
-        Some(s) => s,
-        None    => return Ok(Redirect::to("/login").into_response()),
-    };
 
     // Categories come from what each rule says it belongs to, which the
     // database records as of the last install or update. The rule files on disk
@@ -1608,12 +1584,9 @@ pub async fn get_all_rules(
 pub async fn get_rule_edit_global(
     State(state): State<AppState>,
     jar: SignedCookieJar,
+    Viewer(session): Viewer,
     Path(id): Path<i64>,
 ) -> Result<Response> {
-    let session = match get_session(&jar) {
-        Some(s) => s,
-        None    => return Ok(Redirect::to("/login").into_response()),
-    };
 
     let r = sqlx::query!(
         "SELECT wr.id      as \"id!\",
@@ -1727,13 +1700,11 @@ pub async fn get_rule_edit_global(
 /// Save edits to a single rule. Validates the regex before saving.
 pub async fn post_rule_update_global(
     State(state): State<AppState>,
-    jar: SignedCookieJar,
+    _jar: SignedCookieJar,
+    _: Admin,
     Path(id): Path<i64>,
     Form(form): Form<RuleForm>,
 ) -> Result<Response> {
-    if get_session(&jar).is_none() {
-        return Ok(Redirect::to("/login").into_response());
-    }
 
     // Reject invalid regex so we never store a broken pattern.
     if regex::Regex::new(&form.pattern).is_err() {
@@ -1888,13 +1859,11 @@ async fn share_custom_rules(
 
 pub async fn post_share_custom_rules(
     State(state): State<AppState>,
-    jar: SignedCookieJar,
+    _jar: SignedCookieJar,
+    _: Admin,
     Path(policy_name): Path<String>,
     Form(form): Form<HashMap<String, String>>,
 ) -> Result<Response> {
-    if get_session(&jar).is_none() {
-        return Ok(Redirect::to("/login").into_response());
-    }
 
     let back = format!("/policy/{policy_name}/rules");
 
@@ -1949,12 +1918,10 @@ pub async fn post_share_custom_rules(
 
 pub async fn post_rule_clone(
     State(state): State<AppState>,
-    jar: SignedCookieJar,
+    _jar: SignedCookieJar,
+    _: Admin,
     Path(id): Path<i64>,
 ) -> Result<Response> {
-    if get_session(&jar).is_none() {
-        return Ok(Redirect::to("/login").into_response());
-    }
 
     let src = sqlx::query!(
         r#"SELECT policy_id as "policy_id!", name, description, zone, pattern,
@@ -2023,12 +1990,10 @@ pub async fn post_rule_clone(
 /// Toggle a rule's enabled flag, returning to the global list.
 pub async fn post_rule_toggle_global(
     State(state): State<AppState>,
-    jar: SignedCookieJar,
+    _jar: SignedCookieJar,
+    _: Admin,
     Path(id): Path<i64>,
 ) -> Result<Response> {
-    if get_session(&jar).is_none() {
-        return Ok(Redirect::to("/login").into_response());
-    }
 
     sqlx::query!(
         "UPDATE waf_rules SET enabled = CASE WHEN enabled = 1 THEN 0 ELSE 1 END
@@ -2046,12 +2011,10 @@ pub async fn post_rule_toggle_global(
 /// Delete a rule, returning to the global list.
 pub async fn post_rule_delete_global(
     State(state): State<AppState>,
-    jar: SignedCookieJar,
+    _jar: SignedCookieJar,
+    _: Admin,
     Path(id): Path<i64>,
 ) -> Result<Response> {
-    if get_session(&jar).is_none() {
-        return Ok(Redirect::to("/login").into_response());
-    }
 
     sqlx::query!("DELETE FROM waf_rules WHERE id = ?", id)
         .execute(&state.db)
@@ -2081,11 +2044,8 @@ pub struct CustomRuleForm {
 pub async fn get_custom_rule_new(
     State(state): State<AppState>,
     jar: SignedCookieJar,
+    Viewer(session): Viewer,
 ) -> Result<Response> {
-    let session = match get_session(&jar) {
-        Some(s) => s,
-        None    => return Ok(Redirect::to("/login").into_response()),
-    };
 
     // Policy names for the dropdown.
     let policies = sqlx::query_scalar!("SELECT name FROM policies ORDER BY name")
@@ -2107,12 +2067,10 @@ pub async fn get_custom_rule_new(
 /// Validates the regex and that the target policy exists.
 pub async fn post_custom_rule_create(
     State(state): State<AppState>,
-    jar: SignedCookieJar,
+    _jar: SignedCookieJar,
+    _: Admin,
     Form(form): Form<CustomRuleForm>,
 ) -> Result<Response> {
-    if get_session(&jar).is_none() {
-        return Ok(Redirect::to("/login").into_response());
-    }
 
     // Reject an invalid regex before saving.
     if regex::Regex::new(&form.pattern).is_err() {

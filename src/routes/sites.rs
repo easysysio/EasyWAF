@@ -9,13 +9,13 @@
 
 use crate::routes::flash_redirect;
 use crate::{
-    auth::get_session,
+    auth::{Admin, Viewer},
     error::{AppError, Result},
     AppState,
 };
 use axum::{
     extract::{Path, Query, State},
-    response::{Html, IntoResponse, Redirect, Response},
+    response::{Html, IntoResponse, Response},
     Form,
 };
 use axum_extra::extract::cookie::SignedCookieJar;
@@ -96,12 +96,9 @@ pub struct FlashQuery {
 pub async fn get_sites(
     State(state): State<AppState>,
     jar: SignedCookieJar,
+    Viewer(session): Viewer,
     Query(flash): Query<FlashQuery>,
 ) -> Result<Response> {
-    let session = match get_session(&jar) {
-        Some(s) => s,
-        None    => return Ok(Redirect::to("/login").into_response()),
-    };
 
     let sites    = fetch_sites(&state).await?;
     let policies = fetch_policies(&state).await?;
@@ -125,11 +122,8 @@ pub async fn get_sites(
 pub async fn get_site_new(
     State(state): State<AppState>,
     jar: SignedCookieJar,
+    Viewer(session): Viewer,
 ) -> Result<Response> {
-    let session = match get_session(&jar) {
-        Some(s) => s,
-        None    => return Ok(Redirect::to("/login").into_response()),
-    };
 
     let policies = fetch_policies(&state).await?;
 
@@ -153,12 +147,10 @@ pub async fn get_site_new(
 /// Validates that name and hostname are non-empty and unique.
 pub async fn post_site_create(
     State(state): State<AppState>,
-    jar: SignedCookieJar,
+    _jar: SignedCookieJar,
+    _: Admin,
     Form(form): Form<SiteForm>,
 ) -> Result<Response> {
-    if get_session(&jar).is_none() {
-        return Ok(Redirect::to("/login").into_response());
-    }
 
     let name        = form.name.as_deref().unwrap_or("").trim().to_string();
     let server_name = normalize_server_name(&form.server_name);
@@ -293,13 +285,10 @@ async fn request_cert_for_new_site(
 pub async fn get_site_edit(
     State(state): State<AppState>,
     jar: SignedCookieJar,
+    Viewer(session): Viewer,
     Path(name): Path<String>,
     Query(flash): Query<FlashQuery>,
 ) -> Result<Response> {
-    let session = match get_session(&jar) {
-        Some(s) => s,
-        None    => return Ok(Redirect::to("/login").into_response()),
-    };
 
     let site     = fetch_site(&state, &name).await?;
     let policies = fetch_policies(&state).await?;
@@ -349,13 +338,11 @@ pub async fn get_site_edit(
 /// keeps listening until the proxy restarts.
 pub async fn post_site_update(
     State(state): State<AppState>,
-    jar: SignedCookieJar,
+    _jar: SignedCookieJar,
+    _: Admin,
     Path(name): Path<String>,
     Form(form): Form<SiteForm>,
 ) -> Result<Response> {
-    if get_session(&jar).is_none() {
-        return Ok(Redirect::to("/login").into_response());
-    }
 
     let hsts           = form.hsts.is_some();
     let x_frame        = form.x_frame.is_some();
@@ -432,12 +419,10 @@ pub async fn post_site_update(
 /// site that listens on it, and closing the listener would take those down too.
 pub async fn post_site_toggle(
     State(state): State<AppState>,
-    jar: SignedCookieJar,
+    _jar: SignedCookieJar,
+    _: Admin,
     Path(name): Path<String>,
 ) -> Result<Response> {
-    if get_session(&jar).is_none() {
-        return Ok(Redirect::to("/login").into_response());
-    }
 
     let site    = fetch_site(&state, &name).await?;
     let enabled = !site.enabled;
@@ -487,12 +472,10 @@ pub async fn post_site_toggle(
 /// Delete a site by name. Traffic events are cascade-deleted by the DB.
 pub async fn post_site_delete(
     State(state): State<AppState>,
-    jar: SignedCookieJar,
+    _jar: SignedCookieJar,
+    _: Admin,
     Path(name): Path<String>,
 ) -> Result<Response> {
-    if get_session(&jar).is_none() {
-        return Ok(Redirect::to("/login").into_response());
-    }
 
     sqlx::query!("DELETE FROM sites WHERE name = ?", name)
         .execute(&state.db)
@@ -616,12 +599,10 @@ async fn fetch_policies(state: &AppState) -> Result<Vec<Policy>> {
 /// and needs to know nothing about where it came from.
 pub async fn post_site_acme(
     State(state): State<AppState>,
-    jar: SignedCookieJar,
+    _jar: SignedCookieJar,
+    _: Admin,
     Path(name): Path<String>,
 ) -> Result<Response> {
-    if get_session(&jar).is_none() {
-        return Ok(Redirect::to("/login").into_response());
-    }
 
     let site = sqlx::query!(
         r#"SELECT id as "id!", server_name as "server_name!", listen_port

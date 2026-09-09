@@ -6,10 +6,10 @@
 // =========================================================
 
 use crate::routes::flash_redirect;
-use crate::{auth::get_session, error::{AppError, Result}, AppState};
+use crate::{auth::{Admin, Viewer}, error::{AppError, Result}, AppState};
 use axum::{
     extract::{Path, Query, State},
-    response::{Html, IntoResponse, Redirect, Response},
+    response::{Html, IntoResponse, Response},
     Form,
 };
 use axum_extra::extract::cookie::SignedCookieJar;
@@ -56,12 +56,10 @@ pub struct FlashQuery {
 /// enough to think about.
 pub async fn post_apply_rule_update(
     State(state): State<AppState>,
-    jar: SignedCookieJar,
+    _jar: SignedCookieJar,
+    _: Admin,
     Path((name, set_id)): Path<(String, String)>,
 ) -> Result<Response> {
-    if get_session(&jar).is_none() {
-        return Ok(Redirect::to("/login").into_response());
-    }
 
     let policy_id: Option<i64> =
         sqlx::query_scalar!(r#"SELECT id as "id!" FROM policies WHERE name = ?"#, name)
@@ -92,12 +90,10 @@ pub async fn post_apply_rule_update(
 /// someone wondering whether their custom rules went with it.
 pub async fn post_remove_rule_set(
     State(state): State<AppState>,
-    jar: SignedCookieJar,
+    _jar: SignedCookieJar,
+    _: Admin,
     Path((name, set_id)): Path<(String, String)>,
 ) -> Result<Response> {
-    if get_session(&jar).is_none() {
-        return Ok(Redirect::to("/login").into_response());
-    }
 
     let policy_id: Option<i64> =
         sqlx::query_scalar!(r#"SELECT id as "id!" FROM policies WHERE name = ?"#, name)
@@ -141,13 +137,10 @@ pub async fn post_remove_rule_set(
 pub async fn get_rule_sets(
     State(state): State<AppState>,
     jar: SignedCookieJar,
+    Viewer(session): Viewer,
     Path(name): Path<String>,
     Query(flash): Query<FlashQuery>,
 ) -> Result<Response> {
-    let session = match get_session(&jar) {
-        Some(s) => s,
-        None    => return Ok(Redirect::to("/login").into_response()),
-    };
 
     let policy_id: Option<i64> =
         sqlx::query_scalar!(r#"SELECT id as "id!" FROM policies WHERE name = ?"#, name)
@@ -184,12 +177,9 @@ pub async fn get_rule_sets(
 pub async fn get_policies(
     State(state): State<AppState>,
     jar: SignedCookieJar,
+    Viewer(session): Viewer,
     Query(flash): Query<FlashQuery>,
 ) -> Result<Response> {
-    let session = match get_session(&jar) {
-        Some(s) => s,
-        None    => return Ok(Redirect::to("/login").into_response()),
-    };
 
     let policies = fetch_policies(&state).await?;
 
@@ -217,11 +207,8 @@ pub async fn get_policies(
 pub async fn get_policy_new(
     State(state): State<AppState>,
     jar: SignedCookieJar,
+    Viewer(session): Viewer,
 ) -> Result<Response> {
-    let session = match get_session(&jar) {
-        Some(s) => s,
-        None    => return Ok(Redirect::to("/login").into_response()),
-    };
 
     // Load the full rule catalog with nothing pre-checked (new policy).
     let catalog = crate::routes::rules::read_catalog_categories(&HashSet::new())?;
@@ -250,12 +237,10 @@ pub async fn get_policy_new(
 
 pub async fn post_policy_create(
     State(state): State<AppState>,
-    jar: SignedCookieJar,
+    _jar: SignedCookieJar,
+    _: Admin,
     Form(raw): Form<HashMap<String, String>>,
 ) -> Result<Response> {
-    if get_session(&jar).is_none() {
-        return Ok(Redirect::to("/login").into_response());
-    }
 
     let name = raw.get("name").map(|s| s.trim().to_string()).unwrap_or_default();
     if name.is_empty() {
@@ -337,12 +322,9 @@ pub async fn post_policy_create(
 pub async fn get_policy_edit(
     State(state): State<AppState>,
     jar: SignedCookieJar,
+    Viewer(session): Viewer,
     Path(name): Path<String>,
 ) -> Result<Response> {
-    let session = match get_session(&jar) {
-        Some(s) => s,
-        None    => return Ok(Redirect::to("/login").into_response()),
-    };
 
     let policy = fetch_policy(&state, &name).await?;
 
@@ -359,13 +341,11 @@ pub async fn get_policy_edit(
 
 pub async fn post_policy_update(
     State(state): State<AppState>,
-    jar: SignedCookieJar,
+    _jar: SignedCookieJar,
+    _: Admin,
     Path(name): Path<String>,
     Form(raw): Form<HashMap<String, String>>,
 ) -> Result<Response> {
-    if get_session(&jar).is_none() {
-        return Ok(Redirect::to("/login").into_response());
-    }
 
     let rule_engine     = raw.get("rule_engine").cloned().unwrap_or_else(|| "DetectionOnly".into());
     let score_threshold: i64 = raw.get("score_threshold")
@@ -401,12 +381,10 @@ pub async fn post_policy_update(
 
 pub async fn post_policy_delete(
     State(state): State<AppState>,
-    jar: SignedCookieJar,
+    _jar: SignedCookieJar,
+    _: Admin,
     Path(name): Path<String>,
 ) -> Result<Response> {
-    if get_session(&jar).is_none() {
-        return Ok(Redirect::to("/login").into_response());
-    }
 
     // `sites.waf_policy_id` is ON DELETE SET NULL and sqlx enables foreign keys,
     // so deleting a policy in use silently unsets it on every site that had it.

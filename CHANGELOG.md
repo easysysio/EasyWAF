@@ -24,9 +24,21 @@ Version bumps and tags are created only after explicit approval.
   Authorisation is now something a handler *declares* rather than remembers.
   Taking `Viewer` or `Admin` as an argument makes the requirement part of the
   signature, so a page that needs an administrator cannot be written without
-  saying so. Sixty-seven handlers previously opened with the same four lines
-  and nothing enforced that a new one included them — forgetting was not a
+  saying so. Fifty-five handlers previously opened with the same four lines
+  and nothing enforced that the fifty-sixth would — forgetting was not a
   compile error, it was an unauthenticated page.
+
+  **What a viewer can reach:** the dashboard, traffic, sites, policies, rules,
+  GeoIP and exclusions, read-only, plus their own password. **Settings and
+  certificates are administrator-only** — certificates expose private-key
+  metadata, and settings holds the rule-channel URL and the trusted-proxy list,
+  which decides whose `X-Forwarded-For` is believed. Every write is
+  administrator-only.
+
+  A viewer reaching an administrator page gets a 403 that explains why, rather
+  than a redirect to a login form they are already past — being bounced to a
+  form you have completed suggests a broken session rather than a refused
+  permission.
 
 - **Signing out actually signs out.** Sessions were stateless signed cookies,
   so changing a password did not invalidate one already issued: it stayed valid

@@ -8,10 +8,10 @@
 // instead of to a form that duplicates policy settings.
 // =========================================================
 
-use crate::{auth::get_session, error::Result, AppState};
+use crate::{auth::{Viewer}, error::Result, AppState};
 use axum::{
     extract::State,
-    response::{Html, IntoResponse, Redirect, Response},
+    response::{Html, IntoResponse, Response},
 };
 use axum_extra::extract::cookie::SignedCookieJar;
 use tera::Context;
@@ -22,11 +22,8 @@ use tera::Context;
 pub async fn get_geoip(
     State(state): State<AppState>,
     jar: SignedCookieJar,
+    Viewer(session): Viewer,
 ) -> Result<Response> {
-    let session = match get_session(&jar) {
-        Some(s) => s,
-        None => return Ok(Redirect::to("/login").into_response()),
-    };
 
     let mut ctx = Context::new();
     ctx.insert("username", &session.username);
