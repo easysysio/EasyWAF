@@ -237,6 +237,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # Full history and tags: the release notes list the commits since the
+          # previous tag, which a shallow clone cannot see.
+          fetch-depth: 0
 
       - name: Download all packages
         uses: actions/download-artifact@v4
@@ -269,6 +273,36 @@ jobs:
           if [ ! -s notes.md ]; then
             echo "EasyWAF $VERSION" > notes.md
           fi
+
+          # Who changed what, taken from git rather than written by hand.
+          #
+          # A CHANGELOG line is written before its commit exists, so it cannot
+          # carry that commit's hash — and amending it in would change the hash
+          # it just recorded. Generating the list at release time is the only
+          # way for it to be right, and it cannot drift from the history.
+          PREV=$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)
+          if [ -n "$PREV" ]; then
+            RANGE="${PREV}..${GITHUB_REF_NAME}"
+            echo "Listing commits in $RANGE"
+          else
+            RANGE="${GITHUB_REF_NAME}"
+            echo "No previous tag; listing all commits up to ${GITHUB_REF_NAME}"
+          fi
+
+          {
+            echo
+            echo "### Commits"
+            echo
+            # The hash is deliberately not in backticks: GitHub turns a bare
+            # SHA in a release body into a link to the commit, and turns one in
+            # backticks into unclickable code. %an is the commit author, which
+            # is not necessarily everyone a Co-Authored-By trailer names.
+            git log --no-merges --reverse --format='- %h %s — %an' "$RANGE"
+            echo
+            if [ -n "$PREV" ]; then
+              echo "**Full changelog:** ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/compare/${PREV}...${GITHUB_REF_NAME}"
+            fi
+          } >> notes.md
 
           echo "----- release notes -----"
           cat notes.md
