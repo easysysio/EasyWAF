@@ -74,6 +74,15 @@ impl FromRef<AppState> for Key {
     }
 }
 
+/// Required so the Viewer and Admin extractors can check a session against the
+/// account it names — a signed cookie says who minted it, not whether that
+/// account still exists, is still enabled, or still holds that role.
+impl FromRef<AppState> for sqlx::SqlitePool {
+    fn from_ref(state: &AppState) -> Self {
+        state.db.clone()
+    }
+}
+
 // ─── main ────────────────────────────────────────────────
 
 #[tokio::main]

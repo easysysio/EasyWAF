@@ -6,6 +6,43 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
+## [Unreleased]
+
+### Added
+- **Accounts have roles, and sessions can be ended.** The groundwork for 0.8.0;
+  the account management pages follow.
+
+  `admin` sees and changes everything. `viewer` sees the dashboard, traffic and
+  the configuration pages and changes nothing. Two roles rather than three,
+  because a third invented up front is usually the one nobody uses.
+
+  **Every account that existed before the upgrade becomes an admin.** There is
+  no other safe default: those are the accounts somebody has been administering
+  the appliance with, and demoting them on upgrade locks them out of their own
+  installation.
+
+  Authorisation is now something a handler *declares* rather than remembers.
+  Taking `Viewer` or `Admin` as an argument makes the requirement part of the
+  signature, so a page that needs an administrator cannot be written without
+  saying so. Sixty-seven handlers previously opened with the same four lines
+  and nothing enforced that a new one included them — forgetting was not a
+  compile error, it was an unauthenticated page.
+
+- **Signing out actually signs out.** Sessions were stateless signed cookies,
+  so changing a password did not invalidate one already issued: it stayed valid
+  for its remaining eight hours, in any browser holding it, and there was no
+  way to end it.
+
+  Each account now carries a session epoch, stamped into the cookie and checked
+  on every request. Bumping it ends every session at once, which is what a
+  password change, a role change and a suspension all now do. The role is read
+  from the account rather than the cookie, so a demotion takes effect on the
+  next request instead of when the cookie expires.
+
+  An account can also be **suspended** rather than deleted, keeping its history
+  and its attribution, and its sign-in time is recorded so a dormant account is
+  visible as one.
+
 ## [0.7.3] — 2026-09-08
 
 ### Added

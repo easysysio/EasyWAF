@@ -68,9 +68,35 @@ pub async fn init(database_url: &str) -> SqlitePool {
     run_migration_019(&pool).await;
     run_migration_020(&pool).await;
     run_migration_021(&pool).await;
+    run_migration_022(&pool).await;
 
     info!("Database ready: {}", database_url);
     pool
+}
+
+// ─── run_migration_022 ───────────────────────────────────
+
+/// Roles, an enabled flag, and a session epoch that makes sign-out possible.
+///
+/// Every account that exists when this runs becomes an admin. Those are the
+/// accounts somebody has been administering the appliance with, and any other
+/// default locks them out of their own installation on upgrade.
+async fn run_migration_022(pool: &SqlitePool) {
+    let exists: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM pragma_table_info('users') WHERE name = 'role'",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0);
+
+    if exists == 0 {
+        let sql = include_str!("../migrations/022_user_roles.sql");
+        sqlx::raw_sql(sql)
+            .execute(pool)
+            .await
+            .unwrap_or_else(|e| panic!("Migration 022 failed: {}", e));
+        info!("Migration 022 applied: accounts have roles, and sessions can be ended");
+    }
 }
 
 // ─── run_migration_021 ───────────────────────────────────

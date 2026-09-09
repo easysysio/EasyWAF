@@ -56,8 +56,21 @@ pub async fn post_login(
     jar: SignedCookieJar,
     Form(form): Form<LoginForm>,
 ) -> Result<Response> {
-    match authenticate(&state.db, &form.user, &form.pass).await {
+    match verify_credentials(&state.db, &form.user, &form.pass).await {
         Some(session) => {
+            // Recorded so the account list can show a dormant account, which
+            // is the usual reason to suspend one. Failure to write it must not
+            // fail the sign-in: it is a convenience, not part of the decision.
+            if let Err(e) = sqlx::query!(
+                "UPDATE users SET last_login = datetime('now') WHERE id = ?",
+                session.user_id
+            )
+            .execute(&state.db)
+            .await
+            {
+                tracing::warn!(user = %session.username, "Could not record the sign-in time: {e}");
+            }
+            tracing::info!(user = %session.username, role = %session.role, "Signed in");
             let jar = set_session(jar, &session);
             Ok((jar, Redirect::to("/")).into_response())
         }
@@ -73,26 +86,48 @@ pub async fn get_logout(jar: SignedCookieJar) -> impl IntoResponse {
     (jar, Redirect::to("/login"))
 }
 
-// ─── authenticate ────────────────────────────────────────
+// ─── verify_credentials ──────────────────────────────────
 
-/// Look up user in DB and verify password with bcrypt. Returns SessionData on success.
-async fn authenticate(db: &SqlitePool, username: &str, password: &str) -> Option<SessionData> {
+/// Look up the account and verify the password. `None` on any failure.
+///
+/// A suspended account is refused here as well as in `auth::authenticate`, so
+/// it cannot obtain a new session in the first place rather than obtaining one
+/// that is rejected on its next request.
+///
+/// The failure is deliberately not distinguished between "no such account",
+/// "wrong password" and "suspended": the caller reports one message for all
+/// three, so a login form cannot be used to enumerate which accounts exist.
+async fn verify_credentials(
+    db: &SqlitePool,
+    username: &str,
+    password: &str,
+) -> Option<SessionData> {
     let row = sqlx::query!(
-        "SELECT id as \"id!\", password_hash FROM users WHERE username = ?",
+        r#"SELECT id as "id!", password_hash, role as "role!",
+                  enabled as "enabled!: i64", session_epoch as "session_epoch!"
+           FROM users WHERE username = ?"#,
         username
     )
     .fetch_optional(db)
     .await
     .ok()??;
 
-    if verify(password, &row.password_hash).unwrap_or(false) {
-        Some(SessionData {
-            user_id: row.id,
-            username: username.to_string(),
-        })
-    } else {
-        None
+    if !verify(password, &row.password_hash).unwrap_or(false) {
+        return None;
     }
+    if row.enabled == 0 {
+        tracing::warn!(username, "Sign-in refused: the account is suspended");
+        return None;
+    }
+
+    // The epoch is captured now, so this cookie survives until something
+    // deliberately ends it — a password change, a role change, a suspension.
+    Some(SessionData {
+        user_id:  row.id,
+        username: username.to_string(),
+        role:     row.role,
+        epoch:    row.session_epoch,
+    })
 }
 
 // ─── render_login ────────────────────────────────────────
