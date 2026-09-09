@@ -1,6 +1,6 @@
 # Design note — the decoders the rules assume
 
-Status: planned for **0.10.0** — see [roadmap.md](roadmap.md), alongside
+Status: planned for **0.11.0** — see [roadmap.md](roadmap.md), alongside
 [proxy-performance.md](proxy-performance.md). The two share a release because
 they change the same code path in opposite directions, which is argued at the
 end.

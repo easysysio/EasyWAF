@@ -1,7 +1,12 @@
 # Design note — IP allow/block lists, added from Traffic Monitor
 
-Status: planned for **0.9.0** — see [roadmap.md](roadmap.md), after users and
-roles (0.8.0).
+Status: planned for **0.10.0** — see [roadmap.md](roadmap.md), after users and
+roles (0.8.0) and flow logs (0.9.0).
+
+Logging moved ahead of this on 2026-09-09. It costs this release nothing and
+buys it something: an IP list refusing a request is exactly the kind of verdict
+someone will want explained afterwards, and the flow log is where that
+explanation lives.
 
 ## What 0.7.0 already did, and what is left
 
@@ -25,8 +30,9 @@ rewritten on 2026-09-08 to say so, so that this release is not built as though
 `sites.waf_policy_id` is `NULL`. Rule exclusions live *inside* the WAF module,
 so they exist only where a policy exists. A site added as a plain reverse proxy
 has no WAF, no country rules, and no way to refuse a single address — and
-nothing in the GUI says so. That gap is live in every installation today, and
-it is what moved this release ahead of logging, load balancing and export.
+nothing in the GUI says so — 0.7.1 at least made it visible. That gap is live
+in every installation today, and it is what moved this release ahead of load
+balancing and export.
 
 **2. Blocking does not exist at all.** An exclusion turns a rule *off*. Nothing
 in EasyWAF refuses a client outright, at any scope. That half of this note is

@@ -149,7 +149,7 @@ CREATE TABLE learned_urls (
 
 **In memory, like everything else on this path.** The allowlist is consulted
 per request, so it is cached and rebuilt on change — the pattern already used
-for the regex cache, the country database, and the IP lists in 0.9.0.
+for the regex cache, the country database, and the IP lists in 0.10.0.
 
 **Bounded, and loud when it is not.** A site whose learned set keeps growing
 past a sane cap is telling you the normaliser is missing a dynamic pattern,

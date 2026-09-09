@@ -405,13 +405,13 @@ scheduled or decided — the roadmap lives in [docs/design/roadmap.md](docs/desi
 * **Sessions cannot be revoked.** They are stateless signed cookies, so changing a password
   does not invalidate one already issued — it expires on its own within 8 hours. Scheduled
   with roles in **0.8.0**, which needs the same refactor.
-* **No audit log.** Nothing records who changed what. Scheduled for **0.11.0** — deliberately
+* **No audit log.** Nothing records who changed what. Scheduled for **0.9.0** — deliberately
   after roles, since a trail saying "admin did X" says little when every operator is `admin`.
 * **No backup, restore or configuration export.** Everything lives in one SQLite file with no
   way to export it, clone it to staging, or keep it under version control. Scheduled for
   **0.13.0**; until then, copy the database file with the service stopped.
 * **No high availability.** No configuration sync between nodes. Scheduled for **0.14.0**.
-* **No IP allow/block lists** (**0.9.0**) and **no rate limiting** (**0.15.0**).
+* **No IP allow/block lists** (**0.10.0**) and **no rate limiting** (**0.15.0**).
 * **`http_port` and `acme_webroot` in `config.toml` are ignored.** They are placeholders from
   0.1.0; listening ports come from the sites you define.
 

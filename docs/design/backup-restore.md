@@ -1,7 +1,7 @@
 # Design note — backup, restore, and configuration export
 
 Status: planned for **0.13.0** — see [roadmap.md](roadmap.md), after rule
-updates (0.6.0), flow logs (0.11.0) and load balancing (0.12.0).
+updates (0.6.0), flow logs (0.9.0) and load balancing (0.12.0).
 
 ## The problem
 

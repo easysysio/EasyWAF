@@ -1,17 +1,26 @@
 # Design note — flow logs over syslog, audit log on disk
 
-Status: planned for **0.11.0** — see [roadmap.md](roadmap.md). It follows TLS
+Status: planned for **0.9.0** — see [roadmap.md](roadmap.md). It follows TLS
 (0.4.0), ACME (0.5.0), the update work (0.6.0) and users and roles (0.8.0) — the
 audit log deliberately comes after roles, since a trail recording that "admin
 did X" says little when every operator is `admin`.
 
-Moved ahead of load balancing and backup/export on 2026-09-08. Both of those
-change what a core object *is* — a site's upstream becomes a pool, and export
-has to encode that — whereas logging observes the objects rather than reshaping
-them, so it neither blocks them nor is invalidated by them. Node sync (0.14.0)
-also depends on it: the traffic half of high availability is deliberately not
-built, and each node instead records what it saw for EasyLog to aggregate, so
-the aggregation should exist before the nodes do.
+Moved to the front of the unreleased work on 2026-09-09, ahead of IP lists
+and the engine release as well as load balancing and export.
+
+The argument is the same each time and it has only got stronger: logging
+*observes* the objects, where the others reshape them — a site's upstream
+becomes a pool, an export has to encode that shape, the engine changes how a
+request is buffered and matched. Nothing logging does is invalidated by any of
+them, and everything they do is easier to see having shipped it first. Node
+sync (0.14.0) depends on it outright: the traffic half of high availability is
+deliberately not built, each node instead recording what it saw for EasyLog to
+aggregate, so the aggregation should exist before the nodes do.
+
+There is a practical argument too. The two releases it now precedes are the
+ones most likely to need explaining after the fact — an IP list that refuses a
+request, and an engine that streams a body it used to buffer. Having the flow
+log and the audit trail already in place is what makes either debuggable.
 The EasyLog parser question below is cross-repository and can be settled in
 parallel, well before then.
 

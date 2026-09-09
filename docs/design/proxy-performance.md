@@ -1,7 +1,12 @@
 # Design note — proxy performance: streaming bodies, cached rules
 
-Status: planned for **0.10.0** — see [roadmap.md](roadmap.md), after IP
-allow/block lists (0.9.0) and deliberately *before* load balancing (0.12.0).
+Status: planned for **0.11.0** — see [roadmap.md](roadmap.md), after flow logs
+(0.9.0) and IP allow/block lists (0.10.0), and deliberately *before* load
+balancing (0.12.0).
+
+Flow logs moved ahead of this on 2026-09-09, which suits it: this release
+changes how a request is buffered and matched, and having the log already in
+place is what makes the before-and-after legible rather than asserted.
 
 ## Why before load balancing
 

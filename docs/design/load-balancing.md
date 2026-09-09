@@ -1,9 +1,9 @@
 # Design note — load balancing and upstream health
 
 Status: planned for **0.12.0** — see [roadmap.md](roadmap.md), after rule updates
-(0.6.0) and flow logs (0.11.0), and deliberately *before* backup/export (0.13.0).
+(0.6.0) and flow logs (0.9.0), and deliberately *before* backup/export (0.13.0).
 
-Proxy performance (0.10.0) was placed ahead of this on 2026-09-08 for the same
+Proxy performance (0.11.0) was placed ahead of this on 2026-09-08 for the same
 kind of reason this sits before export. That release makes request bodies
 stream rather than being buffered whole, which is a property of the request
 path this release rewrites — adding upstream selection and health checks to a

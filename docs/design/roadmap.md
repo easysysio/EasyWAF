@@ -11,9 +11,9 @@ next minor, so a release's notes stay about its feature.
 | 0.6.0 | Updating the rule sets and the country database (see [rule-repository.md](rule-repository.md)) |
 | 0.7.0 | Rule exclusions narrowed to a client, added from Traffic Monitor |
 | 0.8.0 | User management and roles |
-| 0.9.0 | IP allow/block lists, addable with one click from Traffic Monitor (see [ip-lists.md](ip-lists.md)) |
-| 0.10.0 | Engine: streaming bodies and cached rules (see [proxy-performance.md](proxy-performance.md)), plus the decoders CRS rules assume (see [request-transformations.md](request-transformations.md)) |
-| 0.11.0 | Flow logs over syslog, audit log on disk (see [logging.md](logging.md)) |
+| 0.9.0 | Flow logs over syslog, audit log on disk (see [logging.md](logging.md)) |
+| 0.10.0 | IP allow/block lists, addable with one click from Traffic Monitor (see [ip-lists.md](ip-lists.md)) |
+| 0.11.0 | Engine: streaming bodies and cached rules (see [proxy-performance.md](proxy-performance.md)), plus the decoders CRS rules assume (see [request-transformations.md](request-transformations.md)) |
 | 0.12.0 | Load balancing across upstreams, with health checks (see [load-balancing.md](load-balancing.md)) |
 | 0.13.0 | Backup, restore and configuration export (see [backup-restore.md](backup-restore.md)) |
 | 0.14.0 | Configuration sync between nodes — HA (see [ha-config-sync.md](ha-config-sync.md)) |
@@ -39,7 +39,7 @@ not yet ordered against each other.
 **Rule attribution — done in 0.5.5.** Traffic Monitor shows the score and
 every rule that contributed to it. It is what makes disabling a rule, cloning
 it to tune (0.6.0), excluding it for the client it wrongly blocked (0.7.0) and
-allowlisting that client outright (0.9.0) reachable in one click from the row
+allowlisting that client outright (0.10.0) reachable in one click from the row
 that prompted them. Two of the four are done; the prediction held, which is why
 the remaining two are expected to reuse the same row.
 
@@ -206,7 +206,7 @@ learning.** It is 0.13.0's export applied continuously — the same question of
 what constitutes this appliance's configuration, expressed portably — so
 building the two apart would produce two definitions of that, drifting. The
 traffic half of high availability is deliberately not built: each node records
-what it saw and EasyLog (0.11.0) aggregates it, which is why logging was moved
+what it saw and EasyLog (0.9.0) aggregates it, which is why logging was moved
 ahead of it rather than left to follow.
 
 It comes *before* rate limiting and learning because both change meaning on
@@ -229,12 +229,12 @@ while it is still moving.
 
 **IP lists and rate limiting are both identity/volume signals rather than
 payload inspection, share a pipeline position — checked early, before GeoIP and
-WAF — and rate limiting must respect the allowlist override from 0.9.0.** They
+WAF — and rate limiting must respect the allowlist override from 0.10.0.** They
 were scheduled adjacent to each other for that reason, and the note said both
 were easy slots to pull forward, since neither assumes anything from the
 releases ahead of it.
 
-**IP lists were pulled forward to 0.9.0 on 2026-09-08, which is that clause
+**IP lists were pulled forward to 0.10.0 on 2026-09-08, which is that clause
 being used.** The urgent need is the gap in [ip-lists.md](ip-lists.md): a site
 with no policy attached gets no WAF and no country rules, and until IP lists
 exist there is no way to refuse a single address on such a site. Rule

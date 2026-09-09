@@ -1,11 +1,11 @@
 # Design note — per-site rate limiting
 
 Status: planned for **0.15.0** — see [roadmap.md](roadmap.md), after IP
-allow/block lists (0.9.0).
+allow/block lists (0.10.0).
 
 The two were originally scheduled adjacent, being both identity/volume signals
 rather than payload inspection and sharing a pipeline position. IP lists were
-pulled forward to 0.9.0 on 2026-09-08 to close the gap on sites with no policy
+pulled forward to 0.10.0 on 2026-09-08 to close the gap on sites with no policy
 attached, so they are no longer neighbours. Nothing here depends on that
 adjacency: what this release needs from IP lists is the allowlist override,
 which now exists earlier rather than immediately before.
@@ -21,7 +21,7 @@ override — defeating the point of sharing.
 
 So rate-limit settings belong on `sites` directly, alongside the fields
 already there per-site: `listen_port`, `target`, the security-header toggles.
-Not a third policy concept next to WAF policies and the IP lists from 0.9.0 —
+Not a third policy concept next to WAF policies and the IP lists from 0.10.0 —
 each of those is genuinely shared threat data; a rate limit is a property of
 one site's own traffic shape.
 
@@ -48,14 +48,14 @@ one site's own traffic shape.
 
 ## Where it runs, and why
 
-Right after the IP allow/block check (0.9.0) and before GeoIP and WAF pattern
+Right after the IP allow/block check (0.10.0) and before GeoIP and WAF pattern
 matching — cheapest checks first. If a client is already over its limit,
 nothing is gained by then compiling and matching every WAF rule against a
 request that is going to be rejected anyway, the same reasoning already
 written down for why GeoIP precedes WAF.
 
 **It must respect the allowlist.** An allowlisted IP is checked before
-`Pipeline::run` is even called (0.9.0's design), so it automatically never
+`Pipeline::run` is even called (0.10.0's design), so it automatically never
 reaches a rate limiter either — one more confirmation that keeping the
 allowlist override structural, rather than a rule each module has to
 individually honour, was the right call.
