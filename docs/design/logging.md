@@ -144,11 +144,11 @@ because `/var/log/easywaf` is root-owned.
 * **systemd**: add `LogsDirectory=easywaf` to the unit, which creates and owns
   `/var/log/easywaf`. This is the convention EasyLog already uses
   (`LogsDirectory=easylog`).
-* **Docker**: `/var/log` inside a container is lost with the container, and the
-  image already declares `/data` as its volume. The log directory must
-  therefore be configurable rather than a fixed path, defaulting to
-  `/var/log/easywaf` for packages and set to `/data/log` in the image's
-  `config.toml`.
+* **Docker**: `/var/log/easywaf` there too, so the path is the same wherever
+  EasyWAF runs and there is one answer to "where is the audit log". It is
+  inside the container and goes with it unless something is mounted there,
+  which is why the directory stays configurable — an installation that wants
+  the log on the `/data` volume points it there.
 
 ## Open questions
 
