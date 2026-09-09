@@ -18,3 +18,10 @@
 gui_port     = 8080      # management GUI: plain HTTP, redirects to gui_tls_port
 gui_tls_port = 8443      # management GUI: served here, over TLS
 geoip_db     = ""        # external .mmdb; empty = bundled DB-IP Lite
+
+# /var/log inside a container is lost with the container, so the audit log goes
+# to the volume the image already declares. The syslog collector for flow lines
+# is set in the GUI, under Settings › Logging.
+[logging]
+dir       = "/data/log"          # audit.log, one file per day
+keep_days = 14                   # then deleted; 0 keeps everything

@@ -38,6 +38,9 @@
                     <a href="#tab-proxy" data-toggle="tab" role="tab">
                         <i class="fa fa-exchange"></i> Proxy</a></li>
                 <li role="presentation">
+                    <a href="#tab-logging" data-toggle="tab" role="tab">
+                        <i class="fa fa-file-text-o"></i> Logging</a></li>
+                <li role="presentation">
                     <a href="#tab-rules" data-toggle="tab" role="tab">
                         <i class="fa fa-download"></i> Rule Updates</a></li>
             </ul>
@@ -264,6 +267,87 @@
                             solving a CAPTCHA would clear it for everyone.
                         </p>
                     </div>
+                </div>
+            </div>
+
+                </div>
+
+                <div role="tabpanel" class="tab-pane" id="tab-logging">
+
+            <div class="panel panel-default">
+                <div class="panel-heading"><h4>Flow Logs</h4></div>
+                <div class="panel-body">
+                    <div class="form-group">
+                        <div class="checkbox">
+                            <label>
+                                <input type="checkbox" name="syslog_enabled" value="1"
+                                       {% if syslog_enabled %}checked{% endif %}>
+                                Send one line per request to a syslog collector
+                            </label>
+                        </div>
+                        <p class="help-block">
+                            One line for every proxied request — the site, the client, the
+                            method and path, the verdict, and the rules and score behind it.
+                            Off by default: sending traffic off the box is a decision, not
+                            an assumption.
+                            <br>
+                            Nothing is written locally. Every request is already in Traffic
+                            Monitor with the same detail, so a file beside the database
+                            would be the same data in a worse format. This exists to get the
+                            stream <em>off the box</em> — into a collector that can hold more
+                            history than an appliance should, and chart it across several of
+                            them.
+                            <br>
+                            Lines are sent without waiting: if the collector is slow or gone,
+                            lines are dropped and the count is reported, rather than the proxy
+                            slowing down behind them.
+                        </p>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-sm-8">
+                            <div class="form-group">
+                                <label>Collector</label>
+                                <input type="text" class="form-control" name="syslog_host"
+                                       value="{{ syslog_host }}" spellcheck="false"
+                                       placeholder="10.0.0.9">
+                                <p class="help-block">
+                                    A hostname or an IP address — not a URL, and without the
+                                    port. UDP, which is what EasyLog ingests.
+                                </p>
+                            </div>
+                        </div>
+                        <div class="col-sm-4">
+                            <div class="form-group">
+                                <label>Port</label>
+                                <input type="number" class="form-control" name="syslog_port"
+                                       value="{{ syslog_port }}" min="1" max="65535">
+                                <p class="help-block">514 unless the collector says otherwise.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="panel panel-default">
+                <div class="panel-heading"><h4>Audit Log</h4></div>
+                <div class="panel-body">
+                    <p class="help-block" style="margin-bottom:0">
+                        Every change made through this interface is written to
+                        <code>{{ log_dir }}/audit.log</code> with the account that made it.
+                        It is always on and stays on this machine: an audit trail sent
+                        somewhere by the machine it accuses is worth less than one that
+                        survives the network being down, and there is no switch for it —
+                        an appliance that cannot say who changed it is not one to run.
+                        <br>
+                        A file per day, kept
+                        {% if log_keep_days == 0 %}indefinitely{% else %}{{ log_keep_days }} days{% endif %},
+                        then deleted — nothing to set up in logrotate. The directory and
+                        that number are the one part of logging still set in
+                        <code>config.toml</code>, since the directory has to be known before
+                        the database is open and a container needs to point it somewhere
+                        that survives the container.
+                    </p>
                 </div>
             </div>
 

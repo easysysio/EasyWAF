@@ -48,6 +48,18 @@ pub const KEY_TRUSTED_PROXIES: &str = "trusted_proxies";
 /// Whether this node performs ACME renewals. Defaults to yes.
 pub const KEY_ACME_RENEW_HERE: &str = "acme_renew_here";
 
+/// Whether flow lines are sent to a syslog collector. "1" or "0".
+pub const KEY_SYSLOG_ENABLED: &str = "syslog_enabled";
+
+/// The collector's address — a hostname or an IP. Empty means none.
+pub const KEY_SYSLOG_HOST: &str = "syslog_host";
+
+/// The collector's UDP port.
+pub const KEY_SYSLOG_PORT: &str = "syslog_port";
+
+/// Offered when nothing has been stored — the syslog port.
+pub const DEFAULT_SYSLOG_PORT: u16 = 514;
+
 /// Used when the row is missing or cannot be parsed.
 const DEFAULT_RETENTION_DAYS: i64 = 0;
 
@@ -87,6 +99,9 @@ pub struct SettingsForm {
     pub trusted_proxies:        Option<String>,
     pub rule_update_check:      Option<String>,
     pub rule_update_url:        Option<String>,
+    pub syslog_enabled:         Option<String>,
+    pub syslog_host:            Option<String>,
+    pub syslog_port:            Option<String>,
 }
 
 // ─── get_settings ────────────────────────────────────────
@@ -140,6 +155,14 @@ pub async fn get_settings(
     ctx.insert("acme_directory", &acme.map(|a| a.directory)
         .unwrap_or_else(|| crate::acme::STAGING_DIRECTORY.to_string()));
     ctx.insert("trusted_proxies", &get_trusted_proxies(&state.db).await);
+
+    // Shown as stored, including a host left behind when sending was turned
+    // off: turning it back on should not mean typing the address again.
+    ctx.insert("syslog_enabled", &syslog_enabled(&state.db).await);
+    ctx.insert("syslog_host",    &get_setting(&state.db, KEY_SYSLOG_HOST).await.unwrap_or_default());
+    ctx.insert("syslog_port",    &syslog_port(&state.db).await);
+    ctx.insert("log_dir",        &state.config.logging.dir);
+    ctx.insert("log_keep_days",  &state.config.logging.keep_days);
 
     // The stored channel is shown as typed, and left blank when it is the
     // default: a field pre-filled with the default cannot be told apart from
@@ -288,6 +311,59 @@ pub async fn post_settings_update(
     set_setting(&state.db, KEY_TRUSTED_PROXIES, &proxies).await?;
     crate::forwarded::reload(&state.db).await;
 
+    // The syslog collector. Refused rather than stored when it is switched on
+    // with nowhere to send: an enabled collector that silently sends nothing
+    // is the failure this page exists to make visible.
+    let syslog_on   = form.syslog_enabled.is_some();
+    let syslog_host = form.syslog_host.as_deref().unwrap_or("").trim().to_string();
+    let port_raw    = form.syslog_port.as_deref().unwrap_or("").trim().to_string();
+
+    if syslog_on && syslog_host.is_empty() {
+        return flash_redirect(
+            "/settings",
+            "failed",
+            "Sending flow logs needs a collector address",
+        );
+    }
+
+    // A hostname or an address, not a URL and not "host:port" — the port has
+    // its own field, and taking one here would leave two answers to the same
+    // question.
+    if syslog_host.contains(|c: char| c.is_whitespace()) || syslog_host.contains('/') {
+        return flash_redirect(
+            "/settings",
+            "failed",
+            "The collector is a hostname or an IP address, not a URL",
+        );
+    }
+    if syslog_host.contains(':') && syslog_host.parse::<std::net::Ipv6Addr>().is_err() {
+        return flash_redirect(
+            "/settings",
+            "failed",
+            "Give the collector's port in the Port field, not with the address",
+        );
+    }
+
+    let syslog_port: u16 = if port_raw.is_empty() {
+        DEFAULT_SYSLOG_PORT
+    } else {
+        match port_raw.parse() {
+            Ok(p) if p > 0 => p,
+            _ => return flash_redirect(
+                "/settings",
+                "failed",
+                "The collector port must be a number between 1 and 65535",
+            ),
+        }
+    };
+
+    set_setting(&state.db, KEY_SYSLOG_ENABLED, if syslog_on { "1" } else { "0" }).await?;
+    set_setting(&state.db, KEY_SYSLOG_HOST, &syslog_host).await?;
+    set_setting(&state.db, KEY_SYSLOG_PORT, &syslog_port.to_string()).await?;
+    // Applied to the running logger, so the next request is logged to the new
+    // collector rather than the one this appliance was started with.
+    state.logger.set_collector(syslog_target(&state.db).await);
+
     // The rule channel. Checked before it is stored: a channel that is not a
     // fetchable URL fails six hours later in a background task, and the only
     // sign of it would be a "last check" that never advances.
@@ -433,6 +509,42 @@ pub async fn get_acme_renew_here(db: &SqlitePool) -> bool {
     match get_setting(db, KEY_ACME_RENEW_HERE).await {
         Some(v) => !matches!(v.trim().to_lowercase().as_str(), "0" | "false" | "no"),
         None    => true,
+    }
+}
+
+/// Whether flow lines are being sent off the box. Off unless it was turned on.
+pub async fn syslog_enabled(db: &SqlitePool) -> bool {
+    matches!(get_setting(db, KEY_SYSLOG_ENABLED).await.as_deref().map(str::trim), Some("1"))
+}
+
+/// The collector's port, falling back to the syslog default when the row is
+/// missing or does not parse.
+pub async fn syslog_port(db: &SqlitePool) -> u16 {
+    match get_setting(db, KEY_SYSLOG_PORT).await {
+        Some(v) => v.trim().parse().unwrap_or(DEFAULT_SYSLOG_PORT),
+        None    => DEFAULT_SYSLOG_PORT,
+    }
+}
+
+/// Where flow lines should be sent, or `None` when they should not be.
+///
+/// The one place the three rows become an address, so the logger and the form
+/// cannot disagree about what "enabled with an empty host" means: nowhere.
+/// An IPv6 literal is bracketed here, since that is what a socket address
+/// parser expects and not what anyone types into a form.
+pub async fn syslog_target(db: &SqlitePool) -> Option<String> {
+    if !syslog_enabled(db).await {
+        return None;
+    }
+    let host = get_setting(db, KEY_SYSLOG_HOST).await.unwrap_or_default().trim().to_string();
+    if host.is_empty() {
+        return None;
+    }
+    let port = syslog_port(db).await;
+    if host.parse::<std::net::Ipv6Addr>().is_ok() {
+        Some(format!("[{host}]:{port}"))
+    } else {
+        Some(format!("{host}:{port}"))
     }
 }
 

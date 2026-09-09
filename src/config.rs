@@ -19,10 +19,10 @@ const DEFAULT_DATABASE_URL: &str = "sqlite://easywaf.db";
 pub struct Config {
     pub proxy: ProxyConfig,
 
-    /// Where flow and audit lines go. Read from the file rather than the
-    /// database because logging has to work before the database is open, and
-    /// because a container needs to set the directory without editing a file
-    /// inside the image.
+    /// Where the log directory is and how long files are kept. Only those two
+    /// live here: a container needs to set the directory without editing a
+    /// file inside the image, and the directory has to be known before the
+    /// database is open. The syslog collector is a setting in the GUI.
     #[serde(default)]
     pub logging: LoggingConfig,
 
@@ -46,14 +46,20 @@ pub struct Config {
 
 // ─── LoggingConfig ───────────────────────────────────────
 
-/// Flow and audit logging.
+/// Where the audit log is written and how long it is kept.
 ///
 /// Every field has a default and the whole section may be absent, so a
-/// config.toml written before 0.9.0 still parses. The audit log then starts
-/// being written, and nothing is sent off the box until a collector is named.
+/// config.toml written before 0.9.0 still parses and the audit log simply
+/// starts being written.
+///
+/// The syslog collector is deliberately not here. It is a thing an operator
+/// changes — a collector moves, a port changes — and changing it should not
+/// mean editing a file on the appliance and restarting the proxy, so it lives
+/// in Settings with everything else of that kind. What is left is what has to
+/// be known before the database is open, or set from outside the image.
 #[derive(Deserialize, Clone, Debug)]
 pub struct LoggingConfig {
-    /// Directory holding `flow.log` and `audit.log`.
+    /// Directory holding `audit.log`.
     #[serde(default = "default_log_dir")]
     pub dir: String,
 
@@ -61,9 +67,6 @@ pub struct LoggingConfig {
     /// in logrotate, matching EasyLog.
     #[serde(default = "default_keep_days")]
     pub keep_days: u32,
-
-    #[serde(default)]
-    pub syslog: SyslogConfig,
 }
 
 impl Default for LoggingConfig {
@@ -71,41 +74,12 @@ impl Default for LoggingConfig {
         Self {
             dir:       default_log_dir(),
             keep_days: default_keep_days(),
-            syslog:    SyslogConfig::default(),
         }
     }
 }
 
 fn default_log_dir()   -> String { "/var/log/easywaf".to_string() }
 fn default_keep_days() -> u32    { 14 }
-
-/// The collector flow lines are sent to.
-///
-/// There is no local flow file, deliberately. Every proxied request is already
-/// written to `traffic_events` and shown in Traffic Monitor, with the verdict,
-/// the score and the rules that produced it — a `flow.log` beside it would be
-/// the same data in a worse format. Syslog exists to get that stream *off the
-/// box*, into a collector that can hold more history than an appliance should
-/// and chart it across several of them.
-#[derive(Deserialize, Clone, Debug, Default)]
-pub struct SyslogConfig {
-    /// Off by default: sending traffic off-box is a decision, not an
-    /// assumption.
-    #[serde(default)]
-    pub enabled: bool,
-
-    #[serde(default)]
-    pub host: String,
-    #[serde(default = "default_syslog_port")]
-    pub port: u16,
-    /// "udp" today. TCP is a possible later addition for delivery guarantees;
-    /// anything else is refused at startup rather than silently ignored.
-    #[serde(default = "default_syslog_protocol")]
-    pub protocol: String,
-}
-
-fn default_syslog_port()     -> u16    { 514 }
-fn default_syslog_protocol() -> String { "udp".to_string() }
 
 // ─── ProxyConfig ─────────────────────────────────────────
 

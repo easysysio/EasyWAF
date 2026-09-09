@@ -15,6 +15,10 @@
 // proxy that stalls because a disk is slow or a collector is
 // gone has turned its logging into an outage.
 //
+// The collector address comes from Settings, not the config
+// file, so it can be changed while the proxy is running. It
+// is read per line from a shared cell the GUI writes to.
+//
 // Operational chatter is not here. That stays on stdout for
 // the journal, which is what a systemd service should do.
 // =========================================================
@@ -24,7 +28,7 @@ use chrono::{DateTime, Utc};
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use tokio::sync::mpsc;
 
 /// How many lines may be waiting before new ones are dropped.
@@ -45,24 +49,60 @@ enum Line {
 
 /// The handle held by the rest of the program.
 ///
-/// Cloneable and cheap: it is a channel sender and two counters. Everything
-/// that can block — opening files, rotating them, resolving a collector —-
-/// happens in the task behind it.
+/// Cloneable and cheap: it is a channel sender, a counter and a shared cell.
+/// Everything that can block — opening files, rotating them, resolving a
+/// collector —- happens in the task behind it.
 #[derive(Clone)]
 pub struct Logger {
     tx:      Option<mpsc::Sender<Line>>,
     dropped: Arc<AtomicU64>,
+    /// `host:port` when flow lines are being sent, `None` when they are not.
+    /// Shared with the writer task and replaced by `set_collector`, so a
+    /// change in Settings takes effect on the next request rather than the
+    /// next restart.
+    target:  Arc<RwLock<Option<String>>>,
 }
 
 impl Logger {
     /// A logger that discards everything, for tests and for a configuration
     /// with every sink switched off.
     pub fn disabled() -> Self {
-        Self { tx: None, dropped: Arc::new(AtomicU64::new(0)) }
+        Self {
+            tx:      None,
+            dropped: Arc::new(AtomicU64::new(0)),
+            target:  Arc::new(RwLock::new(None)),
+        }
+    }
+
+    /// Point flow lines at a collector, or stop sending them with `None`.
+    ///
+    /// Called at start with what Settings holds, and again whenever it is
+    /// saved. A poisoned lock is ignored rather than panicking: failing to
+    /// change where logs go must not take the management interface down.
+    pub fn set_collector(&self, target: Option<String>) {
+        let Ok(mut slot) = self.target.write() else { return };
+        if *slot == target {
+            return;
+        }
+        match &target {
+            Some(t) => tracing::info!(collector = %t, "Flow logs are being sent to syslog"),
+            None    => tracing::info!("Flow logs are not being sent anywhere"),
+        }
+        *slot = target;
+    }
+
+    /// Whether flow lines have anywhere to go, so a caller can skip building
+    /// one. Nothing consumes them locally — every request is already in
+    /// `traffic_events` — so with no collector the line is pure cost.
+    pub fn flow_enabled(&self) -> bool {
+        self.tx.is_some() && self.target.read().map(|t| t.is_some()).unwrap_or(false)
     }
 
     /// Record one proxied request.
     pub fn flow(&self, line: String) {
+        if !self.flow_enabled() {
+            return;
+        }
         self.send(Line::Flow(line));
     }
 
@@ -92,46 +132,31 @@ impl Logger {
 /// source build running unprivileged should not refuse to boot because
 /// `/var/log/easywaf` is root-owned.
 pub fn init(cfg: &LoggingConfig) -> Logger {
-    let want_syslog = cfg.syslog.enabled && !cfg.syslog.host.is_empty();
     // The audit log has no switch: an appliance that cannot say who changed it
     // is not one to run, and it is a local file whose only cost is disk.
     let dir = PathBuf::from(&cfg.dir);
 
+    // A directory that cannot be created is reported and the logger still
+    // starts: flow lines go to a collector over the network and have no
+    // interest in the disk, so a root-owned /var/log/easywaf must not take
+    // them down with the audit file.
     if let Err(e) = std::fs::create_dir_all(&dir) {
         tracing::warn!(
             dir = %dir.display(),
-            "Cannot create the log directory, so flow and audit lines will not be written: {e}"
-        );
-        return Logger::disabled();
-    }
-
-    if cfg.syslog.enabled && cfg.syslog.host.is_empty() {
-        tracing::warn!("logging.syslog.enabled is on but logging.syslog.host is empty — not sending");
-    }
-    if cfg.syslog.enabled && cfg.syslog.protocol != "udp" {
-        tracing::warn!(
-            protocol = %cfg.syslog.protocol,
-            "Only \"udp\" is supported today; syslog will not be sent"
+            "Cannot create the log directory, so the audit trail will not be written: {e}"
         );
     }
 
     let (tx, rx) = mpsc::channel(QUEUE);
     let dropped  = Arc::new(AtomicU64::new(0));
+    // Starts empty. main sets it from Settings once the database is open, and
+    // the Settings page replaces it on every save.
+    let target: Arc<RwLock<Option<String>>> = Arc::new(RwLock::new(None));
 
-    tokio::spawn(writer(
-        rx,
-        dir,
-        cfg.keep_days,
-        want_syslog && cfg.syslog.protocol == "udp",
-        format!("{}:{}", cfg.syslog.host, cfg.syslog.port),
-        dropped.clone(),
-    ));
+    tokio::spawn(writer(rx, dir, cfg.keep_days, target.clone(), dropped.clone()));
 
-    tracing::info!(
-        dir = %cfg.dir, flow_syslog = want_syslog, keep_days = cfg.keep_days,
-        "Logging started"
-    );
-    Logger { tx: Some(tx), dropped }
+    tracing::info!(dir = %cfg.dir, keep_days = cfg.keep_days, "Logging started");
+    Logger { tx: Some(tx), dropped, target }
 }
 
 // ─── The writer task ─────────────────────────────────────
@@ -141,21 +166,14 @@ async fn writer(
     mut rx: mpsc::Receiver<Line>,
     dir: PathBuf,
     keep_days: u32,
-    to_syslog: bool,
-    collector: String,
+    target: Arc<RwLock<Option<String>>>,
     dropped: Arc<AtomicU64>,
 ) {
-    let socket = if to_syslog {
-        match tokio::net::UdpSocket::bind("0.0.0.0:0").await {
-            Ok(s) => Some(s),
-            Err(e) => {
-                tracing::error!("Cannot open a socket for syslog, so nothing will be sent: {e}");
-                None
-            }
-        }
-    } else {
-        None
-    };
+    // Opened on the first line that has somewhere to go, not at start: an
+    // installation that never names a collector never holds a socket, and one
+    // that names it later does not need a restart to get one.
+    let mut socket: Option<tokio::net::UdpSocket> = None;
+    let mut bind_failed = false;
 
     let mut audit = DailyFile::new(dir, "audit", keep_days);
 
@@ -171,6 +189,27 @@ async fn writer(
                 let Some(line) = line else { break };
                 match line {
                     Line::Flow(text) => {
+                        // Re-read per line: the collector can change under a
+                        // running proxy, and a line queued before the change
+                        // should go where the appliance points now.
+                        let Some(collector) = target.read().ok().and_then(|t| t.clone())
+                        else { continue };
+
+                        if socket.is_none() && !bind_failed {
+                            match tokio::net::UdpSocket::bind("0.0.0.0:0").await {
+                                Ok(s)  => socket = Some(s),
+                                Err(e) => {
+                                    // Once, not per request: a box with no
+                                    // socket to spare would otherwise fill the
+                                    // journal describing the fact.
+                                    tracing::error!(
+                                        "Cannot open a socket for syslog, so nothing will be sent: {e}"
+                                    );
+                                    bind_failed = true;
+                                }
+                            }
+                        }
+
                         if let Some(sock) = &socket {
                             send_syslog(sock, &collector, &text).await;
                         }
@@ -398,12 +437,46 @@ mod tests {
         // The property the request path depends on: sending must never block,
         // however far behind the writer is.
         let (tx, _rx) = mpsc::channel(1);
-        let l = Logger { tx: Some(tx), dropped: Arc::new(AtomicU64::new(0)) };
+        let l = Logger {
+            tx:      Some(tx),
+            dropped: Arc::new(AtomicU64::new(0)),
+            target:  Arc::new(RwLock::new(Some("127.0.0.1:514".into()))),
+        };
         for _ in 0..50 {
             l.flow("line".into());
         }
         let dropped = l.dropped.load(Ordering::Relaxed);
         assert!(dropped >= 48, "expected most of 50 to be dropped, got {dropped}");
+    }
+
+    #[tokio::test]
+    async fn flow_lines_wait_for_a_collector_and_follow_it() {
+        // The collector is a setting now, so it can be named, changed and
+        // cleared while the proxy runs — and with none named a flow line must
+        // cost nothing rather than queue up for a sink that does not exist.
+        let (tx, mut rx) = mpsc::channel(8);
+        let l = Logger {
+            tx:      Some(tx),
+            dropped: Arc::new(AtomicU64::new(0)),
+            target:  Arc::new(RwLock::new(None)),
+        };
+
+        l.flow("before".into());
+        assert!(rx.try_recv().is_err(), "queued a flow line with nowhere to send it");
+        assert_eq!(l.dropped.load(Ordering::Relaxed), 0,
+                   "a line with no collector is not a dropped line");
+
+        // The audit trail is local and unconditional, so it is unaffected.
+        l.audit("change".into());
+        assert!(rx.try_recv().is_ok(), "the audit trail does not depend on a collector");
+
+        l.set_collector(Some("10.0.0.9:514".into()));
+        l.flow("after".into());
+        assert!(matches!(rx.try_recv(), Ok(Line::Flow(t)) if t == "after"));
+
+        l.set_collector(None);
+        l.flow("later".into());
+        assert!(rx.try_recv().is_err(), "kept sending after the collector was cleared");
     }
 }
 

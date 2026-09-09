@@ -88,19 +88,19 @@ Option 2 is the one worth building: those fields are the entire point of a WAF,
 and EasyLog's log types are self-contained modules designed to be added. It is
 cross-repository work and should be planned as such.
 
-**Configuration** (`config.toml`, since logging must work before the GUI is up
-and before the database is readable):
+**Configuration.** The collector is a setting in the GUI, under Settings ›
+Logging: enabled, host, port. It is a thing an operator changes — a collector
+moves, a port changes — and changing it should not mean editing a file on the
+appliance and restarting the proxy. The logger reads the address per line from
+a shared cell, so a save takes effect on the next request.
+
+What stays in `config.toml` is what has to be known before the database is
+open, or set from outside a container image:
 
 ```toml
 [logging]
 dir       = "/var/log/easywaf"  # audit.log lives here
 keep_days = 14                  # daily rotation, then delete
-
-[logging.syslog]
-enabled  = false                # sending traffic off-box is opt-in
-host     = ""                   # collector address, e.g. "10.0.0.9"
-port     = 514
-protocol = "udp"
 ```
 
 Both sinks share one bounded channel and one drop counter, for the same reason:

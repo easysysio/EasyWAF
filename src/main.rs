@@ -154,6 +154,10 @@ async fn main() {
     // Started before anything that logs, so a log directory that cannot be
     // opened is reported once at boot rather than on the first request.
     let logger = logging::init(&cfg.logging);
+    // Where flow lines go is a setting rather than a line in config.toml, so
+    // it is applied here — once the database is open — and again on every
+    // save of the Settings page.
+    logger.set_collector(routes::settings::syslog_target(&db).await);
 
     let proxy_state = proxy::ProxyState {
         db:         db.clone(),

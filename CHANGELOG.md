@@ -8,15 +8,14 @@ Version bumps and tags are created only after explicit approval.
 
 ## [Unreleased]
 
+### Added
+- Flow logs over syslog: one line per proxied request, sent to a collector with the site, client, method, path, verdict, score and rules. Off by default.
+- Settings › Logging: the syslog collector's address and port, applied to the running proxy on save rather than at the next restart.
+- Logging configuration in `config.toml`: the directory the audit log is written to, and how many days of files are kept.
+- `docs/design/easylog-easywaf-type.md` — the wire format EasyWAF emits, specified for EasyLog to implement a parser against.
+
 ### Fixed
 - `scripts/modsec2easywaf.py` converted CRS rules of every paranoia level. CRS runs level 1 by default and higher levels are opt-in, so 53% of the output was rules CRS itself would not run. It now takes `--max-paranoia`, default 1.
-
-## [Unreleased]
-
-### Added
-- Flow logs over syslog: one line per proxied request, sent to a collector when `logging.syslog.enabled` is set. Off by default.
-- Logging configuration in `config.toml`: a log directory, daily rotation with `keep_days`, and an optional syslog collector for flow lines.
-- `docs/design/easylog-easywaf-type.md` — the wire format EasyWAF emits, specified for EasyLog to implement a parser against.
 
 ## [0.8.1] — 2026-09-09
 
