@@ -1,0 +1,178 @@
+# =========================================================
+# sets.toml — EasyWAF rule sets
+#
+# The index of what this repository publishes. A build reads
+# it to decide what to bundle; EasyWAF reads the published
+# copy to decide what it can update.
+#
+# tier:
+#   basic     bundled with every EasyWAF build and installed
+#             by default. Protections no deployment should be
+#             without, which assume nothing about the
+#             application behind the proxy.
+#   optional  published and updatable, never bundled. Sets
+#             that only make sense for one application —
+#             WordPress, and whatever follows — where the
+#             cost of matching would be paid by everyone and
+#             the benefit collected by the few running it.
+#
+# description is one sentence, shown beside the set in the
+# Rule Sets page of every installation. It is what someone
+# reads when deciding whether they want the set at all, so
+# say what it matches rather than restating the name.
+#
+# version is how an installation knows an update exists: it
+# compares the version it holds against the version
+# published. Bump it whenever a set's content changes.
+# publish.sh refuses to publish a changed set whose version
+# stood still, because a corrected rule nobody is told about
+# is the same as no correction at all.
+#
+# A set's id is permanent. It appears in EasyWAF's database
+# and in the update channel, so renaming one orphans every
+# installation that has it.
+#
+# Rule id namespaces:
+#   9xxxxx    OWASP CRS numbering, written for EasyWAF.
+#   101xxxx+  Application sets, stepping 10000 per set.
+#   2xxxxxx   Converted from a CRS rule by
+#             scripts/modsec2easywaf.py: 2000000 + the original
+#             CRS id, so 2944100 is CRS 944100. The offset
+#             exists because CRS numbering collides with the
+#             OWASP-numbered sets above, and external_id is
+#             unique per policy.
+#
+# sha256 is added by publish.sh, not written here.
+# =========================================================
+
+generated = "2026-09-08T17:53:43Z"
+
+[[sets]]
+id          = "owasp-scanners"
+name        = "Scanner and automated tool detection"
+description = "Identifies well-known attack and reconnaissance tools by their signatures."
+band        = 913
+version     = 4
+file        = "sets/913-scanners.rules.toml"
+sha256  = "4d3305c1b5a7e0a05ae54bd97ad2cbe654e7fe09be41a9f2dc6d7ee3bce78e21"
+tier        = "basic"
+
+[[sets]]
+id          = "owasp-protocol"
+name        = "Protocol enforcement"
+description = "Malformed, abusive and evasion-oriented HTTP requests."
+band        = 920
+version     = 1
+file        = "sets/920-protocol.rules.toml"
+sha256  = "66e635d195f4ec14378c517c6ff72e9ca7dc0bbfb737425576353c05c23dd7ac"
+tier        = "basic"
+
+[[sets]]
+id          = "owasp-lfi"
+name        = "Local file inclusion"
+description = "Local file inclusion and path traversal."
+band        = 930
+version     = 3
+file        = "sets/930-lfi.rules.toml"
+sha256  = "45fc33384effa85bbf1b7bd521524c1fea352e3ad208f96598f20599aad36abc"
+tier        = "basic"
+
+[[sets]]
+id          = "owasp-rfi"
+name        = "Remote file inclusion"
+description = "Remote file inclusion."
+band        = 931
+version     = 2
+file        = "sets/931-rfi.rules.toml"
+sha256  = "0c3bef1d39f23eefcd96b9ff23ad5a5076413fd9d7be51875b71eef76d8fe412"
+tier        = "basic"
+
+[[sets]]
+id          = "owasp-rce"
+name        = "Remote code execution"
+description = "Remote code execution and command injection."
+band        = 932
+version     = 2
+file        = "sets/932-rce.rules.toml"
+sha256  = "fa598e6556bf6341e43ae5caf8198378cd9a1cffbf155b4d8f4a651ce52ce623"
+tier        = "basic"
+
+[[sets]]
+id          = "owasp-php"
+name        = "PHP injection"
+description = "PHP injection and PHP-specific attacks."
+band        = 933
+version     = 1
+file        = "sets/933-php.rules.toml"
+sha256  = "40115ee4eca435cc08954dbc7355f7506c85358a3e7b7bbeb5918a7d4aed4285"
+tier        = "basic"
+
+[[sets]]
+id          = "owasp-xss"
+name        = "Cross-site scripting"
+description = "Cross-site scripting."
+band        = 941
+version     = 2
+file        = "sets/941-xss.rules.toml"
+sha256  = "aee30feb8917aaf9f6071c5f18e874ebc3c7855244a2d22f8c546f77d8e36da8"
+tier        = "basic"
+
+[[sets]]
+id          = "owasp-sqli"
+name        = "SQL injection"
+description = "SQL injection."
+band        = 942
+version     = 2
+file        = "sets/942-sqli.rules.toml"
+sha256  = "aec172405b39cde7697359304e933e60ecc6361ae1297ec7522a79d47c6b370a"
+tier        = "basic"
+
+[[sets]]
+id          = "wordpress"
+name        = "WordPress"
+description = "Protections that only make sense in front of WordPress: XML-RPC abuse, user enumeration, webshells in the uploads directory, and exposed backups."
+band        = 1010
+version     = 1
+file        = "sets/1010-wordpress.rules.toml"
+sha256  = "d60b3ea66696a707402f639cdb2f97742c9494a5a58610710f9d1f2f34d03e4a"
+tier        = "optional"
+
+[[sets]]
+id          = "apache"
+name        = "Apache httpd"
+description = "How Apache is attacked and how it leaks: the 2.4.49 traversal encoding, .htaccess and .htpasswd, server-info, cgi-bin and configuration probing."
+band        = 1020
+version     = 1
+file        = "sets/1020-apache.rules.toml"
+sha256  = "62968d692df80ad2d6df2a387f551d1d8a16c09a0a7131857bf396802feee577"
+tier        = "optional"
+
+[[sets]]
+id          = "owasp-protocol-attack"
+name        = "Protocol attack"
+description = "Request splitting through CR/LF in the path, and the unix: form behind the mod_proxy SSRF — attacks on how the request is framed rather than what it carries."
+band        = 921
+version     = 1
+file        = "sets/921-protocol-attack.rules.toml"
+sha256  = "854ae660d92d7e16428c6981972ce2b3dccdff16033dc14b176fa2fee2dbdaf2"
+tier        = "optional"
+
+[[sets]]
+id          = "java"
+name        = "Java and Tomcat"
+description = "Protections that only make sense in front of a JVM application: Java deserialization payloads, malicious class loading, and suspicious class and method names. Does not cover Log4Shell — see the set header."
+band        = 1030
+version     = 1
+file        = "sets/1030-java.rules.toml"
+sha256  = "de68ffc891e26a60293a9dc4cbefe5fe713b0a14283a9a3cdde3594a6d8c6080"
+tier        = "optional"
+
+[[sets]]
+id          = "secrets"
+name        = "Credential and secret file exposure"
+description = "Requests for files that hold credentials — cloud keys, SSH keys, CI secrets, container registry logins and IDE deployment profiles. Anchored to the document root, so a git host's repository content is not matched."
+band        = 1040
+version     = 1
+file        = "sets/1040-secrets.rules.toml"
+sha256  = "4deb01aecf0c94cb77e1183c4cc1c3eb5b8433e6a998e4631d310b5a734f40ec"
+tier        = "optional"

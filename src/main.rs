@@ -212,6 +212,15 @@ async fn main() {
         .route("/exclusions",             get(routes::exclusions::get_exclusions))
         .route("/exclusions/{id}/remove", post(routes::exclusions::post_exclusion_remove))
         .route("/account",               get(routes::account::get_account))
+        // Who may sign in, and what they may do. Administrator-only, and
+        // guarded so no action can leave the installation with none.
+        .route("/accounts",               get(routes::accounts::get_accounts))
+        .route("/accounts/create",        post(routes::accounts::post_account_create))
+        .route("/accounts/{id}/role",     post(routes::accounts::post_account_role))
+        .route("/accounts/{id}/toggle",   post(routes::accounts::post_account_toggle))
+        .route("/accounts/{id}/password", post(routes::accounts::post_account_password))
+        .route("/accounts/{id}/signout",  post(routes::accounts::post_account_signout))
+        .route("/accounts/{id}/delete",   post(routes::accounts::post_account_delete))
         .route("/account/password",      post(routes::account::post_account_password))
         .route("/settings",              get(routes::settings::get_settings))
         .route("/settings/update",       post(routes::settings::post_settings_update))

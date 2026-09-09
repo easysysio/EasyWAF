@@ -4,6 +4,7 @@
 // =========================================================
 
 pub mod account;
+pub mod accounts;
 pub mod certs;
 pub mod dashboard;
 pub mod exclusions;

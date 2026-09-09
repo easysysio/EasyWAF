@@ -1,0 +1,54 @@
+# Protocol attack (band 921)
+#
+# Request smuggling, response splitting and header injection: attacks on how
+# the request itself is framed, rather than on what it carries. Distinct from
+# the 920 protocol set, which is about malformed and abusive requests.
+#
+# Derived from OWASP CRS 4.7.0, REQUEST-921-PROTOCOL-ATTACK.conf, converted by
+# scripts/modsec2easywaf.py. Apache-2.0; see LICENSE and NOTICE. Each rule's
+# description carries its original CRS id.
+#
+# These two are the rules from that file that convert EXACTLY — same pattern,
+# same zone, nothing widened — and that are detections rather than bookkeeping.
+# Twenty-three others were refused: chained conditions, transformations EasyWAF
+# does not apply, rules that would have had to inspect more than the original,
+# and several that only exist to feed a counter a later rule reads. One of
+# those, CRS 921170, is `@rx .` against every parameter name; converting it
+# would have scored every request carrying a parameter at all.
+#
+#   2921190  a CR or LF in the request path — request splitting.
+#   2921240  the `unix:...|` form behind the mod_proxy SSRF, which matters in
+#            front of Apache in particular.
+#
+# See imported/crs-4.7.0/refused.txt for every refusal and its reason.
+#
+# Optional rather than basic because these are converted rules that have not
+# yet run against real traffic here. Nothing about them is application
+# specific, so they are a candidate for promotion once they have.
+#
+# Scores are CRS severities against CRS's threshold of 5, and EasyWAF's default
+# threshold is 10. On a policy left at 10 these accumulate rather than block on
+# their own, which is the conservative direction.
+
+[set]
+id      = "owasp-protocol-attack"
+name    = "Protocol attack"
+version = 1
+
+[[rules]]
+id          = 2921190
+name        = 'HTTP Splitting (CR/LF in request filename detected)'
+description = 'Converted from ModSecurity rule 921190 (severity CRITICAL); original transforms t:urldecodeuni'
+zone        = "URL"
+pattern     = '[\n\r]'
+score       = 5
+action      = "score"
+
+[[rules]]
+id          = 2921240
+name        = 'mod_proxy attack attempt detected'
+description = 'Converted from ModSecurity rule 921240 (severity CRITICAL); original transforms t:urldecodeuni,lowercase'
+zone        = "URL"
+pattern     = '(?i)unix:[^|]*\|'
+score       = 5
+action      = "score"

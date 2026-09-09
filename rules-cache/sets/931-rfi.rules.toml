@@ -1,0 +1,91 @@
+# OWASP CRS — Remote File Inclusion (category 931)
+# Detects attempts to make the server fetch and include a remote resource.
+
+[set]
+id      = "owasp-rfi"
+name    = "Remote file inclusion"
+version = 2
+
+[[rules]]
+id          = 931001
+name        = "RFI: HTTP URL in parameter"
+description = "A remote script URL passed where a local path is expected"
+zone        = "ANY"
+# Narrowed to URLs that point at something includable.
+#
+# Any http(s) URL in a parameter used to score 6, and a URL in a parameter is
+# ordinary on the modern web: an OAuth redirect_uri, an OIDC issuer, a webhook
+# callback, an image proxy. Every sign-in through an identity provider scored 6
+# — enough to cross a challenge threshold on its own, so a CAPTCHA on every
+# login, for a vulnerability class the application may not even have.
+#
+# Real remote file inclusion fetches a script: ?page=http://host/shell.txt or
+# ?file=http://host/c99.php. Requiring that shape keeps the payloads and drops
+# the callbacks. A URL with no script extension is no longer scored at all —
+# weak evidence that fires constantly is worse than no evidence.
+pattern     = '(?i)https?://[a-z0-9\-\.]+(:\d+)?/[^\s"\x27&]*\.(php[0-9]?|phtml|phar|inc|txt|asp|aspx|jsp|jspx|cgi|pl|py|rb|sh)(\?|&|$)'
+score       = 6
+action      = "score"
+
+[[rules]]
+id          = 931002
+name        = "RFI: FTP URL in parameter"
+description = "ftp:// URL as a value — used to probe internal FTP or RFI"
+zone        = "ARGS"
+pattern     = '(?i)ftp://[a-z0-9\-\.]'
+score       = 6
+action      = "score"
+
+[[rules]]
+id          = 931003
+name        = "RFI: php:// stream wrapper"
+description = "PHP stream wrappers used to read/write arbitrary streams"
+zone        = "ANY"
+pattern     = '(?i)php://(input|filter|data|expect|zip|phar)'
+score       = 9
+action      = "score"
+
+[[rules]]
+id          = 931004
+name        = "RFI: data: URI scheme"
+description = "data: URI used to include inline base64-encoded content"
+zone        = "ARGS"
+pattern     = '(?i)data://text/'
+score       = 7
+action      = "score"
+
+[[rules]]
+id          = 931005
+name        = "RFI: phar:// stream wrapper"
+description = "Phar archive stream — can trigger deserialization gadgets"
+zone        = "ANY"
+pattern     = '(?i)phar://'
+score       = 8
+action      = "score"
+
+[[rules]]
+id          = 931006
+name        = "RFI: zip:// stream wrapper"
+description = "zip:// stream wrapper used for file inclusion"
+zone        = "ANY"
+pattern     = '(?i)zip://'
+score       = 7
+action      = "score"
+
+[[rules]]
+id          = 931007
+name        = "RFI: expect:// command execution"
+description = "PHP expect:// wrapper executes OS commands directly"
+zone        = "ANY"
+pattern     = '(?i)expect://'
+score       = 10
+action      = "block"
+
+[[rules]]
+id          = 931008
+name        = "RFI: glob:// wrapper"
+description = "glob:// wrapper used to list files or bypass include restrictions"
+zone        = "ANY"
+pattern     = '(?i)glob://'
+score       = 6
+action      = "score"

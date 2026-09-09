@@ -9,6 +9,26 @@ Version bumps and tags are created only after explicit approval.
 ## [Unreleased]
 
 ### Added
+- **Account management** — Settings › Accounts, administrators only.
+
+  Create accounts, change a role, reset a password, sign an account out of
+  every browser, suspend it, or delete it. Suspending keeps the account and its
+  history; deleting does not, so suspension is the one to reach for when
+  somebody leaves.
+
+  Every action that could remove an administrator is refused when it would
+  leave **no enabled administrator at all** — the one state the GUI cannot
+  recover from, since undoing it would mean editing the database by hand. An
+  account also cannot suspend or delete itself. A suspended administrator does
+  not count as one, which is the case worth being careful about: two admin rows
+  where only one can sign in.
+
+  Changing a role, resetting a password and suspending all end that account's
+  sessions immediately. So does **changing your own password**, which until now
+  left sessions minted with the old password valid for their remaining eight
+  hours — including this browser, which is asked to sign in again rather than
+  quietly exempting the one session most likely to be the attacker's.
+
 - **Accounts have roles, and sessions can be ended.** The groundwork for 0.8.0;
   the account management pages follow.
 

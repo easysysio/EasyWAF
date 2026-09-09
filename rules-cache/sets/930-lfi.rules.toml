@@ -1,0 +1,167 @@
+# OWASP CRS — Local File Inclusion (category 930)
+# Detects attempts to read sensitive files from the server filesystem.
+
+[set]
+id      = "owasp-lfi"
+name    = "Local file inclusion"
+version = 3
+
+[[rules]]
+id          = 930001
+name        = "LFI: directory traversal ../"
+description = "Classic dot-dot-slash path traversal"
+zone        = "ANY"
+pattern     = '\.\.[/\\]'
+score       = 6
+action      = "score"
+
+[[rules]]
+id          = 930002
+name        = "LFI: URL-encoded traversal"
+description = "Encoded ../ using %2e%2e or %2f to bypass simple filters"
+zone        = "ANY"
+pattern     = '(?i)(%2e%2e[%2f%5c]|\.\.%2f|\.\.%5c)'
+score       = 7
+action      = "score"
+
+[[rules]]
+id          = 930003
+name        = "LFI: double URL-encoded traversal"
+description = "Double-encoded traversal (%252e%252e) to evade single-decode checks"
+zone        = "ANY"
+pattern     = '(?i)%252e%252e'
+score       = 8
+action      = "score"
+
+[[rules]]
+id          = 930004
+name        = "LFI: /etc/passwd — instant block"
+description = "Attempt to read Unix user credentials"
+zone        = "ANY"
+pattern     = '(?i)/etc/(passwd|shadow|group|hosts|sudoers|crontab)'
+score       = 10
+action      = "block"
+
+[[rules]]
+id          = 930005
+name        = "LFI: /proc/self/environ"
+description = "Reading process environment may expose secrets or enable RCE"
+zone        = "ANY"
+# Blocked, not scored. Raised from 9 on 2026-09-08 after production traffic
+# showed this matching real attempts — a Vite @fs traversal and an AList
+# file-read probe — and passing, because 9 is under the default threshold of
+# 10. Nothing legitimate reads another process's cmdline or environ over HTTP,
+# so there is no traffic to weigh against refusing it, and leaving it one point
+# short of acting made it a rule that watched an attack go past.
+pattern     = '(?i)/proc/(self|[0-9]+)/(environ|cmdline|maps|mem)'
+score       = 10
+action      = "block"
+
+[[rules]]
+id          = 930006
+name        = "LFI: Windows system files — instant block"
+description = "Attempt to read Windows credential or system configuration files"
+zone        = "ANY"
+pattern     = '(?i)(\\windows\\(system32|syswow64)|win\.ini|system\.ini|boot\.ini|ntldr)'
+score       = 10
+action      = "block"
+
+[[rules]]
+id          = 930007
+name        = "LFI: null byte injection"
+description = "Null byte (%00) used to truncate file extension checks"
+zone        = "ANY"
+pattern     = '%00'
+score       = 7
+action      = "score"
+
+[[rules]]
+id          = 930008
+name        = "LFI: SSH private keys"
+description = "Attempt to read SSH private key files"
+zone        = "ANY"
+pattern     = '(?i)(\.ssh/(id_rsa|id_dsa|id_ecdsa|id_ed25519)|authorized_keys)'
+score       = 9
+action      = "score"
+
+[[rules]]
+id          = 930009
+name        = "LFI: application config files"
+description = "Common configuration files containing credentials"
+zone        = "ANY"
+# The name must end the path — be the thing actually being requested — rather
+# than merely appear in it.
+#
+# Unanchored, this matched any URL containing the words. That is fine until the
+# application puts user data in the path: a Nextcloud file called
+# "config.php.bak" or "wp-config.php reference.txt" is a WebDAV request for
+# somebody's own document, and it scored 7. A file-sync application makes every
+# filename part of the URL, so a rule that scans the whole URL eventually
+# matches a legitimate one.
+#
+# Nothing real is lost. /config/config.php and ?file=../.env still match,
+# because in an actual attempt to read the file the name is where the path
+# stops.
+pattern     = '(?i)/(config\.php|settings\.py)(\?|$)'
+score       = 7
+action      = "score"
+
+[[rules]]
+id          = 930011
+name        = "LFI: credential file fetch"
+description = "wp-config.php, .env and framework secret files — never served to a browser"
+zone        = "URL"
+# Split out of 930010 and blocked on 2026-09-08. Production traffic showed a
+# scanner walking /.env, /laravel/.env, /core/.env, /public/.env, /web/.env and
+# /storage/.env in one pass, every one of them scoring 7 against a threshold of
+# 10 and being allowed.
+#
+# These differ from config.php and settings.py, which stayed on 930010: an
+# application can route a request through config.php, and some do. Nothing
+# routes through .env or wp-config.php — they are read by the framework from
+# disk and never served, so a request for one is always someone checking
+# whether a deployment leaked it. Answering that question with a 403 costs
+# nothing.
+#
+# Two bounds, both learned from a test that caught this refusing a git host its
+# own repository content:
+#
+#   Depth. At the root or at most two directories below it, which is where a
+#   framework puts these and where every path in the observed attack sat —
+#   /.env, /laravel/.env, /@fs/app/.env. A git host serving
+#   /owner/repo/blob/main/.env.example is four deep, and Nextcloud serves user
+#   files deeper still.
+#
+#   Suffix. The env variants that carry secrets are named, rather than
+#   accepting any suffix. .env.example and .env.sample are templates committed
+#   to public repositories on purpose; blocking those would refuse ordinary
+#   content while catching nothing.
+pattern     = '(?i)^/([^/?]{1,40}/){0,2}(wp-config\.php|\.env(\.(local|prod|production|dev|development|staging|test))?|database\.yml|secrets\.yml|credentials\.yml)(\?|$)'
+score       = 10
+action      = "block"
+
+[[rules]]
+id          = 930012
+name        = "LFI: Vite dev server @fs traversal"
+description = "The /@fs/ prefix reads any file the dev server can reach (CVE-2025-30208)"
+zone        = "URL"
+# Seen in production on 2026-09-08 as /@fs/proc/self/cmdline, /@fs/app/.env and
+# /@fs/src/.env. Those scored only because of what followed the prefix; the
+# prefix itself was not matched, so /@fs/ pointed at anything the other rules
+# do not know about went through unscored.
+#
+# A Vite dev server should never be public, which is exactly why it is worth
+# blocking: if this matches, either something is exposed that should not be, or
+# someone is checking whether it is. Neither wants a 200.
+pattern     = '(?i)^/@fs/'
+score       = 10
+action      = "block"
+
+[[rules]]
+id          = 930010
+name        = "LFI: log file access"
+description = "Reading log files can enable log poisoning for RCE"
+zone        = "ANY"
+pattern     = '(?i)/var/log/(apache|nginx|syslog|auth|mail|kern)'
+score       = 6
+action      = "score"

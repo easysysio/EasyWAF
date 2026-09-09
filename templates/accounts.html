@@ -1,0 +1,183 @@
+{% extends "layout_default.html" %}
+
+{% block content %}
+
+{% if result == "failed" %}
+<div class="alert alert-danger alert-dismissible">
+    <button type="button" class="close" data-dismiss="alert">&times;</button>
+    {{ msg }}
+</div>
+{% endif %}
+{% if result == "success" %}
+<div class="alert alert-success alert-dismissible">
+    <button type="button" class="close" data-dismiss="alert">&times;</button>
+    {{ msg }}
+</div>
+{% endif %}
+
+<div class="row">
+    <div class="col-lg-11">
+        <div class="panel panel-default">
+            <div class="panel-heading">
+                <h4><i class="fa fa-users"></i> Accounts</h4>
+            </div>
+            <div class="panel-body">
+
+                <p class="help-block" style="margin-top:0">
+                    An <strong>administrator</strong> sees and changes everything. A
+                    <strong>viewer</strong> sees the dashboard, traffic and the
+                    configuration pages but cannot change anything, and cannot reach
+                    Settings or Certificates at all.
+                    <br>
+                    Changing a role, resetting a password or suspending an account
+                    signs that account out everywhere, immediately — a session is no
+                    longer just a cookie that has to expire.
+                </p>
+
+                {% if admin_count == 1 %}
+                {# The state in which most of the guards below will refuse, so it is
+                   better said before someone tries. #}
+                <div class="alert alert-warning" style="margin-bottom:14px">
+                    <i class="fa fa-exclamation-triangle"></i>
+                    There is <strong>one enabled administrator</strong>. It cannot be
+                    deleted, suspended or demoted, because that would leave nobody able
+                    to administer this installation. Create a second administrator to
+                    lift that restriction.
+                </div>
+                {% endif %}
+
+                <div style="overflow-x:auto">
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th>Account</th>
+                            <th>Role</th>
+                            <th>Status</th>
+                            <th>Last sign-in</th>
+                            <th class="text-right">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    {% for a in accounts %}
+                        <tr {% if not a.enabled %}class="text-muted"{% endif %}>
+                            <td>
+                                <strong>{{ a.username }}</strong>
+                                {% if a.is_self %}<span class="label label-info">you</span>{% endif %}
+                                <br><small class="text-muted">created {{ a.created_at }}</small>
+                            </td>
+                            <td>
+                                <form method="post" action="/accounts/{{ a.id }}/role"
+                                      style="display:inline"
+                                      onsubmit="return confirm('Change {{ a.username }} to the selected role?\n\nThat account will be signed out everywhere.');">
+                                    <select name="role" class="form-control input-sm"
+                                            style="width:auto;display:inline-block"
+                                            onchange="this.form.submit()">
+                                        {% for r in roles %}
+                                        <option value="{{ r }}" {% if a.role == r %}selected{% endif %}>{{ r }}</option>
+                                        {% endfor %}
+                                    </select>
+                                </form>
+                            </td>
+                            <td>
+                                {% if a.enabled %}
+                                    <span class="label label-success">enabled</span>
+                                {% else %}
+                                    <span class="label label-default">suspended</span>
+                                {% endif %}
+                            </td>
+                            <td style="white-space:nowrap">
+                                {% if a.last_login %}
+                                    <small>{{ a.last_login }}</small>
+                                {% else %}
+                                    <small class="text-muted">never</small>
+                                {% endif %}
+                            </td>
+                            <td class="text-right" style="white-space:nowrap">
+                                <button type="button" class="btn btn-default btn-xs"
+                                        onclick="var f=document.getElementById('pw{{ a.id }}');
+                                                 f.style.display = f.style.display === 'none' ? '' : 'none';">
+                                    <i class="fa fa-key"></i> Password
+                                </button>
+
+                                <form method="post" action="/accounts/{{ a.id }}/signout"
+                                      style="display:inline"
+                                      onsubmit="return confirm('Sign {{ a.username }} out of every browser?\n\nThe password is unchanged; only the open sessions end.');">
+                                    <button type="submit" class="btn btn-default btn-xs"
+                                            title="End every session this account holds">
+                                        <i class="fa fa-sign-out"></i> Sign out
+                                    </button>
+                                </form>
+
+                                {% if not a.is_self %}
+                                <form method="post" action="/accounts/{{ a.id }}/toggle"
+                                      style="display:inline"
+                                      onsubmit="return confirm('{% if a.enabled %}Suspend{% else %}Restore{% endif %} {{ a.username }}?');">
+                                    <button type="submit" class="btn btn-default btn-xs">
+                                        {% if a.enabled %}
+                                            <i class="fa fa-pause"></i> Suspend
+                                        {% else %}
+                                            <i class="fa fa-play"></i> Restore
+                                        {% endif %}
+                                    </button>
+                                </form>
+
+                                <form method="post" action="/accounts/{{ a.id }}/delete"
+                                      style="display:inline"
+                                      onsubmit="return confirm('Delete {{ a.username }} permanently?\n\nSuspending keeps the account and its history; deleting does not.');">
+                                    <button type="submit" class="btn btn-danger btn-xs">
+                                        <i class="fa fa-trash"></i> Delete
+                                    </button>
+                                </form>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        <tr id="pw{{ a.id }}" style="display:none">
+                            <td colspan="5" style="background:rgba(0,0,0,.03)">
+                                <form method="post" action="/accounts/{{ a.id }}/password"
+                                      class="form-inline"
+                                      onsubmit="return confirm('Set a new password for {{ a.username }}?\n\nThat account will be signed out everywhere.');">
+                                    <span style="margin-right:8px">New password for
+                                        <strong>{{ a.username }}</strong>:</span>
+                                    <input type="password" name="password" class="form-control input-sm"
+                                           placeholder="at least {{ min_length }} characters" required>
+                                    <input type="password" name="confirm_password" class="form-control input-sm"
+                                           placeholder="confirm" required style="margin-left:6px">
+                                    <button type="submit" class="btn btn-primary btn-sm" style="margin-left:6px">
+                                        Set password
+                                    </button>
+                                    <span class="help-block" style="display:inline;margin-left:10px">
+                                        <small>No current password is asked for — an administrator
+                                        resetting an account they do not own does not have it.</small>
+                                    </span>
+                                </form>
+                            </td>
+                        </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+                </div>
+
+                <hr>
+                <h5><i class="fa fa-user-plus"></i> Add an account</h5>
+                <form method="post" action="/accounts/create" class="form-inline" style="margin-top:10px">
+                    <input type="text" name="username" class="form-control input-sm"
+                           placeholder="username" required>
+                    <input type="password" name="password" class="form-control input-sm"
+                           placeholder="at least {{ min_length }} characters" required style="margin-left:6px">
+                    <input type="password" name="confirm_password" class="form-control input-sm"
+                           placeholder="confirm" required style="margin-left:6px">
+                    <select name="role" class="form-control input-sm" style="margin-left:6px">
+                        {% for r in roles %}
+                        <option value="{{ r }}">{{ r }}</option>
+                        {% endfor %}
+                    </select>
+                    <button type="submit" class="btn btn-success btn-sm" style="margin-left:6px">
+                        <i class="fa fa-plus"></i> Create
+                    </button>
+                </form>
+
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

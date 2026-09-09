@@ -1,0 +1,90 @@
+# Apache httpd (band 1020)
+#
+# Optional. These describe how Apache is attacked and how it leaks, which means
+# nothing in front of nginx, Caddy, or an application serving its own HTTP.
+#
+# What is deliberately NOT here, because a basic set already covers it:
+#
+#   /server-status       — 913015 scores it
+#   ../ and %2e%2e/      — 930-lfi covers ordinary traversal
+#   /etc/passwd          — 930-lfi blocks it outright
+#   /var/log/apache…     — 930-lfi scores it
+#
+# Two rules matching one request both add their score, so a set that repeats a
+# basic one halves the policy's effective threshold for that request.
+#
+# Nothing here fires on a static site's own traffic: not on Apache's directory
+# listings, not on the /icons/ images those listings reference, and not on
+# package repository metadata or .deb/.rpm filenames. A rule for a static host
+# that matches static hosting would be worse than no rule.
+
+[set]
+id      = "apache"
+name    = "Apache httpd"
+version = 1
+
+[[rules]]
+id          = 1020001
+name        = "Apache: 2.4.49/50 path traversal encoding"
+description = "The dot-then-encoded-dot form used by CVE-2021-41773 and CVE-2021-42013"
+zone        = "URL"
+# Worth its own rule even though those CVEs are old, because what is matched is
+# the *encoding*, not the target. 930-lfi catches these payloads today only
+# when they end at /etc/passwd — the same traversal aimed at a config file, or
+# used for the mod_cgi remote-execution variant, is not matched at all.
+#
+# `.%2e/` and `%2e./` never occur by accident. A browser normalises a real
+# relative path before sending it, so this shape only exists when something is
+# deliberately trying to survive that normalisation.
+pattern     = '(?i)(\.%2e|%2e\.|%252e\.|\.%252e)[/\\]'
+score       = 10
+action      = "block"
+
+[[rules]]
+id          = 1020002
+name        = "Apache: .htaccess or .htpasswd fetch"
+description = "Per-directory config and its password file, served only when the config that should hide them is broken"
+zone        = "URL"
+# Blocked. Apache's default configuration refuses these, so a request for one
+# is either probing or arriving at a server whose config has stopped denying
+# them — and in the second case the answer is a password hash. There is no
+# legitimate request to weigh against it.
+pattern     = '(?i)/\.ht(access|passwd|groups?|digest)(\?|$)'
+score       = 10
+action      = "block"
+
+[[rules]]
+id          = 1020003
+name        = "Apache: server-info"
+description = "mod_info publishes the whole configuration, including module list and paths"
+zone        = "URL"
+# Scored rather than blocked: some operators do expose it deliberately on an
+# internal address. Public probing for it is constant, and it hands over the
+# module inventory an attacker would otherwise have to guess.
+pattern     = '(?i)^/server-info(/|\?|$)'
+score       = 8
+action      = "score"
+
+[[rules]]
+id          = 1020004
+name        = "Apache: cgi-bin probing"
+description = "The CGI directory, and the path every Apache remote-execution chain has gone through"
+zone        = "URL"
+# Scored, not blocked, because CGI is still legitimately used. On a host that
+# serves static files or proxies an application it never is, and this is then a
+# clean signal — which is exactly the case this set is written for.
+pattern     = '(?i)^/(cgi-bin|cgi-sys|cgi|fcgi-bin)/'
+score       = 5
+action      = "score"
+
+[[rules]]
+id          = 1020005
+name        = "Apache: configuration file probing"
+description = "httpd.conf and the sites-available layout name the vhosts, paths and modules"
+zone        = "URL"
+# Distinct from 930-lfi's log-file rule, which covers /var/log/apache. This is
+# the configuration itself, wherever it is reached from — including through a
+# traversal that 930-lfi scored but did not stop.
+pattern     = '(?i)/(httpd|apache2?|ssl|vhosts?)\.conf(\?|$)|/sites-(available|enabled)/'
+score       = 7
+action      = "score"

@@ -143,6 +143,21 @@ pub async fn post_account_password(
     .execute(&state.db)
     .await?;
 
+    // Ending every session is the whole reason the epoch exists: until 0.8.0 a
+    // password change left sessions minted with the old one valid for their
+    // remaining eight hours, in whatever browser held them. This browser is
+    // signed out with them and asked to sign in again, which is the honest
+    // behaviour — the alternative is re-minting a cookie here and quietly
+    // exempting the one session most likely to be the attacker's.
+    if let Some(Some(id)) = sqlx::query_scalar!(
+        "SELECT id FROM users WHERE username = ?", session.username
+    )
+    .fetch_optional(&state.db)
+    .await?
+    {
+        crate::auth::end_all_sessions(&state.db, id).await?;
+    }
+
     tracing::info!("Password changed for user '{}'", session.username);
 
     flash_redirect("/account", "success", "Password changed")

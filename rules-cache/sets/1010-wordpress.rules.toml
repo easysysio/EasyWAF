@@ -1,0 +1,162 @@
+# WordPress (band 1010)
+#
+# Optional, and optional on purpose: these patterns only mean anything in front
+# of WordPress. Installed everywhere they would cost every deployment the
+# matching and return nothing, which is what `tier = "optional"` exists to
+# avoid.
+#
+# What is deliberately NOT here, because a basic set already matches it and two
+# rules matching one request both add their score:
+#
+#   /wp-admin/      — 913015 already scores 4 for anything under it
+#   wp-config.php   — 930-lfi already matches it anywhere in a URL
+#
+# A note for anyone running WordPress behind EasyWAF: because 913015 scores 4
+# for every `/wp-admin/` request, an administrator working in the dashboard
+# scores 4 on each page load. That is under the default block threshold of 10
+# on its own, but it is a standing 4 that anything else adds to. If your admin
+# traffic gets blocked, that rule is the first place to look — clone it and
+# anchor it away from your admin path, rather than disabling the set.
+
+[set]
+id      = "wordpress"
+name    = "WordPress"
+version = 1
+
+[[rules]]
+id          = 1010001
+name        = "WP: xmlrpc.php"
+description = "XML-RPC is a standing brute-force and pingback-amplification target"
+zone        = "URL"
+# Scored rather than blocked: Jetpack, the WordPress mobile apps and pingbacks
+# all use xmlrpc.php legitimately. Sites that do not use those usually disable
+# it outright, and for them this is a clean signal — but it is not certain
+# enough to refuse on its own.
+pattern     = '(?i)^/xmlrpc\.php'
+score       = 5
+action      = "score"
+
+[[rules]]
+id          = 1010002
+name        = "WP: XML-RPC system.multicall"
+description = "Batches hundreds of credential guesses into one request, defeating per-request rate limits"
+zone        = "BODY"
+# This is the part of XML-RPC that matters. A single POST carrying
+# system.multicall can test hundreds of passwords, so connection-counting rate
+# limits never see it. No ordinary client sends it.
+pattern     = '(?i)<\s*methodName\s*>\s*system\.multicall'
+score       = 9
+action      = "score"
+
+[[rules]]
+id          = 1010003
+name        = "WP: user enumeration via author archive"
+description = "?author=N redirects reveal the login name behind each user id"
+zone        = "URL"
+# Numeric ids only. Author archives are normally reached by slug
+# (/author/jane/ or ?author_name=jane), and it is the numeric form that walks
+# 1, 2, 3 to map ids to usernames.
+pattern     = '(?i)[?&]author=\d{1,4}(&|$)'
+score       = 3
+action      = "score"
+
+[[rules]]
+id          = 1010004
+name        = "WP: user enumeration via REST API"
+description = "/wp-json/wp/v2/users lists accounts to anyone who asks"
+zone        = "URL"
+# Low, because an authenticated admin's own dashboard calls this. It is worth
+# a point of suspicion rather than a refusal.
+pattern     = '(?i)/wp-json/wp/v2/users(/|\?|$)'
+score       = 3
+action      = "score"
+
+[[rules]]
+id          = 1010005
+name        = "WP: PHP under wp-content/uploads"
+description = "The uploads directory serves media; a PHP file there is a webshell"
+zone        = "URL"
+# Blocked outright. WordPress writes images, PDFs and video here — never
+# executable code. A .php under uploads is the classic persistence path after a
+# vulnerable plugin allows an arbitrary upload, and there is no legitimate
+# request to weigh against it.
+#
+# Matches the extension at the end or before a query string, so a file merely
+# named "php-tips.jpg" is not caught.
+pattern     = '(?i)/wp-content/uploads/.*\.ph(p[0-9]?|tml|ar)(\?|$)'
+score       = 10
+action      = "block"
+
+[[rules]]
+id          = 1010006
+name        = "WP: PHP under wp-content/themes or plugins uploads"
+description = "Webshells dropped into a theme or plugin upload directory"
+zone        = "URL"
+# Narrower than it looks: only an `uploads` or `upload` directory *inside* a
+# theme or plugin, which is where file-upload bugs land. Plugins legitimately
+# serve their own .php endpoints elsewhere, so those are untouched.
+pattern     = '(?i)/wp-content/(themes|plugins)/[^/]+/uploads?/.*\.ph(p[0-9]?|tml)(\?|$)'
+score       = 10
+action      = "block"
+
+[[rules]]
+id          = 1010007
+name        = "WP: debug.log exposure"
+description = "WP_DEBUG_LOG writes queries, paths and sometimes credentials to a world-readable file"
+zone        = "URL"
+# Never a legitimate request. The file exists only when debugging is left on,
+# and fetching it is always someone looking for what it leaked.
+pattern     = '(?i)/wp-content/debug\.log(\?|$)'
+score       = 10
+action      = "block"
+
+[[rules]]
+id          = 1010008
+name        = "WP: backup archive probing"
+description = "Backup plugins leave archives under wp-content that hand over the whole site and its database"
+zone        = "URL"
+# The directories the common backup plugins use. Serving one of these over HTTP
+# gives away the database, so a request for the directory is always probing —
+# but it is scored rather than blocked, because a site may legitimately serve a
+# file the operator put there deliberately.
+pattern     = '(?i)/wp-content/(backup[s]?|ai1wm-backups|updraft|backwpup[^/]*|duplicator[^/]*)(/|\?|$)'
+score       = 8
+action      = "score"
+
+[[rules]]
+id          = 1010009
+name        = "WP: version disclosure files"
+description = "readme.html and license.txt name the exact WordPress version"
+zone        = "URL"
+# Low. Knowing the version is not an attack, it is the reconnaissance before
+# one — worth a point so it adds up alongside other probing, not on its own.
+pattern     = '(?i)^/(readme\.html|license\.txt|wp-links-opml\.php)(\?|$)'
+score       = 2
+action      = "score"
+
+[[rules]]
+id          = 1010010
+name        = "WP: plugin and theme version enumeration"
+description = "readme.txt under a plugin or theme gives its exact version, and so its known vulnerabilities"
+zone        = "URL"
+# How a scanner turns "this is WordPress" into "this is WordPress with a
+# vulnerable copy of plugin X". Low on its own, meaningful in bulk.
+pattern     = '(?i)/wp-content/(plugins|themes)/[^/]+/(readme\.txt|changelog\.txt|README\.md)(\?|$)'
+score       = 2
+action      = "score"
+
+[[rules]]
+id          = 1010011
+name        = "WP: direct PHP execution in wp-includes"
+description = "wp-includes holds libraries, not entry points — direct requests are exploitation attempts"
+zone        = "URL"
+# wp-includes serves CSS, JS and fonts to browsers; its PHP is included by
+# WordPress, never requested. Historically the target of file-inclusion chains.
+#
+# Only PHP directly in the wp-includes root, one segment deep. That is where
+# the historically targeted files sit, and it excludes the one file browsers
+# legitimately fetch — js/tinymce/wp-tinymce.php — without needing a negative
+# lookahead, which Rust's regex engine does not support at all.
+pattern     = '(?i)/wp-includes/[^/?]+\.php(\?|$)'
+score       = 6
+action      = "score"
