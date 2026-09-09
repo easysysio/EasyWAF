@@ -227,10 +227,10 @@ pub async fn post_account_role(
     if !is_known_role(&form.role) {
         return flash_redirect(back, "failed", "Choose a role of admin or viewer.");
     }
-    if form.role == ROLE_VIEWER {
-        if let Some(msg) = would_orphan(&state.db, id, "demoting it").await? {
-            return flash_redirect(back, "failed", &msg);
-        }
+    if form.role == ROLE_VIEWER
+        && let Some(msg) = would_orphan(&state.db, id, "demoting it").await?
+    {
+        return flash_redirect(back, "failed", &msg);
     }
 
     let done = sqlx::query!("UPDATE users SET role = ? WHERE id = ?", form.role, id)
@@ -275,10 +275,10 @@ pub async fn post_account_toggle(
         None    => return flash_redirect(back, "failed", "That account no longer exists."),
     };
 
-    if enabled == 1 {
-        if let Some(msg) = would_orphan(&state.db, id, "suspending it").await? {
-            return flash_redirect(back, "failed", &msg);
-        }
+    if enabled == 1
+        && let Some(msg) = would_orphan(&state.db, id, "suspending it").await?
+    {
+        return flash_redirect(back, "failed", &msg);
     }
 
     let now = if enabled == 1 { 0 } else { 1 };

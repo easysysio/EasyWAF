@@ -6,7 +6,7 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
-## [Unreleased]
+## [0.8.0] — 2026-09-09
 
 ### Added
 - **The interface reflects the role.** A viewer no longer sees Settings,
@@ -72,6 +72,9 @@ Version bumps and tags are created only after explicit approval.
   **Settings is administrator-only** — it holds the rule-channel URL and the
   trusted-proxy list, which decides whose `X-Forwarded-For` is believed. Every
   write is administrator-only.
+
+  Changing your **own** password is not an administrator action, so a viewer
+  can do it — nobody else can do it for them without an administrator.
 
   Certificate *reading* is deliberately open to viewers: the list and the
   detail page render public X.509 metadata — subject, issuer, dates, serial,

@@ -15,7 +15,7 @@
 // =========================================================
 
 use crate::routes::flash_redirect;
-use crate::{auth::{Admin, Viewer}, error::Result, AppState};
+use crate::{auth::Viewer, error::Result, AppState};
 use axum::{
     extract::{Query, State},
     response::{Html, IntoResponse, Response},
@@ -88,7 +88,12 @@ pub async fn get_account(
 pub async fn post_account_password(
     State(state): State<AppState>,
     _jar: SignedCookieJar,
-    Admin(session): Admin,
+    // Any signed-in account may change its own password — a viewer most of
+    // all, since nobody else can do it for them without an administrator.
+    // The blanket "every POST is administrative" rule was wrong for exactly
+    // this one handler, and the page offered the form while the route
+    // refused it.
+    Viewer(session): Viewer,
     Form(form): Form<PasswordForm>,
 ) -> Result<Response> {
 
