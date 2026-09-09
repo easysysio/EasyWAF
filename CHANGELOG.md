@@ -9,99 +9,31 @@ Version bumps and tags are created only after explicit approval.
 ## [0.8.0] — 2026-09-09
 
 ### Added
-- **The interface reflects the role.** A viewer no longer sees Settings,
-  Certificates or Accounts in the menu, nor the certificate card on the
-  dashboard, and the controls that change things are not offered — 32 of them
-  across twelve pages. The header says `viewer` beside the username, because
-  someone who does not know they are one reads a missing button as a broken
-  page.
+- Accounts have roles: `admin` sees and changes everything, `viewer` sees the
+  dashboard, traffic, sites, policies, rules, exclusions and certificates but
+  changes nothing. Every account existing before the upgrade becomes an admin.
+- Account management under Settings › Accounts: create, change role, reset a
+  password, sign out everywhere, suspend, delete.
+- Accounts can be suspended rather than deleted, keeping their history, and
+  their last sign-in is recorded.
+- Sessions can be ended. A password change, role change, suspension or "sign
+  out everywhere" invalidates that account's sessions immediately, instead of
+  leaving them valid for up to eight hours.
+- The interface reflects the role: controls a viewer cannot use are not offered,
+  and the header shows a `viewer` badge.
 
-  This is presentation, not enforcement: the route's extractor is what refuses,
-  and it is unchanged. So it fails safe twice over. A control that should be
-  marked and is not still gets refused on click, which is exactly where things
-  stood before; and a page that somehow renders without knowing the role shows
-  the viewer's interface rather than the administrator's, because every use
-  site defaults to `false`.
+### Changed
+- Authorisation is declared per route rather than checked by each handler, so a
+  page that needs an administrator cannot be written without saying so.
+- Settings is administrator-only. Certificates are readable by viewers —
+  private keys are never rendered — but uploading, requesting and deleting are
+  not.
 
-  Actions are hidden with a stylesheet, but the dashboard's certificate card is
-  omitted server-side instead — it carries a count, and sending data a viewer
-  may not see and then covering it with CSS is not the same thing as declining
-  to offer a button.
-
-- **Account management** — Settings › Accounts, administrators only.
-
-  Create accounts, change a role, reset a password, sign an account out of
-  every browser, suspend it, or delete it. Suspending keeps the account and its
-  history; deleting does not, so suspension is the one to reach for when
-  somebody leaves.
-
-  Every action that could remove an administrator is refused when it would
-  leave **no enabled administrator at all** — the one state the GUI cannot
-  recover from, since undoing it would mean editing the database by hand. An
-  account also cannot suspend or delete itself. A suspended administrator does
-  not count as one, which is the case worth being careful about: two admin rows
-  where only one can sign in.
-
-  Changing a role, resetting a password and suspending all end that account's
-  sessions immediately. So does **changing your own password**, which until now
-  left sessions minted with the old password valid for their remaining eight
-  hours — including this browser, which is asked to sign in again rather than
-  quietly exempting the one session most likely to be the attacker's.
-
-- **Accounts have roles, and sessions can be ended.** The groundwork for 0.8.0;
-  the account management pages follow.
-
-  `admin` sees and changes everything. `viewer` sees the dashboard, traffic and
-  the configuration pages and changes nothing. Two roles rather than three,
-  because a third invented up front is usually the one nobody uses.
-
-  **Every account that existed before the upgrade becomes an admin.** There is
-  no other safe default: those are the accounts somebody has been administering
-  the appliance with, and demoting them on upgrade locks them out of their own
-  installation.
-
-  Authorisation is now something a handler *declares* rather than remembers.
-  Taking `Viewer` or `Admin` as an argument makes the requirement part of the
-  signature, so a page that needs an administrator cannot be written without
-  saying so. Fifty-five handlers previously opened with the same four lines
-  and nothing enforced that the fifty-sixth would — forgetting was not a
-  compile error, it was an unauthenticated page.
-
-  **What a viewer can reach:** the dashboard, traffic, sites, policies, rules,
-  GeoIP, exclusions and certificates, read-only, plus their own password.
-  **Settings is administrator-only** — it holds the rule-channel URL and the
-  trusted-proxy list, which decides whose `X-Forwarded-For` is believed. Every
-  write is administrator-only.
-
-  Changing your **own** password is not an administrator action, so a viewer
-  can do it — nobody else can do it for them without an administrator.
-
-  Certificate *reading* is deliberately open to viewers: the list and the
-  detail page render public X.509 metadata — subject, issuer, dates, serial,
-  fingerprint — and the private key is never rendered anywhere, only a boolean
-  saying whether one is stored. Knowing what a certificate is and when it
-  expires is exactly the sort of thing a read-only account exists to check.
-  Uploading, requesting and deleting stay administrator-only.
-
-  A viewer reaching an administrator page gets a 403 that explains why, rather
-  than a redirect to a login form they are already past — being bounced to a
-  form you have completed suggests a broken session rather than a refused
-  permission.
-
-- **Signing out actually signs out.** Sessions were stateless signed cookies,
-  so changing a password did not invalidate one already issued: it stayed valid
-  for its remaining eight hours, in any browser holding it, and there was no
-  way to end it.
-
-  Each account now carries a session epoch, stamped into the cookie and checked
-  on every request. Bumping it ends every session at once, which is what a
-  password change, a role change and a suspension all now do. The role is read
-  from the account rather than the cookie, so a demotion takes effect on the
-  next request instead of when the cookie expires.
-
-  An account can also be **suspended** rather than deleted, keeping its history
-  and its attribution, and its sign-in time is recorded so a dormant account is
-  visible as one.
+### Security
+- A session no longer outlives the password that created it.
+- No action can leave the installation without an enabled administrator: the
+  last one cannot be demoted, suspended or deleted, and no account can suspend
+  or delete itself.
 
 ## [0.7.3] — 2026-09-08
 
