@@ -6,6 +6,11 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
+## [Unreleased]
+
+### Changed
+- The site settings page follows the same order as the create-site form, field for field, with the Let's Encrypt request beside the certificate picker instead of in a section at the bottom of the page.
+
 ## [0.9.2] — 2026-09-10
 
 ### Added

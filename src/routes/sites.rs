@@ -322,6 +322,9 @@ pub async fn get_site_edit(
     ctx.insert("site",      &site);
     ctx.insert("policies",  &policies);
     ctx.insert("certs",     &fetch_certs(&state).await?);
+    // The request button is offered only when there is a contact address to
+    // request with, the same as on the create form.
+    ctx.insert("acme_configured", &crate::acme::config(&state.db).await?.is_some());
     // Named on this page because this is where the policy is chosen, and so
     // where someone stands when they find it is wrong for this one site.
     let exclusion_count: i64 = sqlx::query_scalar!(
