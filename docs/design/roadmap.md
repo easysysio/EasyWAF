@@ -43,6 +43,21 @@ allowlisting that client outright (0.10.0) reachable in one click from the row
 that prompted them. Two of the four are done; the prediction held, which is why
 the remaining two are expected to reuse the same row.
 
+**Authentication gateway — a third vector (see
+[auth-gateway.md](auth-gateway.md)).** Proposed 2026-09-10. The rules ask what
+a request is and the challenge asks whether there is a person; this asks who
+they are, and puts a sign-in in front of a site — or in front of `/admin` on
+one — with local accounts or LDAP. It is the first thing in EasyWAF that needs
+an identity and a session rather than a verdict on a request.
+
+Not yet slotted. The argument for taking it soon is that it is a new
+capability rather than a refinement of an existing one, and it protects
+something on the author's own estate the week it ships. The argument for the
+engine release (0.11.0) first is that the missing decoders are a hole in what
+already ships: CRS rules assume transformations EasyWAF does not perform, so
+some rules do not match what they were written to match. A hole in shipped
+behaviour before a new capability is the usual order in this roadmap.
+
 **Reverse-proxy parity — WebSockets, HTTP/2, path routing, multiple
 upstreams.** Found on 2026-09-04 while checking whether ACME alone would let
 EasyWAF replace Traefik in front of the author's own sites. It would: none of
