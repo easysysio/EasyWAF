@@ -33,6 +33,17 @@ to clear the warning.
 | HTTPS ports | `443` | Optional. Empty means plain HTTP only |
 | Certificate | one you uploaded | Required to serve HTTPS |
 
+There is also a **Request a Let's Encrypt certificate** checkbox, which issues
+one as part of creating the site and assigns it — saving you creating the site
+and then coming back to ask. It covers the hostname and every alias, the request
+happens when you press Save, and the page waits for the CA. The site is created
+either way: if issuing fails, the site is still there and its own page has a
+Request Certificate button to try again.
+
+The checkbox only appears once an ACME contact address is set under **Settings →
+TLS**; before that the form says so instead. See
+[TLS and certificates](tls.md#lets-encrypt).
+
 The listener is bound the moment you save, so adding a site on a new port does
 not need a restart. Requests whose `Host:` matches no enabled site get a 404.
 

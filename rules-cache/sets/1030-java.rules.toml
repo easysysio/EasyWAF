@@ -1,43 +1,45 @@
 # Java and Tomcat (band 1030)
 #
 # Optional, and only meaningful in front of a Java application — Tomcat, Spring,
-# JBoss, or anything else on the JVM. Java deserialization payloads (including
-# the base64 and magic-byte forms), malicious class loading, and suspicious
-# Java class and method names in request data.
+# JBoss, or anything else on the JVM. Java deserialization payloads, malicious
+# class loading, and suspicious Java class and method names in request data.
+#
+# In front of anything else these can only cost matching time and match
+# something legitimate, which is what the optional tier exists to prevent.
+#
+# Derived from OWASP CRS `main` (2026-09-09),
+# REQUEST-944-APPLICATION-ATTACK-JAVA.conf, converted by
+# scripts/modsec2easywaf.py. Apache-2.0; see LICENSE and NOTICE. Each rule
+# records its original CRS id and paranoia level.
+#
+# CRS PARANOIA LEVELS 1 AND 2. Level 2 is opt-in upstream, which is a
+# reasonable trade in a set that is itself opt-in and installed only in front
+# of the stack it names — the traffic is narrower and so is the risk. Level 3
+# is excluded: CRS 944300 matches a base64 string containing a suspicious
+# keyword, which fires on ordinary encoded payloads.
 #
 # LOG4SHELL IS NOT COVERED. CRS detects it with rules 944150-944152, and all
 # three depend on t:htmlEntityDecode and t:jsDecode — EasyWAF does not perform
 # those transformations, so converting them would have produced rules that look
 # like Log4Shell protection and can be evaded by the encoding they were written
-# to see through. They were refused for that reason. If you run a JVM
-# application exposed to the internet, do not treat this set as covering it.
-#
-# In front of anything else these can only cost matching time and match
-# something legitimate, which is what the optional tier exists to prevent.
-#
-# Derived from OWASP CRS 4.7.0, REQUEST-944-APPLICATION-ATTACK-JAVA.conf,
-# converted by scripts/modsec2easywaf.py. Apache-2.0; see LICENSE and NOTICE.
-# Each rule's description carries its original CRS id.
+# to see through. If you run a JVM application exposed to the internet, do not
+# treat this set as covering it.
 #
 # EVERY RULE HERE IS WIDENED. CRS targets named variables and excludes others;
-# EasyWAF's zone is a single choice, so each of these inspects more of the
-# request than the original did. That does not create a hole, it creates false
-# positives — so if a rule here blocks something legitimate, the fix is to
-# exclude it for that site rather than to distrust the set. Thirteen further
-# rules from the same file were refused outright; see imported/crs-4.7.0/.
-#
-# Scores are CRS severities against CRS's threshold of 5, and EasyWAF's default
-# threshold is 10.
+# EasyWAF's zone is a single choice, so each inspects more of the request than
+# the original did. That does not create a hole, it creates false positives —
+# so if a rule here blocks something legitimate, exclude it for that site
+# rather than distrusting the set.
 
 [set]
 id      = "java"
 name    = "Java and Tomcat"
-version = 1
+version = 2
 
 [[rules]]
 id          = 2944100
 name        = 'Remote Command Execution: Suspicious Java class detected'
-description = 'Converted from ModSecurity rule 944100 (severity CRITICAL); original transforms t:lowercase; WIDENED — inspects more than the original did'
+description = 'Converted from ModSecurity rule 944100 (severity CRITICAL, CRS paranoia level 1); original transforms t:lowercase; WIDENED — inspects more than the original did'
 zone        = "ANY"
 pattern     = '(?i)java\.lang\.(?:runtime|processbuilder)'
 score       = 5
@@ -46,25 +48,16 @@ action      = "score"
 [[rules]]
 id          = 2944130
 name        = 'Suspicious Java class detected'
-description = 'Converted from ModSecurity rule 944130 (severity CRITICAL); WIDENED — inspects more than the original did'
+description = 'Converted from ModSecurity rule 944130 (severity CRITICAL, CRS paranoia level 1); WIDENED — inspects more than the original did'
 zone        = "ANY"
-pattern     = '(?i)(?:com\.opensymphony\.xwork2|com\.sun\.org\.apache|freemarker\.core|freemarker\.template|freemarker\.ext\.rhino|java\.io\.BufferedInputStream|java\.io\.BufferedReader|java\.io\.ByteArrayInputStream|java\.io\.ByteArrayOutputStream|java\.io\.CharArrayReader|java\.io\.DataInputStream|java\.io\.File|java\.io\.FileOutputStream|java\.io\.FilePermission|java\.io\.FileWriter|java\.io\.FilterInputStream|java\.io\.FilterOutputStream|java\.io\.FilterReader|java\.io\.InputStream|java\.io\.InputStreamReader|java\.io\.IOException|java\.io\.LineNumberReader|java\.io\.ObjectOutputStream|java\.io\.OutputStream|java\.io\.PipedOutputStream|java\.io\.PipedReader|java\.io\.PrintStream|java\.io\.PushbackInputStream|java\.io\.Reader|java\.io\.StringReader|java\.lang\.Class|java\.lang\.Integer|java\.lang\.Number|java\.lang\.Object|java\.lang\.Process|java\.lang\.ProcessBuilder|java\.lang\.reflect|java\.lang\.Runtime|java\.lang\.String|java\.lang\.StringBuilder|java\.lang\.System|java\.net\.Socket|javassist|javax\.script\.ScriptEngineManager|org\.apache\.commons|org\.apache\.struts|org\.apache\.struts2|org\.omg\.CORBA|java\.beans\.XMLDecode|sun\.reflect)'
-score       = 5
-action      = "score"
-
-[[rules]]
-id          = 2944140
-name        = 'Java Injection Attack: Java Script File Upload Found'
-description = 'Converted from ModSecurity rule 944140 (severity CRITICAL); original transforms t:lowercase; WIDENED — inspects more than the original did'
-zone        = "ANY"
-pattern     = '(?i).*\.(?:jsp|jspx)\.*$'
+pattern     = '(?i)(?:com\.opensymphony\.xwork2|com\.sun\.org\.apache|classLoader|declaredClass|freemarker\.core|freemarker\.template|freemarker\.ext\.rhino|java\.io\.BufferedInputStream|java\.io\.BufferedReader|java\.io\.ByteArrayInputStream|java\.io\.ByteArrayOutputStream|java\.io\.CharArrayReader|java\.io\.DataInputStream|java\.io\.File|java\.io\.FileOutputStream|java\.io\.FilePermission|java\.io\.FileWriter|java\.io\.FilterInputStream|java\.io\.FilterOutputStream|java\.io\.FilterReader|java\.io\.InputStream|java\.io\.IOException|java\.io\.LineNumberReader|java\.io\.ObjectInputStream|java\.io\.ObjectOutputStream|java\.io\.OutputStream|java\.io\.PipedOutputStream|java\.io\.PipedReader|java\.io\.PrintStream|java\.io\.PushbackInputStream|java\.io\.Reader|java\.io\.StringReader|java\.lang\.Class|java\.lang\.Enum|java\.lang\.Integer|java\.lang\.Number|java\.lang\.Object|java\.lang\.Process|java\.lang\.ProcessBuilder|java\.lang\.reflect|java\.lang\.Runtime|java\.lang\.String|java\.lang\.System|java\.net\.HttpURLConnection|java\.net\.JarURLConnection|java\.net\.DatagramSocket|java\.net\.MulticastSocket|java\.net\.ServerSocket|java\.net\.Socket|java\.net\.URL|javassist|javax\.naming\.InitialContext|javax\.script\.ScriptEngineManager|javax\.xml\.parsers|javax\.xml\.stream|OgnlContext|OgnlUtil|org\.apache\.commons|org\.apache\.struts|org\.apache\.struts2|org\.dom4j\.io\.SAXReader|org\.jdom2\.input\.SAXBuilder|org\.omg\.CORBA|org\.xml\.sax|PropertyUtilsBean|java\.beans\.XMLDecode|java\.nio\.file|sun\.reflect)'
 score       = 5
 action      = "score"
 
 [[rules]]
 id          = 2944200
 name        = 'Magic bytes Detected, probable java serialization in use'
-description = 'Converted from ModSecurity rule 944200 (severity CRITICAL); WIDENED — inspects more than the original did'
+description = 'Converted from ModSecurity rule 944200 (severity CRITICAL, CRS paranoia level 2); WIDENED — inspects more than the original did'
 zone        = "ANY"
 pattern     = '\xac\xed\x00\x05'
 score       = 5
@@ -73,7 +66,7 @@ action      = "score"
 [[rules]]
 id          = 2944210
 name        = 'Magic bytes Detected Base64 Encoded, probable java serialization in use'
-description = 'Converted from ModSecurity rule 944210 (severity CRITICAL); WIDENED — inspects more than the original did'
+description = 'Converted from ModSecurity rule 944210 (severity CRITICAL, CRS paranoia level 2); WIDENED — inspects more than the original did'
 zone        = "ANY"
 pattern     = '(?:rO0ABQ|KztAAU|Cs7QAF)'
 score       = 5
@@ -82,16 +75,16 @@ action      = "score"
 [[rules]]
 id          = 2944240
 name        = 'Remote Command Execution: Java serialization (CVE-2015-4852)'
-description = 'Converted from ModSecurity rule 944240 (severity CRITICAL); original transforms t:lowercase; WIDENED — inspects more than the original did'
+description = 'Converted from ModSecurity rule 944240 (severity CRITICAL, CRS paranoia level 2); original transforms t:lowercase; WIDENED — inspects more than the original did'
 zone        = "ANY"
-pattern     = '(?i)(?:clonetransformer|forclosure|instantiatefactory|instantiatetransformer|invokertransformer|prototypeclonefactory|prototypeserializationfactory|whileclosure|getproperty|filewriter|xmldecoder)'
+pattern     = '(?i)(?:clonetransform|xmldecod)er|f(?:orclosure|ilewriter)|in(?:stantiate(?:factory|transformer)|vokertransformer)|(?:prototype(?:clone|serialization)factor|getpropert)y|whileclosure'
 score       = 5
 action      = "score"
 
 [[rules]]
 id          = 2944250
 name        = 'Remote Command Execution: Suspicious Java method detected'
-description = 'Converted from ModSecurity rule 944250 (severity CRITICAL); original transforms t:lowercase; WIDENED — inspects more than the original did'
+description = 'Converted from ModSecurity rule 944250 (severity CRITICAL, CRS paranoia level 2); original transforms t:lowercase; WIDENED — inspects more than the original did'
 zone        = "ANY"
 pattern     = '(?i)java\b.+(?:runtime|processbuilder)'
 score       = 5
@@ -100,17 +93,8 @@ action      = "score"
 [[rules]]
 id          = 2944260
 name        = 'Remote Command Execution: Malicious class-loading payload'
-description = 'Converted from ModSecurity rule 944260 (severity CRITICAL); original transforms t:urldecodeuni; WIDENED — inspects more than the original did'
+description = 'Converted from ModSecurity rule 944260 (severity CRITICAL, CRS paranoia level 2); original transforms t:urldecodeuni; WIDENED — inspects more than the original did'
 zone        = "ANY"
-pattern     = '(?:class\.module\.classLoader\.resources\.context\.parent\.pipeline|springframework\.context\.support\.FileSystemXmlApplicationContext)'
-score       = 5
-action      = "score"
-
-[[rules]]
-id          = 2944300
-name        = 'Base64 encoded string matched suspicious keyword'
-description = 'Converted from ModSecurity rule 944300 (severity CRITICAL); WIDENED — inspects more than the original did'
-zone        = "ANY"
-pattern     = '(?:cnVudGltZQ|HJ1bnRpbWU|BydW50aW1l|cHJvY2Vzc2J1aWxkZXI|HByb2Nlc3NidWlsZGVy|Bwcm9jZXNzYnVpbGRlcg|Y2xvbmV0cmFuc2Zvcm1lcg|GNsb25ldHJhbnNmb3JtZXI|BjbG9uZXRyYW5zZm9ybWVy|Zm9yY2xvc3VyZQ|GZvcmNsb3N1cmU|Bmb3JjbG9zdXJl|aW5zdGFudGlhdGVmYWN0b3J5|Gluc3RhbnRpYXRlZmFjdG9yeQ|BpbnN0YW50aWF0ZWZhY3Rvcnk|aW5zdGFudGlhdGV0cmFuc2Zvcm1lcg|Gluc3RhbnRpYXRldHJhbnNmb3JtZXI|BpbnN0YW50aWF0ZXRyYW5zZm9ybWVy|aW52b2tlcnRyYW5zZm9ybWVy|Gludm9rZXJ0cmFuc2Zvcm1lcg|BpbnZva2VydHJhbnNmb3JtZXI|cHJvdG90eXBlY2xvbmVmYWN0b3J5|HByb3RvdHlwZWNsb25lZmFjdG9yeQ|Bwcm90b3R5cGVjbG9uZWZhY3Rvcnk|cHJvdG90eXBlc2VyaWFsaXphdGlvbmZhY3Rvcnk|HByb3RvdHlwZXNlcmlhbGl6YXRpb25mYWN0b3J5|Bwcm90b3R5cGVzZXJpYWxpemF0aW9uZmFjdG9yeQ|d2hpbGVjbG9zdXJl|HdoaWxlY2xvc3VyZQ|B3aGlsZWNsb3N1cmU)'
+pattern     = 'class\.module\.classLoader\.resources\.context\.parent\.pipeline|springframework\.context\.support\.FileSystemXmlApplicationContext'
 score       = 5
 action      = "score"

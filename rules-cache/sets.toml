@@ -45,7 +45,7 @@
 # sha256 is added by publish.sh, not written here.
 # =========================================================
 
-generated = "2026-09-08T17:53:43Z"
+generated = "2026-09-09T13:15:01Z"
 
 [[sets]]
 id          = "owasp-scanners"
@@ -152,9 +152,9 @@ id          = "owasp-protocol-attack"
 name        = "Protocol attack"
 description = "Request splitting through CR/LF in the path, and the unix: form behind the mod_proxy SSRF — attacks on how the request is framed rather than what it carries."
 band        = 921
-version     = 1
+version     = 2
 file        = "sets/921-protocol-attack.rules.toml"
-sha256  = "854ae660d92d7e16428c6981972ce2b3dccdff16033dc14b176fa2fee2dbdaf2"
+sha256  = "13d6133c515cb1a49d2f831162b1d3da95cfbf1144f092a3a1ac7284637ef1aa"
 tier        = "optional"
 
 [[sets]]
@@ -162,9 +162,9 @@ id          = "java"
 name        = "Java and Tomcat"
 description = "Protections that only make sense in front of a JVM application: Java deserialization payloads, malicious class loading, and suspicious class and method names. Does not cover Log4Shell — see the set header."
 band        = 1030
-version     = 1
+version     = 2
 file        = "sets/1030-java.rules.toml"
-sha256  = "de68ffc891e26a60293a9dc4cbefe5fe713b0a14283a9a3cdde3594a6d8c6080"
+sha256  = "802de398021d02ec0fb9fcd8812eabf50eedb9f8bc02b07d7d76a95e9e553a28"
 tier        = "optional"
 
 [[sets]]

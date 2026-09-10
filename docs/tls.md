@@ -15,8 +15,12 @@ be exported from the interface — viewers can read this page, which is why.
 
 ## Let's Encrypt
 
-Set a contact address under **Settings → TLS**, then request a certificate from
-a site's page or from the Certificates page.
+Set a contact address under **Settings → TLS**, then request a certificate:
+while creating a site (a checkbox on the form), from an existing site's page, or
+from the Certificates page.
+
+Until that contact address is set there is nothing to request with, so the
+checkbox on the site form is replaced by a note saying so.
 
 EasyWAF answers the **HTTP-01** challenge itself on port 80. There is no webroot
 to configure and nothing to change on the backend. Port 80 is bound whatever
