@@ -305,6 +305,13 @@ pub async fn post_policy_create(
         "/policy",
         "success",
         &match (installed, added, failed.is_empty()) {
+            // Nothing chosen is a legitimate thing to do and a bad thing to do
+            // by accident, so it says what the policy is rather than reporting
+            // a count of zero and leaving the reader to work it out.
+            (0, 0, true)  => format!(
+                "Policy {name} created with no rules — it will inspect nothing until \
+                 you add rule sets from its Rule Sets page"
+            ),
             (0, a, true)  => format!("Policy {name} created with {a} rule(s)"),
             (i, 0, true)  => format!("Policy {name} created with {i} rule set(s)"),
             (i, a, true)  => format!("Policy {name} created with {i} rule set(s) and {a} further rule(s)"),

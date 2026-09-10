@@ -6,6 +6,12 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
+## [Unreleased]
+
+### Changed
+- Creating a policy starts with nothing selected, and a **Basic sets** button ticks the eight that assume nothing about the application behind the proxy. They used to be ticked on arrival, so every new policy carried them whether or not anyone had decided to.
+- The create-site form asks whether to request a Let's Encrypt certificate before offering the list of existing ones, and says why the list goes inert when it does.
+
 ## [0.9.1] — 2026-09-10
 
 ### Added

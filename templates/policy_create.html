@@ -64,6 +64,9 @@
             <input type="text" class="form-control input-sm" id="ruleSearch"
                    placeholder="Filter rules…" style="width:180px;margin-left:auto"
                    oninput="filterRules()">
+            <button type="button" class="btn btn-primary btn-sm" onclick="selectBasic()">
+                <i class="fa fa-shield"></i> Basic sets
+            </button>
             <button type="button" class="btn btn-default btn-sm" onclick="selectAll(true)">
                 <i class="fa fa-check-square-o"></i> All
             </button>
@@ -79,9 +82,14 @@
                 only those: single rules are copies, and nothing will ever correct
                 them.
                 <br>
-                Basic sets start ticked. An optional set only matters in front of the
-                application it names — one for a stack you do not run cannot detect
-                anything, and can only match something legitimate.
+                <strong>Nothing is selected to begin with</strong>, so a policy is
+                whatever you choose to put in it. <strong>Basic sets</strong> ticks the
+                eight that assume nothing about the application behind the proxy, which
+                is the usual starting point.
+                <br>
+                An optional set only matters in front of the application it names — one
+                for a stack you do not run cannot detect anything, and can only match
+                something legitimate.
                 <br>
                 All of it can be changed afterwards from the policy's Rule Sets page.
             </p>
@@ -116,7 +124,7 @@
                    onclick="event.stopPropagation()">
                 <input type="checkbox" class="cat-master" data-cat="{{ cat.code }}"
                        data-set="{{ cat.set_id | default(value='') }}"
-                       {% if cat.tier == "basic" %}checked{% endif %}>
+                       data-tier="{{ cat.tier | default(value='') }}">
                 {{ cat.title }}
             </label>
             {% if cat.tier == "basic" %}
@@ -170,6 +178,10 @@
     <!-- ── Submit bar ─────────────────────────────────────── -->
     <div style="position:sticky;bottom:0;background:#fff;border-top:1px solid #ddd;
                 padding:10px 0;text-align:right">
+        <span id="emptyNote" class="text-warning" style="margin-right:14px;font-size:12px">
+            <i class="fa fa-exclamation-triangle"></i>
+            No rules selected — this policy will inspect nothing until you add some.
+        </span>
         <span class="text-muted" style="margin-right:10px;font-size:12px">
             <span id="selCountBottom">0</span> of {{ total_available }} rules selected
         </span>
@@ -220,6 +232,26 @@ function updateCounts() {
 
     document.getElementById('selCount').textContent = total;
     document.getElementById('selCountBottom').textContent = total;
+
+    // Said on the page rather than at the end of a save: a policy with no rules
+    // is a legitimate thing to create and a bad thing to create by accident,
+    // and the difference is whether anybody noticed.
+    var empty = document.getElementById('emptyNote');
+    if (empty) { empty.style.display = total === 0 ? '' : 'none'; }
+}
+
+// ── The recommended starting point ────────────────────────
+//
+// Basic sets used to be ticked when the page loaded. That made every new
+// policy carry them whether or not anybody had decided to, and the only way
+// to a smaller policy was to untick eight things. It is a button now, so
+// taking them is a decision — and so is not taking them.
+function selectBasic() {
+    document.querySelectorAll('.cat-master').forEach(function (m) {
+        if (m.dataset.set) { m.checked = m.dataset.tier === 'basic'; }
+    });
+    document.querySelectorAll('.cat-chk').forEach(function (c) { c.checked = false; });
+    updateCounts();
 }
 
 // ── Per-category master checkbox ──────────────────────────
