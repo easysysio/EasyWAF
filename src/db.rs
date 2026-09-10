@@ -69,9 +69,31 @@ pub async fn init(database_url: &str) -> SqlitePool {
     run_migration_020(&pool).await;
     run_migration_021(&pool).await;
     run_migration_022(&pool).await;
+    run_migration_023(&pool).await;
 
     info!("Database ready: {}", database_url);
     pool
+}
+
+// ─── run_migration_023 ───────────────────────────────────
+
+/// Additional hostnames a site answers for.
+async fn run_migration_023(pool: &SqlitePool) {
+    let exists: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'site_aliases'",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0);
+
+    if exists == 0 {
+        let sql = include_str!("../migrations/023_site_aliases.sql");
+        sqlx::raw_sql(sql)
+            .execute(pool)
+            .await
+            .unwrap_or_else(|e| panic!("Migration 023 failed: {}", e));
+        info!("Migration 023 applied: a site can answer for more than one hostname");
+    }
 }
 
 // ─── run_migration_022 ───────────────────────────────────

@@ -396,7 +396,10 @@ pub async fn post_cert_acme(
         _                        => domain.clone(),
     };
 
-    match crate::acme::issue_and_store(&state.db, &domain, &name).await {
+    // One name here: this is the certificates page, where a certificate is
+    // requested for a domain typed into a box. A site's own button asks for
+    // every name that site answers for.
+    match crate::acme::issue_and_store(&state.db, std::slice::from_ref(&domain), &name).await {
         Ok(_) => flash_redirect(
             "/certs",
             "success",

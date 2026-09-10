@@ -5,7 +5,8 @@
 // On startup, reads all distinct listen_port values from
 // enabled sites and binds one TCP listener per unique port.
 // Incoming requests are routed to a backend site by matching
-// the Host: header against sites.server_name in the database.
+// the Host: header against sites.server_name — or one of the
+// site's aliases — in the database.
 // Every request is passed through the module pipeline before
 // being forwarded to the upstream.
 //
@@ -1058,7 +1059,8 @@ async fn handle_request(
 
 // ─── lookup_site ─────────────────────────────────────────
 
-/// Find an enabled site by hostname (server_name column).
+/// Find an enabled site by hostname — its `server_name`, or any of its
+/// aliases.
 /// Returns None if no enabled site matches, so the proxy returns 404.
 async fn lookup_site(db: &SqlitePool, host: &str) -> Option<SiteRow> {
     sqlx::query!(
@@ -1071,7 +1073,11 @@ async fn lookup_site(db: &SqlitePool, host: &str) -> Option<SiteRow> {
                 x_content_type as \"x_content_type!: bool\",
                 xss_protection as \"xss_protection!: bool\"
          FROM sites
-         WHERE server_name = ? AND enabled = 1",
+         WHERE enabled = 1
+           AND (server_name = ?1
+                OR EXISTS (SELECT 1 FROM site_aliases a
+                           WHERE a.site_id = sites.id AND a.name = ?1))
+         LIMIT 1",
         host
     )
     .fetch_optional(db)
@@ -1100,7 +1106,11 @@ async fn lookup_site(db: &SqlitePool, host: &str) -> Option<SiteRow> {
 /// and never on a served request.
 async fn site_is_disabled(db: &SqlitePool, host: &str) -> bool {
     sqlx::query_scalar!(
-        "SELECT COUNT(*) FROM sites WHERE server_name = ? AND enabled = 0",
+        "SELECT COUNT(*) FROM sites
+         WHERE enabled = 0
+           AND (server_name = ?1
+                OR EXISTS (SELECT 1 FROM site_aliases a
+                           WHERE a.site_id = sites.id AND a.name = ?1))",
         host
     )
     .fetch_one(db)

@@ -275,12 +275,28 @@ pub fn bind_listener(addr: std::net::SocketAddr) -> std::io::Result<std::net::Tc
 /// rather than aborting the rebuild — one bad certificate must not take TLS
 /// down for every other site sharing the port.
 pub async fn reload(db: &SqlitePool) -> Result<usize> {
+    // Aliases are unioned in rather than joined: a site answering for three
+    // names presents the same certificate on all three, and SNI is matched on
+    // the name the client asked for. A site whose certificate does not cover
+    // an alias still serves it here — and fails in the client's browser, which
+    // is the honest place for that to show up.
     let rows = sqlx::query!(
         r#"SELECT s.server_name as "server_name!",
                   c.name        as "cert_name!",
                   c.cert_pem,
                   c.key_pem
            FROM   sites s
+           JOIN   certs c ON c.id = s.cert_id
+           WHERE  s.enabled = 1 AND s.tls_port IS NOT NULL
+
+           UNION ALL
+
+           SELECT a.name  as "server_name!",
+                  c.name  as "cert_name!",
+                  c.cert_pem,
+                  c.key_pem
+           FROM   site_aliases a
+           JOIN   sites s ON s.id = a.site_id
            JOIN   certs c ON c.id = s.cert_id
            WHERE  s.enabled = 1 AND s.tls_port IS NOT NULL"#
     )

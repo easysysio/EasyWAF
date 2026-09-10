@@ -18,6 +18,28 @@
                         <input type="text" class="form-control" name="server_name" placeholder="example.com" required>
                     </div>
 
+
+                    <div class="form-group">
+                        <label>Aliases
+                            <small class="text-muted">(other hostnames this same site answers for — one per line)</small></label>
+                        <textarea class="form-control" name="aliases" rows="2" spellcheck="false"
+                                  style="font-family: monospace; font-size: 12px"
+                                  placeholder="www.example.com&#10;example.net"></textarea>
+                        <p class="help-block">
+                            Every alias is served by this site, with the same upstream,
+                            policy, ports and headers — which is the point: two names for one
+                            application used to mean two sites kept in step by hand, and any
+                            divergence was a bug that appeared on only one of the names.
+                            <br>
+                            A hostname can belong to one site only. Wildcards are not
+                            supported: the Host header is matched exactly, and a wildcard
+                            certificate needs a DNS-01 challenge EasyWAF does not implement.
+                            <br>
+                            A certificate must cover every name, or a browser reaching the
+                            site by an uncovered one gets a warning. Requesting one from this
+                            page asks for all of them at once.
+                        </p>
+                    </div>
                     <div class="form-group">
                         <label>Upstream Target <small class="text-muted">(where requests are forwarded — full URL, including scheme)</small></label>
                         <input type="text" class="form-control" name="target" placeholder="http://127.0.0.1:3000" required>

@@ -41,7 +41,14 @@
                             </a>
                         </td>
                         <td><a href="/sites/{{ site.name }}/edit">{{ site.name }}</a></td>
-                        <td>{{ site.server_name }}</td>
+                        <td>
+                            {{ site.server_name }}
+                            {% if site.aliases %}
+                            <br><small class="text-muted" title="Aliases">
+                                <i class="fa fa-plus-circle"></i> {{ site.aliases }}
+                            </small>
+                            {% endif %}
+                        </td>
                         <td><span class="label label-default">:{{ site.listen_port }}</span></td>
                         <td>{{ site.target }}</td>
                         <td>

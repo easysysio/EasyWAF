@@ -6,6 +6,12 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
+## [Unreleased]
+
+### Added
+- A site can answer for more than one hostname: aliases share its upstream, policy, ports and headers, so two names for one application no longer means two sites kept in step by hand.
+- A certificate requested for a site now covers every hostname it answers for, and renewal re-requests all of them.
+
 ## [0.9.0] — 2026-09-09
 
 ### Added

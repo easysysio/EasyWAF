@@ -22,14 +22,19 @@ next minor, so a release's notes stay about its feature.
 
 ## Next patch
 
-**Hostname aliases.** Deferred twice now: 0.5.2 went to a header-copying fix
-that broke cookie-based logins, and 0.5.4 to two bundled rules that blocked
-ordinary traffic. A site matches one `server_name` exactly, so two
-names for one application means two sites with duplicate settings kept in step
-by hand, and any divergence is a bug that appears on only one name. Traefik
-expresses this as `Host(a) || Host(b)` on one router with a single certificate
-covering both. The work is an `aliases` column, matching it in the site lookup,
-and ACME requesting a certificate that covers every name on the site.
+**Hostname aliases — done in 0.9.1.** Deferred twice before that: 0.5.2 went to
+a header-copying fix that broke cookie-based logins, and 0.5.4 to two bundled
+rules that blocked ordinary traffic. A site matched one `server_name` exactly,
+so two names for one application meant two sites with duplicate settings kept
+in step by hand, and any divergence was a bug that appeared on only one name.
+
+A site now answers for any number of hostnames, all with the same upstream,
+policy, ports and headers. The names live in `site_aliases` rather than a
+column, because `UNIQUE(name)` is what stops two sites claiming the same
+hostname and a check in application code cannot promise that. ACME requests one
+certificate covering every name on the site, and renewal re-requests all of
+them — a renewal that quietly dropped the aliases would break them a month
+later with nothing pointing at why.
 
 ## Candidates, not yet scheduled
 

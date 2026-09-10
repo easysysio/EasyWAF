@@ -265,7 +265,8 @@ mod tests {
         sctx.insert("certs",    &Vec::<String>::new());
         sctx.insert("exclusion_count", &0);
         let site = |pid: Option<i64>| serde_json::json!({
-            "id": 1, "name": "s", "server_name": "s.example", "target": "http://a",
+            "id": 1, "name": "s", "server_name": "s.example", "aliases": "",
+            "target": "http://a",
             "enabled": true, "listen_port": 80, "tls_port": null, "cert_id": null,
             "tls_redirect": false, "waf_policy_id": pid, "hsts": false,
             "x_frame": false, "x_frame_value": "SAMEORIGIN",

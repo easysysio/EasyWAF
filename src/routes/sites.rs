@@ -30,6 +30,9 @@ pub struct Site {
     pub id:             i64,
     pub name:           String,
     pub server_name:    String,
+    /// The other hostnames this site answers for, space separated for display
+    /// and for the form field that edits them.
+    pub aliases:        String,
     pub target:         String,
     pub listen_port:    i64,
     /// HTTPS port, or None when the site serves plain HTTP only.
@@ -66,6 +69,8 @@ pub struct Policy {
 pub struct SiteForm {
     pub name:           Option<String>,
     pub server_name:    String,
+    /// Additional hostnames, one per line or comma separated.
+    pub aliases:        Option<String>,
     pub target:         String,
     pub listen_port:    Option<String>,  // comes in as text; we parse to i64
     /// HTTPS port. Empty means the site serves plain HTTP only.
@@ -174,6 +179,15 @@ pub async fn post_site_create(
         return flash_redirect("/sites", "failed", "Site name or hostname already exists");
     }
 
+    // Checked before the site exists, so a rejected alias leaves nothing behind.
+    let aliases = match parse_aliases(form.aliases.as_deref().unwrap_or(""), &server_name) {
+        Ok(a)  => a,
+        Err(e) => return flash_redirect("/sites", "failed", &e),
+    };
+    if let Some(e) = alias_conflict(&state.db, None, &aliases).await? {
+        return flash_redirect("/sites", "failed", &e);
+    }
+
     let hsts           = form.hsts.is_some();
     let x_frame        = form.x_frame.is_some();
     // Anything unrecognised becomes SAMEORIGIN rather than DENY: a typo should
@@ -213,6 +227,7 @@ pub async fn post_site_create(
     .last_insert_rowid();
 
     save_extra_ports(&state.db, site_id, &extra_http, &extra_https).await?;
+    save_aliases(&state.db, site_id, &aliases).await?;
 
     // Before any certificate request: HTTP-01 validation arrives on a port that
     // has to be listening, and the challenge is answered by the proxy.
@@ -227,7 +242,7 @@ pub async fn post_site_create(
     // DNS, a closed port 80, the CA's rate limit — and losing the site over
     // that would mean filling the form in again to retry something the site's
     // own page already offers a button for.
-    if let Err(e) = request_cert_for_new_site(&state, site_id, &server_name).await {
+    if let Err(e) = request_cert_for_new_site(&state, site_id, &server_name, &aliases).await {
         return flash_redirect(
             "/sites",
             "failed",
@@ -257,6 +272,7 @@ async fn request_cert_for_new_site(
     state:       &AppState,
     site_id:     i64,
     server_name: &str,
+    aliases:     &[String],
 ) -> std::result::Result<(), String> {
     if crate::acme::config(&state.db).await.ok().flatten().is_none() {
         return Err("set an ACME contact address under Settings, then request one \
@@ -264,7 +280,13 @@ async fn request_cert_for_new_site(
             .to_string());
     }
 
-    let cert_id = crate::acme::issue_and_store(&state.db, server_name, server_name)
+    // Every name the site answers for, in one certificate. An alias left out
+    // would serve the site's certificate under a name it does not cover, which
+    // is a browser warning rather than a working site.
+    let mut names = vec![server_name.to_string()];
+    names.extend_from_slice(aliases);
+
+    let cert_id = crate::acme::issue_and_store(&state.db, &names, server_name)
         .await
         .map_err(|e| e.to_string())?;
 
@@ -366,6 +388,21 @@ pub async fn post_site_update(
     let cert_id      = parse_policy_id(&form.cert_id);
     let tls_redirect = form.tls_redirect.is_some();
 
+    let site_id: i64 =
+        sqlx::query_scalar!(r#"SELECT id as "id!" FROM sites WHERE name = ?"#, name)
+            .fetch_one(&state.db)
+            .await?;
+
+    // Before the UPDATE, for the same reason the ports are: a rejected alias
+    // should leave the site exactly as it was.
+    let aliases = match parse_aliases(form.aliases.as_deref().unwrap_or(""), &server_name) {
+        Ok(a)  => a,
+        Err(e) => return flash_redirect("/sites", "failed", &e),
+    };
+    if let Some(e) = alias_conflict(&state.db, Some(site_id), &aliases).await? {
+        return flash_redirect("/sites", "failed", &e);
+    }
+
     // Before the UPDATE: a rejected port list should leave the site as it was,
     // not half-saved with the ports refused.
     let ports = match validated_ports(&form, &state.config) {
@@ -390,15 +427,25 @@ pub async fn post_site_update(
     .execute(&state.db)
     .await?;
 
-    let site_id: i64 =
-        sqlx::query_scalar!(r#"SELECT id as "id!" FROM sites WHERE name = ?"#, name)
-            .fetch_one(&state.db)
-            .await?;
     save_extra_ports(&state.db, site_id, &extra_http, &extra_https).await?;
+    save_aliases(&state.db, site_id, &aliases).await?;
 
+    // Reloads the certificate map, which is what puts a new alias into SNI.
     announce_site(&state, listen_port, tls_port, &extra_http, &extra_https).await;
 
-    flash_redirect("/sites", "success", &format!("Site {} updated successfully", name))
+    // Said rather than left to be found in a browser: the certificate is not
+    // reissued by saving the form, so a name added here is not covered until
+    // somebody asks for one.
+    let msg = if aliases.is_empty() {
+        format!("Site {} updated successfully", name)
+    } else {
+        format!(
+            "Site {} updated — answering for {} and {} alias{}. Request a certificate \
+             if the new names are not on the current one.",
+            name, server_name, aliases.len(), if aliases.len() == 1 { "" } else { "es" }
+        )
+    };
+    flash_redirect("/sites", "success", &msg)
 }
 
 // ─── post_site_toggle ────────────────────────────────────
@@ -506,7 +553,21 @@ async fn fetch_sites(state: &AppState) -> Result<Vec<Site>> {
     .fetch_all(&state.db)
     .await?;
 
+    // One grouped query rather than one per site: the list page renders every
+    // site, and a query each would grow with the table for no reason.
+    let mut aliases: std::collections::HashMap<i64, String> = sqlx::query!(
+        r#"SELECT site_id as "site_id!", group_concat(name, ' ') as "names!"
+           FROM site_aliases GROUP BY site_id"#
+    )
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .map(|r| (r.site_id, r.names))
+    .collect();
+
     Ok(rows.into_iter().map(|r| Site {
+        aliases:        aliases.remove(&r.id).unwrap_or_default(),
         id:             r.id,
         name:           r.name,
         server_name:    r.server_name,
@@ -547,7 +608,16 @@ async fn fetch_site(state: &AppState, name: &str) -> Result<Site> {
     .await?
     .ok_or_else(|| AppError::NotFound(format!("Site '{}' not found", name)))?;
 
+    // Space separated, which is how the form field takes them back.
+    let aliases = site_names(&state.db, r.id, "")
+        .await
+        .into_iter()
+        .skip(1)                // site_names leads with the server name
+        .collect::<Vec<_>>()
+        .join(" ");
+
     Ok(Site {
+        aliases,
         id:             r.id,
         name:           r.name,
         server_name:    r.server_name,
@@ -627,8 +697,10 @@ pub async fn post_site_acme(
         );
     }
 
+    let names = site_names(&state.db, site.id, &site.server_name).await;
+
     let cert_id = match crate::acme::issue_and_store(
-        &state.db, &site.server_name, &site.server_name
+        &state.db, &names, &site.server_name
     ).await {
         Ok(id) => id,
         Err(e) => return flash_redirect(&back, "failed", &format!("{e}")),
@@ -839,6 +911,147 @@ async fn extra_ports_of(db: &SqlitePool, site_id: i64) -> (String, String) {
 
 // ─── Form parsing helpers ─────────────────────────────────
 
+// ─── Aliases ─────────────────────────────────────────────
+
+/// Split the aliases field into normalised hostnames.
+///
+/// One per line is what the field invites, but commas and spaces are accepted
+/// too: somebody pasting a list should not have to reformat it first.
+///
+/// Rejects rather than drops. An alias that is silently discarded is a
+/// hostname the operator believes is being served and which answers 404, and
+/// the site page would show no sign of it.
+fn parse_aliases(raw: &str, server_name: &str) -> std::result::Result<Vec<String>, String> {
+    let mut out: Vec<String> = Vec::new();
+
+    for token in raw.split([',', '\n', '\r', ' ', '\t']).filter(|t| !t.trim().is_empty()) {
+        let host = normalize_server_name(token);
+
+        if host.is_empty() {
+            return Err(format!("'{}' is not a hostname", token.trim()));
+        }
+        // Checked before general validity, so a wildcard gets the answer to
+        // the question actually being asked rather than "not a hostname". It
+        // needs a DNS-01 challenge, which EasyWAF does not implement, and the
+        // proxy matches the Host header exactly — so a wildcard alias would
+        // match nothing and could not be covered by a certificate either.
+        if host.contains('*') {
+            return Err(format!(
+                "'{host}': wildcards are not supported — name each hostname"
+            ));
+        }
+        if !is_hostname(&host) {
+            return Err(format!("'{host}' is not a valid hostname"));
+        }
+        if host == server_name {
+            return Err(format!("'{host}' is already this site's hostname"));
+        }
+        if out.contains(&host) {
+            continue;   // listing a name twice is a typo, not an error
+        }
+        out.push(host);
+    }
+
+    Ok(out)
+}
+
+/// Whether this is a syntactically valid hostname.
+fn is_hostname(host: &str) -> bool {
+    if host.is_empty() || host.len() > 253 {
+        return false;
+    }
+    host.split('.').all(|label| {
+        !label.is_empty()
+            && label.len() <= 63
+            && !label.starts_with('-')
+            && !label.ends_with('-')
+            && label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+    })
+}
+
+/// Is any of these names already spoken for by a different site?
+///
+/// `UNIQUE(name)` on `site_aliases` already refuses a duplicate alias, but it
+/// cannot see `sites.server_name` — and a database error surfaces as "could
+/// not save" rather than naming the hostname and the site holding it.
+async fn alias_conflict(
+    db:      &SqlitePool,
+    site_id: Option<i64>,
+    aliases: &[String],
+) -> Result<Option<String>> {
+    let exclude = site_id.unwrap_or(-1);
+
+    for alias in aliases {
+        if let Some(other) = sqlx::query_scalar!(
+            "SELECT name FROM sites WHERE server_name = ? AND id <> ?",
+            alias, exclude
+        )
+        .fetch_optional(db)
+        .await?
+        {
+            return Ok(Some(format!("'{alias}' is already the hostname of site {other}")));
+        }
+
+        if let Some(other) = sqlx::query_scalar!(
+            r#"SELECT s.name as "name!" FROM site_aliases a
+               JOIN sites s ON s.id = a.site_id
+               WHERE a.name = ? AND a.site_id <> ?"#,
+            alias, exclude
+        )
+        .fetch_optional(db)
+        .await?
+        {
+            return Ok(Some(format!("'{alias}' is already an alias of site {other}")));
+        }
+    }
+
+    Ok(None)
+}
+
+/// Replace a site's aliases with this list.
+///
+/// Delete-then-insert in one transaction: the aliases are a set, the form
+/// submits the whole set, and a half-applied change would leave a hostname
+/// being served that the page no longer shows.
+async fn save_aliases(db: &SqlitePool, site_id: i64, aliases: &[String]) -> Result<()> {
+    let mut tx = db.begin().await?;
+
+    sqlx::query!("DELETE FROM site_aliases WHERE site_id = ?", site_id)
+        .execute(&mut *tx)
+        .await?;
+
+    for alias in aliases {
+        sqlx::query!(
+            "INSERT INTO site_aliases (site_id, name) VALUES (?, ?)",
+            site_id, alias
+        )
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Every hostname a site answers for: its own first, then its aliases.
+///
+/// The order matters for certificates — the first name is the one the
+/// certificate is filed under — so `server_name` leads and the aliases follow
+/// in the order they were given.
+async fn site_names(db: &SqlitePool, site_id: i64, server_name: &str) -> Vec<String> {
+    let mut names = vec![server_name.to_string()];
+    names.extend(
+        sqlx::query_scalar!(
+            r#"SELECT name as "name!" FROM site_aliases WHERE site_id = ? ORDER BY id"#,
+            site_id
+        )
+        .fetch_all(db)
+        .await
+        .unwrap_or_default(),
+    );
+    names
+}
+
 /// Normalise the hostname a site is routed by.
 ///
 /// The proxy matches this value against the request's `Host:` header, which
@@ -892,3 +1105,76 @@ fn parse_policy_id(raw: &Option<String>) -> Option<i64> {
 
 // ─── Flash redirect helper ───────────────────────────────
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn aliases_are_taken_however_they_were_typed() {
+        // A list arrives pasted from wherever the operator had it — a config
+        // file, a certificate, an email — so the separator is not worth an
+        // argument with them.
+        let out = parse_aliases("www.example.com\nexample.net, example.org", "example.com")
+            .expect("a plain list");
+        assert_eq!(out, ["www.example.com", "example.net", "example.org"]);
+    }
+
+    #[test]
+    fn an_alias_is_normalised_the_same_way_the_hostname_is() {
+        // The proxy matches a bare lowercase host, so anything else stored
+        // would be a name that never matches a request.
+        let out = parse_aliases("HTTPS://WWW.Example.com:8443/app\nexample.net.", "example.com")
+            .expect("normalisable input");
+        assert_eq!(out, ["www.example.com", "example.net"]);
+    }
+
+    #[test]
+    fn a_name_listed_twice_is_taken_once() {
+        let out = parse_aliases("a.example.com a.example.com", "example.com").unwrap();
+        assert_eq!(out, ["a.example.com"], "a repeat is a typo, not an error");
+    }
+
+    #[test]
+    fn the_sites_own_hostname_is_refused_as_an_alias() {
+        // It would insert a row claiming a name the site already answers for,
+        // and UNIQUE would then refuse the site's own hostname to itself.
+        let err = parse_aliases("example.com", "example.com").unwrap_err();
+        assert!(err.contains("already this site's hostname"), "{err}");
+    }
+
+    #[test]
+    fn a_wildcard_is_refused_where_it_is_typed() {
+        // Two separate reasons, both invisible until much later: the Host
+        // header is matched exactly, and a wildcard certificate needs DNS-01.
+        let err = parse_aliases("*.example.com", "example.com").unwrap_err();
+        assert!(err.contains("wildcards are not supported"), "{err}");
+    }
+
+    #[test]
+    fn nonsense_is_refused_rather_than_dropped() {
+        // A silently discarded alias is a hostname the operator believes is
+        // being served, and nothing on the page would say otherwise.
+        for bad in ["not a hostname!", "-leading.example.com", "trailing-.example.com",
+                    "double..dot.example.com"] {
+            assert!(parse_aliases(bad, "example.com").is_err(), "{bad} should be refused");
+        }
+    }
+
+    #[test]
+    fn an_empty_field_is_no_aliases_not_an_error() {
+        assert_eq!(parse_aliases("", "example.com").unwrap(), Vec::<String>::new());
+        assert_eq!(parse_aliases("  \n , \n ", "example.com").unwrap(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn hostname_validity_covers_the_label_rules() {
+        assert!(is_hostname("example.com"));
+        assert!(is_hostname("a-b.c-d.example.com"));
+        assert!(is_hostname("localhost"));
+        assert!(is_hostname("1.2.3.4"), "an address is a valid Host header");
+        assert!(!is_hostname(""));
+        assert!(!is_hostname("under_score.example.com"));
+        assert!(!is_hostname(&format!("{}.example.com", "a".repeat(64))));
+    }
+}

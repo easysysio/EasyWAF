@@ -212,6 +212,7 @@ only thing standing between a stranger and your appliance.
 | Field | Value | Notes |
 |---|---|---|
 | Hostname | `example.com` | The `Host:` header to route on — bare name, no scheme, no port |
+| Aliases | `www.example.com` | Optional. Other hostnames the same site answers for, one per line — same upstream, policy, ports and headers. A hostname belongs to one site only, and no wildcards |
 | Upstream Target | `http://127.0.0.1:3000` | Where to forward — full URL including scheme |
 | Listen Port | `80` | Plain HTTP. Bound immediately; the previously bound port keeps listening until restart |
 | HTTPS Port | `443` | Optional. Empty means HTTP only; setting it serves HTTPS *as well as* HTTP |

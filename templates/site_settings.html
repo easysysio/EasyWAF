@@ -33,6 +33,28 @@
                     </div>
 
                     <div class="form-group">
+                        <label>Aliases
+                            <small class="text-muted">(other hostnames this same site answers for — one per line)</small></label>
+                        <textarea class="form-control" name="aliases" rows="2" spellcheck="false"
+                                  style="font-family: monospace; font-size: 12px"
+                                  placeholder="www.example.com&#10;example.net">{{ site.aliases }}</textarea>
+                        <p class="help-block">
+                            Every alias is served by this site, with the same upstream,
+                            policy, ports and headers — which is the point: two names for one
+                            application used to mean two sites kept in step by hand, and any
+                            divergence was a bug that appeared on only one of the names.
+                            <br>
+                            A hostname can belong to one site only. Wildcards are not
+                            supported: the Host header is matched exactly, and a wildcard
+                            certificate needs a DNS-01 challenge EasyWAF does not implement.
+                            <br>
+                            A certificate must cover every name, or a browser reaching the
+                            site by an uncovered one gets a warning. Requesting one from this
+                            page asks for all of them at once.
+                        </p>
+                    </div>
+
+                    <div class="form-group">
                         <label>Upstream Target <small class="text-muted">(where requests are forwarded — full URL, including scheme)</small></label>
                         <input type="text" class="form-control" name="target" value="{{ site.target }}" placeholder="http://127.0.0.1:3000" required>
                     </div>
@@ -210,14 +232,18 @@
                 <hr>
                 <h4><i class="fa fa-certificate"></i> Let's Encrypt</h4>
                 <p class="help-block" style="margin-top:-4px">
-                    Requests a certificate for <strong>{{ site.server_name }}</strong> and
+                    Requests a certificate for <strong>{{ site.server_name }}</strong>{% if site.aliases %},
+                    covering <strong>{{ site.aliases }}</strong> as well,{% endif %} and
                     assigns it to this site. EasyWAF answers the challenge itself, so there
                     is nothing to configure on the backend.
                 </p>
                 <p class="help-block">
-                    For this to work, <code>{{ site.server_name }}</code> must resolve to
+                    For this to work, <code>{{ site.server_name }}</code>{% if site.aliases %} and
+                    every alias{% endif %} must resolve to
                     this host from the public internet, and <strong>port 80</strong> must be
-                    open to it. HTTP-01 validation always arrives there, and EasyWAF listens
+                    open to it.{% if site.aliases %} Every name is validated separately and
+                    they all have to succeed — a name that does not resolve here means no
+                    certificate at all, rather than one missing that name.{% endif %} HTTP-01 validation always arrives there, and EasyWAF listens
                     on port 80 whatever ports your sites use — so this site being on
                     <strong>{{ site.listen_port }}</strong> does not matter.
                     Set the contact address under <a href="/settings">Settings</a> first, and

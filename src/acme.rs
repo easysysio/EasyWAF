@@ -206,19 +206,35 @@ async fn account(db: &SqlitePool, cfg: &AcmeConfig) -> Result<Account> {
 
 // ─── Issuance ────────────────────────────────────────────
 
-/// Obtain a certificate for one domain, returning (cert chain PEM, key PEM).
+/// Obtain one certificate covering every name given, returning
+/// (cert chain PEM, key PEM).
 ///
 /// The whole HTTP-01 exchange: order, publish the token where the proxy will
 /// answer it, tell the CA to validate, wait, then finalise. The published
 /// tokens are held in guards so every failure path withdraws them — and there
 /// are many, since most of this is waiting on someone else's server.
-pub async fn issue(db: &SqlitePool, domain: &str) -> Result<(String, String)> {
+///
+/// Several names means several authorizations in one order, each answered the
+/// same way — one certificate with the rest as subject alternative names.
+/// **Every name has to validate**: a site whose alias does not resolve here
+/// gets no certificate at all, rather than one covering the names that
+/// happened to work. Partial success would be worse, since the missing name is
+/// then a browser warning nobody was told about.
+pub async fn issue(db: &SqlitePool, domains: &[String]) -> Result<(String, String)> {
+    if domains.is_empty() {
+        return Err(AppError::Internal("no domain to request a certificate for".into()));
+    }
+    // What the operator is told when something fails: all the names, since any
+    // one of them can be the one that did not validate.
+    let domain = domains.join(", ");
+
     let cfg = config(db)
         .await?
         .ok_or_else(|| AppError::Internal("ACME is not configured".into()))?;
 
     let account = account(db, &cfg).await?;
-    let identifiers = [Identifier::Dns(domain.to_string())];
+    let identifiers: Vec<Identifier> =
+        domains.iter().map(|d| Identifier::Dns(d.clone())).collect();
     let mut order = account
         .new_order(&NewOrder::new(&identifiers))
         .await
@@ -427,20 +443,29 @@ fn validation_message(answered: bool, listening_on_80: bool, timed_out: bool) ->
 /// oddly depending on which button produced it.
 pub async fn issue_and_store(
     db: &SqlitePool,
-    domain: &str,
+    domains: &[String],
     cert_name: &str,
 ) -> Result<i64> {
+    // Stored as one space-separated string in acme_domain, which is what the
+    // renewal reads back: a certificate covering three names has to be renewed
+    // for all three, and a renewal that quietly dropped the aliases would
+    // break them a month later with nothing pointing at why.
+    let domain = domains.join(" ");
     // Logged here rather than left to the caller. A failed request used to
     // leave no record at all: the error became a flash message, and a page
     // that did not render one turned the whole attempt into silence. The log
     // is the one place that survives whatever the browser does next.
-    let (cert_pem, key_pem) = match issue(db, domain).await {
+    let (cert_pem, key_pem) = match issue(db, domains).await {
         Ok(pair) => pair,
         Err(e)   => {
             tracing::warn!(domain, cert_name, error = %e, "ACME issuance failed");
             return Err(e);
         }
     };
+
+    // The first name is what the certificate is called in the GUI; the whole
+    // list is what it was issued for.
+    let primary_name = domains[0].clone();
 
     // Dates come from the certificate itself rather than from an assumption
     // about validity periods, so renewal later acts on what the CA issued.
@@ -456,7 +481,7 @@ pub async fn issue_and_store(
              domain = excluded.domain, not_before = excluded.not_before,
              not_after = excluded.not_after, cert_pem = excluded.cert_pem,
              key_pem = excluded.key_pem, acme_domain = excluded.acme_domain",
-        cert_name, domain, not_before, not_after, cert_pem, key_pem, domain
+        cert_name, primary_name, not_before, not_after, cert_pem, key_pem, domain
     )
     .execute(db)
     .await?;
@@ -592,7 +617,12 @@ pub async fn renew_due(db: &SqlitePool) {
         tracing::info!(domain = %r.domain, "Renewing certificate");
         let stamp = now.to_rfc3339();
 
-        match issue_and_store(db, &r.domain, &r.name).await {
+        // Split back into the names it was issued for. A single-name
+        // certificate stored before 0.9.1 has no spaces in it and comes back
+        // as a one-element list, so nothing needs migrating.
+        let names: Vec<String> = r.domain.split_whitespace().map(str::to_string).collect();
+
+        match issue_and_store(db, &names, &r.name).await {
             Ok(_) => {
                 let _ = sqlx::query!(
                     "UPDATE certs SET acme_last_attempt = ?, acme_last_error = NULL,
