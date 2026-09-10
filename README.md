@@ -15,6 +15,22 @@ blocked, with a per-site breakdown.*
 
 ---
 
+## Documentation
+
+The full documentation — installation, first run, sites, TLS, policies, logging,
+troubleshooting and the current list of what EasyWAF does not do — is the MkDocs
+site in [`docs/`](docs/), built and published from this repository so a change
+and its documentation are one commit.
+
+```bash
+pip install -r docs-requirements.txt
+mkdocs serve          # http://127.0.0.1:8000
+```
+
+`docs/design/` holds the design notes and is deliberately not part of the site.
+
+---
+
 ## Status
 
 Working today: reverse proxying, the rule engine, country rules, the CAPTCHA challenge,

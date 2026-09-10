@@ -4,3 +4,6 @@
 *.db-wal
 *.db.backup-*
 .env
+
+# Built documentation site — mkdocs build output
+/site/

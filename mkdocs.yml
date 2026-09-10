@@ -1,0 +1,106 @@
+# EasyWAF documentation site.
+#
+# Same theme and extensions as the EasySYS site, so this reads as part of the
+# family rather than as a different product. EasySYS links here; the pages
+# themselves live beside the code they describe, which is what keeps them
+# honest — a change and its documentation are one commit.
+#
+# Build:  pip install -r docs-requirements.txt && mkdocs serve
+
+site_name: EasyWAF
+site_description: A self-contained web application firewall and HTTP reverse proxy, in a single Rust binary.
+repo_url: https://github.com/easysysio/EasyWAF
+repo_name: easysysio/EasyWAF
+copyright: GPL-3.0
+
+# The design notes are working documents — unshipped plans, arguments with
+# earlier decisions — and they live in this directory because they belong
+# beside the code. They are not part of the site.
+exclude_docs: |
+  design/
+
+nav:
+  - Overview: index.md
+  - Getting started:
+      - Installation: install.md
+      - First run: first-run.md
+  - Using EasyWAF:
+      - Sites: sites.md
+      - TLS and certificates: tls.md
+      - Policies and rules: policies.md
+      - Traffic: traffic.md
+      - Accounts and roles: accounts.md
+      - Logging: logging.md
+  - Reference:
+      - Configuration: configuration.md
+      - Troubleshooting: troubleshooting.md
+      - What EasyWAF does not do: limitations.md
+
+theme:
+  name: material
+  font:
+    text: Inter
+    code: Roboto Mono
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.top
+    - navigation.path
+    - toc.follow
+    - search.suggest
+    - search.highlight
+    - search.share
+    - content.code.copy
+    - content.code.annotate
+
+markdown_extensions:
+  - attr_list
+  - md_in_html
+  - admonition
+  - tables
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.magiclink
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+
+plugins:
+  - search
+  - glightbox
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/easysysio
+    - icon: fontawesome/solid/globe
+      link: https://easysys.io
