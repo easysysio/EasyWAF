@@ -6,7 +6,7 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
-## [Unreleased]
+## [0.9.1] — 2026-09-10
 
 ### Added
 - A site can answer for more than one hostname: aliases share its upstream, policy, ports and headers, so two names for one application no longer means two sites kept in step by hand.
