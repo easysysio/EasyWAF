@@ -6,11 +6,16 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
-## [Unreleased]
+## [0.9.2] — 2026-09-10
+
+### Added
+- A documentation site, built with MkDocs from `docs/` in this repository: overview, installation, first run, sites, TLS, policies, traffic, accounts, logging, configuration, troubleshooting, and a current list of what EasyWAF does not do.
 
 ### Changed
 - Creating a policy starts with nothing selected, and a **Basic sets** button ticks the eight that assume nothing about the application behind the proxy. They used to be ticked on arrival, so every new policy carried them whether or not anyone had decided to.
-- The create-site form asks whether to request a Let's Encrypt certificate before offering the list of existing ones, and says why the list goes inert when it does.
+- Creating a policy with no rules says so on the form and in the message afterwards, rather than reporting that it was created with 0 rules.
+- The create-site form asks whether to request a Let's Encrypt certificate before offering the list of existing ones, and says why that list goes inert when it does.
+- The create-site form's Let's Encrypt checkbox says it covers the site's aliases as well, which it has done since 0.9.1.
 
 ## [0.9.1] — 2026-09-10
 
