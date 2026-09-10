@@ -84,6 +84,45 @@ Two supports for the same problem:
   the backends are already there. TLS only — never accepted on the plain-HTTP
   listener.
 
+## Binary, not a rung on the score ladder
+
+Considered on 2026-09-10 and declined, so it is not re-proposed.
+
+The idea was to tie all three vectors together: the rules, the CAPTCHA and
+authentication would each be Off, Always, or triggered at a score the rules
+produced — one escalating ladder from allow through challenge and login to
+block. It is an attractive model, and two-thirds of it is right. The rungs it
+gets right are the ones anybody can climb.
+
+Authentication is not one of them, and it fails from both ends:
+
+* **Where visitors have no accounts**, a login form served because a request
+  scored 6 is a 403 in a costume — and a worse one, because it looks like the
+  visitor's fault and there is nothing they can do about it.
+* **Where visitors all have accounts** — an internal tool, an admin area, the
+  places this feature is for — they are signed in already. Requiring
+  authentication always costs them nothing, so the trigger buys nothing.
+
+Broken in one world, pointless in the other. So the gateway is binary: a site,
+or a path within it, either requires authentication or does not.
+
+The CAPTCHA survives as a score-triggered rung because any human can pass it,
+so it still works for a visitor nobody has ever met. That is the test for
+whether a response belongs on the ladder at all: can the person on the other end
+actually do the thing being asked? By the same test, neither rung works for a
+non-browser client — an API caller, a sync client, a webhook sender gets an
+interstitial where it expected a response, and fails unreadably. That is the
+argument for path scoping above, restated from the other direction.
+
+Two things follow, and both matter more than the ladder did:
+
+* **A signed-in visitor satisfies the challenge**, if a policy has one. They
+  have proved more than a CAPTCHA asks.
+* **Identity never raises the block threshold.** It is tempting to give
+  signed-in users more slack, and it is exactly backwards: the compromised
+  account and the malicious insider are who a WAF most needs to stop. Clearing
+  a rung skips that rung and nothing above it.
+
 ## Where it runs
 
 After the pipeline, immediately before the request is proxied upstream.
