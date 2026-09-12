@@ -12,7 +12,7 @@ next minor, so a release's notes stay about its feature.
 | 0.7.0 | Rule exclusions narrowed to a client, added from Traffic Monitor — **released 2026-09-08** |
 | 0.8.0 | User management and roles — **released 2026-09-09** |
 | 0.9.0 | Flow logs over syslog, audit log on disk (see [logging.md](logging.md)) — **released 2026-09-09** |
-| 0.10.0 | IP allow/block lists, addable with one click from Traffic Monitor (see [ip-lists.md](ip-lists.md)) |
+| 0.10.0 | IP allow/block lists, addable with one click from Traffic Monitor, plus published lists — Tor exits, bad reputation, compromised hosts — synced from a signed channel (see [ip-lists.md](ip-lists.md)) |
 | 0.11.0 | Engine: streaming bodies and cached rules (see [proxy-performance.md](proxy-performance.md)), plus the decoders CRS rules assume (see [request-transformations.md](request-transformations.md)) |
 | 0.12.0 | Load balancing across upstreams, with health checks (see [load-balancing.md](load-balancing.md)) |
 | 0.13.0 | Backup, restore and configuration export (see [backup-restore.md](backup-restore.md)) |
