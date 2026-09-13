@@ -6,18 +6,16 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
-## [Unreleased]
-
-### Changed
-- The site settings page follows the same order as the create-site form, field for field, with the Let's Encrypt request beside the certificate picker instead of in a section at the bottom of the page.
-
-## [Unreleased]
+## [0.10.0] — 2026-09-13
 
 ### Added
 - IP allow and block lists, installation-wide: a blocked address is refused before any rule runs — including on a site with no policy, where the WAF would do nothing — and an allowed one skips the WAF, the country rules and the CAPTCHA alike.
 - Block and Allow on every Traffic Monitor row, beside the client address, with a badge instead when it is already on a list.
 - Security Policy → IP Lists, to search what has accumulated, see who added each entry and why, and take entries off again.
 - Entries are ranges as well as addresses, so a whole CIDR block can be refused with one row.
+
+### Changed
+- The site settings page follows the same order as the create-site form, field for field, with the Let's Encrypt request beside the certificate picker instead of in a section at the bottom of the page.
 
 ## [0.9.2] — 2026-09-10
 
