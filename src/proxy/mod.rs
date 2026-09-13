@@ -748,6 +748,62 @@ async fn handle_request(
     // rules in the pipeline read it from the same lookup.
     let country   = crate::geo::country_of(client_ip);
 
+    // ── 3c. IP lists ──────────────────────────────────────
+    //
+    // Before the body is buffered, so a refused address does not cost 32 MB of
+    // reads first.
+    //
+    // Before the pipeline, and that is the whole design rather than an
+    // optimisation. An allowed address has to skip GeoIP, the WAF and the
+    // challenge alike, and making that a verdict every module must remember to
+    // honour would be one forgotten check away from being false. Never
+    // entering the pipeline is true regardless of which modules exist now or
+    // are added later.
+    //
+    // A blocked address is refused here for a second reason: a site with no
+    // policy runs no pipeline at all, and "refuse this client" has to work
+    // there too.
+    let listed  = crate::iplist::lookup(client_ip);
+    let site_id = site.id;
+
+    if listed == Some(crate::iplist::ListType::Block) {
+        let reason     = "Client address is on the block list".to_string();
+        let elapsed    = started_at.elapsed().as_millis() as i64;
+        let db         = state.db.clone();
+        let logger     = state.logger.clone();
+        let method_str = method.to_string();
+        let host_l     = host.clone();
+        let path_l     = path.clone();
+        let query_l    = query.clone();
+        let ip_l       = client_ip.to_string();
+        let country_l  = country.clone();
+        let reason_log = reason.clone();
+
+        tokio::spawn(async move {
+            log_event(db, logger, TrafficRecord {
+                site_id,
+                client_ip:    ip_l,
+                method:       method_str,
+                host:         host_l,
+                path:         path_l,
+                query:        query_l,
+                status_code:  403,
+                response_ms:  elapsed,
+                blocked:      true,
+                block_reason: Some(reason_log),
+                // No rule fired and no score accumulated: the address was
+                // refused for being itself. Recording a score of zero would
+                // read as a WAF decision that never happened.
+                waf_score:     None,
+                matched_rules: None,
+                country:       country_l,
+                detection:     None,
+            }).await;
+        });
+
+        return error_response(StatusCode::FORBIDDEN, &reason);
+    }
+
     // Buffer the full body (up to 32 MB) — WAF modules need to inspect it.
     let body_bytes = match axum::body::to_bytes(body, 32 * 1024 * 1024).await {
         Ok(b)  => b,
@@ -776,7 +832,18 @@ async fn handle_request(
         started_at,
     };
 
-    let verdict = state.pipeline.run(&ctx).await;
+    // An allowed address skips the pipeline rather than being waved through
+    // it. Substituting a clean verdict rather than returning early keeps every
+    // path below unchanged — the WebSocket upgrade, the ordinary response, and
+    // the traffic row that all three of them write.
+    let verdict = if listed == Some(crate::iplist::ListType::Allow) {
+        PipelineVerdict::Allow {
+            alerts:   Vec::new(),
+            findings: crate::modules::Findings::default(),
+        }
+    } else {
+        state.pipeline.run(&ctx).await
+    };
 
     if let PipelineVerdict::Block { reason, status, findings, .. } = verdict {
         // Log the blocked request asynchronously so we don't delay the response.

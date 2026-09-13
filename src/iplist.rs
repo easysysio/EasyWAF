@@ -40,13 +40,6 @@ pub enum ListType {
 }
 
 impl ListType {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            ListType::Allow => "allow",
-            ListType::Block => "block",
-        }
-    }
-
     fn parse(raw: &str) -> Option<Self> {
         match raw.trim() {
             "allow" => Some(ListType::Allow),
