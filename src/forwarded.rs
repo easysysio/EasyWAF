@@ -6,7 +6,8 @@
 // X-Forwarded-For is a header, which means the client can
 // send one. Honouring it unconditionally would let anyone
 // claim any address and walk straight past country rules —
-// and past the IP allow/block lists in 0.12.0 — so it is
+// and past the IP allow/block lists, which have refused
+// clients outright since 0.10.0 — so it is
 // trusted only when the connection itself came from an
 // address the operator has listed.
 //

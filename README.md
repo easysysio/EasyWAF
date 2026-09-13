@@ -390,7 +390,7 @@ scheduled or decided — the roadmap lives in [docs/design/roadmap.md](docs/desi
   like `*.example.com`. Two applications behind one hostname cannot be split. Not scheduled.
 * **One upstream per site.** No load balancing, no health checks, no failover to a second
   backend — an application running more than one instance needs a load balancer behind
-  EasyWAF. Scheduled for **0.12.0**.
+  EasyWAF. Scheduled for **0.13.0**.
 * **IPv6 literal hostnames do not route.** Host matching truncates at the first colon, so
   `[::1]:8080` does not match. Name-based hosts are unaffected.
 * **No health or metrics endpoint.** Nothing to point a load balancer's health check at, and
@@ -426,10 +426,10 @@ scheduled or decided — the roadmap lives in [docs/design/roadmap.md](docs/desi
   after roles, since a trail saying "admin did X" says little when every operator is `admin`.
 * **No backup, restore or configuration export.** Everything lives in one SQLite file with no
   way to export it, clone it to staging, or keep it under version control. Scheduled for
-  **0.13.0**; until then, copy the database file with the service stopped.
-* **No high availability.** No configuration sync between nodes. Scheduled for **0.14.0**.
-* **No rate limiting** (**0.15.0**). IP allow and block lists arrived in 0.10.0;
-  curated lists synced from a signed channel are the next piece of that work.
+  **0.14.0**; until then, copy the database file with the service stopped.
+* **No high availability.** No configuration sync between nodes. Scheduled for **0.15.0**.
+* **No rate limiting** (**0.16.0**). IP allow and block lists arrived in 0.10.0;
+  curated lists synced from a signed channel follow the engine release, in **0.12.0**.
 * **`http_port` and `acme_webroot` in `config.toml` are ignored.** They are placeholders from
   0.1.0; listening ports come from the sites you define.
 

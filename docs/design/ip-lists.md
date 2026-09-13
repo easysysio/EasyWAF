@@ -1,7 +1,8 @@
 # Design note — IP allow/block lists, added from Traffic Monitor
 
 Status: the manual half **shipped in 0.10.0**; the published half is built and
-not yet released — see [roadmap.md](roadmap.md).
+scheduled for **0.12.0**, after the engine release — see
+[roadmap.md](roadmap.md).
 
 The release was split on 2026-09-13, once the manual lists were working. The
 matcher, the precedence rule and the enforcement point are shared, so the

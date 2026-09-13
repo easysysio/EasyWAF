@@ -23,7 +23,7 @@ Current as of **0.9.1**.
   scheduled.
 - **One upstream per site.** No load balancing, no health checks, no failover —
   an application running more than one instance needs a load balancer behind
-  EasyWAF. Scheduled for **0.12.0**.
+  EasyWAF. Scheduled for **0.13.0**.
 - **IPv6 literal hostnames do not route.** Host matching truncates at the first
   colon, so `[::1]:8080` does not match. Name-based hosts are unaffected.
 - **No health or metrics endpoint.** Nothing to point a load balancer's health
@@ -55,15 +55,15 @@ Current as of **0.9.1**.
   the internet.
 - **No backup, restore or configuration export.** Everything is in one SQLite
   file with no way to export it, clone it to staging, or keep it under version
-  control. Scheduled for **0.13.0**; until then,
+  control. Scheduled for **0.14.0**; until then,
   [copy the file](configuration.md#backing-up) with the service stopped.
 - **No high availability.** No configuration sync between nodes. Scheduled for
-  **0.14.0**.
+  **0.15.0**.
 - **Published IP lists are not here yet.** The lists are yours to fill: an
   address is blocked or allowed because somebody put it there. Curated lists
   synced from a signed channel — Tor exits, hijacked netblocks, compromised
-  hosts — are the next piece of this work.
-- **No rate limiting.** Scheduled for **0.15.0**.
+  hosts — are scheduled for **0.12.0**, after the engine release.
+- **No rate limiting.** Scheduled for **0.16.0**.
 - **No authentication in front of a site.** EasyWAF decides whether a request is
   an attack, not who is making it. Proposed, not scheduled.
 

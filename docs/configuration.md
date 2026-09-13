@@ -72,7 +72,7 @@ Sites, policies, rules, exclusions and certificates have pages of their own.
 
 ## Backing up
 
-There is no export yet ([0.13.0](limitations.md#managing-it)). Everything is in
+There is no export yet ([0.14.0](limitations.md#managing-it)). Everything is in
 the one SQLite file, so with the service stopped:
 
 ```bash

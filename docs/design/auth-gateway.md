@@ -215,7 +215,7 @@ applications actually read today.
 ## Brute force
 
 A login form on the edge is a credential-stuffing target from the hour it goes
-up, and this cannot wait for rate limiting (0.15.0).
+up, and this cannot wait for rate limiting (0.16.0).
 
 Per-username and per-address counters, in memory and bounded the way the
 challenge store is: N failures in a window, then refuse that username for M

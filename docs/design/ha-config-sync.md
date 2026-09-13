@@ -1,7 +1,7 @@
 # Design note — configuration sync between EasyWAF nodes
 
-Status: planned for **0.14.0** — see [roadmap.md](roadmap.md), after flow logs
-(0.9.0) and backup/export (0.13.0), and deliberately *before* rate limiting and
+Status: planned for **0.15.0** — see [roadmap.md](roadmap.md), after flow logs
+(0.9.0) and backup/export (0.14.0), and deliberately *before* rate limiting and
 learning mode.
 
 ## What this is, and what it is not
@@ -54,7 +54,7 @@ than something automatic; automatic promotion needs consensus to avoid two
 nodes both believing they are primary, and that is a distributed-systems
 problem this product should not take on to avoid an occasional manual step.
 
-## It is 0.12.0's export, applied continuously
+## It is 0.14.0's export, applied continuously
 
 This is why it follows backup/export rather than preceding it. The question
 "what constitutes this appliance's configuration, expressed portably, without

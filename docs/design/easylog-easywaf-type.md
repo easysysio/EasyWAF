@@ -184,7 +184,7 @@ itself.
    `scored` bucket against ordinary traffic is a tuning candidate; one
    dominating `blocked` is doing its job.
 4. **Top clients**, by count and by blocked count, with country. Feeds the
-   allow/block lists EasyWAF gains in 0.10.0.
+   allow/block lists EasyWAF gained in 0.10.0.
 5. **Top countries**, for policies considering country rules.
 6. **Served-but-shouldn't-have**: a panel counting `would_block` +
    `would_challenge`. On a DetectionOnly policy this is the number that

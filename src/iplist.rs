@@ -17,7 +17,7 @@
 // what an operator types by hand, and cannot answer "is this
 // address inside any of these blocks" without expanding
 // them — a /12 is a million addresses standing in for one
-// row. Published lists (0.11.0) are ranges throughout, so
+// row. Published lists (0.12.0) are ranges throughout, so
 // the structure is built for them now rather than replaced
 // then.
 // =========================================================
@@ -279,7 +279,7 @@ mod tests {
     #[test]
     fn allow_wins_over_block() {
         // The operator's override has to survive a block arriving later, which
-        // is exactly what a published list will do in 0.11.0.
+        // is exactly what a published list will do in 0.12.0.
         let l = built(&[("10.0.0.5", "allow"), ("10.0.0.0/8", "block")]);
         assert_eq!(l.lookup(ip("10.0.0.5")), Some(ListType::Allow));
         assert_eq!(l.lookup(ip("10.0.0.6")), Some(ListType::Block));

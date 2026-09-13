@@ -13,13 +13,13 @@ next minor, so a release's notes stay about its feature.
 | 0.8.0 | User management and roles — **released 2026-09-09** |
 | 0.9.0 | Flow logs over syslog, audit log on disk (see [logging.md](logging.md)) — **released 2026-09-09** |
 | 0.10.0 | IP allow/block lists, addable with one click from Traffic Monitor (see [ip-lists.md](ip-lists.md)) — **released 2026-09-13** |
-| next | Published IP lists — Tor exits, bad reputation, compromised hosts — synced from a signed channel (see [ip-lists.md](ip-lists.md)). Split out of 0.10.0 on 2026-09-13; its number depends on whether it goes ahead of the engine release |
 | 0.11.0 | Engine: streaming bodies and cached rules (see [proxy-performance.md](proxy-performance.md)), plus the decoders CRS rules assume (see [request-transformations.md](request-transformations.md)) |
-| 0.12.0 | Load balancing across upstreams, with health checks (see [load-balancing.md](load-balancing.md)) |
-| 0.13.0 | Backup, restore and configuration export (see [backup-restore.md](backup-restore.md)) |
-| 0.14.0 | Configuration sync between nodes — HA (see [ha-config-sync.md](ha-config-sync.md)) |
-| 0.15.0 | Per-site rate limiting (see [rate-limiting.md](rate-limiting.md)) |
-| 0.16.0 | Learning and hardening modes — URL allowlisting (see [url-learning.md](url-learning.md)) |
+| 0.12.0 | Published IP lists — Tor exits, bad reputation, compromised hosts — synced from a signed channel (see [ip-lists.md](ip-lists.md)) |
+| 0.13.0 | Load balancing across upstreams, with health checks (see [load-balancing.md](load-balancing.md)) |
+| 0.14.0 | Backup, restore and configuration export (see [backup-restore.md](backup-restore.md)) |
+| 0.15.0 | Configuration sync between nodes — HA (see [ha-config-sync.md](ha-config-sync.md)) |
+| 0.16.0 | Per-site rate limiting (see [rate-limiting.md](rate-limiting.md)) |
+| 0.17.0 | Learning and hardening modes — URL allowlisting (see [url-learning.md](url-learning.md)) |
 
 ## Next patch
 
@@ -223,7 +223,7 @@ schema-agnostic, so it neither depends on the rule model nor churns as the
 schema grows. Only the structured export has to wait.
 
 **Node sync follows export and logging, and precedes rate limiting and
-learning.** It is 0.13.0's export applied continuously — the same question of
+learning.** It is 0.14.0's export applied continuously — the same question of
 what constitutes this appliance's configuration, expressed portably — so
 building the two apart would produce two definitions of that, drifting. The
 traffic half of high availability is deliberately not built: each node records
@@ -262,7 +262,7 @@ exist there is no way to refuse a single address on such a site. Rule
 exclusions (0.7.0) cannot close it, because they live inside the WAF module and
 so exist only where a policy does.
 
-Rate limiting stays at 0.15.0. The adjacency was convenience rather than
+Rate limiting stays at 0.16.0. The adjacency was convenience rather than
 dependency — the direction of the dependency is that rate limiting needs the
 allowlist, which now simply exists five releases earlier. They were always two
 releases rather than one because they differ in shape: an IP list is a set

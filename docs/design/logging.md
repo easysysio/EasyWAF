@@ -13,7 +13,7 @@ The argument is the same each time and it has only got stronger: logging
 becomes a pool, an export has to encode that shape, the engine changes how a
 request is buffered and matched. Nothing logging does is invalidated by any of
 them, and everything they do is easier to see having shipped it first. Node
-sync (0.14.0) depends on it outright: the traffic half of high availability is
+sync (0.15.0) depends on it outright: the traffic half of high availability is
 deliberately not built, each node instead recording what it saw for EasyLog to
 aggregate, so the aggregation should exist before the nodes do.
 
