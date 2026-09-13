@@ -70,9 +70,31 @@ pub async fn init(database_url: &str) -> SqlitePool {
     run_migration_021(&pool).await;
     run_migration_022(&pool).await;
     run_migration_023(&pool).await;
+    run_migration_024(&pool).await;
 
     info!("Database ready: {}", database_url);
     pool
+}
+
+// ─── run_migration_024 ───────────────────────────────────
+
+/// IP allow and block lists.
+async fn run_migration_024(pool: &SqlitePool) {
+    let exists: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'ip_rules'",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0);
+
+    if exists == 0 {
+        let sql = include_str!("../migrations/024_ip_rules.sql");
+        sqlx::raw_sql(sql)
+            .execute(pool)
+            .await
+            .unwrap_or_else(|e| panic!("Migration 024 failed: {}", e));
+        info!("Migration 024 applied: an address can be allowed or blocked outright");
+    }
 }
 
 // ─── run_migration_023 ───────────────────────────────────

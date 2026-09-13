@@ -19,6 +19,7 @@ mod db;
 mod error;
 mod forwarded;
 mod geo;
+mod iplist;
 mod modules;
 mod logging;
 mod pgp_verify;
@@ -119,6 +120,8 @@ async fn main() {
 
     // Loaded once into memory: this is consulted on every proxied request.
     forwarded::reload(&db).await;
+    // Allow and block lists, consulted before the pipeline on every request.
+    iplist::reload(&db).await;
 
     // ── Build module pipeline ─────────────────────────────
     // Modules run in order for every proxied request.

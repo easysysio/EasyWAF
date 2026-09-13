@@ -161,10 +161,16 @@ of them alone can carry hundreds of thousands of ranges. A hash set cannot
 answer "is this address inside any of these ranges" at all without expanding
 them, which for a `/12` is four hundred thousand entries standing in for one.
 
-So: ranges normalised to `(start, end)` as `u128`, sorted once at load, found
-by binary search — one comparison per bit of index, independent of how many
-lists are enabled. IPv4 is mapped into the same space rather than kept in a
-second structure, so a lookup is one search regardless of family.
+So: ranges normalised to `(start, end)` as `u128`, sorted and merged once at
+load, found by bisection — one comparison per bit of index, independent of how
+many lists are enabled. Overlapping and touching blocks are merged, so three
+entries describing one `/24` cost one range.
+
+**One array per family, not one mapped space.** An earlier draft of this
+section folded IPv4 into v6 so a lookup would be a single search. That is the
+opposite of the decision `Cidr::contains` already makes, and for a good reason:
+`10.0.0.0/8` would quietly cover `::ffff:10.0.0.1`, which is a wider rule than
+the one written down. Two arrays, and the address's own family picks one.
 
 Manual entries go into the same structure as `/32` and `/128` ranges. One
 matcher, one code path, and the exact-versus-range distinction stays where it

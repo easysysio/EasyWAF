@@ -68,6 +68,35 @@ impl Cidr {
             _ => false,
         }
     }
+
+    /// Which family this block is in, so a matcher can keep the two apart.
+    pub fn is_ipv4(&self) -> bool {
+        self.addr.is_ipv4()
+    }
+
+    /// The block as an inclusive `(first, last)` pair of integers.
+    ///
+    /// Within its own family's space: a v4 block spans 0..=u32::MAX widened to
+    /// u128, a v6 block the full range. Keeping the two spaces separate is the
+    /// same decision `contains` makes above — a v4 address must not match a v6
+    /// block through its mapped form.
+    ///
+    /// Host bits below the prefix are cleared for the start and set for the
+    /// end, so `10.0.0.1/8` and `10.0.0.0/8` describe the same block, which is
+    /// what every other tool does with a sloppily written prefix.
+    pub fn range(&self) -> (u128, u128) {
+        let (bits, value) = match self.addr {
+            IpAddr::V4(a) => (32u32,  u32::from(a) as u128),
+            IpAddr::V6(a) => (128u32, u128::from(a)),
+        };
+        let host = bits - self.prefix as u32;
+        if host >= bits {
+            // A /0 covers everything; shifting by the full width is undefined.
+            return (0, if bits == 32 { u32::MAX as u128 } else { u128::MAX });
+        }
+        let mask = if host == 0 { 0 } else { (1u128 << host) - 1 };
+        (value & !mask, value | mask)
+    }
 }
 
 /// Compare the first `prefix` bits of two addresses.
