@@ -59,8 +59,10 @@ Current as of **0.9.1**.
   [copy the file](configuration.md#backing-up) with the service stopped.
 - **No high availability.** No configuration sync between nodes. Scheduled for
   **0.14.0**.
-- **No IP allow or block lists** — nothing refuses a client outright, at any
-  scope. Scheduled for **0.10.0**.
+- **Published IP lists are not here yet.** The lists are yours to fill: an
+  address is blocked or allowed because somebody put it there. Curated lists
+  synced from a signed channel — Tor exits, hijacked netblocks, compromised
+  hosts — are the next piece of this work.
 - **No rate limiting.** Scheduled for **0.15.0**.
 - **No authentication in front of a site.** EasyWAF decides whether a request is
   an attack, not who is making it. Proposed, not scheduled.

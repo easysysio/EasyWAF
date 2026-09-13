@@ -428,7 +428,8 @@ scheduled or decided — the roadmap lives in [docs/design/roadmap.md](docs/desi
   way to export it, clone it to staging, or keep it under version control. Scheduled for
   **0.13.0**; until then, copy the database file with the service stopped.
 * **No high availability.** No configuration sync between nodes. Scheduled for **0.14.0**.
-* **No IP allow/block lists** (**0.10.0**) and **no rate limiting** (**0.15.0**).
+* **No rate limiting** (**0.15.0**). IP allow and block lists arrived in 0.10.0;
+  curated lists synced from a signed channel are the next piece of that work.
 * **`http_port` and `acme_webroot` in `config.toml` are ignored.** They are placeholders from
   0.1.0; listening ports come from the sites you define.
 

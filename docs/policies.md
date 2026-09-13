@@ -115,6 +115,11 @@ policy is used. The disabled state survives rule updates.
 Every rule that is not running anywhere — disabled or excluded — is listed on one
 page, so a temporary exclusion cannot quietly become permanent.
 
+Those three all assume the rule is wrong. When it is the *caller* that is fine —
+a monitoring probe, a partner's integration, your own office — the answer is an
+[allow list entry](ip-lists.md) instead, which skips every check for that
+address rather than turning a rule off for everyone who trips it.
+
 ## Country rules
 
 Per policy: block listed countries, or allow only listed ones.

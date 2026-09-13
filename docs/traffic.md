@@ -44,6 +44,16 @@ rule for the site — optionally for just that client or path. That is the faste
 honest answer to a false positive: keep the rule for everyone else, and stop it
 refusing the caller it was wrong about.
 
+Beside the client address, every row also offers **Block** and **Allow**, which
+put that address on an [IP list](ip-lists.md) for the whole installation —
+refused before any rule runs, or waved past every check. A row whose client is
+already listed shows a badge instead, so you cannot add it twice.
+
+The three are different sizes and the row keeps them legible: excluding turns
+one rule off for one client on one site, blocking refuses that address
+everywhere, and allowing skips every check for it everywhere. The widest is not
+the easiest to reach by accident — blocking asks for confirmation.
+
 ## Retention
 
 Traffic history is kept forever by default. Set a window under **Settings →

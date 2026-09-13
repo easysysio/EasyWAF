@@ -1,9 +1,15 @@
 # Design note — IP allow/block lists, added from Traffic Monitor
 
-Status: planned for **0.10.0** — see [roadmap.md](roadmap.md), after users and
-roles (0.8.0) and flow logs (0.9.0).
+Status: the manual half **shipped in 0.10.0**; the published half is built and
+not yet released — see [roadmap.md](roadmap.md).
 
-**Published lists were added to this release on 2026-09-12** — see *Published
+The release was split on 2026-09-13, once the manual lists were working. The
+matcher, the precedence rule and the enforcement point are shared, so the
+published half is a fetch and a verification on top of something already
+carrying traffic — and splitting got blocking into production while the channel
+was still being designed.
+
+**Published lists were added to this note on 2026-09-12** — see *Published
 lists* below. What began as manual entry for an address you had just seen in
 Traffic Monitor now also covers addresses you have not seen yet, fetched from a
 signed channel. The two halves share one matcher and one precedence rule.
