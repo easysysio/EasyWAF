@@ -1,0 +1,129 @@
+{% extends "layout_default.html" %}
+
+{% block content %}
+
+{% if result == "failed" %}
+<div class="alert alert-danger alert-dismissible">
+    <button type="button" class="close" data-dismiss="alert">&times;</button>
+    {{ msg }}
+</div>
+{% endif %}
+{% if result == "success" %}
+<div class="alert alert-success alert-dismissible">
+    <button type="button" class="close" data-dismiss="alert">&times;</button>
+    {{ msg }}
+</div>
+{% endif %}
+
+<div class="row">
+    <div class="col-lg-11">
+        <div class="panel panel-default">
+            <div class="panel-heading">
+                <h4 style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+                    <span><i class="fa fa-hand-stop-o"></i> IP Lists</span>
+                    <span class="text-muted" style="font-size:12px">
+                        {{ blocked }} blocked, {{ allowed }} allowed
+                    </span>
+                    <form method="get" action="/iplists" style="margin:0;margin-left:auto">
+                        <input type="text" name="q" value="{{ search }}"
+                               class="form-control input-sm" placeholder="Search address or reason"
+                               style="width:auto;display:inline-block">
+                    </form>
+                </h4>
+            </div>
+            <div class="panel-body">
+
+                <p class="help-block" style="margin-top:0">
+                    These apply <strong>installation-wide</strong>, before anything else.
+                    A specific attacker's address is true regardless of which site it
+                    reaches, and so is one you have decided to trust.
+                    <br>
+                    <strong>Blocked</strong> is refused outright, before any rule runs —
+                    including on a site with no policy, where the WAF would do nothing.
+                    <strong>Allowed</strong> skips everything: the rules, the country
+                    rules and the CAPTCHA alike. That is deliberate and it is wide, so
+                    allow sparingly.
+                    <br>
+                    An address is on at most one list. Putting it on the other one moves
+                    it.
+                </p>
+
+                <form class="admin-only" method="post" action="/iplists/add"
+                      style="margin-bottom:16px;display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start">
+                    <input type="text" name="ip" class="form-control" required
+                           placeholder="203.0.113.9 or 203.0.113.0/24"
+                           spellcheck="false" style="width:260px">
+                    <select name="list_type" class="form-control" style="width:auto">
+                        <option value="block">Block</option>
+                        <option value="allow">Allow</option>
+                    </select>
+                    <input type="text" name="reason" class="form-control"
+                           placeholder="Why (optional)" style="width:280px">
+                    <button type="submit" class="btn btn-default">
+                        <i class="fa fa-plus"></i> Add
+                    </button>
+                </form>
+
+                {% if entries %}
+                <div style="overflow-x:auto">
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th>Address</th>
+                            <th>List</th>
+                            <th>Why</th>
+                            <th>Added by</th>
+                            <th>When</th>
+                            <th class="text-right"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    {% for e in entries %}
+                        <tr {% if e.list_type == "block" %}class="danger"{% endif %}>
+                            <td><code>{{ e.ip }}</code></td>
+                            <td>
+                                {% if e.list_type == "block" %}
+                                <span class="label label-danger">BLOCKED</span>
+                                {% else %}
+                                <span class="label label-success">ALLOWED</span>
+                                {% endif %}
+                            </td>
+                            <td>{{ e.reason | default(value="—") }}</td>
+                            <td>{{ e.added_by | default(value="—") }}</td>
+                            <td style="white-space:nowrap"><small class="text-muted">{{ e.created_at }}</small></td>
+                            <td class="text-right" style="white-space:nowrap">
+                                <form class="admin-only" method="post"
+                                      action="/iplists/{{ e.id }}/remove"
+                                      onsubmit="return confirm('Take {{ e.ip }} off the {{ e.list_type }} list?\n\nIt is inspected like any other client from the next request.');"
+                                      style="display:inline">
+                                    <button type="submit" class="btn btn-default btn-xs"
+                                            title="Inspected like any other client again">
+                                        <i class="fa fa-undo"></i> Remove
+                                    </button>
+                                </form>
+                            </td>
+                        </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+                </div>
+                {% else %}
+                <p class="text-muted">
+                    {% if search %}
+                    Nothing matches <code>{{ search }}</code>.
+                    {% else %}
+                    No addresses are listed. Every client is inspected by whatever policy
+                    its site carries.
+                    <br>
+                    <small>The usual way one appears is from
+                    <a href="/traffic">Traffic Monitor</a>: find the request, and block
+                    or allow the address that made it.</small>
+                    {% endif %}
+                </p>
+                {% endif %}
+
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

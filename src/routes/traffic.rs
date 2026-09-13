@@ -55,6 +55,11 @@ pub struct TrafficEvent {
     /// "would_challenge" or "would_block". None on clean traffic and on rows
     /// written before 0.6.11.
     pub detection:    Option<String>,
+    /// "allow", "block", or None — whether this client is already on a list,
+    /// so the row shows it rather than offering to add it twice. Read from the
+    /// in-memory matcher, which is a bisection over sorted ranges, so it costs
+    /// nothing per row and needs no query.
+    pub listed:       Option<String>,
 }
 
 /// One rule that produced a verdict, as the Traffic Monitor shows it.
@@ -317,6 +322,9 @@ async fn fetch_events(
         },
         waf_score:    r.waf_score,
         country:      r.country,
+        listed:       ip.parse().ok()
+                        .and_then(crate::iplist::lookup)
+                        .map(|t| t.as_str().to_string()),
       }
     }).collect())
 }

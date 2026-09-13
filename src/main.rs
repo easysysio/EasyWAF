@@ -229,6 +229,11 @@ async fn main() {
         // rather than one per policy, because the menu entry needs one URL.
         .route("/exclusions",             get(routes::exclusions::get_exclusions))
         .route("/exclusions/{id}/remove", post(routes::exclusions::post_exclusion_remove))
+        // Addresses allowed past every check, and addresses refused before any
+        // of them. Added from a traffic row; read back and removed here.
+        .route("/iplists",             get(routes::iplists::get_iplists))
+        .route("/iplists/add",         post(routes::iplists::post_ip_add))
+        .route("/iplists/{id}/remove", post(routes::iplists::post_ip_remove))
         .route("/account",               get(routes::account::get_account))
         // Who may sign in, and what they may do. Administrator-only, and
         // guarded so no action can leave the installation with none.

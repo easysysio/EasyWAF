@@ -149,7 +149,46 @@
                     {% endif %}>
                     <td style="white-space:nowrap">{{ e.timestamp }}</td>
                     <td>{{ e.site_name }}</td>
-                    <td><code>{{ e.client_ip }}</code></td>
+                    <td style="white-space:nowrap">
+                        <code>{{ e.client_ip }}</code>
+                        {% if e.listed == "block" %}
+                        <br><span class="label label-danger" title="Refused before any rule runs, on every site">
+                            <i class="fa fa-hand-stop-o"></i> blocked
+                        </span>
+                        {% elif e.listed == "allow" %}
+                        <br><span class="label label-success" title="Skips the WAF, the country rules and the challenge, on every site">
+                            <i class="fa fa-check"></i> allowed
+                        </span>
+                        {% else %}
+                        {# Offered only when the address is on neither list, so the
+                           page never invites an add that would silently move an
+                           entry somebody else made. #}
+                        <br>
+                        <form class="admin-only" method="post" action="/iplists/add"
+                              style="display:inline"
+                              onsubmit="return confirm('Block {{ e.client_ip }}?\n\nEvery request from it is refused on every site, before any rule runs.');">
+                            <input type="hidden" name="ip"        value="{{ e.client_ip }}">
+                            <input type="hidden" name="list_type" value="block">
+                            <input type="hidden" name="reason"    value="From Traffic Monitor: {{ e.block_reason | default(value='seen in traffic') }}">
+                            <input type="hidden" name="back"      value="/traffic?site={{ sel_site }}&blocked={{ sel_blocked }}&hours={{ sel_hours }}">
+                            <button type="submit" class="btn btn-link btn-xs" style="padding:0 4px"
+                                    title="Refuse this address everywhere">
+                                <i class="fa fa-hand-stop-o"></i> block
+                            </button>
+                        </form>
+                        <form class="admin-only" method="post" action="/iplists/add"
+                              style="display:inline">
+                            <input type="hidden" name="ip"        value="{{ e.client_ip }}">
+                            <input type="hidden" name="list_type" value="allow">
+                            <input type="hidden" name="reason"    value="From Traffic Monitor">
+                            <input type="hidden" name="back"      value="/traffic?site={{ sel_site }}&blocked={{ sel_blocked }}&hours={{ sel_hours }}">
+                            <button type="submit" class="btn btn-link btn-xs" style="padding:0 4px"
+                                    title="Skip every check for this address">
+                                <i class="fa fa-check"></i> allow
+                            </button>
+                        </form>
+                        {% endif %}
+                    </td>
                     <td>
                         {% if e.method == "GET" %}
                             <span class="label label-success">GET</span>

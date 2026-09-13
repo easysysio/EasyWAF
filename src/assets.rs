@@ -154,13 +154,17 @@ mod tests {
         let tera = tera().expect("templates should build");
         let mut ctx = tera::Context::new();
 
-        let event = |path: &str, blocked: bool, detection: Option<&str>| {
+        let event = |path: &str, blocked: bool, detection: Option<&str>,
+                     listed: Option<&str>| {
             serde_json::json!({
                 "id": 1, "timestamp": "2026-09-07 12:00:00", "site_name": "s",
                 "client_ip": "1.2.3.4", "method": "GET", "host": "h", "path": path,
                 "status_code": 200, "response_ms": 4, "blocked": blocked,
                 "block_reason": null, "waf_score": 9, "country": null,
                 "detection": detection,
+                // Whether this client is already on a list. A row that is
+                // shows a badge; one that is not offers to put it on one.
+                "listed": listed,
                 // One rule already excluded for this client and one not, so
                 // both the marker and the offer to exclude are rendered.
                 "matched_rules": [
@@ -171,12 +175,16 @@ mod tests {
         };
 
         ctx.insert("events", &vec![
-            event("/pre-0.6.11", false, None),          // the upgrade case
-            event("/clean",      false, None),
-            event("/observed",   false, Some("observed")),
-            event("/would",      false, Some("would_block")),
-            event("/wouldch",    false, Some("would_challenge")),
-            event("/blocked",    true,  None),
+            event("/pre-0.6.11", false, None, None),          // the upgrade case
+            event("/clean",      false, None, None),
+            event("/observed",   false, Some("observed"), None),
+            event("/would",      false, Some("would_block"), None),
+            event("/wouldch",    false, Some("would_challenge"), None),
+            event("/blocked",    true,  None, None),
+            // Both list states, so the badges are rendered rather than only
+            // the branch that offers to add one.
+            event("/on-block",   false, None, Some("block")),
+            event("/on-allow",   false, None, Some("allow")),
         ]);
         ctx.insert("stats", &serde_json::json!({
             "total": 6, "blocked": 1, "allowed": 5, "avg_response": 4 }));
@@ -208,6 +216,16 @@ mod tests {
                 "the ambiguous label is back — it reads as DetectionOnly");
         assert!(html.contains("BLOCKED"),       "a blocked row lost its verdict");
         assert!(html.contains("PASS"),          "a clean row lost its verdict");
+        // A client already on a list says so; one that is not is offered both
+        // ways. Asserted because a row that renders but shows neither would
+        // pass every check above while the feature was invisible.
+        assert!(html.contains("Refused before any rule runs, on every site"),
+                "a blocklisted client lost its badge");
+        assert!(html.contains("Skips the WAF, the country rules and the challenge, on every site"),
+                "an allowlisted client lost its badge");
+        assert!(html.contains("/iplists/add"),
+                "an unlisted client is not offered block or allow");
+
         // The chart's three series must all reach the page, or an hour of
         // detected traffic is drawn as ordinary traffic.
         for series in ["'Allowed'", "'Detected'", "'Blocked'"] {

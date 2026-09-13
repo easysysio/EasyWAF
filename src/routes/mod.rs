@@ -9,6 +9,7 @@ pub mod certs;
 pub mod dashboard;
 pub mod exclusions;
 pub mod geoip;
+pub mod iplists;
 pub mod login;
 pub mod policy;
 pub mod rules;
