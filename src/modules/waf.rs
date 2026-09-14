@@ -846,3 +846,167 @@ mod tests {
         assert!(!ex.silences(&rule(1, None),         "/x", ip("203.0.113.9")));
     }
 }
+
+// ─── Measurement harness ─────────────────────────────────
+//
+// Not a test of behaviour: a repeatable measurement of what inspection costs per
+// request, which is the acceptance test for 0.11.0 — see
+// docs/design/proxy-performance.md. Ignored by default because it is slow and
+// its numbers only mean anything from a release build:
+//
+//     cargo test --release bench_ -- --ignored --nocapture
+//
+// It builds a throwaway database through the real migrations, installs N rules
+// cycled from the shipped rule sets, and drives the modules exactly as the
+// pipeline does. The request is benign — a percent-encoded query and a JSON
+// body — because a hostile one stops at the first block rule and understates
+// what a full pass over the rules costs.
+#[cfg(test)]
+mod bench {
+    use super::*;
+    use crate::modules::{geoip::GeoIpModule, InspectionModule, RequestContext};
+    use std::time::{Duration, Instant};
+
+    const WARMUP: usize = 30;
+    const ROUNDS: usize = 300;
+
+    /// Every (zone, pattern) in the shipped sets, so the patterns being timed
+    /// are the ones that actually run rather than something written to be fast.
+    fn shipped_rules() -> Vec<(String, String)> {
+        let mut paths: Vec<_> = std::fs::read_dir("rules")
+            .expect("rules/ — run from the repository root")
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| p.to_string_lossy().ends_with(".rules.toml"))
+            .collect();
+        paths.sort();
+
+        let mut out = Vec::new();
+        for p in paths {
+            let table: toml::Table = std::fs::read_to_string(&p).unwrap().parse().unwrap();
+            for r in table.get("rules").and_then(|r| r.as_array()).into_iter().flatten() {
+                let zone = r.get("zone").and_then(|v| v.as_str()).unwrap_or("ANY");
+                if let Some(pattern) = r.get("pattern").and_then(|v| v.as_str()) {
+                    out.push((zone.to_string(), pattern.to_string()));
+                }
+            }
+        }
+        assert!(!out.is_empty(), "no rules found under rules/");
+        out
+    }
+
+    fn remove_db(path: &std::path::Path) {
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+    }
+
+    /// A file database, not `sqlite::memory:` — an in-memory database is a
+    /// separate one per pooled connection, so migrating one connection and
+    /// querying another would time queries against an empty schema.
+    async fn seeded(rule_count: usize) -> (SqlitePool, i64, std::path::PathBuf) {
+        let path = std::env::temp_dir()
+            .join(format!("easywaf-bench-{}-{rule_count}.db", std::process::id()));
+        remove_db(&path);
+        let db = crate::db::init(&format!("sqlite://{}", path.display())).await;
+
+        let policy_id = sqlx::query(
+            "INSERT INTO policies (name, rule_engine, score_threshold) VALUES ('bench', 'On', 1000000)",
+        )
+        .execute(&db).await.unwrap().last_insert_rowid();
+
+        let site_id = sqlx::query(
+            "INSERT INTO sites (name, server_name, target, waf_policy_id)
+             VALUES ('bench', 'bench.example', 'http://127.0.0.1:1', ?)",
+        )
+        .bind(policy_id)
+        .execute(&db).await.unwrap().last_insert_rowid();
+
+        let shipped = shipped_rules();
+        let mut tx = db.begin().await.unwrap();
+        for i in 0..rule_count {
+            let (zone, pattern) = &shipped[i % shipped.len()];
+            // action 'score' throughout, so no rule ends the loop early.
+            sqlx::query(
+                "INSERT INTO waf_rules (policy_id, name, zone, pattern, score, action, enabled)
+                 VALUES (?, ?, ?, ?, 1, 'score', 1)",
+            )
+            .bind(policy_id).bind(format!("bench {i}")).bind(zone).bind(pattern)
+            .execute(&mut *tx).await.unwrap();
+        }
+        tx.commit().await.unwrap();
+        (db, site_id, path)
+    }
+
+    fn request(site_id: i64) -> RequestContext {
+        let mut headers = axum::http::HeaderMap::new();
+        for (k, v) in [
+            ("user-agent",   "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0"),
+            ("accept",       "application/json"),
+            ("content-type", "application/json"),
+            ("cookie",       "session=abc123; theme=dark"),
+        ] {
+            headers.insert(k, v.parse().unwrap());
+        }
+        RequestContext {
+            site_id,
+            site_name:  "bench".into(),
+            client_ip:  "203.0.113.9".parse().unwrap(),
+            method:     axum::http::Method::POST,
+            host:       "bench.example".into(),
+            path:       "/api/search".into(),
+            query:      Some("q=red%20running%20shoes&size=42&sort=price%20asc".into()),
+            headers,
+            body:       bytes::Bytes::from_static(
+                br#"{"user":"alice","comment":"looking for something in blue","items":[1,2,3]}"#,
+            ),
+            started_at: Instant::now(),
+        }
+    }
+
+    fn micros(total: Duration) -> f64 {
+        total.as_secs_f64() * 1e6 / ROUNDS as f64
+    }
+
+    /// Warm up, then time ROUNDS iterations of an async body, in µs per round.
+    macro_rules! per_round {
+        ($body:expr) => {{
+            for _ in 0..WARMUP { $body; }
+            let start = Instant::now();
+            for _ in 0..ROUNDS { $body; }
+            micros(start.elapsed())
+        }};
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn bench_per_request_cost() {
+        if cfg!(debug_assertions) {
+            eprintln!("\nnote: debug build — these numbers are not comparable; use --release");
+        }
+        println!("\n{:>6}  {:>11}  {:>11}  {:>11}  {:>11}",
+                 "rules", "waf db µs", "waf µs", "matching µs", "geoip µs");
+
+        for n in [138usize, 1000, 5000] {
+            let (db, site_id, path) = seeded(n).await;
+            let ctx = request(site_id);
+            let waf = WafModule::new(db.clone());
+            let geo = GeoIpModule::new(db.clone());
+
+            // The three reads inspect makes, on their own.
+            let db_work = per_round!({
+                let p = get_site_policy(&db, site_id).await.expect("policy");
+                let _ = get_rules(&db, p.id).await;
+                let _ = get_exclusions(&db, site_id).await;
+            });
+            let waf_total = per_round!({ let _ = waf.inspect(&ctx).await; });
+            let geo_total = per_round!({ let _ = geo.inspect(&ctx).await; });
+
+            println!("{:>6}  {:>11.0}  {:>11.0}  {:>11.0}  {:>11.0}",
+                     n, db_work, waf_total, (waf_total - db_work).max(0.0), geo_total);
+
+            db.close().await;
+            remove_db(&path);
+        }
+    }
+}
