@@ -71,9 +71,36 @@ pub async fn init(database_url: &str) -> SqlitePool {
     run_migration_022(&pool).await;
     run_migration_023(&pool).await;
     run_migration_024(&pool).await;
+    run_migration_025(&pool).await;
 
     info!("Database ready: {}", database_url);
     pool
+}
+
+// ─── run_migration_025 ───────────────────────────────────
+
+/// The configuration generation and the triggers that move it.
+///
+/// Run on every start, not only when the table is missing: every statement is
+/// idempotent, and re-running restores a trigger somebody dropped by hand —
+/// which would otherwise leave every cache serving what it last read, forever.
+async fn run_migration_025(pool: &SqlitePool) {
+    let existed: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'config_generation'",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0);
+
+    let sql = include_str!("../migrations/025_config_generation.sql");
+    sqlx::raw_sql(sql)
+        .execute(pool)
+        .await
+        .unwrap_or_else(|e| panic!("Migration 025 failed: {}", e));
+
+    if existed == 0 {
+        info!("Migration 025 applied: inspection caches its configuration and notices every change");
+    }
 }
 
 // ─── run_migration_024 ───────────────────────────────────

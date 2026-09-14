@@ -28,12 +28,16 @@ use sqlx::SqlitePool;
 /// Pipeline module that applies a policy's country rules.
 pub struct GeoIpModule {
     db: SqlitePool,
+    /// Each site's country settings, as of one configuration generation — the
+    /// same cache and the same invalidation as the WAF module's, so the two
+    /// cannot disagree about which version of a policy is in force.
+    sites: super::generation::PerSite<Option<GeoPolicy>>,
 }
 
 impl GeoIpModule {
     /// Create a GeoIpModule backed by the given connection pool.
     pub fn new(db: SqlitePool) -> Self {
-        Self { db }
+        Self { db, sites: super::generation::PerSite::new() }
     }
 }
 
@@ -53,8 +57,17 @@ impl InspectionModule for GeoIpModule {
     fn name(&self) -> &'static str { "geoip" }
 
     async fn inspect(&self, ctx: &RequestContext) -> ModuleDecision {
-        // Step 1 — the site's policy, if it has one.
-        let policy = match get_site_geo_policy(&self.db, ctx.site_id).await {
+        // Step 1 — the site's policy, if it has one, from the cache. Generation
+        // read before the row, for the reason given on WafModule::snapshot.
+        let generation = super::generation::current(&self.db).await;
+        let cached = match self.sites.get(generation, ctx.site_id) {
+            Some(c) => c,
+            None    => {
+                let loaded = get_site_geo_policy(&self.db, ctx.site_id).await;
+                self.sites.put(generation, ctx.site_id, loaded)
+            }
+        };
+        let policy = match &*cached {
             Some(p) => p,
             None    => return ModuleDecision::Pass,
         };

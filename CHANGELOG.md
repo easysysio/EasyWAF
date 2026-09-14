@@ -6,6 +6,11 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
+## [Unreleased]
+
+### Changed
+- Inspection no longer reads each site's policy, rules and exclusions from the database on every request, which makes it about fifteen times faster at 138 rules; a change to a rule, policy or exclusion now takes effect within a second rather than on the very next request.
+
 ## [0.10.0] — 2026-09-13
 
 ### Added

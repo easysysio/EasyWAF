@@ -44,6 +44,10 @@ pub struct WafModule {
     /// use with no explicit invalidation. The key space is admin-controlled
     /// (rules come from the GUI, never from request data), so it stays small.
     regex_cache: RwLock<HashMap<String, Option<Arc<Regex>>>>,
+    /// Each site's policy, rules and exclusions, as of one configuration
+    /// generation. Read once per change instead of three queries per request —
+    /// which, at 138 rules, was 95% of what inspection cost.
+    sites: super::generation::PerSite<SiteSnapshot>,
 }
 
 impl WafModule {
@@ -52,6 +56,7 @@ impl WafModule {
         Self {
             db,
             regex_cache: RwLock::new(HashMap::new()),
+            sites: super::generation::PerSite::new(),
         }
     }
 
@@ -91,6 +96,29 @@ impl WafModule {
         }
         compiled
     }
+
+    /// This site's configuration, from the cache unless it has changed.
+    ///
+    /// The generation is read **before** the rows. A write landing between the
+    /// two files rows newer than the number they are stored under, which is
+    /// harmless: the next check sees the newer number and reads again. Reading
+    /// in the other order could file rows from before a write under the number
+    /// from after it, and serve them until the configuration next changed.
+    async fn snapshot(&self, site_id: i64) -> Arc<SiteSnapshot> {
+        let generation = super::generation::current(&self.db).await;
+        if let Some(cached) = self.sites.get(generation, site_id) {
+            return cached;
+        }
+
+        let policy = get_site_policy(&self.db, site_id).await;
+        let rules = match &policy {
+            Some(p) => get_rules(&self.db, p.id).await,
+            None    => Vec::new(),
+        };
+        let exclusions = get_exclusions(&self.db, site_id).await;
+
+        self.sites.put(generation, site_id, SiteSnapshot { policy, rules, exclusions })
+    }
 }
 
 // ─── Internal DB row types ───────────────────────────────
@@ -122,6 +150,14 @@ struct RuleRow {
     action:  String,
 }
 
+/// Everything inspection needs to know about one site, read together so the
+/// three always describe the same moment.
+struct SiteSnapshot {
+    policy:     Option<PolicyInfo>,
+    rules:      Vec<RuleRow>,
+    exclusions: Vec<Exclusion>,
+}
+
 // ─── InspectionModule impl ───────────────────────────────
 
 #[async_trait]
@@ -131,8 +167,9 @@ impl InspectionModule for WafModule {
     /// Evaluate all enabled rules for this request's policy.
     /// Returns Pass, Alert (DetectionOnly), or Drop (rule_engine=On).
     async fn inspect(&self, ctx: &RequestContext) -> ModuleDecision {
-        // Step 1 — get the policy assigned to this site.
-        let policy = match get_site_policy(&self.db, ctx.site_id).await {
+        // Step 1 — this site's policy, rules and exclusions, from the cache.
+        let snap = self.snapshot(ctx.site_id).await;
+        let policy = match &snap.policy {
             Some(p) => p,
             None    => return ModuleDecision::Pass, // no policy, skip WAF
         };
@@ -142,8 +179,8 @@ impl InspectionModule for WafModule {
             return ModuleDecision::Pass;
         }
 
-        // Step 3 — load enabled rules.
-        let rules = get_rules(&self.db, policy.id).await;
+        // Step 3 — enabled rules.
+        let rules = &snap.rules;
         if rules.is_empty() {
             return ModuleDecision::Pass;
         }
@@ -154,7 +191,7 @@ impl InspectionModule for WafModule {
         // request path, and because a skipped rule is worth logging: a rule
         // that silently does not run is the kind of thing that is discovered
         // during an incident rather than before one.
-        let exclusions = get_exclusions(&self.db, ctx.site_id).await;
+        let exclusions = &snap.exclusions;
 
         // Step 4 — build zone content forms from the request.
         // Each zone is a small list of candidate strings — raw, then
@@ -196,7 +233,7 @@ impl InspectionModule for WafModule {
         // can say what produced the score rather than only what it came to.
         let mut hits: Vec<RuleHit> = Vec::new();
 
-        for rule in &rules {
+        for rule in rules.iter() {
             // A rule this site excludes never runs, and never scores. Checked
             // before matching so the cost of an exclusion is one string
             // comparison rather than a regex.
@@ -254,7 +291,7 @@ impl InspectionModule for WafModule {
                 "block" => {
                     let score = policy.score_threshold;
                     return decide(
-                        &policy,
+                        policy,
                         Level::Block,
                         format!("WAF block rule matched: {}", rule.name),
                         Findings { score, hits, detection: None },
@@ -276,7 +313,7 @@ impl InspectionModule for WafModule {
         // Step 6 — apply thresholds. Block takes precedence over challenge.
         if total_score >= policy.score_threshold {
             return decide(
-                &policy,
+                policy,
                 Level::Block,
                 format!("WAF score {} ≥ block threshold {}", total_score, policy.score_threshold),
                 Findings { score: total_score, hits, detection: None },
@@ -284,13 +321,13 @@ impl InspectionModule for WafModule {
         }
 
         if let Some(reason) = challenge_reason {
-            return decide(&policy, Level::Challenge, reason,
+            return decide(policy, Level::Challenge, reason,
                           Findings { score: total_score, hits, detection: None });
         }
 
         if policy.challenge_threshold > 0 && total_score >= policy.challenge_threshold {
             return decide(
-                &policy,
+                policy,
                 Level::Challenge,
                 format!("WAF score {} ≥ challenge threshold {}", total_score, policy.challenge_threshold),
                 Findings { score: total_score, hits, detection: None },
@@ -984,8 +1021,8 @@ mod bench {
         if cfg!(debug_assertions) {
             eprintln!("\nnote: debug build — these numbers are not comparable; use --release");
         }
-        println!("\n{:>6}  {:>11}  {:>11}  {:>11}  {:>11}",
-                 "rules", "waf db µs", "waf µs", "matching µs", "geoip µs");
+        println!("\n{:>6}  {:>11}  {:>11}  {:>11}",
+                 "rules", "reads µs", "waf µs", "geoip µs");
 
         for n in [138usize, 1000, 5000] {
             let (db, site_id, path) = seeded(n).await;
@@ -993,7 +1030,8 @@ mod bench {
             let waf = WafModule::new(db.clone());
             let geo = GeoIpModule::new(db.clone());
 
-            // The three reads inspect makes, on their own.
+            // The three reads inspect used to make on every request, timed on
+            // their own for reference. Since 0.11.0 they run once per change.
             let db_work = per_round!({
                 let p = get_site_policy(&db, site_id).await.expect("policy");
                 let _ = get_rules(&db, p.id).await;
@@ -1002,8 +1040,8 @@ mod bench {
             let waf_total = per_round!({ let _ = waf.inspect(&ctx).await; });
             let geo_total = per_round!({ let _ = geo.inspect(&ctx).await; });
 
-            println!("{:>6}  {:>11.0}  {:>11.0}  {:>11.0}  {:>11.0}",
-                     n, db_work, waf_total, (waf_total - db_work).max(0.0), geo_total);
+            println!("{:>6}  {:>11.0}  {:>11.0}  {:>11.0}",
+                     n, db_work, waf_total, geo_total);
 
             db.close().await;
             remove_db(&path);

@@ -2,7 +2,8 @@
 
 Status: planned for **0.11.0** — see [roadmap.md](roadmap.md), after flow logs
 (0.9.0) and IP allow/block lists (0.10.0), and deliberately *before* load
-balancing (0.13.0).
+balancing (0.13.0). **§2 was built first, on 2026-09-14** — see *What was built*
+under it, which departs from this note on invalidation. The rest is still ahead.
 
 Flow logs moved ahead of this on 2026-09-09, which suits it: this release
 changes how a request is buffered and matched, and having the log already in
@@ -99,6 +100,45 @@ is wrong when the change is being made to stop blocking someone.
 
 The same cache covers the policy row and the site's exclusions, taking three
 queries per request to none in the common case.
+
+### What was built
+
+**The per-handler bump was not.** Counting them found about thirty write sites
+across four files. A bump each of them has to remember is the fragile half this
+section already worried about, and the 30-second TTL existed only to cover for
+one being forgotten — so the design was a mechanism that would be missed plus a
+second one to limit how long the miss lasted.
+
+The database keeps the counter instead. Migration 025 adds a
+`config_generation` row and triggers on `waf_rules`, `policies`,
+`site_rule_exclusions` and `sites` that move it on every insert, update and
+delete, whatever wrote the row. The modules compare it at most once a second.
+No handler takes part, so none can forget, and the worst case is one second
+rather than thirty. The migration runs on every start, so a trigger dropped by
+hand comes back.
+
+The generation is read **before** the rows. A write landing between the two
+files newer rows under an older number, which the next check corrects. The
+other order could file rows from before a write under the number from after it
+and serve them until the configuration next changed.
+
+GeoIP, which read its own copy of the policy on every request, uses the same
+cache and counter, so the two modules cannot disagree about which version of a
+policy is in force.
+
+Measured with the harness in `waf.rs`, release build, before and after:
+
+| Rules | WAF before | WAF after | GeoIP before | GeoIP after |
+|---|---|---|---|---|
+| 138 | 461µs | 29µs | 19µs | 0µs |
+| 1,000 | 3,097µs | 222µs | 19µs | 0µs |
+| 5,000 | 15,443µs | 1,111µs | 19µs | 0µs |
+
+The after column is the old matching cost alone — per-request database work is
+gone, which was this section's acceptance test. Invalidation was checked on a
+running instance by writing the rule table with `sqlite3` from outside the
+application: disabling a blocking rule took effect after 1,064ms and
+re-enabling it after 958ms, and ordinary requests left the counter where it was.
 
 ## 3. RegexSet
 
