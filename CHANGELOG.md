@@ -6,7 +6,7 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
-## [Unreleased]
+## [0.10.2] — 2026-09-15
 
 ### Security
 - A request could get past every rule that needs decoded text by adding one escape that does not decode to UTF-8, such as `%FF`, anywhere in the same field — EasyWAF stopped decoding that field, while the application behind it decoded the rest and received the attack. Affects every release before 0.10.2; upgrade.
