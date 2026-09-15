@@ -409,8 +409,8 @@ scheduled or decided — the roadmap lives in [docs/design/roadmap.md](docs/desi
 * **Traffic history holds no headers or bodies** — method, host, path, country and verdict
   only. So a new rule cannot be replayed against past traffic to see what it would have
   matched.
-* **Request bodies are buffered to 32 MB** so rules can inspect them; anything larger is
-  rejected with 400.
+* **Request bodies are inspected up to a limit** — 128 KB by default, under Settings → Proxy;
+  the rest is forwarded uninspected as it arrives, so a payload padded past it is not seen.
 
 ### Managing it
 

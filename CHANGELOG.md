@@ -10,6 +10,10 @@ Version bumps and tags are created only after explicit approval.
 
 ### Changed
 - Inspection no longer reads each site's policy, rules and exclusions from the database on every request, which makes it about fifteen times faster at 138 rules; a change to a rule, policy or exclusion now takes effect within a second rather than on the very next request.
+- Request bodies are no longer read whole before being forwarded: the rules inspect the first 128 KB, set under Settings → Proxy, and the rest streams to the site as it arrives. The 32 MB upload limit is gone, and a 200 MB upload now costs a few MB of memory where a 30 MB one used to take 400 MB.
+
+### Security
+- Bytes of a request body past the inspection limit are forwarded without being inspected, so a payload padded past it is not seen. Raise the limit under Settings → Proxy if every site takes only small, structured request bodies.
 
 ## [0.10.1] — 2026-09-15
 

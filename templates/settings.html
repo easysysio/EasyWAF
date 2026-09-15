@@ -236,6 +236,34 @@
                 <div role="tabpanel" class="tab-pane" id="tab-proxy">
 
             <div class="panel panel-default">
+                <div class="panel-heading"><h4>Request Body Inspection</h4></div>
+                <div class="panel-body">
+                    <div class="form-group">
+                        <label>Inspect the first
+                            <small class="text-muted">(KB of each request body, 1 to 32768)</small></label>
+                        <input type="number" class="form-control" name="body_inspect_kb"
+                               value="{{ body_inspect_kb }}" min="1" max="32768"
+                               style="max-width:200px">
+                        <p class="help-block">
+                            Rules see this much of each request body. The rest is sent on to the
+                            site as it arrives, so an upload of any size streams straight through
+                            instead of being held in memory first, and there is no limit on how
+                            large a body a site can receive.
+                            <br>
+                            <strong>Bytes past this point are not inspected.</strong> Attacks sit
+                            at the start of a body rather than in the tail of a video, which is why
+                            the default of 128 catches what matters without making every upload
+                            cost its own size in memory. A payload deliberately padded past the
+                            limit is not seen — raise it if every site here takes only small,
+                            structured request bodies.
+                            <br>
+                            Applies to every site, from the next request.
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="panel panel-default">
                 <div class="panel-heading"><h4>Trusted Proxies</h4></div>
                 <div class="panel-body">
                     <div class="form-group">

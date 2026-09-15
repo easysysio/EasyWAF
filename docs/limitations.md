@@ -44,8 +44,9 @@ Current as of **0.9.1**.
   and verdict only, and the path without its query string. A new rule cannot be
   replayed against past traffic to see what it would have matched. The
   [flow log](logging.md) carries the full path and query.
-- **Request bodies are buffered to 32 MB** so rules can inspect them; anything
-  larger is refused with 400.
+- **Request bodies are inspected up to a limit** — 128 KB by default, under
+  **Settings → Proxy**. The rest of a body is forwarded uninspected as it
+  arrives, so a payload padded past the limit is not seen.
 
 ## Managing it
 

@@ -45,6 +45,13 @@ pub const KEY_MANAGEMENT_CERT: &str = "management_cert";
 /// Addresses whose `X-Forwarded-For` header is believed. Empty means none.
 pub const KEY_TRUSTED_PROXIES: &str = "trusted_proxies";
 
+/// How many KB of each request body the rules inspect.
+pub const KEY_BODY_INSPECT_KB: &str = "request_body_inspect_kb";
+
+/// Largest the field accepts: the old whole-body cap, so an operator can still
+/// choose full inspection for every body up to that size.
+const MAX_BODY_INSPECT_KB: u64 = 32 * 1024;
+
 /// Whether this node performs ACME renewals. Defaults to yes.
 pub const KEY_ACME_RENEW_HERE: &str = "acme_renew_here";
 
@@ -97,6 +104,7 @@ pub struct SettingsForm {
     pub acme_email:             Option<String>,
     pub acme_directory:         Option<String>,
     pub trusted_proxies:        Option<String>,
+    pub body_inspect_kb:        Option<String>,
     pub rule_update_check:      Option<String>,
     pub rule_update_url:        Option<String>,
     pub syslog_enabled:         Option<String>,
@@ -155,6 +163,7 @@ pub async fn get_settings(
     ctx.insert("acme_directory", &acme.map(|a| a.directory)
         .unwrap_or_else(|| crate::acme::STAGING_DIRECTORY.to_string()));
     ctx.insert("trusted_proxies", &get_trusted_proxies(&state.db).await);
+    ctx.insert("body_inspect_kb", &get_body_inspect_kb(&state.db).await);
 
     // Shown as stored, including a host left behind when sending was turned
     // off: turning it back on should not mean typing the address again.
@@ -310,6 +319,25 @@ pub async fn post_settings_update(
     }
     set_setting(&state.db, KEY_TRUSTED_PROXIES, &proxies).await?;
     crate::forwarded::reload(&state.db).await;
+
+    // Refused rather than clamped, like retention: the number typed is never
+    // quietly changed into a different one. An empty field means the default.
+    let raw_kb = form.body_inspect_kb.as_deref().unwrap_or("").trim().to_string();
+    let kb: u64 = if raw_kb.is_empty() {
+        (crate::proxy::DEFAULT_INSPECTION_LIMIT / 1024) as u64
+    } else {
+        match raw_kb.parse::<u64>() {
+            Ok(v) if (1..=MAX_BODY_INSPECT_KB).contains(&v) => v,
+            _ => return flash_redirect(
+                "/settings",
+                "failed",
+                &format!("Body inspection must be a whole number of KB from 1 to {MAX_BODY_INSPECT_KB}"),
+            ),
+        }
+    };
+    set_setting(&state.db, KEY_BODY_INSPECT_KB, &kb.to_string()).await?;
+    // Applied to the running proxy, so the next request uses it.
+    crate::proxy::set_inspection_limit(kb as usize * 1024);
 
     // The syslog collector. Refused rather than stored when it is switched on
     // with nowhere to send: an enabled collector that silently sends nothing
@@ -546,6 +574,19 @@ pub async fn syslog_target(db: &SqlitePool) -> Option<String> {
     } else {
         Some(format!("{host}:{port}"))
     }
+}
+
+/// KB of each request body the rules inspect.
+///
+/// The default when the row is missing or unreadable — never zero, and never
+/// something outside the range the form accepts, since a corrupt row must not
+/// leave bodies uninspected.
+pub async fn get_body_inspect_kb(db: &SqlitePool) -> u64 {
+    get_setting(db, KEY_BODY_INSPECT_KB)
+        .await
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .filter(|v| (1..=MAX_BODY_INSPECT_KB).contains(v))
+        .unwrap_or((crate::proxy::DEFAULT_INSPECTION_LIMIT / 1024) as u64)
 }
 
 /// Addresses whose `X-Forwarded-For` header should be believed.

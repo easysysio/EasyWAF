@@ -87,8 +87,10 @@ Hop-by-hop headers are stripped, as a proxy must. WebSocket upgrades are
 tunnelled: the handshake is inspected like any other request, and the connection
 that follows is relayed as opaque frames.
 
-Request bodies are buffered up to 32 MB so rules can inspect them. Anything
-larger is refused with 400.
+Request bodies are inspected up to a limit — 128 KB by default, under
+**Settings → Proxy** — and the rest streams to the site as it arrives. There is
+no upload size limit, and a large upload is not held in memory first. Bytes
+past the limit are not inspected.
 
 ## Disabling a site
 

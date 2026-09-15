@@ -54,6 +54,61 @@ pub const UPSTREAM_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::f
 /// has actually stopped moving.
 pub const UPSTREAM_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(600);
 
+/// How much of a request body the rules see unless Settings says otherwise.
+/// Everything past it is forwarded to the upstream as it arrives, uninspected.
+pub const DEFAULT_INSPECTION_LIMIT: usize = 128 * 1024;
+
+/// The limit in force, set at startup from Settings and again on every save.
+///
+/// An atomic rather than a setting read per request: the point of the engine
+/// release is that the request path stops reading the database.
+static INSPECTION_LIMIT: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(DEFAULT_INSPECTION_LIMIT);
+
+/// Change how many bytes of each request body the rules inspect. Never zero:
+/// a limit of nothing would forward every body uninspected, which is not a
+/// setting anybody means to choose.
+pub fn set_inspection_limit(bytes: usize) {
+    INSPECTION_LIMIT.store(bytes.max(1), std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn inspection_limit() -> usize {
+    INSPECTION_LIMIT.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// The start of a request body, read far enough to inspect, and whatever of the
+/// body is still to come.
+pub(crate) struct Prefix<S> {
+    /// Every byte read so far: at least the limit, unless the body ended first.
+    /// It can run past the limit by part of a chunk — those bytes are
+    /// forwarded like the rest, just not inspected.
+    pub head:     bytes::Bytes,
+    /// Whether the body ended within what was read.
+    pub complete: bool,
+    /// The unread remainder, streamed on after `head`.
+    pub rest:     S,
+}
+
+/// Read a body until at least `limit` bytes are in hand or it ends.
+///
+/// Reads whole chunks and never splits one, so `head` followed by `rest` is
+/// always the body exactly as it arrived — nothing is dropped, duplicated or
+/// reordered on its way to the upstream.
+pub(crate) async fn read_prefix<S, E>(mut body: S, limit: usize) -> Result<Prefix<S>, E>
+where
+    S: futures::Stream<Item = Result<bytes::Bytes, E>> + Unpin,
+{
+    use futures::StreamExt;
+    let mut head = bytes::BytesMut::new();
+    while head.len() < limit {
+        match body.next().await {
+            Some(chunk) => head.extend_from_slice(&chunk?),
+            None        => return Ok(Prefix { head: head.freeze(), complete: true, rest: body }),
+        }
+    }
+    Ok(Prefix { head: head.freeze(), complete: false, rest: body })
+}
+
 const HOP_HEADERS: &[&str] = &[
     "connection",
     "keep-alive",
@@ -819,15 +874,41 @@ async fn handle_request(
         return error_response(StatusCode::FORBIDDEN, &reason);
     }
 
-    // Buffer the full body (up to 32 MB) — WAF modules need to inspect it.
-    let body_bytes = match axum::body::to_bytes(body, 32 * 1024 * 1024).await {
-        Ok(b)  => b,
+    // ── 3d. Read as much of the body as the rules inspect ──
+    //
+    // Until 0.11.0 every body was read whole, up to 32 MB, before anything was
+    // forwarded, and anything larger was refused. The cost below the cap was
+    // worse than the cap: the rules decode a body several ways, so a 30 MB
+    // upload took EasyWAF from 78 MB to 480 MB, and a few concurrent ones were a
+    // way to exhaust memory.
+    //
+    // Now only the first `inspection_limit()` bytes are read before the verdict.
+    // Attacks sit at the start of a body — the tail of a video does not contain
+    // SQL injection. The rest streams to the upstream as it arrives, so an
+    // upload of any size costs about the limit rather than its own size.
+    //
+    // The trade-off is stated in Settings, where the limit is set: bytes past it
+    // are forwarded uninspected, so a payload padded past it is not seen.
+    let inspect_limit = inspection_limit();
+    let prefix = match read_prefix(Box::pin(body.into_data_stream()), inspect_limit).await {
+        Ok(p)  => p,
         Err(_) => return error_response(StatusCode::BAD_REQUEST, "Failed to read request body"),
+    };
+    let inspected = if prefix.head.len() > inspect_limit {
+        prefix.head.slice(..inspect_limit)
+    } else {
+        prefix.head.clone()
     };
 
     // ── 3b. CAPTCHA verify submissions — handled before the WAF ──
+    // Always a tiny form this server rendered, so it is answered only when it
+    // arrived whole. A verification submission larger than the inspection limit
+    // is not one this server sent.
     if method == Method::POST && path == VERIFY_PATH {
-        return handle_verify(&state, &client_ip.to_string(), &body_bytes);
+        if !prefix.complete {
+            return error_response(StatusCode::PAYLOAD_TOO_LARGE, "Verification submission too large");
+        }
+        return handle_verify(&state, &client_ip.to_string(), &prefix.head);
     }
 
     // Does the visitor already hold a valid challenge clearance cookie?
@@ -843,7 +924,7 @@ async fn handle_request(
         path:       path.clone(),
         query:      query.clone(),
         headers:    headers.clone(),
-        body:       body_bytes.clone(),
+        body:       inspected,
         started_at,
     };
 
@@ -1043,11 +1124,24 @@ async fn handle_request(
         state.is_tls,
     );
 
+    // A body that ended within the limit is sent as it is, exactly as before.
+    // Otherwise the inspected start goes first and the rest follows as it
+    // arrives from the client — with the client's own Content-Length, which is
+    // forwarded unchanged and still matches, since not one byte is altered.
+    let request_body = if prefix.complete {
+        reqwest::Body::from(prefix.head)
+    } else {
+        let head = futures::stream::once(std::future::ready(
+            Ok::<bytes::Bytes, axum::Error>(prefix.head),
+        ));
+        reqwest::Body::wrap_stream(futures::StreamExt::chain(head, prefix.rest))
+    };
+
     let upstream_result = state
         .client
         .request(to_reqwest_method(&method), &upstream_url)
         .headers(to_reqwest_headers(&fwd_headers))
-        .body(body_bytes)
+        .body(request_body)
         .send()
         .await;
 
@@ -1566,5 +1660,76 @@ mod tests {
         assert!(!is_upgrade(&hm(&[
             ("connection", "upgrade-insecure-requests"), ("upgrade", "websocket"),
         ])));
+    }
+}
+
+#[cfg(test)]
+mod prefix_tests {
+    use super::read_prefix;
+    use bytes::Bytes;
+    use futures::{stream, StreamExt};
+
+    type Chunk = Result<Bytes, std::io::Error>;
+
+    fn body(chunks: &[&'static [u8]]) -> impl futures::Stream<Item = Chunk> + Unpin {
+        stream::iter(chunks.iter().map(|c| Ok(Bytes::from_static(c))).collect::<Vec<_>>())
+    }
+
+    async fn drain<S: futures::Stream<Item = Chunk> + Unpin>(mut s: S) -> Vec<u8> {
+        let mut out = Vec::new();
+        while let Some(c) = s.next().await {
+            out.extend_from_slice(&c.unwrap());
+        }
+        out
+    }
+
+    #[tokio::test]
+    async fn a_body_under_the_limit_is_read_whole() {
+        let p = read_prefix(body(&[b"small", b" form"]), 1024).await.unwrap();
+        assert!(p.complete, "a body that ends within the limit is complete");
+        assert_eq!(&p.head[..], b"small form");
+        assert!(drain(p.rest).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_body_over_the_limit_stops_reading_and_keeps_the_rest() {
+        // Chunks are never split, so the head may run past the limit by part
+        // of one; reading stops as soon as the limit is reached.
+        let p = read_prefix(body(&[b"aaaa", b"bbbb", b"cccc", b"dddd"]), 6).await.unwrap();
+        assert!(!p.complete);
+        assert_eq!(&p.head[..], b"aaaabbbb");
+        assert_eq!(drain(p.rest).await, b"ccccdddd");
+    }
+
+    #[tokio::test]
+    async fn nothing_is_lost_duplicated_or_reordered_at_any_limit() {
+        // The property the upstream depends on: head then rest is the body.
+        let chunks: &[&'static [u8]] = &[b"GET", b" the ", b"whole", b" body", b" back"];
+        let whole: Vec<u8> = chunks.concat();
+        for limit in 1..=whole.len() + 2 {
+            let p = read_prefix(body(chunks), limit).await.unwrap();
+            let mut got = p.head.to_vec();
+            got.extend(drain(p.rest).await);
+            assert_eq!(got, whole, "limit {limit} changed the body");
+            assert!(p.head.len() >= limit.min(whole.len()), "limit {limit} read too little");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_read_error_is_returned_rather_than_swallowed() {
+        // A client that disconnects mid-body must not be forwarded as a body
+        // that simply ended early.
+        let broken = stream::iter(vec![
+            Ok(Bytes::from_static(b"partial")),
+            Err(std::io::Error::other("client went away")),
+        ]);
+        assert!(read_prefix(broken, 1024).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn an_empty_body_is_complete_and_empty() {
+        let p = read_prefix(body(&[]), 1024).await.unwrap();
+        assert!(p.complete);
+        assert!(p.head.is_empty());
     }
 }

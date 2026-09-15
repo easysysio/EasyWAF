@@ -2,8 +2,10 @@
 
 Status: planned for **0.11.0** — see [roadmap.md](roadmap.md), after flow logs
 (0.9.0) and IP allow/block lists (0.10.0), and deliberately *before* load
-balancing (0.13.0). **§2 was built first, on 2026-09-14** — see *What was built*
-under it, which departs from this note on invalidation. The rest is still ahead.
+balancing (0.13.0). **§2 was built first, on 2026-09-14**, and **§1 on
+2026-09-15** — see *What was built* under each; §2 departs from this note on
+invalidation, and §1 builds only half of what it proposed. §3 and §4 are still
+ahead.
 
 Flow logs moved ahead of this on 2026-09-09, which suits it: this release
 changes how a request is buffered and matched, and having the log already in
@@ -76,6 +78,58 @@ stopgap.
 
 The first two together are the design. The first is a special case of the
 second and can ship first.
+
+### What was built
+
+**Only the bounded prefix.** The special case — skip reading when nothing in the
+policy inspects the body — was not built. Counting the bundled sets found 73 of
+100 rules in the `ANY` zone, so every policy using them inspects bodies, and the
+optimisation would almost never fire. It would have been a second code path
+kept correct for a case that does not occur.
+
+The proxy reads whole chunks until it holds at least the limit or the body
+ends, and never splits a chunk, so the start followed by the rest is exactly
+the body as it arrived. The rules see the first `limit` bytes; the upstream gets
+the start and then the remainder as it arrives, with the client's own
+`Content-Length` forwarded unchanged — it still matches, since no byte is
+altered. A chunked body stays chunked. A body that ends within the limit is
+sent exactly as before.
+
+**The limit is a setting**, under Settings → Proxy: 128 KB by default, 1 to
+32,768 KB, the upper bound being the old whole-body cap so full inspection up to
+that size is still a choice. It is held in an atomic, set at startup and on
+every save, so it applies from the next request and the request path still reads
+nothing from the database.
+
+The CAPTCHA verify endpoint answers only a body that arrived whole. Its form is
+tiny and rendered by this server, so a verification submission larger than the
+limit is refused with 413 rather than read further.
+
+**A prerequisite surfaced first.** The upstream client had a thirty-second
+*total* timeout, which covers the response body — so every download over thirty
+seconds was already being cut off in production, after a 200 had been sent.
+Removing the upload cap would have extended the same failure to uploads. It
+shipped on its own as 0.10.1, cherry-picked onto v0.10.0, before this change.
+
+Measured on a running instance, release build:
+
+| | Before | After |
+|---|---|---|
+| Largest upload accepted | 32 MB, then 400 | no limit — 200 MB tested |
+| EasyWAF memory during an upload | 78 → 480 MB for 30 MB | 40 → 44 MB for 200 MB |
+| Upload arrives byte-exact, `Content-Length` kept | yes, up to 32 MB | yes; chunked also exact |
+| Attack at the end of a 10 KB body | 403 | 403 |
+| Attack in the first bytes of a 50 MB body | 400 (over the cap) | 403 |
+
+The 480 MB was worse than one copy of the body: the rules decode a body several
+ways, so a handful of concurrent large uploads was a way to exhaust memory. The
+acceptance test at the end of this note — an upload larger than the prefix
+reaching the upstream without being held whole first — is met.
+
+**The trade-off, demonstrated rather than asserted.** A marker placed 200 KB into
+a body passed at the default limit, and was refused with 403 once the limit was
+raised to 1,024 KB in Settings — with no restart between the two. That is the
+behaviour the Settings page describes: bytes past the limit are not inspected.
 
 ## 2. Rules are re-read on every request
 

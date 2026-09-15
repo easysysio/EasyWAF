@@ -53,7 +53,7 @@ sit on a mounted volume to survive at all.
 |---|---|
 | **General** | Traffic retention, and the maintenance message shown for a disabled site |
 | **TLS** | Version profile, cipher suites, the management certificate, the ACME contact address and directory |
-| **Proxy** | Trusted proxies — whose `X-Forwarded-For` is believed |
+| **Proxy** | Trusted proxies — whose `X-Forwarded-For` is believed — and how much of each request body the rules inspect |
 | **Logging** | The syslog collector for flow logs |
 | **Rule Updates** | Whether to check the channel, and which channel |
 | **Accounts** | Accounts and roles |

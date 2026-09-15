@@ -122,6 +122,8 @@ async fn main() {
     forwarded::reload(&db).await;
     // Allow and block lists, consulted before the pipeline on every request.
     iplist::reload(&db).await;
+    // How much of each request body the rules inspect; the rest streams on.
+    proxy::set_inspection_limit(routes::settings::get_body_inspect_kb(&db).await as usize * 1024);
 
     // ── Build module pipeline ─────────────────────────────
     // Modules run in order for every proxied request.
