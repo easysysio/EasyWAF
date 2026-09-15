@@ -380,13 +380,20 @@ fn zone_text(raw: &str, plus_is_space: bool) -> Vec<String> {
     forms
 }
 
-/// Percent-decode one string, returning it unchanged when it is not valid
-/// encoding or does not decode to UTF-8. A malformed payload is still matched
-/// in its raw form by the caller.
+/// Percent-decode one string: byte by byte, then read as UTF-8 with anything
+/// invalid replaced by U+FFFD.
+///
+/// Until 0.10.2 this used `urlencoding::decode`, which fails outright when the
+/// decoded bytes are not valid UTF-8 — and on failure the raw text was kept. So
+/// one escape that does not decode to UTF-8, anywhere in a field (`%FF`, `%C0`),
+/// switched decoding off for the whole field, and every rule needing the
+/// decoded text stopped seeing the attack beside it. The applications behind
+/// EasyWAF decode the rest of the field regardless, so the attack still arrived.
+///
+/// A lossy decode keeps every ASCII character of a payload visible whatever
+/// else the field contains, and valid input decodes exactly as it did before.
 fn percent_decode(s: &str) -> String {
-    urlencoding::decode(s)
-        .map(|c| c.into_owned())
-        .unwrap_or_else(|_| s.to_string())
+    String::from_utf8_lossy(&urlencoding::decode_binary(s.as_bytes())).into_owned()
 }
 
 // ─── decide ──────────────────────────────────────────────
@@ -643,6 +650,50 @@ mod tests {
         for attack in ["%253Cscript%253E", "%252e%252e%252f", "%%3C"] {
             assert!(re.is_match(attack), "missed {attack:?}");
         }
+    }
+
+    #[test]
+    fn one_invalid_escape_does_not_switch_decoding_off() {
+        // Until 0.10.2 a single escape that does not decode to UTF-8 made the
+        // whole field keep its raw, still-encoded form, so every rule needing
+        // the decoded text missed the attack beside it — while the backend
+        // decoded the rest and received it. A junk extra parameter was enough.
+        for (field, decoded) in [
+            ("%45VILBODY%FF",                          "EVILBODY"),
+            ("x=%45VILBODY&y=%C0",                     "EVILBODY"),
+            ("%3Cscript%3Ealert(1)%3C%2Fscript%3E%E9", "<script>alert(1)</script>"),
+            ("%FF%27%20OR%201%3D1--",                  "' OR 1=1--"),
+        ] {
+            let forms = super::zone_text(field, true);
+            assert!(forms.iter().any(|f| f.contains(decoded)),
+                    "{field:?} never decoded to {decoded:?}: {forms:?}");
+        }
+    }
+
+    #[test]
+    fn shipped_rules_see_through_a_stray_invalid_escape() {
+        // The same bypass against two instant-block rules from the bundled
+        // sets, rather than a pattern written for the test: a junk parameter
+        // carrying one byte that is not UTF-8 hid each attack from its rule.
+        for (file, id, field) in [
+            ("942-sqli.rules.toml", 942016, "q=%78p_cmdshell&z=%FF"),
+            ("942-sqli.rules.toml", 942006, "q=drop%20table%20users&z=%C0"),
+        ] {
+            let re = Regex::new(&pattern(file, id)).unwrap();
+            let forms = super::zone_text(field, true);
+            assert!(forms.iter().any(|f| re.is_match(f)),
+                    "rule {id} missed {field:?}; forms were {forms:?}");
+        }
+    }
+
+    #[test]
+    fn valid_encoding_decodes_exactly_as_before() {
+        // The fix changes only what happens to invalid bytes.
+        assert_eq!(super::percent_decode("caf%C3%A9"), "café");
+        assert_eq!(super::percent_decode("a%20b%2Fc"), "a b/c");
+        assert_eq!(super::percent_decode("plain"), "plain");
+        assert_eq!(super::percent_decode("%2545"), "%45", "one level per call, as before");
+        assert_eq!(super::percent_decode("100%"), "100%", "a stray percent is left alone");
     }
 
     #[test]
