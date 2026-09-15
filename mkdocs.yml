@@ -1,17 +1,21 @@
-# EasyWAF documentation site.
+# EasyWAF documentation site — https://easywaf.easysys.io
 #
-# Same theme and extensions as the EasySYS site, so this reads as part of the
-# family rather than as a different product. EasySYS links here; the pages
-# themselves live beside the code they describe, which is what keeps them
-# honest — a change and its documentation are one commit.
+# Same design as easysys.io and easylog.easysys.io. The landing page
+# (docs/index.md) is drawn with the EasySYS `es-*` components copied into
+# stylesheets/easysys.css; the documentation pages keep Material's navigation
+# and search, themed with the same tokens in stylesheets/easywaf.css. The pages
+# live beside the code they describe, so a change and its documentation land in
+# one commit.
 #
-# Build:  pip install -r docs-requirements.txt && mkdocs serve
+# Build:   pip install -r docs-requirements.txt && mkdocs serve
+# Deploy:  ./deploy-docs.sh   (on the host that serves the site)
 
 site_name: EasyWAF
+site_url: https://easywaf.easysys.io/
 site_description: A self-contained web application firewall and HTTP reverse proxy, in a single Rust binary.
 repo_url: https://github.com/easysysio/EasyWAF
 repo_name: easysysio/EasyWAF
-copyright: GPL-3.0
+copyright: GPL-3.0 licensed · part of the EasySYS suite
 
 # The design notes are working documents — unshipped plans, arguments with
 # earlier decisions — and they live in this directory because they belong
@@ -20,25 +24,29 @@ exclude_docs: |
   design/
 
 nav:
-  - Overview: index.md
-  - Getting started:
-      - Installation: install.md
-      - First run: first-run.md
-  - Using EasyWAF:
-      - Sites: sites.md
-      - TLS and certificates: tls.md
-      - Policies and rules: policies.md
-      - IP lists: ip-lists.md
-      - Traffic: traffic.md
-      - Accounts and roles: accounts.md
-      - Logging: logging.md
-  - Reference:
-      - Configuration: configuration.md
-      - Troubleshooting: troubleshooting.md
-      - What EasyWAF does not do: limitations.md
+  - Home: index.md
+  - Documentation:
+      - Overview: overview.md
+      - Getting started:
+          - Installation: install.md
+          - First run: first-run.md
+      - Using EasyWAF:
+          - Sites: sites.md
+          - TLS and certificates: tls.md
+          - Policies and rules: policies.md
+          - IP lists: ip-lists.md
+          - Traffic: traffic.md
+          - Accounts and roles: accounts.md
+          - Logging: logging.md
+      - Reference:
+          - Configuration: configuration.md
+          - Troubleshooting: troubleshooting.md
+          - What EasyWAF does not do: limitations.md
 
 theme:
   name: material
+  logo: assets/logo.svg
+  favicon: assets/favicon.png
   font:
     text: Inter
     code: Roboto Mono
@@ -61,7 +69,6 @@ theme:
     - navigation.instant
     - navigation.tracking
     - navigation.tabs
-    - navigation.tabs.sticky
     - navigation.sections
     - navigation.top
     - navigation.path
@@ -102,6 +109,14 @@ plugins:
 extra:
   social:
     - icon: fontawesome/brands/github
-      link: https://github.com/easysysio
+      link: https://github.com/easysysio/EasyWAF
     - icon: fontawesome/solid/globe
       link: https://easysys.io
+    - icon: fontawesome/brands/discord
+      link: https://discord.gg/easysys
+
+extra_css:
+  # Bump ?v= whenever a stylesheet changes so browsers fetch the new file
+  # instead of serving a cached copy.
+  - stylesheets/easysys.css?v=1
+  - stylesheets/easywaf.css?v=1

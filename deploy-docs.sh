@@ -1,15 +1,28 @@
 #!/bin/sh
-# Build the documentation site and publish it.
+# Build the EasyWAF documentation site and publish it to easywaf.easysys.io.
 #
-# Mirrors EasySYS-web/deploy.sh: build with mkdocs, replace what is served.
-# Run it on the host that serves the site.
+# Mirrors EasyLog/deploy-docs.sh and EasySYS-web/deploy.sh: pull, build with
+# mkdocs, replace what is served. Run it on the host that serves the site; the
+# web server's easywaf.easysys.io vhost should point at the target directory.
+#
+# Usage: ./deploy-docs.sh [TARGET]    (default /var/www/easywaf)
 set -e
+
+TARGET=${1:-/var/www/easywaf}
+
+# The target is removed wholesale below, so refuse anything that isn't a
+# dedicated directory.
+case "$TARGET" in
+  /|/var|/var/www|/var/www/) echo "Refusing to deploy over $TARGET" >&2; exit 1 ;;
+esac
+
+cd "$(dirname "$0")"
 
 echo "Building the EasyWAF documentation site"
 git pull
-mkdocs build
+# Built before the old site is touched: a failed build leaves the live site up.
+mkdocs build --strict
 
-TARGET=${1:-/var/www/easywaf}
 rm -rf "$TARGET"
 cp -r site "$TARGET"
 echo "Deployed to $TARGET"
