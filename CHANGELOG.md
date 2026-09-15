@@ -6,6 +6,11 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
+## [Unreleased]
+
+### Fixed
+- Downloads and media streams taking longer than thirty seconds were cut off mid-transfer, after the response had already started with a 200, leaving a truncated file; upstream connections now time out only when they stop moving.
+
 ## [0.10.0] — 2026-09-13
 
 ### Added

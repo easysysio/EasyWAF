@@ -138,9 +138,12 @@ async fn main() {
     let pipeline = Arc::new(pipeline);
 
     // ── Build reqwest client ──────────────────────────────
+    // Connect and idle timeouts, never a total one — see UPSTREAM_IDLE_TIMEOUT
+    // for the truncated downloads a total timeout produced.
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
-        .timeout(std::time::Duration::from_secs(30))
+        .connect_timeout(proxy::UPSTREAM_CONNECT_TIMEOUT)
+        .read_timeout(proxy::UPSTREAM_IDLE_TIMEOUT)
         .build()
         .expect("reqwest client");
 

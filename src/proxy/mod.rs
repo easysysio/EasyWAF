@@ -39,6 +39,21 @@ use tokio::{net::TcpListener, sync::mpsc};
 
 /// Headers that must not be forwarded between proxy and upstream.
 /// These are connection-specific and are stripped before forwarding.
+/// How long to wait for an upstream to accept a connection.
+pub const UPSTREAM_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// How long an upstream connection may sit with nothing arriving before it is
+/// abandoned. Idle, not total: it resets on every successful read.
+///
+/// There was a thirty-second *total* timeout here until 0.10.1, and a total
+/// timeout covers the whole response body. Every download and media stream
+/// longer than thirty seconds was cut off mid-transfer — after the upstream's
+/// 200 had already been sent, so the client was left with a truncated file and
+/// a success status. Ten minutes of silence is what Immich's documentation asks
+/// of a reverse proxy, and an idle timeout only ever fires on a connection that
+/// has actually stopped moving.
+pub const UPSTREAM_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(600);
+
 const HOP_HEADERS: &[&str] = &[
     "connection",
     "keep-alive",
