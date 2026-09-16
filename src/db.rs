@@ -72,9 +72,31 @@ pub async fn init(database_url: &str) -> SqlitePool {
     run_migration_023(&pool).await;
     run_migration_024(&pool).await;
     run_migration_025(&pool).await;
+    run_migration_026(&pool).await;
 
     info!("Database ready: {}", database_url);
     pool
+}
+
+// ─── run_migration_026 ───────────────────────────────────
+
+/// What the operator has decided about each published IP list.
+async fn run_migration_026(pool: &SqlitePool) {
+    let exists: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'ip_list_feeds'",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0);
+
+    if exists == 0 {
+        let sql = include_str!("../migrations/026_ip_list_feeds.sql");
+        sqlx::raw_sql(sql)
+            .execute(pool)
+            .await
+            .unwrap_or_else(|e| panic!("Migration 026 failed: {}", e));
+        info!("Migration 026 applied: published IP lists can be switched on per list");
+    }
 }
 
 // ─── run_migration_025 ───────────────────────────────────

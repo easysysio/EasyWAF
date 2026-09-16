@@ -345,7 +345,7 @@ const KEY_OVERRIDE: &str = "rules/key.gpg";
 /// The override is logged every time it is used. A substituted trust anchor is
 /// exactly the thing that must not be silent, and the packages no longer ship
 /// this file, so its presence is always somebody's decision.
-fn trusted_key() -> String {
+pub(crate) fn trusted_key() -> String {
     key_from(KEY_OVERRIDE)
 }
 
@@ -740,6 +740,10 @@ pub async fn sync_cache(db: &SqlitePool) -> std::result::Result<usize, String> {
 
 // ─── Settings ────────────────────────────────────────────
 
+/// Whether this installation may reach its update channels at all.
+///
+/// One switch for rule sets and published IP lists alike: the reason to turn
+/// it off is an installation with no outbound access, which is true of both.
 pub async fn enabled(db: &SqlitePool) -> bool {
     match get(db, KEY_ENABLED).await {
         Some(v) => !matches!(v.trim().to_lowercase().as_str(), "0" | "false" | "no" | "off"),

@@ -1,0 +1,6 @@
+; Fixture DROP List - not real data
+; lines after a semicolon are comments
+
+192.0.2.0/24 ; FIX1
+198.51.100.0/25 ; FIX2
+2001:db8::/32 ; FIX3

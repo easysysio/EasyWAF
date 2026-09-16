@@ -1,0 +1,11 @@
+[[lists]]
+id          = "fixture-drop"
+name        = "Fixture DROP"
+description = "Documentation ranges, for tests."
+licence     = "CC0"
+attribution = "EasyWAF test fixtures"
+version     = "2026091601"
+entries     = 3
+response    = "block"
+file        = "lists/fixture-drop.txt"
+sha256      = "e5bfd07a1e9eef60d4eb0d911618a824ec5151da55f9c50fe989f60ab9de108f"

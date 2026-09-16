@@ -391,7 +391,7 @@
                             <label>
                                 <input type="checkbox" name="rule_update_check" value="1"
                                        {% if rule_update_check %}checked{% endif %}>
-                                Check the channel for newer rule sets
+                                Check the update channels for rule sets and IP lists
                             </label>
                         </div>
                         <p class="help-block">
@@ -400,6 +400,10 @@
                             policies are behind, and applying is a button someone presses.
                             An auto-applied bad rule is an outage across every site using
                             that policy.
+                            <br>
+                            Published IP lists are fetched on the same schedule, and their
+                            data <em>is</em> refreshed automatically — but a list does nothing
+                            until it is switched on under <a href="/iplists">IP Lists</a>.
                             <br>
                             Turn it off on an installation with no outbound access, or one
                             whose rules are managed by hand.
@@ -422,6 +426,31 @@
                             with EasyWAF, and only if the set matches the SHA-256 that signed
                             manifest gives for it. A channel serving something else is
                             refused, whoever it belongs to.
+                        </p>
+                    </div>
+
+                    <div class="form-group">
+                        <label>IP List Channel</label>
+                        <input type="text" class="form-control" name="ip_list_url"
+                               value="{{ ip_list_url }}" spellcheck="false"
+                               style="font-family: monospace; font-size: 12px;"
+                               placeholder="{{ ip_list_default }}">
+                        <p class="help-block">
+                            Where the published IP lists come from. Leave it empty for the
+                            default, <code>{{ ip_list_default }}</code>. The same rule applies
+                            as for rule sets: a list is loaded only if the manifest is signed by
+                            the key that ships with EasyWAF and the file matches its hash.
+                            <br>
+                            {% if ip_list_error %}
+                                <span class="text-danger"><i class="fa fa-exclamation-triangle"></i>
+                                    Last update failed: {{ ip_list_error }}</span>
+                                {% if ip_list_checked %}<small class="text-muted">— last worked {{ ip_list_checked }} UTC</small>{% endif %}
+                            {% elif ip_list_checked %}
+                                <span class="text-success"><i class="fa fa-check"></i>
+                                    Updated {{ ip_list_checked }} UTC</span>
+                            {% else %}
+                                <span class="text-muted">Not fetched yet</span>
+                            {% endif %}
                         </p>
                     </div>
 

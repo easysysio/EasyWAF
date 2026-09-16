@@ -126,4 +126,137 @@
         </div>
     </div>
 </div>
+<div class="row">
+    <div class="col-lg-11">
+        <div class="panel panel-default">
+            <div class="panel-heading">
+                <h4 style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+                    <span><i class="fa fa-globe"></i> Published Lists</span>
+                    <span class="text-muted" style="font-size:12px">
+                        {% if feeds_fetched %}updated {{ feeds_fetched }} UTC{% else %}not fetched yet{% endif %}
+                    </span>
+                    <form class="admin-only" method="post" action="/iplists/update" style="margin:0;margin-left:auto">
+                        <button type="submit" class="btn btn-default btn-sm"
+                                {% if not feeds_check %}disabled title="Checking the update channels is turned off under Settings → Rule Updates"{% endif %}>
+                            <i class="fa fa-refresh"></i> Update now
+                        </button>
+                    </form>
+                </h4>
+            </div>
+            <div class="panel-body">
+
+                <p class="help-block" style="margin-top:0">
+                    Addresses other people keep track of: hijacked netblocks, compromised
+                    hosts, Tor exits. <strong>The data updates itself; what it does does
+                    not.</strong> Every list is fetched from the signed channel and refreshed
+                    daily, but none of them changes anything until you switch it on and say
+                    what it should do.
+                    <br>
+                    <strong>Challenge</strong> asks for a CAPTCHA, which anyone human can
+                    pass, so a wrongly listed address is a speed bump rather than a wall.
+                    <strong>Block</strong> refuses the address before any rule runs.
+                    Both apply on every site. An address on your own allow list above
+                    skips every published list.
+                </p>
+
+                {% if feeds_fetch_error %}
+                <div class="alert alert-warning">
+                    <i class="fa fa-exclamation-triangle"></i>
+                    The last update failed: {{ feeds_fetch_error }}.
+                    {% if feeds %}The lists below are from the last update that worked.{% endif %}
+                </div>
+                {% endif %}
+
+                {% if feeds %}
+                <div style="overflow-x:auto">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>List</th>
+                            <th>Size</th>
+                            <th>Source</th>
+                            <th>In force</th>
+                            <th class="admin-only"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    {% for f in feeds %}
+                        <tr {% if f.enabled and f.error %}class="warning"{% endif %}>
+                            <td>
+                                <strong>{{ f.name }}</strong>
+                                {% if f.description %}<br><small class="text-muted">{{ f.description }}</small>{% endif %}
+                                {% if not f.offered %}
+                                <br><small class="text-danger">No longer published. It is switched on and doing nothing — switch it off.</small>
+                                {% endif %}
+                                {% if f.enabled and f.error %}
+                                <br><small class="text-danger"><i class="fa fa-exclamation-triangle"></i>
+                                    Not in force: {{ f.error }}</small>
+                                {% endif %}
+                            </td>
+                            <td style="white-space:nowrap">
+                                {% if f.enabled and not f.error %}
+                                    {{ f.ranges }} ranges
+                                {% else %}
+                                    {{ f.entries }} entries
+                                {% endif %}
+                                {% if f.unreadable > 0 %}
+                                <br><small class="text-warning" title="Lines in the file that are not addresses — the list may have changed format">
+                                    {{ f.unreadable }} unreadable</small>
+                                {% endif %}
+                                {% if f.version %}<br><small class="text-muted">{{ f.version }}</small>{% endif %}
+                            </td>
+                            <td>
+                                <small>
+                                    {% if f.licence %}{{ f.licence }}{% endif %}
+                                    {% if f.attribution %}<br>{{ f.attribution }}{% endif %}
+                                </small>
+                            </td>
+                            <td style="white-space:nowrap">
+                                {% if not f.enabled %}
+                                <span class="label label-default">OFF</span>
+                                {% elif f.error %}
+                                <span class="label label-warning">NOT LOADED</span>
+                                {% elif f.response == "block" %}
+                                <span class="label label-danger">BLOCK</span>
+                                {% else %}
+                                <span class="label label-warning">CHALLENGE</span>
+                                {% endif %}
+                            </td>
+                            <td class="admin-only" style="white-space:nowrap">
+                                <form method="post" action="/iplists/feeds/{{ f.id }}/save"
+                                      style="margin:0;display:flex;gap:6px;align-items:center"
+                                      onsubmit="if (this.enabled.checked && this.response.value === 'block') { return confirm('Block every address on {{ f.name }}?\n\nThey are refused before any rule runs, on every site. Your allow list still overrules it.'); } return true;">
+                                    <label class="checkbox-inline" style="margin:0">
+                                        <input type="checkbox" name="enabled" value="1" {% if f.enabled %}checked{% endif %}> On
+                                    </label>
+                                    <select name="response" class="form-control input-sm" style="width:auto">
+                                        <option value="challenge" {% if f.response == "challenge" %}selected{% endif %}>Challenge</option>
+                                        <option value="block" {% if f.response == "block" %}selected{% endif %}>Block</option>
+                                    </select>
+                                    <button type="submit" class="btn btn-default btn-sm">Save</button>
+                                </form>
+                            </td>
+                        </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+                </div>
+                {% else %}
+                <p class="text-muted">
+                    {% if feeds_error %}
+                    No published lists to show: {{ feeds_error }}.
+                    {% else %}
+                    The channel offers no lists.
+                    {% endif %}
+                    {% if not feeds_check %}
+                    <br><small>Checking the update channels is turned off under
+                    <a href="/settings">Settings → Rule Updates</a>.</small>
+                    {% endif %}
+                </p>
+                {% endif %}
+
+            </div>
+        </div>
+    </div>
+</div>
 {% endblock %}

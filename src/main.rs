@@ -20,6 +20,7 @@ mod error;
 mod forwarded;
 mod geo;
 mod iplist;
+mod iplist_feeds;
 mod modules;
 mod logging;
 mod pgp_verify;
@@ -122,6 +123,9 @@ async fn main() {
     forwarded::reload(&db).await;
     // Allow and block lists, consulted before the pipeline on every request.
     iplist::reload(&db).await;
+    // Published lists that are switched on, from the mirror: no network is
+    // needed for them to be in force from the first request.
+    iplist_feeds::reload(&db).await;
     // How much of each request body the rules inspect; the rest streams on.
     proxy::set_inspection_limit(routes::settings::get_body_inspect_kb(&db).await as usize * 1024);
 
@@ -190,6 +194,7 @@ async fn main() {
     // everything reads, so a first run with no network still has rules.
     rules_update::seed_cache_from_bundle();
     rules_update::spawn_check_task(db.clone());
+    iplist_feeds::spawn_task(db.clone());
 
     // ── Build management GUI ──────────────────────────────
     let tera = assets::tera()
@@ -239,6 +244,8 @@ async fn main() {
         .route("/iplists",             get(routes::iplists::get_iplists))
         .route("/iplists/add",         post(routes::iplists::post_ip_add))
         .route("/iplists/{id}/remove", post(routes::iplists::post_ip_remove))
+        .route("/iplists/feeds/{id}/save", post(routes::iplists::post_feed_save))
+        .route("/iplists/update",      post(routes::iplists::post_feeds_update))
         .route("/account",               get(routes::account::get_account))
         // Who may sign in, and what they may do. Administrator-only, and
         // guarded so no action can leave the installation with none.

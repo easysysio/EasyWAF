@@ -64,10 +64,12 @@ Current as of **0.9.1**.
   [copy the file](configuration.md#backing-up) with the service stopped.
 - **No high availability.** No configuration sync between nodes. Scheduled for
   **0.15.0**.
-- **Published IP lists are not here yet.** The lists are yours to fill: an
-  address is blocked or allowed because somebody put it there. Curated lists
-  synced from a signed channel — Tor exits, hijacked netblocks, compromised
-  hosts — are scheduled for **0.12.0**, after the engine release.
+- **No list of proxy, VPN or hosting addresses.** Every credible dataset is
+  commercial, and the cloud providers' own address files may not be
+  redistributed. The [published lists](ip-lists.md#published-lists) cover
+  hijacked netblocks, compromised hosts and Tor exits only.
+- **No feed of your own.** A published list comes from the signed channel; there
+  is no way yet to point EasyWAF at another list's URL.
 - **No rate limiting.** Scheduled for **0.16.0**.
 - **No authentication in front of a site.** EasyWAF decides whether a request is
   an attack, not who is making it. Proposed, not scheduled.

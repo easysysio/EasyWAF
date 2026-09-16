@@ -1,8 +1,13 @@
 # Design note — IP allow/block lists, added from Traffic Monitor
 
-Status: the manual half **shipped in 0.10.0**; the published half is built and
-scheduled for **0.12.0**, after the engine release — see
-[roadmap.md](roadmap.md).
+Status: the manual half **shipped in 0.10.0**. The published half is scheduled
+for **0.12.0** — see [roadmap.md](roadmap.md). Its engine side was built
+**2026-09-16** (see *What was built*); the lists repository and
+`github2repo.sh --lists` are next.
+
+An earlier version of this line said the published half was already built. A
+session did build one before 0.11.0, and it was dropped rather than merged, so
+0.12.0 started from the manual half.
 
 The release was split on 2026-09-13, once the manual lists were working. The
 matcher, the precedence rule and the enforcement point are shared, so the
@@ -373,3 +378,48 @@ attribution, a switch, and the response it produces. A blocked request names
 the list that did it, for the same reason a blocked request has named the rule
 since 0.5.5 — a refusal nobody can explain is the one people turn the whole
 feature off over.
+
+## What was built
+
+The engine side, 2026-09-16: `src/iplist_feeds.rs`, the matcher in
+`src/iplist.rs`, and the second panel on the IP Lists page. Five departures from
+the plan above.
+
+**The table holds decisions, not metadata.** Migration 026 keeps `enabled`,
+`response` and who changed them — nothing else. Name, description, licence,
+attribution, version and entry count are read from the verified manifest in the
+mirror. Copying them into rows would give them two sources, one always about to
+be stale, and the manifest is already where the licence text has to live.
+
+**Every load verifies, not only every download.** The mirror is not trusted for
+being local: the signature and each file's hash are checked again whenever the
+matcher is rebuilt, at startup included. A mirror that cannot prove itself loads
+nothing, and every list that was switched on says why. That lets through what
+the lists would have stopped — deliberately, because the alternative is
+enforcing data nobody can vouch for, and the manual lists are untouched either
+way. Files are stored under their list id, never under the path the manifest
+names, so nothing a channel says chooses where a file is written.
+
+**One update switch.** Settings' existing "check the channel" now covers both
+channels. Its reason to be off — no outbound access — is true of both, and two
+switches would let an installation that must not reach out forget the second.
+The lists get their own URL field.
+
+**Challenge only for a visitor who has not already answered one.** A
+challenge-response list turns an otherwise clean verdict into the existing
+CAPTCHA flow, after the pipeline, so a request the rules would block is still
+blocked. A visitor holding a clearance cookie is left alone: they have shown
+what the list asked, and converting their request would also drop whatever a
+DetectionOnly policy found on it.
+
+**Precedence is one function.** `Lists::check` decides manual allow, manual
+block, published block, published challenge — in that order, whatever order the
+lists loaded in — and the request path calls nothing else.
+
+Checked live against a throwaway instance trusting the test key, with a local
+channel and upstream: a listed address refused and named in its traffic row,
+IPv6 ranges enforced, a challenge list serving the CAPTCHA, the manual allowlist
+overruling a published block while the neighbouring address stays refused, a
+switched-off list changing nothing, and a tampered mirror with the channel down
+enforcing nothing and saying why.
+

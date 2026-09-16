@@ -23,6 +23,7 @@
 // =========================================================
 
 use crate::forwarded::Cidr;
+use serde::Serialize;
 use sqlx::SqlitePool;
 use std::net::IpAddr;
 use std::sync::{OnceLock, RwLock};
@@ -133,6 +134,9 @@ fn coalesce(mut ranges: Vec<(u128, u128)>) -> Vec<(u128, u128)> {
 pub struct Lists {
     allow: Ranges,
     block: Ranges,
+    /// Published lists that are switched on. Loaded separately from the
+    /// manual ones, on their own schedule — see `iplist_feeds`.
+    feeds: Vec<Feed>,
 }
 
 impl Lists {
@@ -151,7 +155,7 @@ impl Lists {
             }
         }
 
-        (Self { allow: Ranges::build(&allow), block: Ranges::build(&block) }, bad)
+        (Self { allow: Ranges::build(&allow), block: Ranges::build(&block), feeds: Vec::new() }, bad)
     }
 
     /// Which list this address is on, if any.
@@ -169,10 +173,137 @@ impl Lists {
         }
     }
 
+    /// Where this address stands across every list, manual and published.
+    ///
+    /// The order is the design. The manual allowlist overrules everything, the
+    /// manual blocklist comes next, then published lists that block, then
+    /// those that challenge. An operator who has said an address is fine has
+    /// overruled every feed, and no sync can undo that.
+    pub fn check(&self, ip: IpAddr) -> Option<Listed> {
+        match self.lookup(ip) {
+            Some(ListType::Allow) => return Some(Listed::Allowed),
+            Some(ListType::Block) => return Some(Listed::Blocked),
+            None => {}
+        }
+
+        // Blocking lists before challenging ones, so an address on both gets
+        // the stronger answer whatever order the lists happened to load in.
+        [Response::Block, Response::Challenge].into_iter().find_map(|want| {
+            self.feeds
+                .iter()
+                .find(|f| f.response == want && f.ranges.contains(ip))
+                .map(|f| Listed::Published(FeedHit {
+                    id:       f.id.clone(),
+                    name:     f.name.clone(),
+                    response: f.response,
+                }))
+        })
+    }
+
     /// How many ranges each list holds, after merging.
     pub fn counts(&self) -> (usize, usize) {
         (self.allow.len(), self.block.len())
     }
+}
+
+// ─── Published lists ─────────────────────────────────────
+
+/// What a published list does to an address on it.
+///
+/// Off is not a value: a list that is off is never loaded, so the request path
+/// cannot mistake it for a response somebody forgot to handle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Response {
+    /// A CAPTCHA, which anyone human can pass — so a misclassified address is
+    /// a speed bump rather than a wall.
+    Challenge,
+    /// Refused outright, before any rule runs.
+    Block,
+}
+
+impl Response {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Response::Challenge => "challenge",
+            Response::Block     => "block",
+        }
+    }
+
+    pub fn parse(raw: &str) -> Option<Self> {
+        match raw.trim() {
+            "challenge" => Some(Response::Challenge),
+            "block"     => Some(Response::Block),
+            _           => None,
+        }
+    }
+}
+
+/// One published list that is switched on, ready to be consulted.
+#[derive(Debug, Clone)]
+pub struct Feed {
+    pub id:       String,
+    pub name:     String,
+    pub response: Response,
+    ranges:       Ranges,
+}
+
+impl Feed {
+    pub fn new(id: &str, name: &str, response: Response, blocks: &[Cidr]) -> Self {
+        Self {
+            id:       id.to_string(),
+            name:     name.to_string(),
+            response,
+            ranges:   Ranges::build(blocks),
+        }
+    }
+
+    /// How many ranges it holds, after merging.
+    pub fn len(&self) -> usize {
+        self.ranges.len()
+    }
+}
+
+/// The published list an address was found on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FeedHit {
+    pub id:       String,
+    pub name:     String,
+    pub response: Response,
+}
+
+/// Where an address stands, every list considered.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Listed {
+    /// On the manual allowlist: skips everything, published lists included.
+    Allowed,
+    /// On the manual blocklist.
+    Blocked,
+    /// On a published list that is switched on.
+    Published(FeedHit),
+}
+
+/// Read a published list: one address or block per line.
+///
+/// Anything after `;` or `#` is a comment. Spamhaus DROP writes
+/// `192.0.2.0/24 ; SBL123`, and opens with `;` lines its terms require to stay
+/// with the data. Returns the blocks read and how many lines were not
+/// addresses, so a list that has quietly changed format shows up as a number
+/// rather than as an empty list nobody thinks to question.
+pub fn parse_feed(text: &str) -> (Vec<Cidr>, usize) {
+    let mut blocks = Vec::new();
+    let mut unreadable = 0;
+    for line in text.lines() {
+        let entry = line.split([';', '#']).next().unwrap_or("").trim();
+        if entry.is_empty() {
+            continue;
+        }
+        match Cidr::parse(entry) {
+            Some(c) => blocks.push(c),
+            None    => unreadable += 1,
+        }
+    }
+    (blocks, unreadable)
 }
 
 // ─── The loaded lists ────────────────────────────────────
@@ -205,8 +336,11 @@ pub async fn reload(db: &SqlitePool) -> usize {
 
     let (allow, block) = built.counts();
     let total = allow + block;
+    // Only the manual half. Published lists load on their own schedule and
+    // must not vanish because somebody added an address by hand.
     if let Ok(mut w) = lists().write() {
-        *w = built;
+        w.allow = built.allow;
+        w.block = built.block;
     }
     tracing::info!(allow, block, "IP lists loaded");
     total
@@ -220,6 +354,20 @@ pub async fn reload(db: &SqlitePool) -> usize {
 /// and both are worse than losing the lists until the next reload.
 pub fn lookup(ip: IpAddr) -> Option<ListType> {
     lists().read().ok().and_then(|l| l.lookup(ip))
+}
+
+/// Replace the published lists that are switched on.
+pub fn set_feeds(feeds: Vec<Feed>) {
+    if let Ok(mut w) = lists().write() {
+        w.feeds = feeds;
+    }
+}
+
+/// Where this address stands, every list considered.
+///
+/// A poisoned lock answers `None`, for the reason `lookup` gives.
+pub fn check(ip: IpAddr) -> Option<Listed> {
+    lists().read().ok().and_then(|l| l.check(ip))
 }
 
 #[cfg(test)]
@@ -334,5 +482,110 @@ mod tests {
         ]);
         assert_eq!(bad.len(), 3, "got {bad:?}");
         assert_eq!(l.counts(), (0, 1), "the usable row still loaded");
+    }
+
+    fn with_feeds(rows: &[(&str, &str)], feeds: &[(&str, Response, &[&str])]) -> Lists {
+        let mut l = built(rows);
+        l.feeds = feeds
+            .iter()
+            .map(|(id, response, blocks)| {
+                let cidrs: Vec<Cidr> = blocks.iter().map(|b| Cidr::parse(b).unwrap()).collect();
+                Feed::new(id, &format!("{id} list"), *response, &cidrs)
+            })
+            .collect();
+        l
+    }
+
+    fn published(id: &str, response: Response) -> Option<Listed> {
+        Some(Listed::Published(FeedHit {
+            id: id.to_string(),
+            name: format!("{id} list"),
+            response,
+        }))
+    }
+
+    #[test]
+    fn an_address_on_a_published_list_is_found_with_its_response() {
+        let l = with_feeds(&[], &[
+            ("drop", Response::Block,     &["198.51.100.0/24"]),
+            ("tor",  Response::Challenge, &["203.0.113.7"]),
+        ]);
+        assert_eq!(l.check(ip("198.51.100.200")), published("drop", Response::Block));
+        assert_eq!(l.check(ip("203.0.113.7")),    published("tor", Response::Challenge));
+        assert_eq!(l.check(ip("203.0.113.8")),    None);
+    }
+
+    #[test]
+    fn the_manual_allowlist_overrules_every_published_list() {
+        // The design's central promise: somebody who has said an address is
+        // fine has overruled every feed, and a sync cannot take that back.
+        let l = with_feeds(&[("198.51.100.9", "allow")], &[
+            ("drop", Response::Block, &["198.51.100.0/24"]),
+        ]);
+        assert_eq!(l.check(ip("198.51.100.9")), Some(Listed::Allowed));
+        assert_eq!(l.check(ip("198.51.100.10")), published("drop", Response::Block));
+    }
+
+    #[test]
+    fn a_manual_block_is_reported_as_manual() {
+        // The traffic row should name the operator's own list, not a feed that
+        // happens to agree with it.
+        let l = with_feeds(&[("198.51.100.9", "block")], &[
+            ("drop", Response::Block, &["198.51.100.0/24"]),
+        ]);
+        assert_eq!(l.check(ip("198.51.100.9")), Some(Listed::Blocked));
+    }
+
+    #[test]
+    fn blocking_beats_challenging_whatever_the_load_order() {
+        for order in [
+            [("et", Response::Challenge), ("drop", Response::Block)],
+            [("drop", Response::Block), ("et", Response::Challenge)],
+        ] {
+            let l = with_feeds(&[], &[
+                (order[0].0, order[0].1, &["192.0.2.0/24"]),
+                (order[1].0, order[1].1, &["192.0.2.0/24"]),
+            ]);
+            assert_eq!(l.check(ip("192.0.2.1")), published("drop", Response::Block),
+                       "order {:?}", order.map(|o| o.0));
+        }
+    }
+
+    #[test]
+    fn manual_reloads_leave_published_lists_alone() {
+        let mut l = with_feeds(&[], &[("drop", Response::Block, &["192.0.2.0/24"])]);
+        let (manual, _) = Lists::build([("203.0.113.1", "block")]);
+        l.allow = manual.allow;
+        l.block = manual.block;
+        assert_eq!(l.check(ip("192.0.2.1")), published("drop", Response::Block));
+        assert_eq!(l.check(ip("203.0.113.1")), Some(Listed::Blocked));
+    }
+
+    #[test]
+    fn a_drop_style_file_reads_with_its_header_and_comments() {
+        let text = "\
+; Spamhaus DROP List 2026/09/16 - (c) 2026 The Spamhaus Project SLU
+; https://www.spamhaus.org/drop/drop.txt
+; Last-Modified: Wed, 16 Sep 2026 06:00:00 GMT
+
+1.10.16.0/20 ; SBL256894
+2.56.192.0/22 ; SBL459831
+2001:db8::/32 ; SBL000001
+";
+        let (blocks, unreadable) = parse_feed(text);
+        assert_eq!(blocks.len(), 3);
+        assert_eq!(unreadable, 0);
+        let l = Lists { feeds: vec![Feed::new("drop", "DROP", Response::Block, &blocks)], ..Lists::default() };
+        assert!(l.check(ip("1.10.20.1")).is_some());
+        assert!(l.check(ip("2001:db8::1")).is_some());
+        assert!(l.check(ip("1.10.32.0")).is_none(), "the /20 ends at 1.10.31.255");
+    }
+
+    #[test]
+    fn a_plain_address_list_reads_and_counts_what_it_cannot() {
+        // The Tor exit list and ET's compromised hosts are bare addresses.
+        let (blocks, unreadable) = parse_feed("203.0.113.7\n# exits\n\n2001:db8::7\nnot-an-address\n999.1.1.1\n");
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(unreadable, 2, "a format change must be visible, not silent");
     }
 }

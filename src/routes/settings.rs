@@ -107,6 +107,7 @@ pub struct SettingsForm {
     pub body_inspect_kb:        Option<String>,
     pub rule_update_check:      Option<String>,
     pub rule_update_url:        Option<String>,
+    pub ip_list_url:            Option<String>,
     pub syslog_enabled:         Option<String>,
     pub syslog_host:            Option<String>,
     pub syslog_port:            Option<String>,
@@ -186,6 +187,15 @@ pub async fn get_settings(
     ctx.insert("rule_update_default", crate::rules_update::DEFAULT_URL);
     ctx.insert("rule_update_checked", &checked.map(|t| format_utc(&t)).unwrap_or_default());
     ctx.insert("rule_update_error",   &error.unwrap_or_default());
+    // The IP list channel, shown the same way: blank when it is the default.
+    let ip_list_url = get_setting(&state.db, crate::iplist_feeds::KEY_URL)
+        .await
+        .unwrap_or_default();
+    let (lists_checked, lists_error) = crate::iplist_feeds::status(&state.db).await;
+    ctx.insert("ip_list_url",     &ip_list_url);
+    ctx.insert("ip_list_default", crate::iplist_feeds::DEFAULT_URL);
+    ctx.insert("ip_list_checked", &lists_checked.map(|t| format_utc(&t)).unwrap_or_default());
+    ctx.insert("ip_list_error",   &lists_error.unwrap_or_default());
     let (mirrored, mirror_error) = crate::rules_update::mirror_status(&state.db).await;
     ctx.insert("mirrored_sets",  &mirrored);
     ctx.insert("mirror_error",   &mirror_error.unwrap_or_default());
@@ -392,30 +402,22 @@ pub async fn post_settings_update(
     // collector rather than the one this appliance was started with.
     state.logger.set_collector(syslog_target(&state.db).await);
 
-    // The rule channel. Checked before it is stored: a channel that is not a
-    // fetchable URL fails six hours later in a background task, and the only
-    // sign of it would be a "last check" that never advances.
+    // The update channels, rule sets and IP lists, each checked before it is
+    // stored — see `channel_url`.
     //
     // An empty field means the default, not "no channel" — turning the check
     // off is the checkbox, and conflating the two would leave a checked box
     // that quietly does nothing.
-    let channel = form.rule_update_url.as_deref().unwrap_or("").trim().to_string();
-    if !channel.is_empty() {
-        match reqwest::Url::parse(&channel) {
-            Ok(u) if u.scheme() == "http" || u.scheme() == "https" => {}
-            Ok(u)  => return flash_redirect(
-                "/settings",
-                "failed",
-                &format!("Rule channel must be http or https, not '{}'", u.scheme()),
-            ),
-            Err(e) => return flash_redirect(
-                "/settings",
-                "failed",
-                &format!("Rule channel is not a URL: {e}"),
-            ),
-        }
-    }
+    let channel = match channel_url(form.rule_update_url.as_deref(), "Rule channel") {
+        Ok(c)  => c,
+        Err(e) => return flash_redirect("/settings", "failed", &e),
+    };
+    let lists_channel = match channel_url(form.ip_list_url.as_deref(), "IP list channel") {
+        Ok(c)  => c,
+        Err(e) => return flash_redirect("/settings", "failed", &e),
+    };
     set_setting(&state.db, crate::rules_update::KEY_URL, &channel).await?;
+    set_setting(&state.db, crate::iplist_feeds::KEY_URL, &lists_channel).await?;
 
     // An unticked checkbox sends nothing at all, so the absence is the answer.
     let check = form.rule_update_check.is_some();
@@ -449,7 +451,23 @@ pub async fn post_settings_update(
 /// the last check was today. An unparseable value is shown as it is rather
 /// than swallowed — if something ever writes a different format, seeing it is
 /// more use than an empty field.
-fn format_utc(raw: &str) -> String {
+/// An update channel as typed, checked: empty for the default, otherwise an
+/// http or https URL. Checked before it is stored, because a channel that is
+/// not fetchable fails hours later in a background task, and the only sign of
+/// it would be a "last check" that never advances.
+fn channel_url(raw: Option<&str>, what: &str) -> std::result::Result<String, String> {
+    let channel = raw.unwrap_or("").trim().to_string();
+    if channel.is_empty() {
+        return Ok(channel);
+    }
+    match reqwest::Url::parse(&channel) {
+        Ok(u) if u.scheme() == "http" || u.scheme() == "https" => Ok(channel),
+        Ok(u)  => Err(format!("{what} must be http or https, not '{}'", u.scheme())),
+        Err(e) => Err(format!("{what} is not a URL: {e}")),
+    }
+}
+
+pub(crate) fn format_utc(raw: &str) -> String {
     match chrono::DateTime::parse_from_rfc3339(raw) {
         Ok(t)  => t.naive_utc().format("%Y-%m-%d %H:%M:%S").to_string(),
         Err(_) => raw.to_string(),

@@ -44,6 +44,14 @@ pub struct ListQuery {
     pub msg:    Option<String>,
 }
 
+/// Switching a published list on or off, and choosing what it does.
+#[derive(Debug, Deserialize)]
+pub struct FeedForm {
+    /// An unticked checkbox sends nothing, so its absence is the answer.
+    pub enabled:  Option<String>,
+    pub response: String,
+}
+
 /// Adding an address, from a traffic row or from this page's own form.
 #[derive(Debug, Deserialize)]
 pub struct AddForm {
@@ -92,8 +100,17 @@ pub async fn get_iplists(
     let allowed = entries.iter().filter(|e| e.list_type == "allow").count();
     let blocked = entries.iter().filter(|e| e.list_type == "block").count();
 
+    // Published lists: what the verified mirror offers and what is in force.
+    let (feeds, feeds_error) = crate::iplist_feeds::catalogue(&state.db).await;
+    let (fetched, fetch_error) = crate::iplist_feeds::status(&state.db).await;
+
     let mut ctx = Context::new();
     crate::routes::who_context(&mut ctx, &session);
+    ctx.insert("feeds",             &feeds);
+    ctx.insert("feeds_error",       &feeds_error.unwrap_or_default());
+    ctx.insert("feeds_fetched",     &fetched.map(|t| crate::routes::settings::format_utc(&t)).unwrap_or_default());
+    ctx.insert("feeds_fetch_error", &fetch_error.unwrap_or_default());
+    ctx.insert("feeds_check",       &crate::rules_update::enabled(&state.db).await);
     ctx.insert("title",   "IP Lists");
     ctx.insert("url",     "/iplists");
     ctx.insert("entries", &entries);
@@ -208,4 +225,69 @@ pub async fn post_ip_remove(
         format!("{} is no longer allowed past the checks — it is inspected again", gone.ip)
     };
     flash_redirect("/iplists", "success", &msg)
+}
+
+// ─── post_feed_save ──────────────────────────────────────
+
+/// POST /iplists/feeds/{id}/save — switch a published list on or off, and say
+/// what it does.
+pub async fn post_feed_save(
+    State(state): State<AppState>,
+    _jar: SignedCookieJar,
+    Admin(session): Admin,
+    Path(id): Path<String>,
+    Form(form): Form<FeedForm>,
+) -> Result<Response> {
+
+    let Some(response) = crate::iplist::Response::parse(&form.response) else {
+        return flash_redirect("/iplists", "failed", &format!("\"{}\" is not a response", form.response));
+    };
+    let enabled = form.enabled.is_some();
+
+    if let Err(e) = crate::iplist_feeds::save(&state.db, &id, enabled, response, &session.username).await {
+        return flash_redirect("/iplists", "failed", &e);
+    }
+    tracing::info!(list = %id, enabled, response = response.as_str(), by = %session.username,
+                   "Published IP list saved");
+
+    let msg = match (enabled, response) {
+        (false, _) => format!("{id} is off — it changes nothing"),
+        (true, crate::iplist::Response::Block) => format!(
+            "{id} is on — addresses on it are refused before any rule runs, on every site"
+        ),
+        (true, crate::iplist::Response::Challenge) => format!(
+            "{id} is on — addresses on it are asked to solve a CAPTCHA, on every site"
+        ),
+    };
+    flash_redirect("/iplists", "success", &msg)
+}
+
+// ─── post_feeds_update ───────────────────────────────────
+
+/// POST /iplists/update — fetch the channel now rather than at the next check.
+///
+/// Refused while checking the update channels is turned off: that switch is
+/// how an installation says it must not reach out at all, and a button that
+/// quietly overrode it would make the switch a suggestion.
+pub async fn post_feeds_update(
+    State(state): State<AppState>,
+    _jar: SignedCookieJar,
+    Admin(session): Admin,
+) -> Result<Response> {
+
+    if !crate::rules_update::enabled(&state.db).await {
+        return flash_redirect(
+            "/iplists",
+            "failed",
+            "Checking the update channels is turned off under Settings → Rule Updates",
+        );
+    }
+
+    match crate::iplist_feeds::check_now(&state.db).await {
+        Ok(n) => {
+            tracing::info!(lists = n, by = %session.username, "Published IP lists updated on request");
+            flash_redirect("/iplists", "success", &format!("Fetched {n} published lists and reloaded those switched on"))
+        }
+        Err(e) => flash_redirect("/iplists", "failed", &format!("Could not update the published lists: {e}")),
+    }
 }

@@ -833,11 +833,26 @@ async fn handle_request(
     // A blocked address is refused here for a second reason: a site with no
     // policy runs no pipeline at all, and "refuse this client" has to work
     // there too.
-    let listed  = crate::iplist::lookup(client_ip);
+    //
+    // A published list that blocks is refused here too, and the row names the
+    // list: a refusal nobody can explain is the one people switch the whole
+    // feature off over.
+    let listed  = crate::iplist::check(client_ip);
     let site_id = site.id;
 
-    if listed == Some(crate::iplist::ListType::Block) {
-        let reason     = "Client address is on the block list".to_string();
+    let refusal = match &listed {
+        Some(crate::iplist::Listed::Blocked) => {
+            Some("Client address is on the block list".to_string())
+        }
+        Some(crate::iplist::Listed::Published(hit))
+            if hit.response == crate::iplist::Response::Block =>
+        {
+            Some(format!("Client address is on the published list \"{}\"", hit.name))
+        }
+        _ => None,
+    };
+
+    if let Some(reason) = refusal {
         let elapsed    = started_at.elapsed().as_millis() as i64;
         let db         = state.db.clone();
         let logger     = state.logger.clone();
@@ -932,13 +947,33 @@ async fn handle_request(
     // it. Substituting a clean verdict rather than returning early keeps every
     // path below unchanged — the WebSocket upgrade, the ordinary response, and
     // the traffic row that all three of them write.
-    let verdict = if listed == Some(crate::iplist::ListType::Allow) {
+    let verdict = if listed == Some(crate::iplist::Listed::Allowed) {
         PipelineVerdict::Allow {
             alerts:   Vec::new(),
             findings: crate::modules::Findings::default(),
         }
     } else {
         state.pipeline.run(&ctx).await
+    };
+
+    // A published list whose response is a challenge. Applied to what the
+    // pipeline decided rather than before it, so a request the rules would
+    // block is still blocked and one they would challenge is challenged once.
+    //
+    // Not for a visitor who has already answered a challenge: they have shown
+    // what the list was asking, and turning their request into a challenge
+    // they skip would also drop what a DetectionOnly policy found on it.
+    let verdict = match (verdict, &listed) {
+        (PipelineVerdict::Allow { alerts, findings }, Some(crate::iplist::Listed::Published(hit)))
+            if hit.response == crate::iplist::Response::Challenge && !cleared =>
+        {
+            PipelineVerdict::Challenge {
+                reason: format!("Client address is on the published list \"{}\"", hit.name),
+                alerts,
+                findings,
+            }
+        }
+        (verdict, _) => verdict,
     };
 
     if let PipelineVerdict::Block { reason, status, findings, .. } = verdict {

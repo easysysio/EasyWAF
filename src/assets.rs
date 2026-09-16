@@ -301,6 +301,64 @@ mod tests {
     }
 
     #[test]
+    fn the_ip_lists_page_renders_every_published_list_state() {
+        // Every state a published list can be in, because each is a different
+        // branch of the template and Tera only finds a missing field when that
+        // branch is rendered — on the page an operator opens to find out why an
+        // address was refused.
+        let tera = tera().expect("templates should build");
+        let mut ctx = tera::Context::new();
+        for (k, v) in [("username", "t"), ("title", "IP Lists"), ("url", "/iplists"),
+                       ("search", ""), ("result", ""), ("msg", ""),
+                       ("feeds_error", ""), ("feeds_fetched", "2026-09-16 06:00"),
+                       ("feeds_fetch_error", "channel unreachable")] {
+            ctx.insert(k, v);
+        }
+        ctx.insert("entries", &Vec::<String>::new());
+        ctx.insert("allowed", &0);
+        ctx.insert("blocked", &0);
+        ctx.insert("feeds_check", &true);
+
+        let feed = |id: &str, enabled: bool, response: &str, error: Option<&str>,
+                    offered: bool, unreadable: usize| {
+            serde_json::json!({
+                "id": id, "name": format!("{id} name"), "description": "what it covers",
+                "licence": "CC0", "attribution": "Someone", "version": "2026091601",
+                "entries": 1432, "enabled": enabled, "response": response,
+                "ranges": 1400, "unreadable": unreadable, "error": error,
+                "offered": offered,
+            })
+        };
+        ctx.insert("feeds", &vec![
+            feed("off-list",       false, "challenge", None, true, 0),
+            feed("block-list",     true,  "block",     None, true, 0),
+            feed("challenge-list", true,  "challenge", None, true, 3),
+            feed("broken-list",    true,  "block",     Some("its file does not match the signed manifest"), true, 0),
+            feed("gone-list",      true,  "challenge", Some("the channel no longer publishes this list"), false, 0),
+        ]);
+
+        let html = tera.render("iplists.html", &ctx)
+            .unwrap_or_else(|e| panic!("iplists.html failed to render: {e:#?}"));
+        for label in ["OFF", "BLOCK", "CHALLENGE", "NOT LOADED"] {
+            assert!(html.contains(label), "the {label} state is not shown");
+        }
+        assert!(html.contains("does not match the signed manifest"),
+                "a list that failed to load does not say why");
+        assert!(html.contains("No longer published"), "a withdrawn list is not flagged");
+        assert!(html.contains("3 unreadable"), "unreadable lines are not counted");
+        assert!(html.contains("The last update failed"), "a failed update is not shown");
+        assert!(html.contains("Update now"), "no way to fetch the lists on demand");
+
+        // And with nothing mirrored yet, which is every new installation.
+        ctx.insert("feeds", &Vec::<String>::new());
+        ctx.insert("feeds_error", "nothing has been fetched from the channel yet");
+        ctx.insert("feeds_check", &false);
+        let html = tera.render("iplists.html", &ctx).expect("renders with no lists");
+        assert!(html.contains("nothing has been fetched"), "the empty state does not say why");
+        assert!(html.contains("turned off under"), "a disabled channel check is not explained");
+    }
+
+    #[test]
     fn the_exclusions_page_is_reachable_from_the_menu() {
         // The page existed in 0.7.0 and was reachable only from an unlabelled
         // icon on the policy list. Someone looking for it in the Security
