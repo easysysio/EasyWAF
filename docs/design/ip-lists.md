@@ -1,9 +1,9 @@
 # Design note — IP allow/block lists, added from Traffic Monitor
 
-Status: the manual half **shipped in 0.10.0**. The published half is scheduled
-for **0.12.0** — see [roadmap.md](roadmap.md). Its engine side was built
-**2026-09-16** (see *What was built*); the lists repository and
-`github2repo.sh --lists` are next.
+Status: the manual half **shipped in 0.10.0**. The published half is built for
+**0.12.0**, 2026-09-16 — engine, list builder and `github2repo.sh --lists`; see
+*What was built*. What remains is deploying the daily job on the repo server and
+cutting the release. See [roadmap.md](roadmap.md).
 
 An earlier version of this line said the published half was already built. A
 session did build one before 0.11.0, and it was dropped rather than merged, so
@@ -416,10 +416,39 @@ DetectionOnly policy found on it.
 block, published block, published challenge — in that order, whatever order the
 lists loaded in — and the request path calls nothing else.
 
+### The channel side
+
+**The builder lives in EasyWAF-rules, not in a repository of its own.** The
+section above argued for "a lists repository"; the decision on 2026-09-16 was
+to put it beside the rule channel instead — one repository already holds
+everything installations fetch from EasySYS. It is a second script,
+`publish-lists.sh`, reading `lists/sources.toml`, not a second copy of
+`publish.sh`, and `github2repo.sh --lists` clones that repository and runs it,
+sharing the stage-and-rename step with `--rules`.
+
+Nothing sourced is committed: the definitions are, and each run fetches the
+data afresh. It publishes nothing — leaving yesterday's channel up — when a
+source cannot be fetched, yields fewer entries than its `min_entries`, has more
+unreadable lines than a small margin, or, for a verbatim source, has lost the
+notice its terms require. The floor matters most: an error page served with a
+200 would otherwise publish an empty list, which every installation would read
+as nobody being bad any more.
+
+Spamhaus DROP is published byte for byte. Emerging Threats and Tor gain a
+comment header naming source and licence, which the engine's parser skips. The
+version is the run's UTC timestamp. Spamhaus also publishes an IPv6 DROP file;
+it is not a source yet.
+
+The first sources, fetched once on 2026-09-16 to test against: DROP 1,715
+ranges, Emerging Threats 588 addresses, Tor 1,349, every line parseable.
+
 Checked live against a throwaway instance trusting the test key, with a local
 channel and upstream: a listed address refused and named in its traffic row,
 IPv6 ranges enforced, a challenge list serving the CAPTCHA, the manual allowlist
 overruling a published block while the neighbouring address stays refused, a
 switched-off list changing nothing, and a tampered mirror with the channel down
-enforcing nothing and saying why.
+enforcing nothing and saying why. Then against the builder's real output: the
+engine verified the channel, loaded DROP and Tor (2,152 ranges after merging),
+refused an address inside a DROP /20 while passing the first address past it,
+challenged a Tor exit, and named both lists in their traffic rows.
 
