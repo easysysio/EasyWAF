@@ -1,6 +1,6 @@
 # Design note — the decoders the rules assume
 
-Status: **built, unreleased**, for 0.11.0 — see [roadmap.md](roadmap.md),
+Status: **released in 0.11.0**, 2026-09-16 — see [roadmap.md](roadmap.md),
 alongside [proxy-performance.md](proxy-performance.md). The two share a release
 because they change the same code path in opposite directions, which is argued
 at the end. *What was built* records where the implementation departs from the

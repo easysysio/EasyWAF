@@ -1,6 +1,6 @@
 # Design note — proxy performance: streaming bodies, cached rules
 
-Status: planned for **0.11.0** — see [roadmap.md](roadmap.md), after flow logs
+Status: **released in 0.11.0**, 2026-09-16 — see [roadmap.md](roadmap.md), after flow logs
 (0.9.0) and IP allow/block lists (0.10.0), and deliberately *before* load
 balancing (0.13.0). **§2 was built first, on 2026-09-14**, and **§1 on
 2026-09-15** — see *What was built* under each; §2 departs from this note on

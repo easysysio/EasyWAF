@@ -6,7 +6,7 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
-## [Unreleased]
+## [0.11.0] — 2026-09-16
 
 ### Added
 - Rules now see through the escapes the Core Rule Set assumes have been undone before matching — HTML entities (`&lt;`, `&#60;`, `&#x3c;`), JavaScript escapes (`\x3c`, `\u003c`, octal), CSS escapes (`\3c`) and IIS-style `%u003c` — so an attack hidden behind one of them is caught by the rule written to catch it rather than passing as ordinary text.
