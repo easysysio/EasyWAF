@@ -22,13 +22,15 @@ What does not, and why
                      the engine, so these are not needed rather than missing.
     RESPONSE_*       EasyWAF inspects requests.
     phase 3/4/5
-    t:htmlEntityDecode, t:jsDecode, t:cssDecode, t:base64Decode,
-    t:escapeSeqDecode, t:sqlHexDecode, t:cmdLine, t:replaceComments,
-    t:removeComments, t:removeWhitespace, t:normalizePath
-                     EasyWAF matches the raw and percent-decoded forms only.
+    t:base64Decode, t:escapeSeqDecode, t:sqlHexDecode, t:cmdLine,
+    t:replaceComments, t:removeComments, t:removeWhitespace,
+    t:normalizePath
                      A rule written against a decoded form is evadable by
                      using the encoding it was supposed to decode, so it is
-                     refused rather than shipped looking intact.
+                     refused rather than shipped looking intact. Since 0.11.0
+                     EasyWAF applies htmlEntityDecode, jsDecode, cssDecode,
+                     urlDecodeUni and removeNulls itself, so rules naming
+                     those convert.
     lookaround,      Rust's regex crate has no (?=) (?!) (?<=) (?<!),
     backreferences   no \\1, no (?>), no possessive quantifiers. There is no
                      rewrite that preserves meaning, so these are refused.
