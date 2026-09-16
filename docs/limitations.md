@@ -36,10 +36,14 @@ Current as of **0.9.1**.
   half of a WAF that the OWASP Core Rule Set reserves its 950xxx band for. Not
   scheduled, and it has a real cost: responses stream today, and inspecting them
   means buffering.
-- **Some rule transformations are not implemented.** Rules converted from the
-  Core Rule Set assume decoding steps — HTML entity, JavaScript and CSS decoding
-  — that EasyWAF does not yet perform, so an attack hidden behind one of those
-  encodings can pass a rule written to catch it. Scheduled for **0.11.0**.
+- **Some rule transformations are still not implemented.** HTML entity,
+  JavaScript, CSS and `%uHHHH` decoding arrived in **0.11.0**, so rules assuming
+  those are matched against decoded text. Rules assuming `cmdLine`,
+  `normalizePath`, `replaceComments`, `removeWhitespace` or `escapeSeqDecode`
+  are still refused by the converter rather than shipped broken, so an attack
+  hidden behind one of *those* encodings is not caught. `base64Decode` is
+  excluded deliberately: decoding base64 anywhere in a request would match
+  ordinary payloads — an image upload, a JWT, a session blob.
 - **Traffic history holds no headers or bodies** — method, host, path, country
   and verdict only, and the path without its query string. A new rule cannot be
   replayed against past traffic to see what it would have matched. The

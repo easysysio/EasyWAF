@@ -85,6 +85,9 @@ ZONE_OF = {
 SAFE_TRANSFORMS = {
     "none", "urldecode", "urldecodeuni", "utf8tounicode",
     "removenulls", "compresswhitespace", "trim", "length_none",
+    # 0.11.0: zone_text applies these in the chains CRS declares, so a rule
+    # naming them is matched against the text it was written against.
+    "htmlentitydecode", "jsdecode", "cssdecode",
 }
 CASE_TRANSFORMS = {"lowercase", "uppercase"}
 
@@ -549,9 +552,11 @@ SecRule ARGS "@rx foo" \
     "id:100002,phase:2,chain,msg:'Chained',severity:'ERROR'"
     SecRule REQUEST_HEADERS:User-Agent "@rx bar"
 
-# Refused: a transformation EasyWAF does not apply.
-SecRule ARGS "@rx <script" \
-    "id:100003,phase:2,t:htmlEntityDecode,msg:'XSS',severity:'CRITICAL'"
+# Refused: a transformation EasyWAF does not apply. This was t:htmlEntityDecode
+# until 0.11.0, when zone_text started applying that one — so the case now names
+# a transformation that is still refused, which is what it is here to check.
+SecRule ARGS "@rx /bin/sh" \
+    "id:100003,phase:2,t:cmdLine,msg:'RCE',severity:'CRITICAL'"
 
 # Refused: lookahead.
 SecRule ARGS "@rx (?!safe)attack" \
