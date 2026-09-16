@@ -6,7 +6,7 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
-## [Unreleased]
+## [0.12.0] — 2026-09-16
 
 ### Added
 - Published IP lists — hijacked netblocks, compromised hosts and Tor exit nodes — fetched from the signed channel and refreshed daily, each switched on separately under Security Policy → IP Lists and set to challenge or block; none does anything until switched on, a refused request names the list that refused it, and your own allow list overrules all of them.

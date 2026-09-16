@@ -1,9 +1,9 @@
 # Design note — IP allow/block lists, added from Traffic Monitor
 
-Status: the manual half **shipped in 0.10.0**. The published half is built for
-**0.12.0**, 2026-09-16 — engine, list builder and `github2repo.sh --lists`; see
-*What was built*. What remains is deploying the daily job on the repo server and
-cutting the release. See [roadmap.md](roadmap.md).
+Status: the manual half **shipped in 0.10.0**; the published half **shipped in
+0.12.0**, 2026-09-16 — engine, list builder and `github2repo.sh --lists`; see
+*What was built*. The daily job runs from cron on the repo server. See
+[roadmap.md](roadmap.md).
 
 An earlier version of this line said the published half was already built. A
 session did build one before 0.11.0, and it was dropped rather than merged, so
