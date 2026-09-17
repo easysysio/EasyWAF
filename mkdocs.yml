@@ -15,7 +15,7 @@ site_url: https://easywaf.easysys.io/
 site_description: A self-contained web application firewall and HTTP reverse proxy, in a single Rust binary.
 repo_url: https://github.com/easysysio/EasyWAF
 repo_name: easysysio/EasyWAF
-copyright: GPL-3.0 licensed · part of the EasySYS suite
+copyright: GPL-3.0-or-later licensed · part of the EasySYS suite
 
 # The design notes are working documents — unshipped plans, arguments with
 # earlier decisions — and they live in this directory because they belong

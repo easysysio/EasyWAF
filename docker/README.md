@@ -149,4 +149,4 @@ current in the repository, along with which release each is scheduled for.
 
 ---
 
-Licensed under GPL-3.0.
+Licensed under GPL-3.0-or-later.

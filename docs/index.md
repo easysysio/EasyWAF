@@ -306,7 +306,7 @@ EOF
 <svg class="es-cta-hex" viewBox="0 0 512 512" aria-hidden="true"><polygon points="86,256 171,109 341,109 426,256 341,403 171,403" fill="none" stroke="#ffffff" stroke-width="34" stroke-linejoin="round"></polygon></svg>
 <div class="es-cta-copy">
 <h2 class="es-h2">Start in DetectionOnly.</h2>
-<p class="es-cta-text">Put EasyWAF in front of one site, let a policy record what it would have blocked, and enforce it once the traffic agrees. Read <a href="limitations/">what EasyWAF does not do</a> first. GPL-3.0 licensed and developed in the open.</p>
+<p class="es-cta-text">Put EasyWAF in front of one site, let a policy record what it would have blocked, and enforce it once the traffic agrees. Read <a href="limitations/">what EasyWAF does not do</a> first. GPL-3.0-or-later licensed and developed in the open.</p>
 </div>
 <div class="es-cta-actions">
 <a class="es-btn es-btn--primary es-btn--lg" href="overview/">Read the docs</a>
@@ -347,7 +347,7 @@ EOF
 </div>
 <div class="es-wrap">
 <div class="es-footer-bottom">
-<span>© 2026 EasySYS · GPL-3.0 licensed</span>
+<span>© 2026 EasySYS · GPL-3.0-or-later licensed</span>
 <span class="es-mono">easywaf.easysys.io</span>
 </div>
 </div>

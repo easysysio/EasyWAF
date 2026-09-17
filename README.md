@@ -463,7 +463,7 @@ IP geolocation by [DB-IP](https://db-ip.com) — the DB-IP Lite country database
 
 ## License
 
-EasyWAF is licensed under the GNU General Public License, version 3 — see
-[LICENSE](LICENSE). The rule sets it downloads are published separately, under
+EasyWAF is licensed under the GNU General Public License, version 3 or (at
+your option) any later version — `GPL-3.0-or-later`. See [LICENSE](LICENSE). The rule sets it downloads are published separately, under
 their own terms. Documentation at
 [easywaf.easysys.io](https://easywaf.easysys.io/).
