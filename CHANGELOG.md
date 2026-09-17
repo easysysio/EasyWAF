@@ -6,6 +6,11 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
+## [Unreleased]
+
+### Added
+- The GNU GPL v3 licence text, which the project was already released under, is now in the repository and installed by the .deb and .rpm packages.
+
 ## [0.12.0] — 2026-09-16
 
 ### Added

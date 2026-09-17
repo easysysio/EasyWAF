@@ -105,6 +105,9 @@ maintainer = "Yariv Hakim"
 # packaging/deb/postinst for why.
 maintainer-scripts = "packaging/deb"
 copyright = "2025, Yariv Hakim"
+# Installed as /usr/share/doc/easywaf/copyright. GPL-3.0 requires its text to
+# travel with the binary; 0 lines are skipped from the top.
+license-file = ["LICENSE", "0"]
 section = "net"
 priority = "optional"
 depends = "libc6"
@@ -163,6 +166,8 @@ assets = [
     { source = "rules/SOURCE",               dest = "/opt/easywaf/rules/SOURCE",           mode = "644" },
     { source = "rules/sets.toml",            dest = "/opt/easywaf/rules/sets.toml",        mode = "644" },
     { source = "config.toml",                dest = "/opt/easywaf/config.toml",            mode = "644" },
+    # Where RPM-based distributions keep licence texts.
+    { source = "LICENSE",                    dest = "/usr/share/licenses/easywaf/LICENSE",  mode = "644" },
     { source = "packaging/easywaf.service",  dest = "/usr/lib/systemd/system/easywaf.service", mode = "644" },
     { source = "CHANGELOG.md",               dest = "/usr/share/doc/easywaf/CHANGELOG.md", mode = "644" },
 ]
