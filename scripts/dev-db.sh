@@ -76,7 +76,10 @@ for f in migrations/*.sql; do
     # stderr only: 001 runs `PRAGMA journal_mode=WAL`, and the sqlite3 CLI
     # prints the resulting mode to stdout. Capturing both would read that
     # perfectly normal output as a failure.
-    err=$(sqlite3 "$DB" < "$f" 2>&1 >/dev/null)
+    # -bail stops a file at its first error. Without it, sqlite3 carries on
+    # past a failed statement — which for a migration that rebuilds tables
+    # (027) would drop a table after failing to fill its replacement.
+    err=$(sqlite3 -bail "$DB" < "$f" 2>&1 >/dev/null)
 
     if [ -z "$err" ]; then
         # No error. For an ALTER this means the column was genuinely added;

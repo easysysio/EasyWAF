@@ -1,37 +1,43 @@
 // =========================================================
 // iplist.rs — EasyWAF
-// Addresses allowed past everything, and addresses refused
-// outright.
+// Addresses a policy lets past everything, and addresses it
+// refuses outright — its own, and those of the published
+// lists it has switched on.
 //
 // Consulted on every proxied request, before the pipeline
 // runs, so an allowed address skips the WAF, the country
-// rules and the challenge alike, and a blocked one is
-// refused whether or not the site has a policy at all.
+// rules and the challenge alike. Since 0.12.1 the lists
+// belong to a policy, like everything else that decides
+// what happens to a request, and a site with no policy has
+// none.
 //
-// Kept in memory for the same reason the compiled country
-// database and the trusted-proxy list are: a database round
-// trip on the request path would be absurd.
+// Kept in memory for the reason the compiled rules are: a
+// database round trip on the request path would be absurd.
+// Each policy's lists are rebuilt when the configuration
+// generation moves, which every write to them does, so no
+// handler has to remember to reload anything.
 //
 // The structure is a sorted array of ranges per family,
 // searched by bisection. A set of addresses would do for
 // what an operator types by hand, and cannot answer "is this
 // address inside any of these blocks" without expanding
 // them — a /12 is a million addresses standing in for one
-// row. Published lists (0.12.0) are ranges throughout, so
-// the structure is built for them now rather than replaced
-// then.
+// row. Published lists are ranges throughout, and are parsed
+// once and shared by every policy that uses them.
 // =========================================================
 
 use crate::forwarded::Cidr;
 use serde::Serialize;
 use sqlx::SqlitePool;
 use std::net::IpAddr;
-use std::sync::{OnceLock, RwLock};
+use std::collections::HashMap;
+use std::sync::{Arc, OnceLock, RwLock};
 
 // ─── ListType ────────────────────────────────────────────
 
-/// Which list an address is on. It is never on both: the table's `UNIQUE(ip)`
-/// is what makes that true rather than a convention anybody has to remember.
+/// Which of a policy's own lists an address is on. It is never on both: the
+/// table's `UNIQUE(policy_id, ip)` is what makes that true rather than a
+/// convention anybody has to remember.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ListType {
     /// Skips every check, including the challenge.
@@ -125,7 +131,7 @@ fn coalesce(mut ranges: Vec<(u128, u128)>) -> Vec<(u128, u128)> {
 
 // ─── Lists ───────────────────────────────────────────────
 
-/// Both lists, ready to be consulted.
+/// One policy's lists, ready to be consulted.
 ///
 /// A plain value with no global state, so the decision it makes can be tested
 /// exhaustively without a database and without tests racing each other — the
@@ -201,6 +207,7 @@ impl Lists {
     }
 
     /// How many ranges each list holds, after merging.
+    #[cfg(test)]
     pub fn counts(&self) -> (usize, usize) {
         (self.allow.len(), self.block.len())
     }
@@ -239,28 +246,47 @@ impl Response {
     }
 }
 
-/// One published list that is switched on, ready to be consulted.
-#[derive(Debug, Clone)]
-pub struct Feed {
-    pub id:       String,
-    pub name:     String,
-    pub response: Response,
-    ranges:       Ranges,
+/// A published list's contents, parsed once for the whole installation.
+#[derive(Debug)]
+pub struct FeedData {
+    pub id:   String,
+    pub name: String,
+    ranges:   Arc<Ranges>,
 }
 
-impl Feed {
-    pub fn new(id: &str, name: &str, response: Response, blocks: &[Cidr]) -> Self {
+impl FeedData {
+    pub fn new(id: &str, name: &str, blocks: &[Cidr]) -> Self {
         Self {
-            id:       id.to_string(),
-            name:     name.to_string(),
-            response,
-            ranges:   Ranges::build(blocks),
+            id:     id.to_string(),
+            name:   name.to_string(),
+            ranges: Arc::new(Ranges::build(blocks)),
         }
     }
 
     /// How many ranges it holds, after merging.
     pub fn len(&self) -> usize {
         self.ranges.len()
+    }
+}
+
+/// A published list as one policy uses it: the shared ranges, and the response
+/// that policy chose.
+#[derive(Debug, Clone)]
+pub struct Feed {
+    pub id:       String,
+    pub name:     String,
+    pub response: Response,
+    ranges:       Arc<Ranges>,
+}
+
+impl Feed {
+    fn using(data: &FeedData, response: Response) -> Self {
+        Self {
+            id:       data.id.clone(),
+            name:     data.name.clone(),
+            response,
+            ranges:   data.ranges.clone(),
+        }
     }
 }
 
@@ -306,68 +332,156 @@ pub fn parse_feed(text: &str) -> (Vec<Cidr>, usize) {
     (blocks, unreadable)
 }
 
-// ─── The loaded lists ────────────────────────────────────
+// ─── Building every policy's lists ───────────────────────
 
-static LISTS: OnceLock<RwLock<Lists>> = OnceLock::new();
+/// Every policy's lists, from stored rows and the published data in memory.
+///
+/// A plain function of its inputs, so what one policy sees can be tested
+/// against another without a database. Rows that cannot be read are returned
+/// rather than dropped: a row that silently does nothing is an address
+/// somebody believes is blocked and is not.
+fn build_policies(
+    rows:    &[(i64, String, String)],
+    choices: &[(i64, String, Response)],
+    data:    &HashMap<String, Arc<FeedData>>,
+) -> (HashMap<i64, Arc<Lists>>, Vec<String>) {
+    let mut grouped: HashMap<i64, Vec<(&str, &str)>> = HashMap::new();
+    for (policy, ip, list_type) in rows {
+        grouped.entry(*policy).or_default().push((ip.as_str(), list_type.as_str()));
+    }
+    let mut policies: HashMap<i64, Lists> = HashMap::new();
+    let mut bad = Vec::new();
+    for (policy, entries) in grouped {
+        let (lists, unusable) = Lists::build(entries);
+        bad.extend(unusable);
+        policies.insert(policy, lists);
+    }
 
-fn lists() -> &'static RwLock<Lists> {
-    LISTS.get_or_init(|| RwLock::new(Lists::default()))
+    // A choice for a list that is not loaded — never fetched, withdrawn, or
+    // refused verification — adds nothing. The IP Lists page says why.
+    for (policy, id, response) in choices {
+        if let Some(d) = data.get(id) {
+            policies.entry(*policy).or_default().feeds.push(Feed::using(d, *response));
+        }
+    }
+
+    (policies.into_iter().map(|(k, v)| (k, Arc::new(v))).collect(), bad)
 }
 
-/// Read both lists from the database into memory.
+// ─── The loaded lists ────────────────────────────────────
+
+/// Published list contents, replaced whole whenever the mirror is reloaded.
+/// The version tells the per-policy cache to rebuild, since a reload does not
+/// touch the database and so does not move the generation.
+struct Published {
+    version: u64,
+    lists:   HashMap<String, Arc<FeedData>>,
+}
+
+static PUBLISHED: OnceLock<RwLock<Published>> = OnceLock::new();
+
+fn published() -> &'static RwLock<Published> {
+    PUBLISHED.get_or_init(|| RwLock::new(Published { version: 0, lists: HashMap::new() }))
+}
+
+/// Replace the published lists held in memory.
+pub fn set_feed_data(lists: HashMap<String, Arc<FeedData>>) {
+    if let Ok(mut p) = published().write() {
+        p.version += 1;
+        p.lists = lists;
+    }
+}
+
+/// Every policy's lists, as of one generation and one set of published data.
+struct Loaded {
+    generation: u64,
+    published:  u64,
+    policies:   HashMap<i64, Arc<Lists>>,
+}
+
+static LOADED: OnceLock<RwLock<Option<Loaded>>> = OnceLock::new();
+
+fn loaded() -> &'static RwLock<Option<Loaded>> {
+    LOADED.get_or_init(|| RwLock::new(None))
+}
+
+/// One policy's lists, rebuilt first if the configuration has changed.
 ///
-/// Called at startup and whenever an entry is added or removed, so a change
-/// takes effect on the next request rather than the next restart.
-pub async fn reload(db: &SqlitePool) -> usize {
-    let rows = sqlx::query!(
-        r#"SELECT ip as "ip!", list_type as "list_type!" FROM ip_rules"#
+/// The generation is read **before** the rows, for the reason
+/// `WafModule::snapshot` gives: a write landing between the two files newer
+/// rows under an older number, which the next check corrects.
+async fn policy_lists(db: &SqlitePool, policy_id: i64) -> Option<Arc<Lists>> {
+    let generation = crate::modules::generation::current(db).await;
+    let version = published().read().map(|p| p.version).unwrap_or(0);
+
+    if let Ok(l) = loaded().read()
+        && let Some(l) = l.as_ref()
+        && l.generation == generation
+        && l.published == version
+    {
+        return l.policies.get(&policy_id).cloned();
+    }
+
+    let rows: Vec<(i64, String, String)> = sqlx::query!(
+        r#"SELECT policy_id as "policy_id!", ip as "ip!", list_type as "list_type!"
+           FROM ip_rules"#
     )
     .fetch_all(db)
     .await
-    .unwrap_or_default();
+    .unwrap_or_default()
+    .into_iter()
+    .map(|r| (r.policy_id, r.ip, r.list_type))
+    .collect();
 
-    let (built, bad) = Lists::build(
-        rows.iter().map(|r| (r.ip.as_str(), r.list_type.as_str()))
-    );
+    let choices: Vec<(i64, String, Response)> = sqlx::query!(
+        r#"SELECT policy_id as "policy_id!", id as "id!", response as "response!"
+           FROM ip_list_feeds WHERE enabled = 1"#
+    )
+    .fetch_all(db)
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    // The column's CHECK makes anything else unreachable. Were it reached,
+    // challenge is the answer that cannot lock anybody out.
+    .map(|r| (r.policy_id, r.id, Response::parse(&r.response).unwrap_or(Response::Challenge)))
+    .collect();
 
+    let data = published().read().map(|p| p.lists.clone()).unwrap_or_default();
+    let (policies, bad) = build_policies(&rows, &choices, &data);
     if !bad.is_empty() {
         tracing::warn!("Ignoring unusable IP list entries: {}", bad.join(", "));
     }
+    let wanted = policies.get(&policy_id).cloned();
 
-    let (allow, block) = built.counts();
-    let total = allow + block;
-    // Only the manual half. Published lists load on their own schedule and
-    // must not vanish because somebody added an address by hand.
-    if let Ok(mut w) = lists().write() {
-        w.allow = built.allow;
-        w.block = built.block;
+    // Kept unless something newer is already there — a slow rebuild that lost
+    // a race with a faster one must not put older lists back.
+    if let Ok(mut l) = loaded().write() {
+        let newer = l.as_ref().is_none_or(|cur| {
+            (generation, version) >= (cur.generation, cur.published)
+        });
+        if newer {
+            *l = Some(Loaded { generation, published: version, policies });
+        }
     }
-    tracing::info!(allow, block, "IP lists loaded");
-    total
+    wanted
 }
 
-/// Which list this address is on, if any.
+/// Where this address stands under a policy, its own lists and its published
+/// ones considered.
 ///
-/// A poisoned lock answers `None`: neither list applies, so the request goes on
-/// to the pipeline and is inspected as it would have been. Failing the other
-/// way would either refuse every request or wave every request past the WAF,
-/// and both are worse than losing the lists until the next reload.
-pub fn lookup(ip: IpAddr) -> Option<ListType> {
-    lists().read().ok().and_then(|l| l.lookup(ip))
+/// A poisoned lock or a database in trouble answers `None`: no list applies,
+/// so the request goes on to the pipeline and is inspected as it would have
+/// been. Failing the other way would either refuse every request or wave every
+/// request past the WAF, and both are worse than losing the lists for a moment.
+pub async fn check(db: &SqlitePool, policy_id: i64, ip: IpAddr) -> Option<Listed> {
+    policy_lists(db, policy_id).await.and_then(|l| l.check(ip))
 }
 
-/// Replace the published lists that are switched on.
-pub fn set_feeds(feeds: Vec<Feed>) {
-    if let Ok(mut w) = lists().write() {
-        w.feeds = feeds;
-    }
-}
-
-/// Where this address stands, every list considered.
-///
-/// A poisoned lock answers `None`, for the reason `lookup` gives.
-pub fn check(ip: IpAddr) -> Option<Listed> {
-    lists().read().ok().and_then(|l| l.check(ip))
+/// Which of a policy's own lists this address is on, for the Traffic Monitor's
+/// badge. Published lists are not a badge: they are not something the row can
+/// add the address to or take it off.
+pub async fn lookup(db: &SqlitePool, policy_id: i64, ip: IpAddr) -> Option<ListType> {
+    policy_lists(db, policy_id).await.and_then(|l| l.lookup(ip))
 }
 
 #[cfg(test)]
@@ -490,7 +604,7 @@ mod tests {
             .iter()
             .map(|(id, response, blocks)| {
                 let cidrs: Vec<Cidr> = blocks.iter().map(|b| Cidr::parse(b).unwrap()).collect();
-                Feed::new(id, &format!("{id} list"), *response, &cidrs)
+                Feed::using(&FeedData::new(id, &format!("{id} list"), &cidrs), *response)
             })
             .collect();
         l
@@ -575,7 +689,10 @@ mod tests {
         let (blocks, unreadable) = parse_feed(text);
         assert_eq!(blocks.len(), 3);
         assert_eq!(unreadable, 0);
-        let l = Lists { feeds: vec![Feed::new("drop", "DROP", Response::Block, &blocks)], ..Lists::default() };
+        let l = Lists {
+            feeds: vec![Feed::using(&FeedData::new("drop", "DROP", &blocks), Response::Block)],
+            ..Lists::default()
+        };
         assert!(l.check(ip("1.10.20.1")).is_some());
         assert!(l.check(ip("2001:db8::1")).is_some());
         assert!(l.check(ip("1.10.32.0")).is_none(), "the /20 ends at 1.10.31.255");
@@ -588,4 +705,55 @@ mod tests {
         assert_eq!(blocks.len(), 2);
         assert_eq!(unreadable, 2, "a format change must be visible, not silent");
     }
+
+    fn data(id: &str, blocks: &[&str]) -> (String, Arc<FeedData>) {
+        let cidrs: Vec<Cidr> = blocks.iter().map(|b| Cidr::parse(b).unwrap()).collect();
+        (id.to_string(), Arc::new(FeedData::new(id, &format!("{id} list"), &cidrs)))
+    }
+
+    #[test]
+    fn each_policy_sees_only_its_own_lists() {
+        // The public websites block an address and use DROP; the Nextcloud
+        // policy allows that address and uses nothing published.
+        let rows = vec![
+            (1, "203.0.113.9".to_string(), "block".to_string()),
+            (2, "203.0.113.9".to_string(), "allow".to_string()),
+        ];
+        let choices = vec![(1, "drop".to_string(), Response::Block)];
+        let feeds: HashMap<_, _> = [data("drop", &["198.51.100.0/24"])].into();
+
+        let (policies, bad) = build_policies(&rows, &choices, &feeds);
+        assert!(bad.is_empty());
+        let websites = &policies[&1];
+        let nextcloud = &policies[&2];
+
+        assert_eq!(websites.check(ip("203.0.113.9")), Some(Listed::Blocked));
+        assert_eq!(nextcloud.check(ip("203.0.113.9")), Some(Listed::Allowed));
+        assert_eq!(websites.check(ip("198.51.100.1")), published("drop", Response::Block));
+        assert_eq!(nextcloud.check(ip("198.51.100.1")), None,
+                   "a list one policy switched on reached another");
+        assert!(!policies.contains_key(&3), "a policy with nothing listed has nothing");
+    }
+
+    #[test]
+    fn two_policies_share_a_list_with_different_responses() {
+        let choices = vec![
+            (1, "tor".to_string(), Response::Block),
+            (2, "tor".to_string(), Response::Challenge),
+        ];
+        let feeds: HashMap<_, _> = [data("tor", &["192.0.2.7"])].into();
+        let (policies, _) = build_policies(&[], &choices, &feeds);
+        assert_eq!(policies[&1].check(ip("192.0.2.7")), published("tor", Response::Block));
+        assert_eq!(policies[&2].check(ip("192.0.2.7")), published("tor", Response::Challenge));
+        // Parsed once: both policies hold the same ranges, not two copies.
+        assert!(Arc::ptr_eq(&policies[&1].feeds[0].ranges, &policies[&2].feeds[0].ranges));
+    }
+
+    #[test]
+    fn a_switched_on_list_that_is_not_loaded_adds_nothing() {
+        let choices = vec![(1, "withdrawn".to_string(), Response::Block)];
+        let (policies, _) = build_policies(&[], &choices, &HashMap::new());
+        assert!(policies.get(&1).is_none_or(|l| l.check(ip("192.0.2.1")).is_none()));
+    }
 }
+

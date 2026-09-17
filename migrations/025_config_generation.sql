@@ -14,6 +14,10 @@
 --
 -- Idempotent throughout, and applied on every start rather than once, so a
 -- trigger dropped by hand comes back instead of quietly disabling invalidation.
+--
+-- Exclusions moved to policy_rule_exclusions in 027, and their triggers — with
+-- those for the IP lists — live in 028. The triggers on the old table went with
+-- it when 027 dropped it.
 
 CREATE TABLE IF NOT EXISTS config_generation (
     id    INTEGER PRIMARY KEY CHECK (id = 1),
@@ -38,15 +42,6 @@ CREATE TRIGGER IF NOT EXISTS gen_policies_update AFTER UPDATE ON policies
 BEGIN UPDATE config_generation SET value = value + 1 WHERE id = 1; END;
 
 CREATE TRIGGER IF NOT EXISTS gen_policies_delete AFTER DELETE ON policies
-BEGIN UPDATE config_generation SET value = value + 1 WHERE id = 1; END;
-
-CREATE TRIGGER IF NOT EXISTS gen_site_rule_exclusions_insert AFTER INSERT ON site_rule_exclusions
-BEGIN UPDATE config_generation SET value = value + 1 WHERE id = 1; END;
-
-CREATE TRIGGER IF NOT EXISTS gen_site_rule_exclusions_update AFTER UPDATE ON site_rule_exclusions
-BEGIN UPDATE config_generation SET value = value + 1 WHERE id = 1; END;
-
-CREATE TRIGGER IF NOT EXISTS gen_site_rule_exclusions_delete AFTER DELETE ON site_rule_exclusions
 BEGIN UPDATE config_generation SET value = value + 1 WHERE id = 1; END;
 
 CREATE TRIGGER IF NOT EXISTS gen_sites_insert AFTER INSERT ON sites

@@ -162,7 +162,7 @@ Get started
 <div class="es-card ew-feature">
 <div class="es-icon es-icon--sm"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 5h18l-7 8v6l-4-2v-4L3 5z"></path></svg></div>
 <h3 class="ew-feature-title">One-click exclusions</h3>
-<p class="ew-feature-text">Turn a false positive into an exclusion from the traffic row that showed it, narrowed to a site, a path or a single client.</p>
+<p class="ew-feature-text">Turn a false positive into an exclusion from the traffic row that showed it, on the site's policy, narrowed to a path or a single client.</p>
 </div>
 <div class="es-card ew-feature">
 <div class="es-icon es-icon--sm"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l8 3v6c0 5-3.5 8.5-8 9-4.5-.5-8-4-8-9V6l8-3z"></path><path d="M12 8v5M9.5 10.5L12 13l2.5-2.5"></path></svg></div>

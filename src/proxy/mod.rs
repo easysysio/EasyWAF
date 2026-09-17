@@ -195,6 +195,9 @@ struct SiteRow {
     x_frame_value:  String,
     x_content_type: bool,
     xss_protection: bool,
+    /// The site's policy and its mode, which decide whether its IP lists apply.
+    policy_id:      Option<i64>,
+    rule_engine:    Option<String>,
 }
 
 // ─── start ───────────────────────────────────────────────
@@ -837,18 +840,21 @@ async fn handle_request(
     // A published list that blocks is refused here too, and the row names the
     // list: a refusal nobody can explain is the one people switch the whole
     // feature off over.
-    let listed  = crate::iplist::check(client_ip);
+    //
+    // The lists are the site's policy's, and follow its mode: Off ignores them
+    // with the rest of the policy, DetectionOnly records what they would have
+    // done, and anything else enforces them. A site with no policy has none.
+    let listed = match (site.policy_id, site.rule_engine.as_deref()) {
+        (Some(policy), Some(mode)) if mode != "Off" => {
+            crate::iplist::check(&state.db, policy, client_ip).await
+        }
+        _ => None,
+    };
+    let detection_only = site.rule_engine.as_deref() == Some("DetectionOnly");
     let site_id = site.id;
 
-    let refusal = match &listed {
-        Some(crate::iplist::Listed::Blocked) => {
-            Some("Client address is on the block list".to_string())
-        }
-        Some(crate::iplist::Listed::Published(hit))
-            if hit.response == crate::iplist::Response::Block =>
-        {
-            Some(format!("Client address is on the published list \"{}\"", hit.name))
-        }
+    let refusal = match list_verdict(&listed) {
+        Some((why, crate::modules::Detection::WouldBlock)) if !detection_only => Some(why),
         _ => None,
     };
 
@@ -965,13 +971,25 @@ async fn handle_request(
     // they skip would also drop what a DetectionOnly policy found on it.
     let verdict = match (verdict, &listed) {
         (PipelineVerdict::Allow { alerts, findings }, Some(crate::iplist::Listed::Published(hit)))
-            if hit.response == crate::iplist::Response::Challenge && !cleared =>
+            if hit.response == crate::iplist::Response::Challenge && !cleared && !detection_only =>
         {
             PipelineVerdict::Challenge {
                 reason: format!("Client address is on the published list \"{}\"", hit.name),
                 alerts,
                 findings,
             }
+        }
+        (verdict, _) => verdict,
+    };
+
+    // In DetectionOnly a list refuses and challenges nobody. It records what it
+    // would have done, beside whatever the rules found, the way the rules
+    // record theirs — so a policy can be trialled with its lists as well.
+    let verdict = match (verdict, list_verdict(&listed).filter(|_| detection_only)) {
+        (PipelineVerdict::Allow { mut alerts, mut findings }, Some((why, would))) => {
+            findings.detection = Some(stronger(findings.detection, would));
+            alerts.push(crate::modules::Alert { module: "iplist", reason: why });
+            PipelineVerdict::Allow { alerts, findings }
         }
         (verdict, _) => verdict,
     };
@@ -1268,6 +1286,50 @@ async fn handle_request(
     }
 }
 
+// ─── IP list verdicts ────────────────────────────────────
+
+/// What a list says about a request: the reason a traffic row gives, and what
+/// enforcing it means. `None` for an address on no list, or on the allowlist,
+/// which is not a verdict but a pass.
+fn list_verdict(
+    listed: &Option<crate::iplist::Listed>,
+) -> Option<(String, crate::modules::Detection)> {
+    use crate::iplist::{Listed, Response};
+    use crate::modules::Detection;
+    match listed {
+        Some(Listed::Blocked) => Some((
+            "Client address is on the block list".to_string(),
+            Detection::WouldBlock,
+        )),
+        Some(Listed::Published(hit)) => Some((
+            format!("Client address is on the published list \"{}\"", hit.name),
+            match hit.response {
+                Response::Block     => Detection::WouldBlock,
+                Response::Challenge => Detection::WouldChallenge,
+            },
+        )),
+        _ => None,
+    }
+}
+
+/// The more serious of two detections: a list that would block outranks rules
+/// that would only have challenged, and the other way round.
+fn stronger(
+    have: Option<crate::modules::Detection>,
+    list: crate::modules::Detection,
+) -> crate::modules::Detection {
+    use crate::modules::Detection;
+    let rank = |d: Detection| match d {
+        Detection::Observed       => 0,
+        Detection::WouldChallenge => 1,
+        Detection::WouldBlock     => 2,
+    };
+    match have {
+        Some(h) if rank(h) >= rank(list) => h,
+        _ => list,
+    }
+}
+
 // ─── lookup_site ─────────────────────────────────────────
 
 /// Find an enabled site by hostname — its `server_name`, or any of its
@@ -1282,7 +1344,10 @@ async fn lookup_site(db: &SqlitePool, host: &str) -> Option<SiteRow> {
                 x_frame        as \"x_frame!: bool\",
                 x_frame_value  as \"x_frame_value!\",
                 x_content_type as \"x_content_type!: bool\",
-                xss_protection as \"xss_protection!: bool\"
+                xss_protection as \"xss_protection!: bool\",
+                waf_policy_id,
+                (SELECT rule_engine FROM policies p WHERE p.id = sites.waf_policy_id)
+                               as \"rule_engine?: String\"
          FROM sites
          WHERE enabled = 1
            AND (server_name = ?1
@@ -1306,6 +1371,8 @@ async fn lookup_site(db: &SqlitePool, host: &str) -> Option<SiteRow> {
         x_frame_value:  r.x_frame_value,
         x_content_type: r.x_content_type,
         xss_protection: r.xss_protection,
+        policy_id:      r.waf_policy_id,
+        rule_engine:    r.rule_engine,
     })
 }
 
@@ -1695,6 +1762,38 @@ mod tests {
         assert!(!is_upgrade(&hm(&[
             ("connection", "upgrade-insecure-requests"), ("upgrade", "websocket"),
         ])));
+    }
+}
+
+#[cfg(test)]
+mod list_verdict_tests {
+    use super::*;
+    use crate::iplist::{FeedHit, Listed, Response};
+    use crate::modules::Detection;
+
+    fn hit(response: Response) -> Option<Listed> {
+        Some(Listed::Published(FeedHit { id: "x".into(), name: "X".into(), response }))
+    }
+
+    #[test]
+    fn each_list_state_maps_to_what_enforcing_it_means() {
+        assert_eq!(list_verdict(&Some(Listed::Blocked)).unwrap().1, Detection::WouldBlock);
+        assert_eq!(list_verdict(&hit(Response::Block)).unwrap().1, Detection::WouldBlock);
+        assert_eq!(list_verdict(&hit(Response::Challenge)).unwrap().1, Detection::WouldChallenge);
+        assert!(list_verdict(&Some(Listed::Allowed)).is_none(), "allowing is a pass, not a verdict");
+        assert!(list_verdict(&None).is_none());
+        assert!(list_verdict(&hit(Response::Block)).unwrap().0.contains("\"X\""),
+                "the reason names the list");
+    }
+
+    #[test]
+    fn the_stronger_detection_is_kept() {
+        use Detection::*;
+        assert_eq!(stronger(None, WouldChallenge), WouldChallenge);
+        assert_eq!(stronger(Some(Observed), WouldChallenge), WouldChallenge);
+        assert_eq!(stronger(Some(WouldBlock), WouldChallenge), WouldBlock,
+                   "a list must not soften what the rules found");
+        assert_eq!(stronger(Some(WouldChallenge), WouldBlock), WouldBlock);
     }
 }
 

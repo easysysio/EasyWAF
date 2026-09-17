@@ -1635,28 +1635,30 @@ pub async fn get_rule_edit_global(
     ctx.insert("cloned_from",  &r.cloned_from_external_id);
     ctx.insert("cloned_ver",   &r.cloned_from_version);
 
-    // Sites on which this rule does not actually run.
+    // Where this rule does not actually run.
     //
-    // A rule that is enabled everywhere and yet silent on one host is the kind
-    // of thing found during an incident rather than before one, so the page
-    // that shows the rule is where it has to be said. Matched the same way the
-    // engine matches: by catalogue number when the rule has one, by row id
-    // when it does not.
+    // A rule that is enabled and yet silent for some paths or clients is the
+    // kind of thing found during an incident rather than before one, so the
+    // page that shows the rule is where it has to be said. Matched the same
+    // way the engine matches: by catalogue number when the rule has one, by
+    // row id when it does not.
     let excluded_on = sqlx::query!(
-        "SELECT s.server_name as \"server_name!\", e.path_prefix as \"path_prefix!\"
-         FROM   site_rule_exclusions e
-         JOIN   sites s ON s.id = e.site_id
-         WHERE  s.waf_policy_id = ?
+        "SELECT e.path_prefix as \"path_prefix!\", e.client_cidr
+         FROM   policy_rule_exclusions e
+         WHERE  e.policy_id = ?
            AND  (   (e.external_id IS NOT NULL AND e.external_id = ?)
                  OR (e.rule_id     IS NOT NULL AND e.rule_id     = ?))
-         ORDER  BY s.server_name",
+         ORDER  BY e.path_prefix, e.client_cidr",
         r.policy_id, r.external_id, id
     )
     .fetch_all(&state.db)
     .await?
     .into_iter()
     .map(|row| {
-        serde_json::json!({ "site": row.server_name, "prefix": row.path_prefix })
+        serde_json::json!({
+            "prefix": row.path_prefix,
+            "client": row.client_cidr.unwrap_or_default(),
+        })
     })
     .collect::<Vec<_>>();
     ctx.insert("excluded_on", &excluded_on);

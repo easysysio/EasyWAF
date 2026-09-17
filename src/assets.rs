@@ -165,6 +165,9 @@ mod tests {
                 // Whether this client is already on a list. A row that is
                 // shows a badge; one that is not offers to put it on one.
                 "listed": listed,
+                // The site's policy, which the list and exclusion buttons
+                // act on and whose reach they state.
+                "policy": "websites", "policy_sites": 3,
                 // One rule already excluded for this client and one not, so
                 // both the marker and the offer to exclude are rendered.
                 "matched_rules": [
@@ -185,6 +188,14 @@ mod tests {
             // the branch that offers to add one.
             event("/on-block",   false, None, Some("block")),
             event("/on-allow",   false, None, Some("allow")),
+            // A site with no policy: no lists, nothing to exclude, so neither
+            // offer may be rendered for it.
+            {
+                let mut e = event("/no-policy", false, None, None);
+                e["policy"] = serde_json::Value::Null;
+                e["policy_sites"] = serde_json::json!(0);
+                e
+            },
         ]);
         ctx.insert("stats", &serde_json::json!({
             "total": 6, "blocked": 1, "allowed": 5, "avg_response": 4 }));
@@ -219,9 +230,9 @@ mod tests {
         // A client already on a list says so; one that is not is offered both
         // ways. Asserted because a row that renders but shows neither would
         // pass every check above while the feature was invisible.
-        assert!(html.contains("Refused before any rule runs, on every site"),
+        assert!(html.contains("refused before any rule runs, on every site using it"),
                 "a blocklisted client lost its badge");
-        assert!(html.contains("Skips the WAF, the country rules and the challenge, on every site"),
+        assert!(html.contains("skips the WAF, the country rules and the challenge, on every site using it"),
                 "an allowlisted client lost its badge");
         assert!(html.contains("/iplists/add"),
                 "an unlisted client is not offered block or allow");
@@ -311,9 +322,13 @@ mod tests {
         for (k, v) in [("username", "t"), ("title", "IP Lists"), ("url", "/iplists"),
                        ("search", ""), ("result", ""), ("msg", ""),
                        ("feeds_error", ""), ("feeds_fetched", "2026-09-16 06:00"),
-                       ("feeds_fetch_error", "channel unreachable")] {
+                       ("feeds_fetch_error", "channel unreachable"),
+                       ("sel_policy", "websites"),
+                       ("reach", "every site using websites (2 sites)")] {
             ctx.insert(k, v);
         }
+        ctx.insert("policies", &vec!["nextcloud", "websites"]);
+        ctx.insert("sites", &vec!["a.example", "b.example"]);
         ctx.insert("entries", &Vec::<String>::new());
         ctx.insert("allowed", &0);
         ctx.insert("blocked", &0);
@@ -348,6 +363,8 @@ mod tests {
         assert!(html.contains("3 unreadable"), "unreadable lines are not counted");
         assert!(html.contains("The last update failed"), "a failed update is not shown");
         assert!(html.contains("Update now"), "no way to fetch the lists on demand");
+        assert!(html.contains("every site using websites (2 sites)"),
+                "the page does not say which sites the policy's lists reach");
 
         // And with nothing mirrored yet, which is every new installation.
         ctx.insert("feeds", &Vec::<String>::new());
@@ -356,6 +373,14 @@ mod tests {
         let html = tera.render("iplists.html", &ctx).expect("renders with no lists");
         assert!(html.contains("nothing has been fetched"), "the empty state does not say why");
         assert!(html.contains("turned off under"), "a disabled channel check is not explained");
+
+        // And an installation with no policy yet, where there is nothing a
+        // list could belong to.
+        ctx.insert("sel_policy", "");
+        ctx.insert("policies", &Vec::<String>::new());
+        let html = tera.render("iplists.html", &ctx).expect("renders with no policies");
+        assert!(html.contains("Create a policy"), "no way forward with no policies");
+        assert!(!html.contains("Published Lists"), "lists shown with no policy to own them");
     }
 
     #[test]
@@ -371,8 +396,11 @@ mod tests {
             ctx.insert(k, v);
         }
         ctx.insert("policies", &vec!["prod", "staging"]);
+        ctx.insert("candidates", &Vec::<String>::new());
+        ctx.insert("sites", &Vec::<String>::new());
+        ctx.insert("reach", "");
         ctx.insert("exclusions", &vec![serde_json::json!({
-            "id": 1, "site_name": "cloud.example", "policy_name": "prod",
+            "id": 1, "policy_name": "prod",
             "rule_label": "Scanner probe", "external_id": 913015,
             "path_prefix": "", "client_cidr": "203.0.113.0/24",
             "note": "office range", "created_at": "2026-09-08 10:00:00" })]);
@@ -384,13 +412,27 @@ mod tests {
         assert!(html.contains("prod"), "the policy column is missing");
         assert!(html.contains("exclusions") && html.contains("remove"),
                 "no way to un-exclude");
-        assert!(html.contains("Scanner probe") && html.contains("cloud.example"),
+        assert!(html.contains("Scanner probe") && html.contains("office range"),
                 "the exclusion row did not render");
 
         // The menu entry that makes the page findable at all — it was reachable
         // only from an unlabelled icon before.
         assert!(html.contains("Rule Exclusions</a>"),
                 "the Security Policy menu has no Rule Exclusions entry");
+
+        // One policy selected: where exclusions are added, and where the page
+        // must say how many sites an exclusion reaches before anyone adds one.
+        ctx.insert("sel_policy", "websites");
+        ctx.insert("sites", &vec!["a.example", "b.example"]);
+        ctx.insert("reach", "every site using websites (2 sites)");
+        ctx.insert("candidates", &vec![serde_json::json!({
+            "value": "e:913015", "label": "913015 — Scanner probe", "set": "owasp-scanners" })]);
+        let selected = tera.render("policy_exclusions.html", &ctx).expect("renders");
+        assert!(selected.contains("Exclude this rule"), "no way to add an exclusion");
+        assert!(selected.contains("every site using websites (2 sites)"),
+                "the reach of an exclusion is not stated");
+        assert!(!selected.contains("<th>Policy</th>"),
+                "the policy column is repeated for a single policy");
 
         // And the empty state, so an installation with none says so.
         ctx.insert("exclusions", &Vec::<String>::new());

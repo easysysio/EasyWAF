@@ -103,17 +103,31 @@ When a rule blocks traffic that should have been allowed, you have three answers
 from narrowest to widest.
 
 **Exclude it for the client that was blocked.** From the Traffic Monitor row that
-shows the block, one click excludes that rule for that site — optionally narrowed
-to a path prefix, or to the single address or CIDR block that was refused. The
-rule goes on protecting everyone else.
+shows the block, one click excludes that rule for the address that was refused.
+Under **Security Policy → Rule Exclusions** an exclusion can instead be narrowed
+to a path prefix, or to a CIDR block. The rule goes on protecting everyone else.
 
-**Disable the rule for the policy.** Wider: the rule stops running everywhere that
-policy is used. The disabled state survives rule updates.
+**Disable the rule for the policy.** Wider: the rule stops running for every
+request on every site using the policy. The disabled state survives rule
+updates.
 
 **Clone and tune it.** Where the rule is right in principle and wrong in detail.
 
+**An exclusion belongs to the policy**, like its rules, country rules and
+[IP lists](ip-lists.md), so it applies on every site using that policy. Sites
+that face the same traffic share a policy and tend to trip the same false
+positives; a site that needs exceptions the others should not have needs a
+policy of its own. Every place an exclusion is made says how many sites it
+reaches before you confirm it.
+
 Every rule that is not running anywhere — disabled or excluded — is listed on one
 page, so a temporary exclusion cannot quietly become permanent.
+
+Until 0.12.1 an exclusion belonged to a site. The upgrade moves each one to its
+site's policy, with a note naming the site. One made for a site that shares its
+policy now covers all of that policy's sites, and one on a site with no policy is
+dropped, since no rules ran there; the start-up log names every exclusion in
+either case.
 
 Those three all assume the rule is wrong. When it is the *caller* that is fine —
 a monitoring probe, a partner's integration, your own office — the answer is an

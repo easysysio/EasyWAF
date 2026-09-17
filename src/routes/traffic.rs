@@ -55,11 +55,17 @@ pub struct TrafficEvent {
     /// "would_challenge" or "would_block". None on clean traffic and on rows
     /// written before 0.6.11.
     pub detection:    Option<String>,
-    /// "allow", "block", or None — whether this client is already on a list,
-    /// so the row shows it rather than offering to add it twice. Read from the
-    /// in-memory matcher, which is a bisection over sorted ranges, so it costs
-    /// nothing per row and needs no query.
+    /// "allow", "block", or None — whether this client is already on one of
+    /// the site's policy's lists, so the row shows it rather than offering to
+    /// add it twice. Read from the in-memory matcher, so it costs a bisection
+    /// per row rather than a query.
     pub listed:       Option<String>,
+    /// The site's policy now, and how many sites use it. An IP list entry or
+    /// an exclusion made from this row lands on that policy, so the buttons
+    /// say how far it reaches. `None` for a site with no policy, which offers
+    /// neither.
+    pub policy:       Option<String>,
+    pub policy_sites: i64,
 }
 
 /// One rule that produced a verdict, as the Traffic Monitor shows it.
@@ -114,7 +120,9 @@ struct EventRow {
     path:         Option<String>,
     status_code:  Option<i64>,
     response_ms:  Option<i64>,
-    site_id:      Option<i64>,
+    policy_id:    Option<i64>,
+    policy_name:  Option<String>,
+    policy_sites: i64,
     blocked:      i64,             // NOT NULL DEFAULT 0
     block_reason: Option<String>,
     detection:    Option<String>,
@@ -196,14 +204,14 @@ async fn fetch_sites(state: &AppState) -> Result<Vec<SiteOption>> {
 // ─── fetch_events ────────────────────────────────────────
 
 /// Load up to 1000 most-recent events matching the filter.
-/// One site's exclusions, in the form the coverage check needs.
-struct SiteExclusion {
+/// One policy's exclusions, in the form the coverage check needs.
+struct PolicyExclusion {
     external_id: Option<i64>,
     path_prefix: String,
     client:      Option<crate::forwarded::Cidr>,
 }
 
-/// Every exclusion, keyed by site, so the page can mark rules that are
+/// Every exclusion, keyed by policy, so the page can mark rules that are
 /// already excluded rather than offering to exclude them twice.
 ///
 /// Loaded once for the page rather than per row: a thousand rows would
@@ -211,18 +219,18 @@ struct SiteExclusion {
 /// exclusions.
 async fn fetch_exclusions(
     state: &AppState,
-) -> Result<std::collections::HashMap<i64, Vec<SiteExclusion>>> {
+) -> Result<std::collections::HashMap<i64, Vec<PolicyExclusion>>> {
     let rows = sqlx::query!(
-        r#"SELECT site_id as "site_id!", external_id,
+        r#"SELECT policy_id as "policy_id!", external_id,
                   path_prefix as "path_prefix!", client_cidr
-           FROM   site_rule_exclusions"#
+           FROM   policy_rule_exclusions"#
     )
     .fetch_all(&state.db)
     .await?;
 
-    let mut out: std::collections::HashMap<i64, Vec<SiteExclusion>> = Default::default();
+    let mut out: std::collections::HashMap<i64, Vec<PolicyExclusion>> = Default::default();
     for r in rows {
-        out.entry(r.site_id).or_default().push(SiteExclusion {
+        out.entry(r.policy_id).or_default().push(PolicyExclusion {
             external_id: r.external_id,
             path_prefix: r.path_prefix,
             client: r.client_cidr.as_deref()
@@ -233,13 +241,13 @@ async fn fetch_exclusions(
     Ok(out)
 }
 
-/// Does this site already exclude `rule` for this request?
+/// Does this policy already exclude `rule` for this request?
 ///
 /// Deliberately the same three conditions the engine applies in
 /// `waf::Exclusion::silences` — rule, path, client — so the page cannot claim
 /// a rule is excluded when the engine would still run it.
 fn already_excluded(
-    excls: Option<&Vec<SiteExclusion>>,
+    excls: Option<&Vec<PolicyExclusion>>,
     rule_id: Option<i64>,
     path: &str,
     client_ip: &str,
@@ -259,7 +267,7 @@ fn already_excluded(
 
 async fn fetch_events(
     state:   &AppState,
-    exclusions: &std::collections::HashMap<i64, Vec<SiteExclusion>>,
+    exclusions: &std::collections::HashMap<i64, Vec<PolicyExclusion>>,
     cutoff:  &str,
     site:    &str,
     blocked: &str,
@@ -271,10 +279,15 @@ async fn fetch_events(
                 COALESCE(s.name, '[deleted]') AS site_name,
                 te.client_ip, te.method, te.host, te.path,
                 te.status_code, te.response_ms,
-                te.site_id, te.blocked, te.block_reason, te.country,
+                s.waf_policy_id AS policy_id,
+                p.name          AS policy_name,
+                (SELECT COUNT(*) FROM sites o
+                 WHERE o.waf_policy_id = s.waf_policy_id) AS policy_sites,
+                te.blocked, te.block_reason, te.country,
                 te.matched_rules, te.waf_score, te.detection
          FROM traffic_events te
          LEFT JOIN sites s ON s.id = te.site_id
+         LEFT JOIN policies p ON p.id = s.waf_policy_id
          WHERE te.timestamp >= ",
     );
     qb.push_bind(cutoff);
@@ -287,12 +300,19 @@ async fn fetch_events(
 
     let rows: Vec<EventRow> = qb.build_query_as().fetch_all(&state.db).await?;
 
-    Ok(rows.into_iter().map(|r| {
+    let mut out = Vec::with_capacity(rows.len());
+    for r in rows {
       // Taken before the struct consumes them; both are needed to decide
       // whether an exclusion already covers each rule below.
       let path = r.path.clone().unwrap_or_default();
       let ip   = r.client_ip.clone().unwrap_or_default();
-      TrafficEvent {
+      let listed = match (r.policy_id, ip.parse().ok()) {
+          (Some(policy), Some(addr)) => crate::iplist::lookup(&state.db, policy, addr)
+              .await
+              .map(|t| t.as_str().to_string()),
+          _ => None,
+      };
+      out.push(TrafficEvent {
         id:           r.id,
         timestamp:    r.timestamp,
         site_name:    r.site_name,
@@ -314,19 +334,20 @@ async fn fetch_events(
                 .as_deref()
                 .and_then(|j| serde_json::from_str(j).ok())
                 .unwrap_or_default();
-            let site_excls = r.site_id.and_then(|id| exclusions.get(&id));
+            let excls = r.policy_id.and_then(|id| exclusions.get(&id));
             hits.into_iter().map(|h| EventRule {
-                excluded: already_excluded(site_excls, h.id, &path, &ip),
+                excluded: already_excluded(excls, h.id, &path, &ip),
                 id: h.id, name: h.name, score: h.score,
             }).collect()
         },
         waf_score:    r.waf_score,
         country:      r.country,
-        listed:       ip.parse().ok()
-                        .and_then(crate::iplist::lookup)
-                        .map(|t| t.as_str().to_string()),
-      }
-    }).collect())
+        listed,
+        policy:       r.policy_name,
+        policy_sites: r.policy_sites,
+      });
+    }
+    Ok(out)
 }
 
 // ─── fetch_stats ─────────────────────────────────────────
@@ -461,8 +482,8 @@ fn apply_blocked_filter(qb: &mut QueryBuilder<sqlx::Sqlite>, blocked: &str) {
 mod tests {
     use super::*;
 
-    fn excl(ext: i64, prefix: &str, cidr: Option<&str>) -> SiteExclusion {
-        SiteExclusion {
+    fn excl(ext: i64, prefix: &str, cidr: Option<&str>) -> PolicyExclusion {
+        PolicyExclusion {
             external_id: Some(ext),
             path_prefix: prefix.into(),
             client: cidr.and_then(crate::forwarded::Cidr::parse),

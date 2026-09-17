@@ -115,7 +115,10 @@ impl WafModule {
             Some(p) => get_rules(&self.db, p.id).await,
             None    => Vec::new(),
         };
-        let exclusions = get_exclusions(&self.db, site_id).await;
+        let exclusions = match &policy {
+            Some(p) => get_exclusions(&self.db, p.id).await,
+            None    => Vec::new(),
+        };
 
         self.sites.put(generation, site_id, SiteSnapshot { policy, rules, exclusions })
     }
@@ -891,16 +894,18 @@ impl Exclusion {
     }
 }
 
-/// Exclusions recorded for this site.
+/// Exclusions recorded for a policy.
 ///
-/// Per site, not per policy: the policy is the thing being shared, so it is
-/// the wrong place to record that one site disagrees with it.
-async fn get_exclusions(db: &SqlitePool, site_id: i64) -> Vec<Exclusion> {
+/// Per policy since 0.12.1, like every other decision about what a request
+/// meets. Sites that face different things are given different policies, so a
+/// policy is already the group an exclusion is decided for; a path prefix or a
+/// client block narrows it further where one application needs that.
+async fn get_exclusions(db: &SqlitePool, policy_id: i64) -> Vec<Exclusion> {
     sqlx::query!(
         "SELECT external_id, rule_id, path_prefix as \"path_prefix!\", client_cidr
-         FROM   site_rule_exclusions
-         WHERE  site_id = ?",
-        site_id
+         FROM   policy_rule_exclusions
+         WHERE  policy_id = ?",
+        policy_id
     )
     .fetch_all(db)
     .await
@@ -1562,7 +1567,7 @@ mod bench {
             let db_work = per_round!({
                 let p = get_site_policy(&db, site_id).await.expect("policy");
                 let _ = get_rules(&db, p.id).await;
-                let _ = get_exclusions(&db, site_id).await;
+                let _ = get_exclusions(&db, p.id).await;
             });
             let waf_total = per_round!({ let _ = waf.inspect(&ctx).await; });
             let geo_total = per_round!({ let _ = geo.inspect(&ctx).await; });

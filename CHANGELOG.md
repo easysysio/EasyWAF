@@ -11,6 +11,15 @@ Version bumps and tags are created only after explicit approval.
 ### Added
 - The GNU GPL v3 licence text is now in the repository and installed by the .deb and .rpm packages, and the licence is stated precisely as GPL-3.0-or-later.
 
+### Changed
+- IP lists — your own allow and block lists and the published lists — now belong to a security policy and apply on the sites using it, so the public websites can block Tor exits while an application on its own policy does not; a site with no policy has no IP lists, and upgrading copies every existing entry and list choice into every policy.
+- IP lists follow their policy's mode: in DetectionOnly a listed address is served and recorded as would block or would challenge, and with the policy Off the lists do nothing.
+- Rule exclusions belong to a policy instead of a site, still narrowable to a path and a client, and are added under Security Policy → Rule Exclusions; the per-site exclusions page redirects there.
+- Blocking, allowing and excluding from Traffic Monitor act on the row's site's policy and say how many sites that covers before you confirm.
+
+### Security
+- Upgrading moves each rule exclusion to its site's policy, so one made for a site that shares its policy now applies on all of that policy's sites; the start-up log names every exclusion that widened, and every one dropped because its site had no policy.
+
 ## [0.12.0] — 2026-09-16
 
 ### Added

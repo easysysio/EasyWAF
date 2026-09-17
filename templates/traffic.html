@@ -152,38 +152,41 @@
                     <td style="white-space:nowrap">
                         <code>{{ e.client_ip }}</code>
                         {% if e.listed == "block" %}
-                        <br><span class="label label-danger" title="Refused before any rule runs, on every site">
+                        <br><span class="label label-danger" title="On {{ e.policy }}'s block list: refused before any rule runs, on every site using it">
                             <i class="fa fa-hand-stop-o"></i> blocked
                         </span>
                         {% elif e.listed == "allow" %}
-                        <br><span class="label label-success" title="Skips the WAF, the country rules and the challenge, on every site">
+                        <br><span class="label label-success" title="On {{ e.policy }}'s allow list: skips the WAF, the country rules and the challenge, on every site using it">
                             <i class="fa fa-check"></i> allowed
                         </span>
-                        {% else %}
-                        {# Offered only when the address is on neither list, so the
-                           page never invites an add that would silently move an
-                           entry somebody else made. #}
+                        {% elif e.policy %}
+                        {# Offered only when the address is on neither of the policy's
+                           lists, so the page never invites an add that would silently
+                           move an entry somebody else made — and only when the site has
+                           a policy, since lists belong to one. #}
                         <br>
                         <form class="admin-only" method="post" action="/iplists/add"
                               style="display:inline"
-                              onsubmit="return confirm('Block {{ e.client_ip }}?\n\nEvery request from it is refused on every site, before any rule runs.');">
+                              onsubmit="return confirm('Block {{ e.client_ip }} under policy {{ e.policy }}?\n\nEvery request from it is refused before any rule runs, on {{ e.policy_sites }} site{% if e.policy_sites != 1 %}s{% endif %}.');">
+                            <input type="hidden" name="host"      value="{{ e.host }}">
                             <input type="hidden" name="ip"        value="{{ e.client_ip }}">
                             <input type="hidden" name="list_type" value="block">
                             <input type="hidden" name="reason"    value="From Traffic Monitor: {{ e.block_reason | default(value='seen in traffic') }}">
                             <input type="hidden" name="back"      value="/traffic?site={{ sel_site }}&blocked={{ sel_blocked }}&hours={{ sel_hours }}">
                             <button type="submit" class="btn btn-link btn-xs" style="padding:0 4px"
-                                    title="Refuse this address everywhere">
+                                    title="Refuse this address on every site using {{ e.policy }}">
                                 <i class="fa fa-hand-stop-o"></i> block
                             </button>
                         </form>
                         <form class="admin-only" method="post" action="/iplists/add"
                               style="display:inline">
+                            <input type="hidden" name="host"      value="{{ e.host }}">
                             <input type="hidden" name="ip"        value="{{ e.client_ip }}">
                             <input type="hidden" name="list_type" value="allow">
                             <input type="hidden" name="reason"    value="From Traffic Monitor">
                             <input type="hidden" name="back"      value="/traffic?site={{ sel_site }}&blocked={{ sel_blocked }}&hours={{ sel_hours }}">
                             <button type="submit" class="btn btn-link btn-xs" style="padding:0 4px"
-                                    title="Skip every check for this address">
+                                    title="Skip every check for this address on every site using {{ e.policy }}">
                                 <i class="fa fa-check"></i> allow
                             </button>
                         </form>
@@ -281,13 +284,13 @@
                                    is where diagnosing a false positive gets abandoned. #}
                                 {% if h.excluded %}
                                     <span class="label label-info" style="font-weight:normal"
-                                          title="This site already excludes this rule for this client, so it did not act here.">
+                                          title="The site's policy already excludes this rule for this client, so it did not act here.">
                                         <i class="fa fa-ban"></i> excluded for this IP
                                     </span>
-                                {% elif h.id %}
+                                {% elif h.id and e.policy %}
                                 <form class="admin-only" method="post" action="/exclusions/from-traffic"
                                       style="display:inline"
-                                      onsubmit="return confirm('Stop rule {{ h.id }} running for {{ e.client_ip }} on {{ e.host }}?\n\nEvery other client is still checked by it. You can undo this from the policy\'s exclusions list.');">
+                                      onsubmit="return confirm('Stop rule {{ h.id }} running for {{ e.client_ip }} under policy {{ e.policy }}?\n\nThat covers {{ e.policy_sites }} site{% if e.policy_sites != 1 %}s{% endif %}. Every other client is still checked by it. You can undo this from the policy\'s exclusions list.');">
                                     <input type="hidden" name="host"      value="{{ e.host }}">
                                     <input type="hidden" name="client_ip" value="{{ e.client_ip }}">
                                     <input type="hidden" name="rule"      value="{{ h.id }}">

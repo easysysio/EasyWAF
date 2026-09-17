@@ -102,12 +102,12 @@
                         {# The policy is shared, so this is where someone stands when
                            they discover it is wrong for this one site. #}
                         <span class="help-block">
-                            Shared with every other site using it. To stop one rule
-                            running <em>here only</em> — without weakening it for the
-                            others — use
-                            <a href="/sites/{{ site.server_name }}/exclusions">rule
-                            exclusions</a>{% if exclusion_count > 0 %}, of which this
-                            site has <strong>{{ exclusion_count }}</strong>{% endif %}.
+                            Shared with every other site using it: its rules, country
+                            rules, IP lists and rule exclusions{% if exclusion_count > 0 %}
+                            (<strong>{{ exclusion_count }}</strong>){% endif %} all come
+                            with it. A site that needs something the others do not needs a
+                            policy of its own. <strong>With no policy, nothing is
+                            inspected</strong> — no rules, no country rules, no IP lists.
                         </span>
                     </div>
 

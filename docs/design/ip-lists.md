@@ -1,7 +1,8 @@
 # Design note — IP allow/block lists, added from Traffic Monitor
 
 Status: the manual half **shipped in 0.10.0**; the published half **shipped in
-0.12.0**, 2026-09-16 — engine, list builder and `github2repo.sh --lists`; see
+0.12.0**, 2026-09-16; both became **per policy in 0.12.1** — see *Per policy* at
+the end — engine, list builder and `github2repo.sh --lists`; see
 *What was built*. The daily job runs from cron on the repo server. See
 [roadmap.md](roadmap.md).
 
@@ -67,6 +68,9 @@ regardless of which site it hits. An exclusion is per site by design, because a
 site is what a false positive is about.
 
 ## Scope: global, not per-policy or per-site
+
+*Superseded in 0.12.1 — lists now belong to a policy. See* Per policy *at the
+end for why, and what the argument below got wrong.*
 
 Country rules are per-policy, because "which countries a site trusts" is a
 property of that site's security posture. An IP list is a different kind of
@@ -451,4 +455,54 @@ enforcing nothing and saying why. Then against the builder's real output: the
 engine verified the channel, loaded DROP and Tor (2,152 ranges after merging),
 refused an address inside a DROP /20 while passing the first address past it,
 challenged a Tor exit, and named both lists in their traffic rows.
+
+## Per policy (0.12.1)
+
+Decided 2026-09-17, with rule exclusions moving the same way.
+
+**Why the global argument did not hold.** It rested on sites with no policy: WAF
+and country rules need one, so only a global list could protect a plain reverse
+proxy. In practice every site that faces the internet has a policy, and policies
+are already how sites are grouped by what they face — the public websites under
+one, each hosted application under its own. A global list could not say "block
+Tor on the websites, not on Nextcloud", or "allow the office on the
+applications only", which are exactly the decisions operators make. So the
+lists belong to the policy, and a site with no policy has none; the site page
+says so.
+
+**The policy's mode applies.** Off ignores the lists with the rest of the
+policy. DetectionOnly refuses and challenges nobody and records the list's
+verdict as a detection — keeping the stronger of it and what the rules found —
+so a policy can be trialled with its lists. The allowlist still skips the
+pipeline in both.
+
+**Exclusions moved to the policy too**, which the original exclusion design
+argued against: a policy was "the thing being shared", so the wrong place to
+record one site's disagreement. With one policy per group of like sites, the
+shared case is the point — the same false positive tends to recur across the
+same kind of site — and a site that needs its own exceptions gets its own
+policy. Path and client narrowing remain, and every place an exclusion is made
+states how many sites it reaches.
+
+**Invalidation is the generation counter**, not reloads. Migration 028 adds
+triggers on `ip_rules`, `ip_list_feeds` and `policy_rule_exclusions`, so the
+matcher rebuilds a policy's lists on the first request after any write, however
+the row was written; no handler reloads anything. Published list contents are
+parsed once for the installation and shared by reference between the policies
+that use them, with their own version so a sync rebuilds without a database
+write.
+
+**The upgrade** (migration 027) copies every manual entry and list choice into
+every policy, and moves each exclusion to its site's current policy, merging
+duplicates and noting the site. It is the one migration that makes something
+apply more widely, so it logs, before running, every exclusion that widens and
+every one it drops, and every site that loses its lists for having no policy.
+It runs in a transaction, and migrations 018 and 021 no longer recreate or
+alter the old exclusions table after it.
+
+Checked live against a copy of an old-schema database: the report named both
+widened copies of a shared exclusion, the dropped one and the policy-less site;
+identical exclusions merged; per-policy enforcement held; a change took effect
+within a second without a restart; DetectionOnly recorded `would_block` and
+served; Off did nothing; and a second start migrated nothing.
 

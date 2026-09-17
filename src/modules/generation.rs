@@ -201,10 +201,18 @@ mod tests {
             ("rules insert",      "INSERT INTO waf_rules (policy_id, name, pattern)
                                    VALUES ((SELECT id FROM policies WHERE name = 'g'), 'r', 'x')"),
             ("rules update",      "UPDATE waf_rules SET enabled = 0 WHERE name = 'r'"),
-            ("exclusions insert", "INSERT INTO site_rule_exclusions (site_id, external_id)
-                                   VALUES ((SELECT id FROM sites WHERE name = 'g'), 1)"),
-            ("exclusions update", "UPDATE site_rule_exclusions SET path_prefix = '/x'"),
-            ("exclusions delete", "DELETE FROM site_rule_exclusions"),
+            ("exclusions insert", "INSERT INTO policy_rule_exclusions (policy_id, external_id)
+                                   VALUES ((SELECT id FROM policies WHERE name = 'g'), 1)"),
+            ("exclusions update", "UPDATE policy_rule_exclusions SET path_prefix = '/x'"),
+            ("exclusions delete", "DELETE FROM policy_rule_exclusions"),
+            ("ip rules insert",   "INSERT INTO ip_rules (policy_id, ip, list_type)
+                                   VALUES ((SELECT id FROM policies WHERE name = 'g'), '203.0.113.9', 'block')"),
+            ("ip rules update",   "UPDATE ip_rules SET list_type = 'allow'"),
+            ("ip rules delete",   "DELETE FROM ip_rules"),
+            ("list choice insert", "INSERT INTO ip_list_feeds (policy_id, id, enabled)
+                                   VALUES ((SELECT id FROM policies WHERE name = 'g'), 'drop', 1)"),
+            ("list choice update", "UPDATE ip_list_feeds SET response = 'block'"),
+            ("list choice delete", "DELETE FROM ip_list_feeds"),
             ("rules delete",      "DELETE FROM waf_rules WHERE name = 'r'"),
             ("sites delete",      "DELETE FROM sites WHERE name = 'g'"),
             ("policies delete",   "DELETE FROM policies WHERE name = 'g'"),
@@ -216,12 +224,15 @@ mod tests {
             assert!(value().await > before, "{what} did not move the generation");
         }
 
-        // And the converse: traffic must not churn the cache. The IP lists are
-        // unrelated to rule inspection and reload themselves.
-        let before = value().await;
-        sqlx::raw_sql("INSERT INTO ip_rules (ip, list_type) VALUES ('203.0.113.9', 'block')")
+        // And the converse: traffic must not churn the cache.
+        sqlx::raw_sql("INSERT INTO sites (name, server_name, target) VALUES ('t', 't.example', 'http://x')")
             .execute(&db).await.unwrap();
-        assert_eq!(value().await, before, "an unrelated write moved the generation");
+        let before = value().await;
+        sqlx::raw_sql("INSERT INTO traffic_events (site_id, client_ip, method, host, path, status_code)
+                       VALUES ((SELECT id FROM sites WHERE name = 't'),
+                               '203.0.113.9', 'GET', 't.example', '/', 200)")
+            .execute(&db).await.unwrap();
+        assert_eq!(value().await, before, "recording traffic moved the generation");
 
         db.close().await;
         for sfx in ["", "-wal", "-shm"] { let _ = std::fs::remove_file(format!("{}{sfx}", path.display())); }

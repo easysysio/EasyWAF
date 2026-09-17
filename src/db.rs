@@ -73,9 +73,157 @@ pub async fn init(database_url: &str) -> SqlitePool {
     run_migration_024(&pool).await;
     run_migration_025(&pool).await;
     run_migration_026(&pool).await;
+    run_migration_027(&pool).await;
+    run_migration_028(&pool).await;
 
     info!("Database ready: {}", database_url);
     pool
+}
+
+// ─── run_migration_028 ───────────────────────────────────
+
+/// IP lists and exclusions move the configuration generation. Every start.
+async fn run_migration_028(pool: &SqlitePool) {
+    let sql = include_str!("../migrations/028_policy_scope_generation.sql");
+    sqlx::raw_sql(sql)
+        .execute(pool)
+        .await
+        .unwrap_or_else(|e| panic!("Migration 028 failed: {}", e));
+}
+
+// ─── run_migration_027 ───────────────────────────────────
+
+/// IP lists and rule exclusions belong to a policy.
+///
+/// The one migration that makes something apply more widely than it did, so it
+/// says so before it runs: every exclusion that now covers more sites, and
+/// every one dropped, is logged by name. An operator reading the start-up log
+/// after the upgrade finds out there, rather than from a request the rule
+/// should have caught.
+async fn run_migration_027(pool: &SqlitePool) {
+    let done: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM pragma_table_info('ip_rules') WHERE name = 'policy_id'",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0);
+    if done > 0 {
+        return;
+    }
+
+    report_exclusion_moves(pool).await;
+    report_ip_list_moves(pool).await;
+
+    // One transaction: the tables are rebuilt and renamed, and a failure half
+    // way would leave a database with no IP lists and no exclusions at all.
+    let sql = include_str!("../migrations/027_policy_scope.sql");
+    let mut tx = pool
+        .begin()
+        .await
+        .unwrap_or_else(|e| panic!("Migration 027 could not start: {}", e));
+    sqlx::raw_sql(sql)
+        .execute(&mut *tx)
+        .await
+        .unwrap_or_else(|e| panic!("Migration 027 failed: {}", e));
+    tx.commit()
+        .await
+        .unwrap_or_else(|e| panic!("Migration 027 could not commit: {}", e));
+
+    info!("Migration 027 applied: IP lists and rule exclusions now belong to a policy");
+}
+
+/// Log each exclusion that migration 027 widens or drops.
+///
+/// Runtime queries rather than `query!`: the table they read does not exist in
+/// a current schema, which is the one sqlx checks them against.
+async fn report_exclusion_moves(pool: &SqlitePool) {
+    /// Site, policy, catalogue number, custom rule, path, client, and how many
+    /// sites share the policy.
+    type OldExclusion = (String, Option<String>, Option<i64>, Option<i64>, String, String, i64);
+
+    if !table_exists(pool, "site_rule_exclusions").await {
+        return;
+    }
+    let rows: Vec<OldExclusion> =
+        sqlx::query_as(
+            "SELECT s.server_name, p.name, e.external_id, e.rule_id, e.path_prefix,
+                    IFNULL(e.client_cidr, ''),
+                    (SELECT COUNT(*) FROM sites o
+                     WHERE o.waf_policy_id = s.waf_policy_id)
+             FROM   site_rule_exclusions e
+             JOIN   sites s ON s.id = e.site_id
+             LEFT   JOIN policies p ON p.id = s.waf_policy_id
+             ORDER  BY e.id",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default();
+
+    for (site, policy, external_id, rule_id, prefix, client, sharing) in rows {
+        let rule = match (external_id, rule_id) {
+            (Some(e), _) => format!("rule {e}"),
+            (_, Some(r)) => format!("custom rule #{r}"),
+            _            => "a rule".to_string(),
+        };
+        let scope = match (prefix.as_str(), client.as_str()) {
+            ("", "") => String::new(),
+            (p, "")  => format!(" under {p}"),
+            ("", c)  => format!(" for {c}"),
+            (p, c)   => format!(" under {p} for {c}"),
+        };
+        match policy {
+            None => tracing::warn!(
+                "Migration 027: dropped the exclusion of {rule}{scope} on {site} — \
+                 the site has no policy, so the exclusion silenced nothing"
+            ),
+            Some(p) if sharing > 1 => tracing::warn!(
+                "Migration 027: the exclusion of {rule}{scope}, made for {site}, now \
+                 applies to all {sharing} sites using policy {p}"
+            ),
+            Some(_) => {}
+        }
+    }
+}
+
+/// Log what migration 027 does to the IP lists.
+async fn report_ip_list_moves(pool: &SqlitePool) {
+    let entries: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM ip_rules")
+        .fetch_one(pool).await.unwrap_or(0);
+    let lists_on: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM ip_list_feeds WHERE enabled = 1")
+        .fetch_one(pool).await.unwrap_or(0);
+    if entries == 0 && lists_on == 0 {
+        return;
+    }
+    let policies: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM policies")
+        .fetch_one(pool).await.unwrap_or(0);
+    info!(
+        "Migration 027: {entries} IP list entries and {lists_on} switched-on published \
+         lists are copied into each of {policies} policies"
+    );
+    let bare: Vec<String> = sqlx::query_scalar(
+        "SELECT server_name FROM sites WHERE waf_policy_id IS NULL ORDER BY server_name",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+    if !bare.is_empty() {
+        tracing::warn!(
+            "Migration 027: these sites have no policy and no longer get IP lists — \
+             attach a policy to keep them: {}",
+            bare.join(", ")
+        );
+    }
+}
+
+async fn table_exists(pool: &SqlitePool, name: &str) -> bool {
+    sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?",
+    )
+    .bind(name)
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0)
+        > 0
 }
 
 // ─── run_migration_026 ───────────────────────────────────
@@ -204,7 +352,7 @@ async fn run_migration_021(pool: &SqlitePool) {
     .await
     .unwrap_or(0);
 
-    if exists == 0 {
+    if exists == 0 && table_exists(pool, "site_rule_exclusions").await {
         let sql = include_str!("../migrations/021_exclusion_client_ip.sql");
         sqlx::raw_sql(sql)
             .execute(pool)
@@ -270,7 +418,8 @@ async fn run_migration_018(pool: &SqlitePool) {
     .await
     .unwrap_or(0);
 
-    if exists == 0 {
+    // Replaced by policy_rule_exclusions in 027; never recreate it after that.
+    if exists == 0 && !table_exists(pool, "policy_rule_exclusions").await {
         let sql = include_str!("../migrations/018_site_rule_exclusions.sql");
         sqlx::raw_sql(sql)
             .execute(pool)

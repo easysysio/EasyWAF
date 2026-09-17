@@ -74,7 +74,7 @@ inspected.
   with no third-party service.
 - Country rules per policy, using a geolocation database compiled into the
   binary — offline, with nothing to download.
-- Rule exclusions, narrowed to a site, a path or a single client, added in one
+- Rule exclusions per policy, narrowed to a path or a single client, added in one
   click from the traffic row that showed the block.
 - Signed rule updates: corrected sets are published to a channel, EasyWAF says
   which policies are behind, and applying is always a decision you make.

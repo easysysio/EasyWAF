@@ -325,11 +325,11 @@ pub async fn get_site_edit(
     // The request button is offered only when there is a contact address to
     // request with, the same as on the create form.
     ctx.insert("acme_configured", &crate::acme::config(&state.db).await?.is_some());
-    // Named on this page because this is where the policy is chosen, and so
-    // where someone stands when they find it is wrong for this one site.
+    // Named on this page because this is where the policy is chosen: its
+    // exclusions and IP lists come with it.
     let exclusion_count: i64 = sqlx::query_scalar!(
-        "SELECT COUNT(*) as \"c!\" FROM site_rule_exclusions WHERE site_id = ?",
-        site.id
+        "SELECT COUNT(*) as \"c!\" FROM policy_rule_exclusions WHERE policy_id = ?",
+        site.waf_policy_id
     )
     .fetch_one(&state.db)
     .await

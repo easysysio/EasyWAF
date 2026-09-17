@@ -125,6 +125,11 @@
                             {# Which of this policy's rules are not actually running.
                                A rule that is enabled and yet silent somewhere is worth
                                being able to find without an incident to prompt it. #}
+                            <a href="/iplists?policy={{ pol.name }}"
+                               class="btn btn-link" style="padding:0;margin-right:8px"
+                               title="IP Lists — addresses this policy allows or blocks, and the published lists it uses">
+                                <i class="fa fa-hand-stop-o fa-2x"></i>
+                            </a>
                             <a href="/exclusions?policy={{ pol.name }}"
                                class="btn btn-link" style="padding:0;margin-right:8px"
                                title="Rule Exclusions — rules not running, and for which clients">

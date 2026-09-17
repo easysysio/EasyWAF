@@ -40,14 +40,16 @@ these requests were forwarded to your application exactly as they were.
 ### Acting on a row
 
 A blocked row carries the rule that blocked it, and a button that excludes that
-rule for the site — optionally for just that client or path. That is the fastest
+rule for that client on the site's policy — every site using it, which the
+confirmation states. That is the fastest
 honest answer to a false positive: keep the rule for everyone else, and stop it
 refusing the caller it was wrong about.
 
 Beside the client address, every row also offers **Block** and **Allow**, which
-put that address on an [IP list](ip-lists.md) for the whole installation —
-refused before any rule runs, or waved past every check. A row whose client is
-already listed shows a badge instead, so you cannot add it twice.
+put that address on one of the site's policy's [IP lists](ip-lists.md) —
+refused before any rule runs, or waved past every check, on every site using the
+policy. A row whose client is already listed shows a badge instead, so you
+cannot add it twice. A row whose site has no policy offers none of the three.
 
 The three are different sizes and the row keeps them legible: excluding turns
 one rule off for one client on one site, blocking refuses that address

@@ -21,10 +21,21 @@
             <div class="panel-heading">
                 <h4 style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
                     <span><i class="fa fa-hand-stop-o"></i> IP Lists</span>
+                    {% if policies %}
+                    <form method="get" action="/iplists" style="margin:0">
+                        <select name="policy" class="form-control input-sm"
+                                onchange="this.form.submit()" style="width:auto;display:inline-block">
+                            {% for p in policies %}
+                            <option value="{{ p }}" {% if sel_policy == p %}selected{% endif %}>{{ p }}</option>
+                            {% endfor %}
+                        </select>
+                    </form>
                     <span class="text-muted" style="font-size:12px">
                         {{ blocked }} blocked, {{ allowed }} allowed
                     </span>
+                    {% endif %}
                     <form method="get" action="/iplists" style="margin:0;margin-left:auto">
+                        <input type="hidden" name="policy" value="{{ sel_policy }}">
                         <input type="text" name="q" value="{{ search }}"
                                class="form-control input-sm" placeholder="Search address or reason"
                                style="width:auto;display:inline-block">
@@ -33,23 +44,35 @@
             </div>
             <div class="panel-body">
 
+                {% if not sel_policy %}
+                <div class="alert alert-info">
+                    <i class="fa fa-info-circle"></i>
+                    IP lists belong to a security policy, and there are no policies yet.
+                    <a href="/policy/new">Create a policy</a> and attach it to the sites it
+                    should protect.
+                </div>
+                {% else %}
                 <p class="help-block" style="margin-top:0">
-                    These apply <strong>installation-wide</strong>, before anything else.
-                    A specific attacker's address is true regardless of which site it
-                    reaches, and so is one you have decided to trust.
+                    These belong to the policy <code>{{ sel_policy }}</code> and apply,
+                    before anything else, on <strong>{{ reach }}</strong>{% if sites | length > 1 %}:
+                    {% for s in sites %}<code>{{ s }}</code>{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}.
+                    A site with no policy has no IP lists.
                     <br>
-                    <strong>Blocked</strong> is refused outright, before any rule runs —
-                    including on a site with no policy, where the WAF would do nothing.
-                    <strong>Allowed</strong> skips everything: the rules, the country
-                    rules and the CAPTCHA alike. That is deliberate and it is wide, so
-                    allow sparingly.
+                    <strong>Blocked</strong> is refused outright, before any rule runs.
+                    <strong>Allowed</strong> skips everything: the rules, the country rules,
+                    the published lists and the CAPTCHA alike. That is deliberate and it is
+                    wide, so allow sparingly.
                     <br>
-                    An address is on at most one list. Putting it on the other one moves
-                    it.
+                    The lists follow the policy's mode: with the policy in
+                    <em>DetectionOnly</em> nothing is refused or challenged, and what would
+                    have been is recorded in Traffic Monitor; with it <em>Off</em>, they do
+                    nothing. An address is on at most one of a policy's lists; putting it
+                    on the other one moves it.
                 </p>
 
                 <form class="admin-only" method="post" action="/iplists/add"
                       style="margin-bottom:16px;display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start">
+                    <input type="hidden" name="policy" value="{{ sel_policy }}">
                     <input type="text" name="ip" class="form-control" required
                            placeholder="203.0.113.9 or 203.0.113.0/24"
                            spellcheck="false" style="width:260px">
@@ -94,7 +117,7 @@
                             <td class="text-right" style="white-space:nowrap">
                                 <form class="admin-only" method="post"
                                       action="/iplists/{{ e.id }}/remove"
-                                      onsubmit="return confirm('Take {{ e.ip }} off the {{ e.list_type }} list?\n\nIt is inspected like any other client from the next request.');"
+                                      onsubmit="return confirm('Take {{ e.ip }} off {{ sel_policy }}\'s {{ e.list_type }} list?\n\nIt is inspected like any other client from the next request, on {{ reach }}.');"
                                       style="display:inline">
                                     <button type="submit" class="btn btn-default btn-xs"
                                             title="Inspected like any other client again">
@@ -112,8 +135,8 @@
                     {% if search %}
                     Nothing matches <code>{{ search }}</code>.
                     {% else %}
-                    No addresses are listed. Every client is inspected by whatever policy
-                    its site carries.
+                    No addresses are listed under <code>{{ sel_policy }}</code>. Every
+                    client is inspected by its rules.
                     <br>
                     <small>The usual way one appears is from
                     <a href="/traffic">Traffic Monitor</a>: find the request, and block
@@ -121,21 +144,26 @@
                     {% endif %}
                 </p>
                 {% endif %}
+                {% endif %}
 
             </div>
         </div>
     </div>
 </div>
+
+{% if sel_policy %}
 <div class="row">
     <div class="col-lg-11">
         <div class="panel panel-default">
             <div class="panel-heading">
                 <h4 style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-                    <span><i class="fa fa-globe"></i> Published Lists</span>
+                    <span><i class="fa fa-globe"></i> Published Lists
+                        <small class="text-muted">— for <code>{{ sel_policy }}</code></small></span>
                     <span class="text-muted" style="font-size:12px">
                         {% if feeds_fetched %}updated {{ feeds_fetched }} UTC{% else %}not fetched yet{% endif %}
                     </span>
                     <form class="admin-only" method="post" action="/iplists/update" style="margin:0;margin-left:auto">
+                        <input type="hidden" name="policy" value="{{ sel_policy }}">
                         <button type="submit" class="btn btn-default btn-sm"
                                 {% if not feeds_check %}disabled title="Checking the update channels is turned off under Settings → Rule Updates"{% endif %}>
                             <i class="fa fa-refresh"></i> Update now
@@ -149,14 +177,14 @@
                     Addresses other people keep track of: hijacked netblocks, compromised
                     hosts, Tor exits. <strong>The data updates itself; what it does does
                     not.</strong> Every list is fetched from the signed channel and refreshed
-                    daily, but none of them changes anything until you switch it on and say
-                    what it should do.
+                    daily, but none of them changes anything until this policy switches it
+                    on and says what it should do.
                     <br>
                     <strong>Challenge</strong> asks for a CAPTCHA, which anyone human can
                     pass, so a wrongly listed address is a speed bump rather than a wall.
                     <strong>Block</strong> refuses the address before any rule runs.
-                    Both apply on every site. An address on your own allow list above
-                    skips every published list.
+                    Either applies on {{ reach }}. An address on this policy's allow list
+                    above skips every published list.
                 </p>
 
                 {% if feeds_fetch_error %}
@@ -225,7 +253,8 @@
                             <td class="admin-only" style="white-space:nowrap">
                                 <form method="post" action="/iplists/feeds/{{ f.id }}/save"
                                       style="margin:0;display:flex;gap:6px;align-items:center"
-                                      onsubmit="if (this.enabled.checked && this.response.value === 'block') { return confirm('Block every address on {{ f.name }}?\n\nThey are refused before any rule runs, on every site. Your allow list still overrules it.'); } return true;">
+                                      onsubmit="if (this.enabled.checked && this.response.value === 'block') { return confirm('Block every address on {{ f.name }}?\n\nThey are refused before any rule runs, on {{ reach }}. This policy\'s allow list still overrules it.'); } return true;">
+                                    <input type="hidden" name="policy" value="{{ sel_policy }}">
                                     <label class="checkbox-inline" style="margin:0">
                                         <input type="checkbox" name="enabled" value="1" {% if f.enabled %}checked{% endif %}> On
                                     </label>
@@ -259,4 +288,5 @@
         </div>
     </div>
 </div>
+{% endif %}
 {% endblock %}

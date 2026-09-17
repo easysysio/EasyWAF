@@ -7,9 +7,9 @@
 // fetched from the signed channel, checked the way a rule set
 // is, and mirrored to disk whether or not anyone uses it —
 // fresh data harms nobody while nothing is switched on. What
-// a list *does* is a per-list choice in the database: off,
-// challenge or block. Nothing a list says has any effect
-// until somebody has said what it should mean here.
+// a list *does* is a choice each policy makes in the database:
+// off, challenge or block. Nothing a list says has any effect
+// until somebody has said what it should mean for that policy.
 //
 // The ranges never touch the database. They arrive as whole
 // files, carry licence text their sources require to stay
@@ -20,12 +20,12 @@
 // load checks the signature and every file's hash again.
 // =========================================================
 
-use crate::iplist::{self, Feed, Response};
+use crate::iplist::{self, FeedData, Response};
 use serde::Serialize;
 use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{OnceLock, RwLock};
+use std::sync::{Arc, OnceLock, RwLock};
 use std::time::Duration;
 
 /// Lists are rebuilt daily upstream. Looking four times a day means a fresh one
@@ -286,8 +286,12 @@ struct Choice {
     response: Response,
 }
 
-async fn choices(db: &SqlitePool) -> HashMap<String, Choice> {
-    sqlx::query!(r#"SELECT id as "id!", enabled as "enabled!", response as "response!" FROM ip_list_feeds"#)
+async fn choices(db: &SqlitePool, policy_id: i64) -> HashMap<String, Choice> {
+    sqlx::query!(
+        r#"SELECT id as "id!", enabled as "enabled!", response as "response!"
+           FROM ip_list_feeds WHERE policy_id = ?"#,
+        policy_id
+    )
         .fetch_all(db)
         .await
         .unwrap_or_default()
@@ -303,73 +307,60 @@ async fn choices(db: &SqlitePool) -> HashMap<String, Choice> {
         .collect()
 }
 
-/// Load every switched-on list from the mirror into the matcher.
+/// Load every list the mirror offers into memory, for every policy to use.
 ///
-/// Called at startup, after every sync, and whenever a list is switched on,
-/// off or changed.
+/// Called at startup and after every sync. Which policies use a list, and how,
+/// is read by the matcher itself when it rebuilds; loading every offered list
+/// rather than only those some policy has switched on keeps a newly switched-on
+/// list from waiting for the next sync. A few thousand ranges each, parsed once.
 ///
 /// A mirror that cannot prove itself loads nothing. That lets through what the
-/// lists would have stopped — and every affected list says so on its page —
-/// rather than enforcing data nobody can vouch for. The manual lists are not
-/// touched either way.
-pub async fn reload(db: &SqlitePool) -> usize {
+/// lists would have stopped — and every list says so on the page — rather than
+/// enforcing data nobody can vouch for. The manual lists are not touched.
+pub fn reload() -> usize {
     let dir = cache_dir();
-    let enabled: Vec<(String, Response)> = choices(db)
-        .await
-        .into_iter()
-        .filter(|(_, c)| c.enabled)
-        .map(|(id, c)| (id, c.response))
-        .collect();
-
     let mut status = HashMap::new();
-    let mut feeds = Vec::new();
+    let mut loaded = HashMap::new();
     let failed = |e: String| LoadStatus { error: Some(e), ..LoadStatus::default() };
 
-    if !enabled.is_empty() {
-        match verified_manifest(&dir, &crate::rules_update::trusted_key()) {
-            Err(e) => {
+    match verified_manifest(&dir, &crate::rules_update::trusted_key()) {
+        Err(e) => {
+            // Quiet when nothing was ever fetched: that is every installation
+            // with no outbound access, and the page already says it.
+            if dir.join(MANIFEST).exists() {
                 tracing::warn!("Published IP lists not loaded: {e}");
-                for (id, _) in &enabled {
-                    status.insert(id.clone(), failed(e.clone()));
-                }
             }
-            Ok(offered) => {
-                for (id, response) in &enabled {
-                    let Some(list) = offered.iter().find(|l| &l.id == id) else {
-                        status.insert(id.clone(), failed(
-                            "the channel no longer publishes this list".to_string(),
-                        ));
-                        continue;
-                    };
-                    match verified_file(&dir, list) {
-                        Err(e) => {
-                            tracing::warn!(list = %id, "Published IP list not loaded: {e}");
-                            status.insert(id.clone(), failed(e));
-                        }
-                        Ok(text) => {
-                            let (blocks, unreadable) = iplist::parse_feed(&text);
-                            let feed = Feed::new(&list.id, &list.name, *response, &blocks);
-                            status.insert(id.clone(), LoadStatus {
-                                ranges: feed.len(),
-                                unreadable,
-                                error: None,
-                            });
-                            feeds.push(feed);
-                        }
+        }
+        Ok(offered) => {
+            for list in &offered {
+                match verified_file(&dir, list) {
+                    Err(e) => {
+                        tracing::warn!(list = %list.id, "Published IP list not loaded: {e}");
+                        status.insert(list.id.clone(), failed(e));
+                    }
+                    Ok(text) => {
+                        let (blocks, unreadable) = iplist::parse_feed(&text);
+                        let data = FeedData::new(&list.id, &list.name, &blocks);
+                        status.insert(list.id.clone(), LoadStatus {
+                            ranges: data.len(),
+                            unreadable,
+                            error: None,
+                        });
+                        loaded.insert(list.id.clone(), Arc::new(data));
                     }
                 }
             }
         }
     }
 
-    let loaded = feeds.len();
-    let ranges: usize = feeds.iter().map(Feed::len).sum();
-    iplist::set_feeds(feeds);
+    let lists = loaded.len();
+    let ranges: usize = loaded.values().map(|d| d.len()).sum();
+    iplist::set_feed_data(loaded);
     if let Ok(mut w) = status_map().write() {
         *w = status;
     }
-    if loaded > 0 {
-        tracing::info!(lists = loaded, ranges, "Published IP lists loaded");
+    if lists > 0 {
+        tracing::info!(lists, ranges, "Published IP lists loaded");
     }
     ranges
 }
@@ -389,7 +380,7 @@ pub async fn check_now(db: &SqlitePool) -> Result<usize, String> {
     }
     // Either way: a list switched on while the channel is unreachable still
     // loads from what was mirrored before.
-    reload(db).await;
+    reload();
     result
 }
 
@@ -400,7 +391,7 @@ pub fn spawn_task(db: SqlitePool) {
             if crate::rules_update::enabled(&db).await {
                 let _ = check_now(&db).await;
             } else {
-                reload(&db).await;
+                reload();
             }
             tokio::time::sleep(CHECK_INTERVAL).await;
         }
@@ -433,15 +424,16 @@ pub struct ListView {
     pub offered:     bool,
 }
 
-/// Every list the verified mirror offers, plus any switched on that it no
-/// longer does, and why the mirror could not be read if it could not.
-pub async fn catalogue(db: &SqlitePool) -> (Vec<ListView>, Option<String>) {
+/// Every list the verified mirror offers, as one policy has decided about it,
+/// plus any that policy switched on and the mirror no longer offers — and why
+/// the mirror could not be read, if it could not.
+pub async fn catalogue(db: &SqlitePool, policy_id: i64) -> (Vec<ListView>, Option<String>) {
     let (offered, manifest_error) =
         match verified_manifest(&cache_dir(), &crate::rules_update::trusted_key()) {
             Ok(o)  => (o, None),
             Err(e) => (Vec::new(), Some(e)),
         };
-    let decided = choices(db).await;
+    let decided = choices(db, policy_id).await;
     let status = status_map().read().map(|s| s.clone()).unwrap_or_default();
 
     let mut out: Vec<ListView> = offered
@@ -495,9 +487,13 @@ pub async fn catalogue(db: &SqlitePool) -> (Vec<ListView>, Option<String>) {
     (out, manifest_error)
 }
 
-/// Record what an operator decided about a list, and apply it.
+/// Record what an operator decided about a list for one policy.
+///
+/// Nothing is reloaded here: the write moves the configuration generation, and
+/// the matcher rebuilds from that on the next request.
 pub async fn save(
     db: &SqlitePool,
+    policy_id: i64,
     id: &str,
     enabled: bool,
     response: Response,
@@ -508,18 +504,17 @@ pub async fn save(
     }
     let (on, response) = (enabled as i64, response.as_str());
     sqlx::query!(
-        "INSERT INTO ip_list_feeds (id, enabled, response, changed_by, updated_at)
-         VALUES (?, ?, ?, ?, datetime('now'))
-         ON CONFLICT(id) DO UPDATE SET enabled    = excluded.enabled,
+        "INSERT INTO ip_list_feeds (policy_id, id, enabled, response, changed_by, updated_at)
+         VALUES (?, ?, ?, ?, ?, datetime('now'))
+         ON CONFLICT(policy_id, id) DO UPDATE SET enabled    = excluded.enabled,
                                        response   = excluded.response,
                                        changed_by = excluded.changed_by,
                                        updated_at = excluded.updated_at",
-        id, on, response, by
+        policy_id, id, on, response, by
     )
     .execute(db)
     .await
     .map_err(|e| e.to_string())?;
-    reload(db).await;
     Ok(())
 }
 

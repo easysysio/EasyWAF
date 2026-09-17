@@ -58,22 +58,18 @@
                 <div class="alert alert-warning">
                     <i class="fa fa-ban"></i>
                     <strong>This rule does not run everywhere.</strong>
-                    Whatever it says below, these sites do not apply it — a rule that
-                    is enabled and yet silent on one host is worth knowing before an
+                    Whatever it says below, its policy excludes it here — a rule that is
+                    enabled and yet silent for some requests is worth knowing before an
                     incident rather than during one.
                     <ul style="margin:8px 0 0 0">
                         {% for x in excluded_on %}
                         <li>
-                            <code>{{ x.site }}</code>
-                            {% if x.prefix %}
-                                — only under <code>{{ x.prefix }}</code>
-                            {% else %}
-                                — the whole site
-                            {% endif %}
-                            <a href="/sites/{{ x.site }}/exclusions" class="small">manage</a>
+                            {% if x.prefix %}paths under <code>{{ x.prefix }}</code>{% else %}every path{% endif %},
+                            {% if x.client %}for <code>{{ x.client }}</code>{% else %}for every client{% endif %}
                         </li>
                         {% endfor %}
                     </ul>
+                    <a href="/exclusions?policy={{ rule.policy_name }}" class="small">manage this policy's exclusions</a>
                 </div>
                 {% endif %}
 

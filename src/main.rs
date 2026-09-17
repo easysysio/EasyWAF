@@ -121,11 +121,10 @@ async fn main() {
 
     // Loaded once into memory: this is consulted on every proxied request.
     forwarded::reload(&db).await;
-    // Allow and block lists, consulted before the pipeline on every request.
-    iplist::reload(&db).await;
-    // Published lists that are switched on, from the mirror: no network is
-    // needed for them to be in force from the first request.
-    iplist_feeds::reload(&db).await;
+    // Published list contents, from the mirror: no network is needed for them
+    // to be in force from the first request. Each policy's own lists are built
+    // on first use and whenever the configuration changes.
+    iplist_feeds::reload();
     // How much of each request body the rules inspect; the rest streams on.
     proxy::set_inspection_limit(routes::settings::get_body_inspect_kb(&db).await as usize * 1024);
 
@@ -223,24 +222,20 @@ async fn main() {
         .route("/sites/{name}/acme",     post(routes::sites::post_site_acme))
         .route("/sites/{name}/toggle",   post(routes::sites::post_site_toggle))
         .route("/sites/{name}/delete",   post(routes::sites::post_site_delete))
-        // Rules this one site does not apply. Per site, because the policy is
-        // the thing being shared and so is the wrong place to record that one
-        // site disagrees with it.
+        // Exclusions were per site until 0.12.1; the old page now redirects to
+        // the policy that holds them.
         .route("/sites/{name}/exclusions",
                get(routes::exclusions::get_site_exclusions))
-        .route("/sites/{name}/exclusions/add",
-               post(routes::exclusions::post_exclusion_add))
-        .route("/sites/{name}/exclusions/{id}/delete",
-               post(routes::exclusions::post_exclusion_delete))
         // One click from the traffic row that showed the block.
         .route("/exclusions/from-traffic",
                post(routes::exclusions::post_exclusion_from_traffic))
-        // Every rule not running, anywhere — ?policy= narrows it. One page
-        // rather than one per policy, because the menu entry needs one URL.
+        // Every rule not running, per policy — ?policy= selects one, which is
+        // also where one is added. One page, because the menu needs one URL.
         .route("/exclusions",             get(routes::exclusions::get_exclusions))
+        .route("/exclusions/add",         post(routes::exclusions::post_exclusion_add))
         .route("/exclusions/{id}/remove", post(routes::exclusions::post_exclusion_remove))
-        // Addresses allowed past every check, and addresses refused before any
-        // of them. Added from a traffic row; read back and removed here.
+        // A policy's addresses allowed past every check and refused before any
+        // of them, and its published lists. ?policy= selects the policy.
         .route("/iplists",             get(routes::iplists::get_iplists))
         .route("/iplists/add",         post(routes::iplists::post_ip_add))
         .route("/iplists/{id}/remove", post(routes::iplists::post_ip_remove))

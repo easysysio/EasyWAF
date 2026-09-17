@@ -28,7 +28,8 @@ you had removed, restart the service.
 Open [Traffic Monitor](traffic.md), find the row, and read the rule that blocked
 it and the score. Then, narrowest first:
 
-1. **Exclude the rule for that client or path** from the row itself.
+1. **Exclude the rule for that client or path** from the row itself. The
+   exclusion goes on the site's policy, so it covers every site using it.
 2. **Disable the rule** for the policy, if it is wrong for this application
    generally.
 3. **Clone and tune it**, if it is right in principle and wrong in detail.

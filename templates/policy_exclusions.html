@@ -35,15 +35,23 @@
             <div class="panel-body">
 
                 <p class="help-block" style="margin-top:0">
-                    Every rule that is <strong>not running</strong> somewhere, across the
-                    sites using this policy. An excluded rule adds no score and cannot
-                    block, for the clients and paths listed here — and keeps protecting
-                    everything else.
+                    Rules a policy does <strong>not run</strong>, and where. An excluded
+                    rule adds no score and cannot block, for the paths and clients listed
+                    — and keeps protecting everything else.
                     <br>
-                    Exclusions are stored per site, because a site is what one is about.
-                    They are listed per policy because this is the question worth asking
-                    afterwards: which of my rules are not actually in force, and where.
+                    An exclusion belongs to a policy, so it applies on
+                    <strong>every site using that policy</strong>. Narrow it with a path
+                    prefix or a client where one application or one client needs it; give
+                    a site a policy of its own when it needs something the others do not.
                 </p>
+
+                {% if sel_policy %}
+                <p>
+                    <i class="fa fa-sitemap"></i>
+                    Exclusions here apply on <strong>{{ reach }}</strong>{% if sites | length > 1 %}:
+                    {% for s in sites %}<code>{{ s }}</code>{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}.
+                </p>
+                {% endif %}
 
                 {% if exclusions %}
                 <div style="overflow-x:auto">
@@ -51,8 +59,7 @@
                     <thead>
                         <tr>
                             <th>Rule</th>
-                            <th>Policy</th>
-                            <th>Site</th>
+                            {% if not sel_policy %}<th>Policy</th>{% endif %}
                             <th>Clients</th>
                             <th>Paths</th>
                             <th>Why</th>
@@ -68,8 +75,11 @@
                                 <br><small class="text-muted"><code>{{ e.external_id }}</code></small>
                                 {% endif %}
                             </td>
-                            <td style="white-space:nowrap"><code>{{ e.policy_name }}</code></td>
-                            <td style="white-space:nowrap"><code>{{ e.site_name }}</code></td>
+                            {% if not sel_policy %}
+                            <td style="white-space:nowrap">
+                                <a href="/exclusions?policy={{ e.policy_name }}"><code>{{ e.policy_name }}</code></a>
+                            </td>
+                            {% endif %}
                             <td style="white-space:nowrap">
                                 {% if e.client_cidr %}
                                     <code>{{ e.client_cidr }}</code>
@@ -82,7 +92,7 @@
                                 {% if e.path_prefix %}
                                     under <code>{{ e.path_prefix }}</code>
                                 {% else %}
-                                    <span class="label label-warning">the whole site</span>
+                                    <span class="label label-warning">every path</span>
                                 {% endif %}
                             </td>
                             <td>
@@ -96,7 +106,7 @@
                             <td class="text-right" style="white-space:nowrap">
                                 <form class="admin-only" method="post"
                                       action="/exclusions/{{ e.id }}/remove"
-                                      onsubmit="return confirm('Stop excluding {{ e.rule_label }} on {{ e.site_name }}?\n\nThe rule will run again from the next request, and can block.');"
+                                      onsubmit="return confirm('Stop excluding {{ e.rule_label }} under policy {{ e.policy_name }}?\n\nThe rule will run again from the next request on every site using it, and can block.');"
                                       style="display:inline">
                                     <input type="hidden" name="policy" value="{{ sel_policy }}">
                                     <button type="submit" class="btn btn-default btn-xs"
@@ -120,12 +130,92 @@
                 {% else %}
                 <p class="text-muted">
                     No exclusions{% if sel_policy %} under <code>{{ sel_policy }}</code>{% endif %}.
-                    Every rule runs on every site.
+                    Every rule runs everywhere its policy applies.
                     <br>
                     <small>The usual way one appears is from
                     <a href="/traffic">Traffic Monitor</a>: find the request that was
                     wrongly blocked and exclude that one rule for that one client.</small>
                 </p>
+                {% endif %}
+
+                {% if sel_policy %}
+                <hr>
+                <h5><i class="fa fa-plus"></i> Exclude a rule from <code>{{ sel_policy }}</code></h5>
+                {% if candidates %}
+                <form method="post" action="/exclusions/add"
+                      class="form-horizontal admin-only" style="margin-top:12px"
+                      onsubmit="return confirm('Exclude this rule on {{ reach }}?');">
+                    <input type="hidden" name="policy" value="{{ sel_policy }}">
+
+                    <div class="form-group">
+                        <label class="col-sm-2 control-label">Rule</label>
+                        <div class="col-sm-10">
+                            <select class="form-control" name="rule" required>
+                                <option value="">— select a rule —</option>
+                                {% for c in candidates %}
+                                <option value="{{ c.value }}">{{ c.label }}{% if c.set %} [{{ c.set }}]{% endif %}</option>
+                                {% endfor %}
+                            </select>
+                            <span class="help-block">
+                                Only rules this policy holds and has enabled. A rule from a
+                                set is remembered by its catalogue number, so the exclusion
+                                survives the set being removed and installed again.
+                            </span>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="col-sm-2 control-label">Path prefix</label>
+                        <div class="col-sm-10">
+                            <input type="text" class="form-control" name="path_prefix"
+                                   placeholder="/remote.php/dav/">
+                            <span class="help-block">
+                                Optional. The rule stops running only where the request path
+                                starts with this, and keeps running everywhere else. Leave it
+                                empty to exclude the rule on every path. A prefix, not a
+                                pattern — an exclusion turns a rule off, so it should be a
+                                thing you can read and be sure about.
+                            </span>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="col-sm-2 control-label">Clients</label>
+                        <div class="col-sm-10">
+                            <input type="text" class="form-control" name="client_cidr"
+                                   placeholder="203.0.113.9 or 203.0.113.0/24">
+                            <span class="help-block">
+                                Optional. The rule stops running only for these clients and
+                                keeps protecting the sites from everyone else — the narrowest
+                                exclusion there is, and the right one when a rule is correct
+                                but one client trips it. Leave it empty for every client.
+                            </span>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="col-sm-2 control-label">Why</label>
+                        <div class="col-sm-10">
+                            <input type="text" class="form-control" name="note"
+                                   placeholder="Blocks the OAuth redirect_uri on every login">
+                            <span class="help-block">
+                                Worth filling in. An exclusion outlives the incident that
+                                caused it, and an unexplained one is never safe to remove.
+                            </span>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <div class="col-sm-offset-2 col-sm-10">
+                            <button type="submit" class="btn btn-warning">
+                                <i class="fa fa-ban"></i> Exclude this rule
+                            </button>
+                        </div>
+                    </div>
+                </form>
+                {% else %}
+                <p class="text-muted">This policy has no enabled rules, so there is nothing to exclude.</p>
+                {% endif %}
                 {% endif %}
 
                 <hr>
@@ -135,7 +225,6 @@
                 <a href="/traffic" class="btn btn-default">
                     <i class="fa fa-exchange"></i> Traffic Monitor
                 </a>
-
 
             </div>
         </div>

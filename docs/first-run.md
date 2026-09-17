@@ -48,8 +48,9 @@ The listener is bound the moment you save, so adding a site on a new port does
 not need a restart. Requests whose `Host:` matches no enabled site get a 404.
 
 At this point the site is already being proxied. It has no policy yet, so
-nothing is inspected — it is a plain reverse proxy, with the per-site security
-headers applied and every request recorded.
+nothing is inspected — no rules, no country rules, no IP lists. It is a plain
+reverse proxy, with the per-site security headers applied and every request
+recorded.
 
 See [Sites](sites.md) for aliases, ports, headers and what happens when you
 disable one.

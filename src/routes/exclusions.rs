@@ -1,21 +1,26 @@
 // =========================================================
 // routes/exclusions.rs — EasyWAF
-// Rules a single site does not apply.
+// Rules a policy does not apply — where, and for whom.
 //
-// A policy is shared on purpose: several sites use one, and
-// a rule update reaches all of them at once. That leaves no
-// way to say "this rule is wrong for this one site" without
-// either weakening it for every site or giving the site a
-// policy of its own and losing the shared updates. Both are
-// worse than the false positive being answered.
+// A rule can be right in general and wrong in one place: an
+// application whose uploads look like an injection, a client
+// whose tooling trips a scanner rule. An exclusion is the
+// answer that leaves the rule running everywhere else, and it
+// is deliberately small: one named rule, optionally confined
+// to a path prefix and to a client address or block, with a
+// note saying why.
 //
-// An exclusion is that third answer, and it is deliberately
-// small: one named rule, optionally confined to a path
-// prefix, with a note saying why. It turns a rule off, so
-// everything here is written to make what is off obvious —
-// the list is on the site's own page, the rule editor names
-// the sites that exclude it, and nothing is ever excluded
-// implicitly.
+// Exclusions belong to a policy since 0.12.1, like every
+// other decision about what a request meets. Sites that face
+// different things get different policies — the public
+// websites one, each hosted application its own — so a policy
+// is already the group an exclusion is decided for. Because
+// one exclusion then covers every site on its policy, every
+// place one is made says how many sites that is.
+//
+// It turns a rule off, so everything here is written to make
+// what is off obvious: the policy's list, the rule editor,
+// and the Traffic Monitor all show it.
 // =========================================================
 
 use crate::routes::flash_redirect;
@@ -29,21 +34,18 @@ use axum_extra::extract::cookie::SignedCookieJar;
 use serde::{Deserialize, Serialize};
 use tera::Context;
 
-use super::policy::FlashQuery;
-
 // ─── Models ──────────────────────────────────────────────
 
-/// One exclusion, as the page shows it.
+/// One exclusion, as the list shows it.
 #[derive(Debug, Serialize)]
 pub struct Exclusion {
     pub id:          i64,
-    /// The catalogue number, when the rule has one.
+    pub policy_name: String,
+    /// The rule's name, resolved through the policy at read time. A rule the
+    /// policy no longer holds is labelled as such rather than hidden; see
+    /// `list`.
+    pub rule_label:  String,
     pub external_id: Option<i64>,
-    pub rule_id:     Option<i64>,
-    /// The rule's name, resolved through the site's current policy. `None`
-    /// when the policy no longer holds the rule — which is not an error and
-    /// not something to clean up automatically; see `load`.
-    pub rule_name:   Option<String>,
     pub path_prefix: String,
     /// The clients this covers; empty means every client.
     pub client_cidr: String,
@@ -63,6 +65,8 @@ pub struct Candidate {
 
 #[derive(Debug, Deserialize)]
 pub struct ExclusionForm {
+    /// The policy, by name, as the page's filter holds it.
+    pub policy:      String,
     /// Either "e:913015" (catalogue number) or "r:42" (custom rule row).
     /// One field rather than two, because the form offers one list.
     pub rule:        String,
@@ -72,48 +76,90 @@ pub struct ExclusionForm {
     pub note:        String,
 }
 
-// ─── Queries ─────────────────────────────────────────────
-
-/// The site's id and the policy it uses, or `None` if there is no such site.
-async fn site_and_policy(state: &AppState, name: &str) -> Result<Option<(i64, Option<i64>)>> {
-    let row = sqlx::query!(
-        "SELECT id as \"id!\", waf_policy_id FROM sites WHERE server_name = ?",
-        name
-    )
-    .fetch_optional(&state.db)
-    .await?;
-
-    Ok(row.map(|r| (r.id, r.waf_policy_id)))
+#[derive(Debug, Deserialize)]
+pub struct RemoveForm {
+    /// The filter that was in view, so removing one does not lose the list.
+    pub policy: Option<String>,
 }
 
-/// Every exclusion recorded for a site, newest first.
+#[derive(Debug, Deserialize)]
+pub struct ExclusionsQuery {
+    /// Narrow to one policy. Absent means every exclusion in the installation.
+    pub policy: Option<String>,
+    pub result: Option<String>,
+    pub msg:    Option<String>,
+}
+
+/// Form behind the Traffic Monitor's "exclude for this IP" button.
+#[derive(Debug, Deserialize)]
+pub struct FromTrafficForm {
+    /// The traffic row's host, which leads to its site and so its policy.
+    pub host:      String,
+    pub client_ip: String,
+    /// Catalogue number of the rule that matched.
+    pub rule:      i64,
+    pub rule_name: String,
+    /// Where to return to, preserving whatever filter was applied.
+    pub back:      Option<String>,
+}
+
+// ─── Queries ─────────────────────────────────────────────
+
+async fn policy_id(state: &AppState, name: &str) -> Result<Option<i64>> {
+    Ok(sqlx::query_scalar!("SELECT id FROM policies WHERE name = ?", name)
+        .fetch_optional(&state.db)
+        .await?
+        .flatten())
+}
+
+/// The sites a policy covers, which is what an exclusion on it covers.
+pub async fn sites_using(state: &AppState, policy_id: i64) -> Result<Vec<String>> {
+    Ok(sqlx::query_scalar!(
+        "SELECT server_name FROM sites WHERE waf_policy_id = ? ORDER BY server_name",
+        policy_id
+    )
+    .fetch_all(&state.db)
+    .await?)
+}
+
+/// "every site using websites (4 sites)", or the one site's name — what an
+/// exclusion on this policy reaches, said the same way everywhere.
+pub fn reach(policy: &str, sites: &[String]) -> String {
+    match sites {
+        []  => format!("policy {policy}, which no site uses yet"),
+        [s] => format!("{s}, the only site using {policy}"),
+        _   => format!("every site using {policy} ({} sites)", sites.len()),
+    }
+}
+
+/// Every exclusion, or one policy's, grouped by policy.
 ///
-/// The rule name is resolved through the site's policy at read time rather
-/// than copied in at write time. A copied name goes stale when the rule is
-/// renamed by an update, and the name is the only part of this a person reads.
-///
-/// A rule the policy no longer holds resolves to `None` and is shown as
-/// unknown rather than deleted. The policy can be changed back, or the set
+/// The rule name is resolved through the policy at read time rather than
+/// copied in at write time: a copied name goes stale when an update renames the
+/// rule, and the name is the only part of this a person reads. A rule the
+/// policy no longer holds is labelled rather than removed — the set can be
 /// reinstalled, and an exclusion that quietly removed itself in between would
 /// come back as a false positive nobody remembers the cause of.
-async fn load(state: &AppState, site_id: i64, policy_id: Option<i64>) -> Result<Vec<Exclusion>> {
+pub async fn list(state: &AppState, policy_id: Option<i64>) -> Result<Vec<Exclusion>> {
     let rows = sqlx::query!(
-        "SELECT e.id          as \"id!\",
-                e.external_id,
-                e.rule_id,
-                e.path_prefix as \"path_prefix!\",
-                e.client_cidr,
-                e.note        as \"note!\",
-                e.created_at  as \"created_at!\",
-                r.name        as \"rule_name?\"
-         FROM   site_rule_exclusions e
-         LEFT   JOIN waf_rules r
-                ON  r.policy_id = ?
-                AND (   (e.external_id IS NOT NULL AND r.external_id = e.external_id)
-                     OR (e.rule_id     IS NOT NULL AND r.id          = e.rule_id))
-         WHERE  e.site_id = ?
-         ORDER  BY e.id DESC",
-        policy_id, site_id
+        r#"SELECT e.id          as "id!",
+                  p.name        as "policy_name!",
+                  e.external_id,
+                  e.rule_id,
+                  e.path_prefix as "path_prefix!",
+                  e.client_cidr,
+                  e.note        as "note!",
+                  e.created_at  as "created_at!",
+                  r.name        as "rule_name?"
+           FROM   policy_rule_exclusions e
+           JOIN   policies p ON p.id = e.policy_id
+           LEFT   JOIN waf_rules r
+                  ON  r.policy_id = e.policy_id
+                  AND (   (e.external_id IS NOT NULL AND r.external_id = e.external_id)
+                       OR (e.rule_id     IS NOT NULL AND r.id          = e.rule_id))
+           WHERE  (? IS NULL OR e.policy_id = ?)
+           ORDER  BY p.name, e.id DESC"#,
+        policy_id, policy_id
     )
     .fetch_all(&state.db)
     .await?;
@@ -122,9 +168,14 @@ async fn load(state: &AppState, site_id: i64, policy_id: Option<i64>) -> Result<
         .into_iter()
         .map(|r| Exclusion {
             id:          r.id,
+            policy_name: r.policy_name,
+            rule_label: match (r.rule_name, r.external_id, r.rule_id) {
+                (Some(n), _, _)      => n,
+                (None, Some(ext), _) => format!("rule {ext} (not in this policy)"),
+                (None, _, Some(id))  => format!("custom rule #{id} (deleted)"),
+                _                    => "unknown rule".to_string(),
+            },
             external_id: r.external_id,
-            rule_id:     r.rule_id,
-            rule_name:   r.rule_name,
             path_prefix: r.path_prefix,
             client_cidr: r.client_cidr.unwrap_or_default(),
             note:        r.note,
@@ -133,14 +184,11 @@ async fn load(state: &AppState, site_id: i64, policy_id: Option<i64>) -> Result<
         .collect())
 }
 
-/// The rules this site's policy holds, as choices for the add form.
+/// The rules a policy holds, as choices for the add form.
 ///
 /// Only enabled rules. A disabled rule is already not running, so offering it
-/// here would be offering to turn off something that is off — and would make
-/// the exclusion list longer than the set of rules it explains.
-async fn candidates(state: &AppState, policy_id: Option<i64>) -> Result<Vec<Candidate>> {
-    let Some(policy_id) = policy_id else { return Ok(Vec::new()) };
-
+/// here would be offering to turn off something that is off.
+async fn candidates(state: &AppState, policy_id: i64) -> Result<Vec<Candidate>> {
     let rows = sqlx::query!(
         "SELECT id as \"id!\", external_id, name, rule_set
          FROM   waf_rules
@@ -166,39 +214,51 @@ async fn candidates(state: &AppState, policy_id: Option<i64>) -> Result<Vec<Cand
         .collect())
 }
 
-// ─── get_site_exclusions ─────────────────────────────────
+fn page(policy: &str) -> String {
+    if policy.is_empty() {
+        "/exclusions".to_string()
+    } else {
+        format!("/exclusions?policy={}", urlencoding::encode(policy))
+    }
+}
 
-pub async fn get_site_exclusions(
+// ─── get_exclusions ──────────────────────────────────────
+
+/// Every rule that is not running, optionally narrowed to one policy — which
+/// is also where one is added.
+pub async fn get_exclusions(
     State(state): State<AppState>,
     jar: SignedCookieJar,
     Viewer(session): Viewer,
-    Path(name): Path<String>,
-    Query(flash): Query<FlashQuery>,
+    Query(q): Query<ExclusionsQuery>,
 ) -> Result<Response> {
 
-    let Some((site_id, policy_id)) = site_and_policy(&state, &name).await? else {
-        return Ok(Redirect::to("/sites").into_response());
-    };
+    let wanted = q.policy.clone().unwrap_or_default();
+    let selected = if wanted.is_empty() { None } else { policy_id(&state, &wanted).await? };
 
-    let policy_name: Option<String> = match policy_id {
-        Some(id) => sqlx::query_scalar!("SELECT name FROM policies WHERE id = ?", id)
-            .fetch_optional(&state.db)
-            .await?,
-        None => None,
+    let policies = sqlx::query_scalar!("SELECT name FROM policies ORDER BY name")
+        .fetch_all(&state.db)
+        .await?;
+
+    let (candidates, sites) = match selected {
+        Some(id) => (candidates(&state, id).await?, sites_using(&state, id).await?),
+        None     => (Vec::new(), Vec::new()),
     };
 
     let mut ctx = Context::new();
     crate::routes::who_context(&mut ctx, &session);
-    ctx.insert("title",       "Rule Exclusions");
-    ctx.insert("url",         "/sites");
-    ctx.insert("site_name",   &name);
-    ctx.insert("policy_name", &policy_name.unwrap_or_default());
-    ctx.insert("exclusions",  &load(&state, site_id, policy_id).await?);
-    ctx.insert("candidates",  &candidates(&state, policy_id).await?);
-    ctx.insert("result",      &flash.result.unwrap_or_default());
-    ctx.insert("msg",         &flash.msg.unwrap_or_default());
+    ctx.insert("title",      "Rule Exclusions");
+    ctx.insert("url",        "/exclusions");
+    ctx.insert("policies",   &policies);
+    ctx.insert("sel_policy", &if selected.is_some() { wanted.clone() } else { String::new() });
+    ctx.insert("exclusions", &list(&state, selected).await?);
+    ctx.insert("candidates", &candidates);
+    ctx.insert("sites",      &sites);
+    ctx.insert("reach",      &reach(&wanted, &sites));
+    ctx.insert("result",     &q.result.unwrap_or_default());
+    ctx.insert("msg",        &q.msg.unwrap_or_default());
 
-    Ok((jar, Html(state.tera.render("site_exclusions.html", &ctx)?)).into_response())
+    Ok((jar, Html(state.tera.render("policy_exclusions.html", &ctx)?)).into_response())
 }
 
 // ─── post_exclusion_add ──────────────────────────────────
@@ -207,14 +267,12 @@ pub async fn post_exclusion_add(
     State(state): State<AppState>,
     _jar: SignedCookieJar,
     _: Admin,
-    Path(name): Path<String>,
     Form(form): Form<ExclusionForm>,
 ) -> Result<Response> {
 
-    let back = format!("/sites/{name}/exclusions");
-
-    let Some((site_id, _)) = site_and_policy(&state, &name).await? else {
-        return Ok(Redirect::to("/sites").into_response());
+    let back = page(&form.policy);
+    let Some(policy) = policy_id(&state, &form.policy).await? else {
+        return flash_redirect("/exclusions", "failed", "Select a policy first.");
     };
 
     let (external_id, rule_id) = match parse_rule_ref(&form.rule) {
@@ -230,7 +288,7 @@ pub async fn post_exclusion_add(
         return flash_redirect(
             &back,
             "failed",
-            "A path prefix must start with \"/\" — leave it empty to cover the whole site.",
+            "A path prefix must start with \"/\" — leave it empty to cover every path.",
         );
     }
     // Parsed before storing, not after. A block the engine cannot read would
@@ -249,122 +307,42 @@ pub async fn post_exclusion_add(
     let note = form.note.trim();
 
     let inserted = sqlx::query!(
-        "INSERT INTO site_rule_exclusions
-         (site_id, external_id, rule_id, path_prefix, client_cidr, note)
+        "INSERT INTO policy_rule_exclusions
+         (policy_id, external_id, rule_id, path_prefix, client_cidr, note)
          VALUES (?, ?, ?, ?, ?, ?)",
-        site_id, external_id, rule_id, prefix, client_opt, note
+        policy, external_id, rule_id, prefix, client_opt, note
     )
     .execute(&state.db)
     .await;
 
     match inserted {
         Ok(_) => {
-            tracing::info!(site = %name, rule = %form.rule, prefix, "Rule excluded for a site");
-            let where_ = match (prefix.is_empty(), client_opt) {
-                (true,  None)    => "the whole site".to_string(),
-                (false, None)    => format!("paths under {prefix}"),
-                (true,  Some(c)) => format!("client {c}"),
-                (false, Some(c)) => format!("paths under {prefix} from {c}"),
-            };
-            flash_redirect(
-                &back,
-                "success",
-                &format!("Rule excluded for {where_}. It no longer runs, and no longer scores."),
-            )
+            tracing::info!(policy = %form.policy, rule = %form.rule, prefix, "Rule excluded for a policy");
+            let sites = sites_using(&state, policy).await?;
+            flash_redirect(&back, "success", &format!(
+                "Rule excluded {} on {}. It no longer runs there, and no longer scores.",
+                scope(prefix, client_opt), reach(&form.policy, &sites)
+            ))
         }
         // The unique index. Reported as the harmless thing it is rather than
         // as a database error, because pressing Add twice is not a fault.
-        Err(e) if e.to_string().contains("UNIQUE") => {
-            flash_redirect(&back, "failed", "That rule is already excluded for that path.")
-        }
+        Err(e) if e.to_string().contains("UNIQUE") => flash_redirect(
+            &back, "failed", "That rule is already excluded for that path and those clients."),
         Err(e) => flash_redirect(&back, "failed", &format!("Could not save the exclusion: {e}")),
     }
 }
 
-// ─── policy_exclusions ───────────────────────────────────
-
-/// One exclusion as the policy-wide list shows it.
-#[derive(Debug, Serialize)]
-pub struct PolicyExclusion {
-    pub id:          i64,
-    pub site_name:   String,
-    /// Which policy the site uses, so the unfiltered list can be read.
-    pub policy_name: String,
-    pub rule_label:  String,
-    pub external_id: Option<i64>,
-    pub path_prefix: String,
-    pub client_cidr: String,
-    pub note:        String,
-    pub created_at:  String,
-}
-
-/// Every exclusion, or only those affecting one policy's rules.
-///
-/// Exclusions are stored per site, because a site is what an exclusion is
-/// about. They are *read* per policy here because that is how someone thinks
-/// about them afterwards: a policy is the set of rules, and "which of my rules
-/// are not actually running, and where" is a question about the policy rather
-/// than about any one site.
-pub async fn list_for_policy(
-    state: &AppState,
-    policy_id: Option<i64>,
-) -> Result<Vec<PolicyExclusion>> {
-    // `policy_id IS NULL` in the bind makes the filter optional without a
-    // second query: with no policy given, every row passes and the rule name
-    // is resolved through whichever policy the site actually uses.
-    let rows = sqlx::query!(
-        r#"SELECT e.id          as "id!",
-                  s.server_name as "site_name!",
-                  COALESCE(p.name, '(no policy)') as "policy_name!",
-                  e.external_id,
-                  e.rule_id,
-                  e.path_prefix as "path_prefix!",
-                  e.client_cidr,
-                  e.note        as "note!",
-                  e.created_at  as "created_at!",
-                  r.name        as "rule_name?"
-           FROM   site_rule_exclusions e
-           JOIN   sites s ON s.id = e.site_id
-           LEFT   JOIN policies p ON p.id = s.waf_policy_id
-           LEFT   JOIN waf_rules r
-                  ON  r.policy_id = s.waf_policy_id
-                  AND (   (e.external_id IS NOT NULL AND r.external_id = e.external_id)
-                       OR (e.rule_id     IS NOT NULL AND r.id          = e.rule_id))
-           WHERE  (? IS NULL OR s.waf_policy_id = ?)
-           ORDER  BY p.name, s.server_name, e.id DESC"#,
-        policy_id, policy_id
-    )
-    .fetch_all(&state.db)
-    .await?;
-
-    Ok(rows
-        .into_iter()
-        .map(|r| PolicyExclusion {
-            id:          r.id,
-            site_name:   r.site_name,
-            policy_name: r.policy_name,
-            rule_label: match (r.rule_name, r.external_id, r.rule_id) {
-                (Some(n), _, _)       => n,
-                (None, Some(ext), _)  => format!("rule {ext} (not in this policy)"),
-                (None, _, Some(id))   => format!("custom rule #{id} (deleted)"),
-                _                     => "unknown rule".to_string(),
-            },
-            external_id: r.external_id,
-            path_prefix: r.path_prefix,
-            client_cidr: r.client_cidr.unwrap_or_default(),
-            note:        r.note,
-            created_at:  r.created_at,
-        })
-        .collect())
+/// "for every path and client", "under /dav", "for 203.0.113.9", or both.
+fn scope(prefix: &str, client: Option<&str>) -> String {
+    match (prefix.is_empty(), client) {
+        (true,  None)    => "for every path and client".to_string(),
+        (false, None)    => format!("under {prefix}"),
+        (true,  Some(c)) => format!("for {c}"),
+        (false, Some(c)) => format!("under {prefix} for {c}"),
+    }
 }
 
 // ─── post_exclusion_remove ───────────────────────────────
-
-#[derive(Debug, Deserialize)]
-pub struct RemoveForm {
-    /// The filter that was in view, so removing one does not lose the list.
-    pub policy: Option<String>,
-}
 
 /// Remove an exclusion, from wherever it was listed.
 pub async fn post_exclusion_remove(
@@ -375,12 +353,9 @@ pub async fn post_exclusion_remove(
     Form(form): Form<RemoveForm>,
 ) -> Result<Response> {
 
-    let back = match form.policy.as_deref().filter(|p| !p.is_empty()) {
-        Some(p) => format!("/exclusions?policy={}", urlencoding::encode(p)),
-        None    => "/exclusions".to_string(),
-    };
+    let back = page(form.policy.as_deref().unwrap_or(""));
 
-    let done = sqlx::query!("DELETE FROM site_rule_exclusions WHERE id = ?", id)
+    let done = sqlx::query!("DELETE FROM policy_rule_exclusions WHERE id = ?", id)
         .execute(&state.db)
         .await?;
 
@@ -393,81 +368,18 @@ pub async fn post_exclusion_remove(
                    "Exclusion removed — the rule applies again from the next request.")
 }
 
-// ─── get_exclusions ──────────────────────────────────────
-
-#[derive(Debug, Deserialize)]
-pub struct ExclusionsQuery {
-    /// Narrow to one policy. Absent means every exclusion in the installation.
-    pub policy: Option<String>,
-    pub result: Option<String>,
-    pub msg:    Option<String>,
-}
-
-/// Every rule that is not running, anywhere — optionally narrowed to a policy.
-///
-/// One page rather than one per policy. A menu entry needs a single URL, and
-/// the question people actually ask is "what is not running", not "what is not
-/// running under this particular policy" — that is the narrowing, not the
-/// question. The per-policy links pass `?policy=`.
-pub async fn get_exclusions(
-    State(state): State<AppState>,
-    jar: SignedCookieJar,
-    Viewer(session): Viewer,
-    Query(q): Query<ExclusionsQuery>,
-) -> Result<Response> {
-
-    let wanted = q.policy.clone().unwrap_or_default();
-    let policy_id: Option<i64> = if wanted.is_empty() {
-        None
-    } else {
-        sqlx::query_scalar!("SELECT id FROM policies WHERE name = ?", wanted)
-            .fetch_optional(&state.db)
-            .await?
-            .flatten()
-    };
-
-    let policies = sqlx::query_scalar!("SELECT name FROM policies ORDER BY name")
-        .fetch_all(&state.db)
-        .await?;
-
-    let mut ctx = Context::new();
-    crate::routes::who_context(&mut ctx, &session);
-    ctx.insert("title",      "Rule Exclusions");
-    ctx.insert("url",        "/exclusions");
-    ctx.insert("policies",   &policies);
-    ctx.insert("sel_policy", &wanted);
-    ctx.insert("exclusions", &list_for_policy(&state, policy_id).await?);
-    ctx.insert("result",     &q.result.unwrap_or_default());
-    ctx.insert("msg",        &q.msg.unwrap_or_default());
-
-    Ok((jar, Html(state.tera.render("policy_exclusions.html", &ctx)?)).into_response())
-}
-
 // ─── post_exclusion_from_traffic ─────────────────────────
-
-/// Form behind the Traffic Monitor's "exclude for this IP" button.
-#[derive(Debug, Deserialize)]
-pub struct FromTrafficForm {
-    /// The traffic row this came from, so the message can name it back.
-    pub host:      String,
-    pub client_ip: String,
-    /// Catalogue number of the rule that matched.
-    pub rule:      i64,
-    pub rule_name: String,
-    /// Where to return to, preserving whatever filter was applied.
-    pub back:      Option<String>,
-}
 
 /// Exclude one rule for one client, from the row that showed the block.
 ///
 /// The whole point of the Traffic Monitor showing which rules produced a
 /// verdict is that the fix should be reachable from there. Diagnosing a false
-/// positive and then retyping the site, the rule number and the address into
-/// another page is where the diagnosis gets abandoned.
+/// positive and then retyping the rule number and the address into another
+/// page is where the diagnosis gets abandoned.
 ///
 /// Deliberately the narrowest exclusion available: this rule, this client,
-/// every path. Not the site, not the rule everywhere — those are a decision
-/// someone can still make on the exclusions page, having seen this one first.
+/// every path, on the policy of the site the request reached. The message says
+/// how many sites that policy covers, because that is what was just excluded.
 pub async fn post_exclusion_from_traffic(
     State(state): State<AppState>,
     _jar: SignedCookieJar,
@@ -487,7 +399,9 @@ pub async fn post_exclusion_from_traffic(
     }
 
     let site = sqlx::query!(
-        "SELECT id as \"id!\", server_name FROM sites WHERE server_name = ?",
+        "SELECT s.server_name, s.waf_policy_id, p.name as \"policy_name?\"
+         FROM   sites s LEFT JOIN policies p ON p.id = s.waf_policy_id
+         WHERE  s.server_name = ?",
         form.host
     )
     .fetch_optional(&state.db)
@@ -497,64 +411,57 @@ pub async fn post_exclusion_from_traffic(
         return flash_redirect(&back, "failed",
             &format!("No site named {} — it may have been deleted.", form.host));
     };
+    let (Some(policy), Some(policy_name)) = (site.waf_policy_id, site.policy_name) else {
+        return flash_redirect(&back, "failed", &format!(
+            "{} has no policy, so no rules run on it and there is nothing to exclude.",
+            site.server_name));
+    };
 
-    let note = format!("Excluded from Traffic Monitor: {} was blocked for {}",
-                       client, form.rule_name);
+    let note = format!("Excluded from Traffic Monitor: {} was blocked for {} on {}",
+                       client, form.rule_name, site.server_name);
 
     let done = sqlx::query!(
-        "INSERT INTO site_rule_exclusions
-         (site_id, external_id, rule_id, path_prefix, client_cidr, note)
+        "INSERT INTO policy_rule_exclusions
+         (policy_id, external_id, rule_id, path_prefix, client_cidr, note)
          VALUES (?, ?, NULL, '', ?, ?)",
-        site.id, form.rule, client, note
+        policy, form.rule, client, note
     )
     .execute(&state.db)
     .await;
 
+    let sites = sites_using(&state, policy).await?;
     match done {
         Ok(_) => {
-            tracing::info!(site = %site.server_name, rule = form.rule, client,
+            tracing::info!(policy = %policy_name, rule = form.rule, client,
                            "Rule excluded for a client from Traffic Monitor");
             flash_redirect(&back, "success", &format!(
                 "Rule {} no longer runs for {} on {}. Every other client is still \
-                 checked by it.", form.rule, client, site.server_name))
+                 checked by it.", form.rule, client, reach(&policy_name, &sites)))
         }
         Err(e) if e.to_string().contains("UNIQUE") => flash_redirect(&back, "failed",
             &format!("Rule {} is already excluded for {} on {}.",
-                     form.rule, client, site.server_name)),
+                     form.rule, client, reach(&policy_name, &sites))),
         Err(e) => flash_redirect(&back, "failed", &format!("Could not save it: {e}")),
     }
 }
 
-// ─── post_exclusion_delete ───────────────────────────────
+// ─── get_site_exclusions ─────────────────────────────────
 
-pub async fn post_exclusion_delete(
+/// The per-site page that existed until 0.12.1, kept as a redirect so a
+/// bookmark lands on the policy that now holds the site's exclusions.
+pub async fn get_site_exclusions(
     State(state): State<AppState>,
-    _jar: SignedCookieJar,
-    _: Admin,
-    Path((name, id)): Path<(String, i64)>,
+    _: Viewer,
+    Path(name): Path<String>,
 ) -> Result<Response> {
-
-    let back = format!("/sites/{name}/exclusions");
-
-    let Some((site_id, _)) = site_and_policy(&state, &name).await? else {
-        return Ok(Redirect::to("/sites").into_response());
-    };
-
-    // Scoped to the site, so an id from one site's page cannot delete another
-    // site's exclusion.
-    let done = sqlx::query!(
-        "DELETE FROM site_rule_exclusions WHERE id = ? AND site_id = ?",
-        id, site_id
+    let policy: Option<String> = sqlx::query_scalar!(
+        "SELECT p.name FROM sites s JOIN policies p ON p.id = s.waf_policy_id
+         WHERE s.server_name = ?",
+        name
     )
-    .execute(&state.db)
+    .fetch_optional(&state.db)
     .await?;
-
-    if done.rows_affected() == 0 {
-        return flash_redirect(&back, "failed", "That exclusion no longer exists.");
-    }
-
-    tracing::info!(site = %name, exclusion = id, "Rule exclusion removed");
-    flash_redirect(&back, "success", "Exclusion removed — the rule applies to this site again.")
+    Ok(Redirect::to(&page(policy.as_deref().unwrap_or(""))).into_response())
 }
 
 // ─── Helpers ─────────────────────────────────────────────
@@ -604,5 +511,16 @@ mod tests {
         for raw in ["", "913015", "x:1", "e:", "e:abc", "e:1.5", ":1"] {
             assert_eq!(parse_rule_ref(raw), None, "{raw:?} should not parse");
         }
+    }
+
+    #[test]
+    fn the_reach_of_an_exclusion_is_said_plainly() {
+        // Whoever makes an exclusion has to see how far it goes: on a policy
+        // several sites share, it goes to all of them.
+        let one = vec!["cloud.example".to_string()];
+        let many = vec!["a.example".to_string(), "b.example".to_string()];
+        assert_eq!(reach("nextcloud", &one), "cloud.example, the only site using nextcloud");
+        assert_eq!(reach("websites", &many), "every site using websites (2 sites)");
+        assert!(reach("spare", &[]).contains("no site uses"));
     }
 }
