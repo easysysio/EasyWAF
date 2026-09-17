@@ -6,7 +6,7 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
-## [Unreleased]
+## [0.12.1] — 2026-09-17
 
 ### Added
 - The GNU GPL v3 licence text is now in the repository and installed by the .deb and .rpm packages, and the licence is stated precisely as GPL-3.0-or-later.
