@@ -7,6 +7,29 @@ A site with no policy is a plain reverse proxy — forwarded and recorded, but n
 inspected. The Sites page says so, since a site nobody meant to leave
 uninspected is worth noticing.
 
+## Creating one
+
+**Security Policy → Create Policy** sets up everything a policy holds, in one
+pass:
+
+- **Name, mode and thresholds** — see [Modes](#modes) and [Scoring](#scoring).
+- **Rule sets and rules**, chosen from the catalogue.
+- **Country rules** — the mode and the countries, as on the policy's own page.
+- **IP lists** — addresses to block or allow, one per line, `#` starting a
+  comment. A line that is not an address is named back to you rather than
+  quietly dropped.
+- **Published lists** — each off unless you choose Challenge or Block.
+
+**Start from an existing policy** copies another policy's rules, installed sets,
+exclusions, IP entries, published-list choices and country rules into the new
+one; anything you choose on the form is applied on top. The two are independent
+afterwards — this is the way to say "like the websites policy, but for this
+application". An exclusion naming a *custom* rule is not copied, since that rule
+belongs to the policy it was written in; the message says how many were left.
+
+Exclusions are otherwise added later, from the traffic that shows you need them —
+see [False positives](#false-positives).
+
 ## Modes
 
 | Mode | Behaviour |

@@ -384,6 +384,55 @@ mod tests {
     }
 
     #[test]
+    fn creating_a_policy_offers_everything_a_policy_holds() {
+        // A policy holds rules, country rules, IP lists, published lists and
+        // exclusions. Until 0.12.2 the create page offered only rules, so a new
+        // policy meant four more pages afterwards — and the parts nobody
+        // remembered were the ones that never got set.
+        let tera = tera().expect("templates should build");
+        let mut ctx = tera::Context::new();
+        for (k, v) in [("username", "t"), ("title", "Create Policy"), ("url", "/policy"),
+                       ("check_error", ""), ("checked", "2026-09-18 06:00"),
+                       ("lists_error", "")] {
+            ctx.insert(k, v);
+        }
+        ctx.insert("catalog", &Vec::<String>::new());
+        ctx.insert("total_available", &0);
+        ctx.insert("policies", &vec![serde_json::json!({
+            "id": 1, "name": "websites", "rule_engine": "On", "score_threshold": 10,
+            "challenge_threshold": 0, "geoip_mode": "off", "geoip_countries": "",
+            "rule_count": 99, "enabled_count": 99 })]);
+        ctx.insert("lists", &vec![serde_json::json!({
+            "id": "tor-exits", "name": "Tor exit nodes", "description": "Relays.",
+            "licence": "CC0", "attribution": "The Tor Project", "version": "1",
+            "entries": 1349, "enabled": false, "response": "challenge",
+            "ranges": 0, "unreadable": 0, "error": null, "offered": true })]);
+
+        let html = tera.render("policy_create.html", &ctx)
+            .unwrap_or_else(|e| panic!("policy_create.html failed to render: {e:#?}"));
+        for (field, what) in [
+            ("copy_from",        "no way to start from an existing policy"),
+            ("geoip_mode",       "country rules are not offered"),
+            ("geoip_countries",  "no country list"),
+            ("ip_block",         "no block list"),
+            ("ip_allow",         "no allow list"),
+            ("list:tor-exits",   "published lists are not offered"),
+        ] {
+            assert!(html.contains(field), "{what}");
+        }
+        assert!(html.contains("websites"), "an existing policy is not offered to copy");
+        assert!(html.contains("Tor exit nodes"), "the published list is not named");
+
+        // With nothing published and no policies yet — a first installation.
+        ctx.insert("lists", &Vec::<String>::new());
+        ctx.insert("policies", &Vec::<String>::new());
+        ctx.insert("lists_error", "nothing has been fetched from the channel yet");
+        let first = tera.render("policy_create.html", &ctx).expect("renders");
+        assert!(first.contains("nothing has been fetched"), "the empty state does not say why");
+        assert!(!first.contains("copy_from"), "offers to copy when there is nothing to copy");
+    }
+
+    #[test]
     fn the_exclusions_page_is_reachable_from_the_menu() {
         // The page existed in 0.7.0 and was reachable only from an unlabelled
         // icon on the policy list. Someone looking for it in the Security

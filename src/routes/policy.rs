@@ -15,6 +15,7 @@ use axum::{
 use axum_extra::extract::cookie::SignedCookieJar;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use sqlx::SqlitePool;
 use tera::Context;
 
 // ─── Models ──────────────────────────────────────────────
@@ -230,6 +231,16 @@ pub async fn get_policy_new(
     ctx.insert("check_error",     &check_error.unwrap_or_default());
     ctx.insert("checked",         &checked.unwrap_or_default());
 
+    // Everything else a policy holds, so one can be set up in a single pass
+    // rather than across four pages afterwards.
+    ctx.insert("policies", &fetch_policies(&state).await?);
+    // What the published channel offers. Policy ids start at 1, so nothing is
+    // stored against 0: every list reads as off, with the publisher's
+    // suggestion selected.
+    let (lists, lists_error) = crate::iplist_feeds::catalogue(&state.db, 0).await;
+    ctx.insert("lists",       &lists);
+    ctx.insert("lists_error", &lists_error.unwrap_or_default());
+
     Ok((jar, Html(state.tera.render("policy_create.html", &ctx)?)).into_response())
 }
 
@@ -238,7 +249,7 @@ pub async fn get_policy_new(
 pub async fn post_policy_create(
     State(state): State<AppState>,
     _jar: SignedCookieJar,
-    _: Admin,
+    Admin(session): Admin,
     Form(raw): Form<HashMap<String, String>>,
 ) -> Result<Response> {
 
@@ -255,15 +266,104 @@ pub async fn post_policy_create(
         .and_then(|s| s.parse().ok())
         .unwrap_or(0);
 
+    let geoip_mode = match raw.get("geoip_mode").map(String::as_str) {
+        Some("block") => "block",
+        Some("allow") => "allow",
+        _             => "off",
+    };
+    let geoip_countries =
+        normalize_countries(raw.get("geoip_countries").map(String::as_str).unwrap_or(""));
+
     let insert = sqlx::query!(
-        "INSERT INTO policies (name, rule_engine, score_threshold, challenge_threshold)
-         VALUES (?, ?, ?, ?)",
+        "INSERT INTO policies (name, rule_engine, score_threshold, challenge_threshold,
+                               geoip_mode, geoip_countries)
+         VALUES (?, ?, ?, ?, ?, ?)",
         name, rule_engine, score_threshold, challenge_threshold,
+        geoip_mode, geoip_countries,
     )
     .execute(&state.db)
     .await?;
 
     let policy_id = insert.last_insert_rowid();
+
+    // What else the new policy is given, in the order the form asks for it.
+    // Each part reports what it did, so the one message after a create says
+    // what the policy actually holds rather than only that it exists.
+    let mut extras: Vec<String> = Vec::new();
+    let mut refused: Vec<String> = Vec::new();
+
+    // Copied from an existing policy first, so anything chosen below lands on
+    // top of the copy rather than under it.
+    let copy_from = raw.get("copy_from").map(|s| s.trim()).unwrap_or("");
+    if !copy_from.is_empty() {
+        match copy_policy(&state.db, copy_from, policy_id).await? {
+            None => refused.push(format!("there is no policy named {copy_from} to copy")),
+            Some(c) => {
+                extras.push(c.describe(copy_from));
+                if c.custom_exclusions > 0 {
+                    refused.push(format!(
+                        "{} exclusion(s) naming a custom rule were not copied — a custom \
+                         rule belongs to the policy that holds it, so the copy would point \
+                         at the original",
+                        c.custom_exclusions
+                    ));
+                }
+            }
+        }
+    }
+
+    // IP lists, as typed: one address or block per line.
+    for (field, list_type) in [("ip_block", "block"), ("ip_allow", "allow")] {
+        let (addresses, bad) = parse_addresses(raw.get(field).map(String::as_str).unwrap_or(""));
+        let reason = "Added when the policy was created";
+        let mut added = 0usize;
+        for ip in &addresses {
+            let done = sqlx::query!(
+                "INSERT INTO ip_rules (policy_id, ip, list_type, reason, added_by)
+                 VALUES (?, ?, ?, ?, ?)
+                 ON CONFLICT(policy_id, ip) DO UPDATE SET list_type = excluded.list_type",
+                policy_id, ip, list_type, reason, session.username
+            )
+            .execute(&state.db)
+            .await;
+            if done.is_ok() {
+                added += 1;
+            }
+        }
+        if added > 0 {
+            extras.push(format!("{added} address(es) on the {list_type} list"));
+        }
+        if !bad.is_empty() {
+            refused.push(format!(
+                "these are not addresses or blocks, so they are not on the {list_type} \
+                 list: {}", bad.join(", ")
+            ));
+        }
+    }
+
+    // Published lists: one field per list, off unless a response was chosen.
+    //
+    // Only lists the channel actually offers. A field naming anything else
+    // would store a decision about a list that does not exist, which reads on
+    // the IP Lists page as one that has been withdrawn.
+    let (offered, _) = crate::iplist_feeds::catalogue(&state.db, 0).await;
+    let mut lists_on = 0usize;
+    for (key, value) in raw.iter() {
+        let Some(id) = key.strip_prefix("list:") else { continue };
+        let Some(response) = crate::iplist::Response::parse(value) else { continue };
+        if !offered.iter().any(|l| l.id == id) {
+            refused.push(format!("there is no published list called {id}"));
+            continue;
+        }
+        if crate::iplist_feeds::save(
+            &state.db, policy_id, id, true, response, &session.username).await.is_ok()
+        {
+            lists_on += 1;
+        }
+    }
+    if lists_on > 0 {
+        extras.push(format!("{lists_on} published list(s) switched on"));
+    }
 
     // Insert any rules the user selected in the catalog (comma-separated ids).
     let ids: HashSet<i64> = raw.get("ids")
@@ -301,27 +401,176 @@ pub async fn post_policy_create(
         }
     }
 
+    // Said in one line each, appended to whichever sentence the rules produce.
+    let mut tail = String::new();
+    if !extras.is_empty() {
+        tail.push_str(&format!(", with {}", extras.join(", ")));
+    }
+    for note in &refused {
+        tail.push_str(&format!(". Note: {note}"));
+    }
+    if !failed.is_empty() {
+        tail.push_str(&format!(
+            ". These rule sets could not be installed: {}. Install them from the \
+             policy's Rule Sets page.", failed.join("; ")));
+    }
+
+    // Success even with a note: the policy was created, and colouring that red
+    // would say it was not. What was refused is named in the same message.
     flash_redirect(
         "/policy",
         "success",
-        &match (installed, added, failed.is_empty()) {
+        &format!("{}{tail}", match (installed, added) {
             // Nothing chosen is a legitimate thing to do and a bad thing to do
             // by accident, so it says what the policy is rather than reporting
             // a count of zero and leaving the reader to work it out.
-            (0, 0, true)  => format!(
+            (0, 0) if extras.is_empty() => format!(
                 "Policy {name} created with no rules — it will inspect nothing until \
                  you add rule sets from its Rule Sets page"
             ),
-            (0, a, true)  => format!("Policy {name} created with {a} rule(s)"),
-            (i, 0, true)  => format!("Policy {name} created with {i} rule set(s)"),
-            (i, a, true)  => format!("Policy {name} created with {i} rule set(s) and {a} further rule(s)"),
-            (i, _, false) => format!(
-                "Policy {name} created with {i} rule set(s), but these could not be \
-                 installed: {}. Install them from the policy's Rule Sets page.",
-                failed.join("; ")
-            ),
-        },
+            (0, 0) => format!("Policy {name} created"),
+            (0, a) => format!("Policy {name} created with {a} rule(s)"),
+            (i, 0) => format!("Policy {name} created with {i} rule set(s)"),
+            (i, a) => format!("Policy {name} created with {i} rule set(s) and {a} further rule(s)"),
+        }),
     )
+}
+
+// ─── Setting a new policy up ─────────────────────────────
+
+/// What copying an existing policy brought across.
+#[derive(Debug, Default, PartialEq)]
+struct Copied {
+    rules:      u64,
+    sets:       u64,
+    exclusions: u64,
+    addresses:  u64,
+    lists:      u64,
+    /// Exclusions naming a custom rule, which cannot be copied: the rule row
+    /// they name belongs to the policy being copied from.
+    custom_exclusions: u64,
+}
+
+impl Copied {
+    fn describe(&self, from: &str) -> String {
+        let mut parts = Vec::new();
+        if self.rules > 0      { parts.push(format!("{} rule(s)", self.rules)) }
+        if self.sets > 0       { parts.push(format!("{} installed set(s)", self.sets)) }
+        if self.exclusions > 0 { parts.push(format!("{} exclusion(s)", self.exclusions)) }
+        if self.addresses > 0  { parts.push(format!("{} listed address(es)", self.addresses)) }
+        if self.lists > 0      { parts.push(format!("{} published list choice(s)", self.lists)) }
+        if parts.is_empty() {
+            format!("nothing to copy from {from}")
+        } else {
+            format!("{} copied from {from}", parts.join(", "))
+        }
+    }
+}
+
+/// Copy everything one policy holds into another, newly created one.
+///
+/// Rules, the record of which sets are installed, exclusions, IP list entries,
+/// published-list choices and country rules — so "like that one, but for this
+/// application" is one choice rather than an afternoon of re-entering.
+///
+/// Returns `None` when there is no such policy to copy.
+async fn copy_policy(db: &SqlitePool, from: &str, into: i64) -> Result<Option<Copied>> {
+    let Some(src) = sqlx::query_scalar!("SELECT id FROM policies WHERE name = ?", from)
+        .fetch_optional(db)
+        .await?
+        .flatten()
+    else {
+        return Ok(None);
+    };
+
+    let rules = sqlx::query!(
+        "INSERT INTO waf_rules (policy_id, name, description, zone, pattern, score, action,
+                                enabled, external_id, imported_pattern, imported_score,
+                                imported_action, rule_set, cloned_from_external_id,
+                                cloned_from_version, cloned_from_set)
+         SELECT ?, name, description, zone, pattern, score, action,
+                enabled, external_id, imported_pattern, imported_score,
+                imported_action, rule_set, cloned_from_external_id,
+                cloned_from_version, cloned_from_set
+         FROM   waf_rules WHERE policy_id = ?",
+        into, src
+    )
+    .execute(db).await?.rows_affected();
+
+    let sets = sqlx::query!(
+        "INSERT INTO policy_rule_sets (policy_id, set_id, name, version)
+         SELECT ?, set_id, name, version FROM policy_rule_sets WHERE policy_id = ?",
+        into, src
+    )
+    .execute(db).await?.rows_affected();
+
+    // Only exclusions naming a catalogue rule. One naming a custom rule points
+    // at a row belonging to the source policy, and copying it would silence a
+    // rule in the wrong place — or nothing at all.
+    let exclusions = sqlx::query!(
+        "INSERT INTO policy_rule_exclusions
+                (policy_id, external_id, rule_id, path_prefix, client_cidr, note)
+         SELECT ?, external_id, NULL, path_prefix, client_cidr, note
+         FROM   policy_rule_exclusions
+         WHERE  policy_id = ? AND external_id IS NOT NULL",
+        into, src
+    )
+    .execute(db).await?.rows_affected();
+
+    let custom_exclusions = sqlx::query_scalar!(
+        r#"SELECT COUNT(*) as "n!" FROM policy_rule_exclusions
+           WHERE policy_id = ? AND rule_id IS NOT NULL"#,
+        src
+    )
+    .fetch_one(db).await? as u64;
+
+    let addresses = sqlx::query!(
+        "INSERT INTO ip_rules (policy_id, ip, list_type, reason, added_by)
+         SELECT ?, ip, list_type, reason, added_by FROM ip_rules WHERE policy_id = ?",
+        into, src
+    )
+    .execute(db).await?.rows_affected();
+
+    let lists = sqlx::query!(
+        "INSERT INTO ip_list_feeds (policy_id, id, enabled, response, changed_by)
+         SELECT ?, id, enabled, response, changed_by FROM ip_list_feeds WHERE policy_id = ?",
+        into, src
+    )
+    .execute(db).await?.rows_affected();
+
+    // Country rules come with it. A form that named countries of its own
+    // overwrites these below, which is the order the page presents them in.
+    sqlx::query!(
+        "UPDATE policies SET geoip_mode = (SELECT geoip_mode FROM policies WHERE id = ?),
+                             geoip_countries = (SELECT geoip_countries FROM policies WHERE id = ?)
+         WHERE id = ? AND geoip_mode = 'off'",
+        src, src, into
+    )
+    .execute(db).await?;
+
+    let c = Copied { rules, sets, exclusions, addresses, lists, custom_exclusions };
+    Ok(Some(c))
+}
+
+/// Read an address list as typed: one address or CIDR block per line, with
+/// anything after `#` a comment.
+///
+/// Returns the addresses and the lines that are not addresses, so the message
+/// can name what was refused instead of dropping it quietly.
+fn parse_addresses(raw: &str) -> (Vec<String>, Vec<String>) {
+    let mut good = Vec::new();
+    let mut bad = Vec::new();
+    for line in raw.lines() {
+        let entry = line.split('#').next().unwrap_or("").trim();
+        if entry.is_empty() {
+            continue;
+        }
+        match crate::forwarded::Cidr::parse(entry) {
+            Some(_) => good.push(entry.to_string()),
+            None    => bad.push(entry.to_string()),
+        }
+    }
+    (good, bad)
 }
 
 // ─── get_policy_edit ─────────────────────────────────────
@@ -523,5 +772,110 @@ async fn fetch_policy(state: &AppState, name: &str) -> Result<Policy> {
         rule_count:          0,
         enabled_count:       0,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_address_list_is_read_as_typed() {
+        let (good, bad) = parse_addresses(
+            "203.0.113.9\n  198.51.100.0/24  # the office\n\n2001:db8::/32\n# a whole comment\n",
+        );
+        assert_eq!(good, ["203.0.113.9", "198.51.100.0/24", "2001:db8::/32"]);
+        assert!(bad.is_empty());
+    }
+
+    #[test]
+    fn what_is_not_an_address_is_reported_rather_than_dropped() {
+        // Silently ignoring a line is how somebody ends up believing an
+        // address is blocked when it is not.
+        let (good, bad) = parse_addresses("203.0.113.9\nnot-an-address\n999.1.1.1\nexample.com\n");
+        assert_eq!(good, ["203.0.113.9"]);
+        assert_eq!(bad, ["not-an-address", "999.1.1.1", "example.com"]);
+    }
+
+    #[test]
+    fn a_copy_says_what_it_brought() {
+        let c = Copied { rules: 99, sets: 8, exclusions: 2, addresses: 3, lists: 1,
+                         custom_exclusions: 0 };
+        let said = c.describe("websites");
+        for part in ["99 rule(s)", "8 installed set(s)", "2 exclusion(s)",
+                     "3 listed address(es)", "1 published list choice(s)", "from websites"] {
+            assert!(said.contains(part), "{part} missing from: {said}");
+        }
+        assert_eq!(Copied::default().describe("empty"), "nothing to copy from empty");
+    }
+
+    /// The copy is the risky half of setting a policy up from another one: it
+    /// writes rows into a policy that is about to protect real sites, so what
+    /// it carries and what it refuses to carry are both checked against a real
+    /// database rather than reasoned about.
+    #[tokio::test]
+    async fn copying_a_policy_brings_everything_a_policy_holds() {
+        let path = std::env::temp_dir()
+            .join(format!("easywaf-copy-{}.db", std::process::id()));
+        for sfx in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{sfx}", path.display()));
+        }
+        let db = crate::db::init(&format!("sqlite://{}", path.display())).await;
+
+        sqlx::raw_sql(
+            "INSERT INTO policies (name, rule_engine, geoip_mode, geoip_countries)
+                 VALUES ('websites', 'On', 'block', 'CN,RU');
+             INSERT INTO policies (name) VALUES ('new');
+             INSERT INTO waf_rules (policy_id, name, pattern, external_id)
+                 VALUES ((SELECT id FROM policies WHERE name='websites'), 'sqli', 'x', 942100);
+             INSERT INTO waf_rules (policy_id, name, pattern)
+                 VALUES ((SELECT id FROM policies WHERE name='websites'), 'mine', 'y');
+             INSERT INTO policy_rule_sets (policy_id, set_id, version)
+                 VALUES ((SELECT id FROM policies WHERE name='websites'), 'owasp-sqli', 2);
+             INSERT INTO policy_rule_exclusions (policy_id, external_id, path_prefix)
+                 VALUES ((SELECT id FROM policies WHERE name='websites'), 942100, '/dav');
+             INSERT INTO policy_rule_exclusions (policy_id, rule_id, path_prefix)
+                 VALUES ((SELECT id FROM policies WHERE name='websites'),
+                         (SELECT id FROM waf_rules WHERE name='mine'), '');
+             INSERT INTO ip_rules (policy_id, ip, list_type)
+                 VALUES ((SELECT id FROM policies WHERE name='websites'), '203.0.113.9', 'block');
+             INSERT INTO ip_list_feeds (policy_id, id, enabled, response)
+                 VALUES ((SELECT id FROM policies WHERE name='websites'), 'tor-exits', 1, 'challenge');",
+        )
+        .execute(&db)
+        .await
+        .expect("seed");
+
+        let into: i64 = sqlx::query_scalar("SELECT id FROM policies WHERE name = 'new'")
+            .fetch_one(&db).await.unwrap();
+        let copied = copy_policy(&db, "websites", into).await.unwrap().expect("policy exists");
+
+        assert_eq!(copied.rules, 2, "both rules");
+        assert_eq!(copied.sets, 1);
+        assert_eq!(copied.addresses, 1);
+        assert_eq!(copied.lists, 1);
+        // The catalogue exclusion comes; the one naming a custom rule cannot,
+        // because that rule row belongs to the policy it was written in.
+        assert_eq!(copied.exclusions, 1);
+        assert_eq!(copied.custom_exclusions, 1);
+        let dangling: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM policy_rule_exclusions e JOIN waf_rules r ON r.id = e.rule_id
+             WHERE e.policy_id = ?1 AND r.policy_id <> ?1")
+            .bind(into).fetch_one(&db).await.unwrap();
+        assert_eq!(dangling, 0, "an exclusion points at another policy's rule");
+
+        // Country rules come with it, onto a policy that had none.
+        let geo: (String, String) = sqlx::query_as(
+            "SELECT geoip_mode, geoip_countries FROM policies WHERE id = ?")
+            .bind(into).fetch_one(&db).await.unwrap();
+        assert_eq!(geo, ("block".to_string(), "CN,RU".to_string()));
+
+        // And a name that is not a policy is refused rather than half-applied.
+        assert!(copy_policy(&db, "nonesuch", into).await.unwrap().is_none());
+
+        db.close().await;
+        for sfx in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{sfx}", path.display()));
+        }
+    }
 }
 
