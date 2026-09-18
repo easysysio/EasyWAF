@@ -47,9 +47,16 @@ pub struct ListQuery {
 }
 
 /// Switching a published list on or off, and choosing what it does.
+/// Where to return to, for a form rendered on a page other than IP Lists.
+#[derive(Debug, Deserialize)]
+pub struct BackForm {
+    pub back: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct FeedForm {
     pub policy:   String,
+    pub back:     Option<String>,
     /// An unticked checkbox sends nothing, so its absence is the answer.
     pub enabled:  Option<String>,
     pub response: String,
@@ -59,6 +66,7 @@ pub struct FeedForm {
 pub struct UpdateForm {
     /// The policy that was in view, to return to.
     pub policy: Option<String>,
+    pub back:   Option<String>,
 }
 
 /// Adding an address, from a traffic row or from this page's own form.
@@ -142,6 +150,10 @@ pub async fn get_iplists(
     crate::routes::who_context(&mut ctx, &session);
     ctx.insert("title",    "IP Lists");
     ctx.insert("url",      "/iplists");
+    // This page lists every policy's entries, so it carries the selector and
+    // the search box; a policy's own page includes the same panels without them.
+    ctx.insert("show_picker", &true);
+    ctx.insert("back",        "");
     ctx.insert("policies", &policies.iter().map(|p| p.name.clone()).collect::<Vec<_>>());
     ctx.insert("result",   &q.result.clone().unwrap_or_default());
     ctx.insert("msg",      &q.msg.clone().unwrap_or_default());
@@ -232,11 +244,11 @@ pub async fn post_ip_add(
         &state, form.policy.as_deref(), form.host.as_deref()).await? {
         Ok(p) => p,
         Err(msg) => {
-            let back = form.back.clone().unwrap_or_else(|| "/iplists".to_string());
+            let back = crate::routes::safe_back(form.back.as_deref(), "/iplists");
             return flash_redirect(&back, "failed", &msg);
         }
     };
-    let back = form.back.clone().unwrap_or_else(|| page(&policy_name));
+    let back = crate::routes::safe_back(form.back.as_deref(), &page(&policy_name));
     let ip   = form.ip.trim().to_string();
 
     // Parsed rather than trusted, even coming from a traffic row: it arrives
@@ -303,6 +315,7 @@ pub async fn post_ip_remove(
     _jar: SignedCookieJar,
     Admin(session): Admin,
     Path(id): Path<i64>,
+    Form(form): Form<BackForm>,
 ) -> Result<Response> {
 
     let gone = sqlx::query!(
@@ -316,7 +329,8 @@ pub async fn post_ip_remove(
     let Some(gone) = gone else {
         return flash_redirect("/iplists", "failed", "That entry no longer exists");
     };
-    let back = page(gone.policy_name.as_deref().unwrap_or(""));
+    let back = crate::routes::safe_back(
+        form.back.as_deref(), &page(gone.policy_name.as_deref().unwrap_or("")));
 
     tracing::info!(ip = %gone.ip, by = %session.username, "IP list entry removed");
 
@@ -344,7 +358,7 @@ pub async fn post_feed_save(
         Ok(p) => p,
         Err(msg) => return flash_redirect("/iplists", "failed", &msg),
     };
-    let back = page(&policy_name);
+    let back = crate::routes::safe_back(form.back.as_deref(), &page(&policy_name));
     let Some(response) = crate::iplist::Response::parse(&form.response) else {
         return flash_redirect(&back, "failed", &format!("\"{}\" is not a response", form.response));
     };
@@ -386,7 +400,8 @@ pub async fn post_feeds_update(
     Form(form): Form<UpdateForm>,
 ) -> Result<Response> {
 
-    let back = page(form.policy.as_deref().unwrap_or(""));
+    let back = crate::routes::safe_back(
+        form.back.as_deref(), &page(form.policy.as_deref().unwrap_or("")));
     if !crate::rules_update::enabled(&state.db).await {
         return flash_redirect(
             &back,

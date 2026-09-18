@@ -11,6 +11,7 @@ Version bumps and tags are created only after explicit approval.
 ### Added
 - Creating a policy now sets up everything it holds — country rules, IP lists and published lists alongside the rule sets — arranged in tabs, instead of leaving three more pages to visit afterwards.
 - A new policy can be started from an existing one, copying its rules, installed sets, exclusions, IP entries, published-list choices and country rules; the two are independent afterwards.
+- A policy's own page carries everything it holds in the same tabs — rules, country rules, IP lists and exclusions — instead of a settings form with links elsewhere; the IP list and exclusion panels there are the same ones those pages show.
 
 ## [0.12.1] — 2026-09-17
 

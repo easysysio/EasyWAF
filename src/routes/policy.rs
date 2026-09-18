@@ -586,17 +586,152 @@ pub async fn get_policy_edit(
     jar: SignedCookieJar,
     Viewer(session): Viewer,
     Path(name): Path<String>,
+    Query(flash): Query<FlashQuery>,
 ) -> Result<Response> {
 
     let policy = fetch_policy(&state, &name).await?;
+    let policy_id: i64 = sqlx::query_scalar!(
+        r#"SELECT id as "id!" FROM policies WHERE name = ?"#, name
+    )
+    .fetch_one(&state.db)
+    .await?;
+    let back = format!("/policy/{}/edit", name);
 
     let mut ctx = Context::new();
     crate::routes::who_context(&mut ctx, &session);
     ctx.insert("title",    "Policy Settings");
     ctx.insert("url",      "/policy");
     ctx.insert("policy",   &policy);
+    ctx.insert("back",     &back);
+    // The panels below are the same ones the IP Lists and Rule Exclusions
+    // pages show. Here the policy is already decided, so they come without
+    // the selector and the search box those pages carry.
+    ctx.insert("show_picker", &false);
+    ctx.insert("sel_policy",  &policy.name);
+    ctx.insert("policies",    &Vec::<String>::new());
+    ctx.insert("search",      "");
+
+    // What is installed, and what could still be added — the same catalogue
+    // the create page offers, with what this policy already holds ticked and
+    // left alone.
+    let held: HashSet<i64> = sqlx::query_scalar!(
+        r#"SELECT external_id as "external_id!" FROM waf_rules
+           WHERE policy_id = ? AND external_id IS NOT NULL"#,
+        policy_id
+    )
+    .fetch_all(&state.db)
+    .await?
+    .into_iter()
+    .collect();
+    let counts = sqlx::query!(
+        r#"SELECT COUNT(*) as "all!", COALESCE(SUM(enabled), 0) as "on!: i64"
+           FROM waf_rules WHERE policy_id = ?"#,
+        policy_id
+    )
+    .fetch_one(&state.db)
+    .await?;
+    ctx.insert("rule_count",    &counts.all);
+    ctx.insert("enabled_count", &counts.on);
+
+    let catalog = crate::routes::rules::read_catalog_categories(&held)?;
+    ctx.insert("total_available", &catalog.iter().map(|c| c.total).sum::<usize>());
+    ctx.insert("catalog", &catalog);
+    let (checked, check_error) = crate::rules_update::status(&state.db).await;
+    ctx.insert("check_error", &check_error.unwrap_or_default());
+    ctx.insert("checked",     &checked.unwrap_or_default());
+
+    // Its IP lists, its published lists, and its exclusions.
+    let rows = sqlx::query!(
+        r#"SELECT id as "id!", ip as "ip!", list_type as "list_type!",
+                  reason, added_by, created_at as "created_at!"
+           FROM   ip_rules WHERE policy_id = ?
+           ORDER  BY created_at DESC, id DESC"#,
+        policy_id
+    )
+    .fetch_all(&state.db)
+    .await?;
+    let entries: Vec<crate::routes::iplists::Entry> = rows.into_iter()
+        .map(|r| crate::routes::iplists::Entry {
+            id: r.id, ip: r.ip, list_type: r.list_type, reason: r.reason,
+            added_by: r.added_by, created_at: r.created_at,
+        })
+        .collect();
+    ctx.insert("allowed", &entries.iter().filter(|e| e.list_type == "allow").count());
+    ctx.insert("blocked", &entries.iter().filter(|e| e.list_type == "block").count());
+    ctx.insert("entries", &entries);
+
+    let (feeds, feeds_error) = crate::iplist_feeds::catalogue(&state.db, policy_id).await;
+    let (fetched, fetch_error) = crate::iplist_feeds::status(&state.db).await;
+    ctx.insert("feeds",             &feeds);
+    ctx.insert("feeds_error",       &feeds_error.unwrap_or_default());
+    ctx.insert("feeds_fetched",     &fetched.map(|t| crate::routes::settings::format_utc(&t)).unwrap_or_default());
+    ctx.insert("feeds_fetch_error", &fetch_error.unwrap_or_default());
+    ctx.insert("feeds_check",       &crate::rules_update::enabled(&state.db).await);
+
+    ctx.insert("exclusions", &crate::routes::exclusions::list(&state, Some(policy_id)).await?);
+    ctx.insert("candidates", &crate::routes::exclusions::candidates_for(&state, policy_id).await?);
+
+    let sites = crate::routes::exclusions::sites_using(&state, policy_id).await?;
+    ctx.insert("reach", &crate::routes::exclusions::reach(&policy.name, &sites));
+    ctx.insert("sites", &sites);
+
+    ctx.insert("result", &flash.result.unwrap_or_default());
+    ctx.insert("msg",    &flash.msg.unwrap_or_default());
 
     Ok((jar, Html(state.tera.render("policy_settings.html", &ctx)?)).into_response())
+}
+
+// ─── post_policy_setup ───────────────────────────────────
+
+/// Add rule sets and rules to a policy that already exists.
+///
+/// The same choice the create page offers, on the page that edits one, and
+/// through the same verified path: a set's signature is checked before
+/// anything is read and its hash before anything is written.
+pub async fn post_policy_setup(
+    State(state): State<AppState>,
+    _jar: SignedCookieJar,
+    _: Admin,
+    Path(name): Path<String>,
+    Form(raw): Form<HashMap<String, String>>,
+) -> Result<Response> {
+
+    let back = format!("/policy/{name}/edit");
+    let policy_id: i64 = sqlx::query_scalar!(
+        r#"SELECT id as "id!" FROM policies WHERE name = ?"#, name
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| AppError::NotFound(format!("Policy '{name}' not found")))?;
+
+    let ids: HashSet<i64> = raw.get("ids")
+        .map(|s| s.split(',').filter_map(|p| p.trim().parse::<i64>().ok()).collect())
+        .unwrap_or_default();
+    let added = crate::routes::rules::add_rules_by_external_ids(&state, policy_id, &ids).await?;
+
+    let mut installed = 0usize;
+    let mut failed: Vec<String> = Vec::new();
+    for set_id in raw.get("set_ids").map(String::as_str).unwrap_or("")
+        .split(',').map(str::trim).filter(|s| !s.is_empty())
+    {
+        match crate::rules_update::apply(&state.db, policy_id, set_id).await {
+            Ok(_)  => installed += 1,
+            Err(e) => failed.push(format!("{set_id} ({e})")),
+        }
+    }
+
+    let msg = match (installed, added) {
+        (0, 0) => "Nothing selected, so nothing was added".to_string(),
+        (0, a) => format!("{a} rule(s) added to {name}"),
+        (i, 0) => format!("{i} rule set(s) installed into {name}"),
+        (i, a) => format!("{i} rule set(s) and {a} further rule(s) added to {name}"),
+    };
+    if failed.is_empty() {
+        flash_redirect(&back, "success", &msg)
+    } else {
+        flash_redirect(&back, "failed",
+            &format!("{msg}. These could not be installed: {}", failed.join("; ")))
+    }
 }
 
 // ─── post_policy_update ──────────────────────────────────
@@ -609,34 +744,48 @@ pub async fn post_policy_update(
     Form(raw): Form<HashMap<String, String>>,
 ) -> Result<Response> {
 
-    let rule_engine     = raw.get("rule_engine").cloned().unwrap_or_else(|| "DetectionOnly".into());
-    let score_threshold: i64 = raw.get("score_threshold")
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(10);
-    let challenge_threshold: i64 = raw.get("challenge_threshold")
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0);
+    // Only what the form actually sent. The policy's settings are edited from
+    // two tabs — its mode and thresholds on one, its country rules on another
+    // — and forms cannot be nested, so each posts on its own. Writing every
+    // column from every post would make saving one tab reset the other.
+    let back = crate::routes::safe_back(raw.get("back").map(String::as_str), "/policy");
 
-    let geoip_mode = match raw.get("geoip_mode").map(String::as_str) {
-        Some("block") => "block",
-        Some("allow") => "allow",
-        _             => "off",
-    };
-    // Stored normalised, so the module never has to guess at the formatting a
-    // person typed and the field reads back tidily in the form.
-    let geoip_countries =
-        normalize_countries(raw.get("geoip_countries").map(String::as_str).unwrap_or(""));
+    if raw.contains_key("rule_engine") {
+        let rule_engine = raw.get("rule_engine").cloned().unwrap_or_else(|| "DetectionOnly".into());
+        let score_threshold: i64 = raw.get("score_threshold")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(10);
+        let challenge_threshold: i64 = raw.get("challenge_threshold")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
+        sqlx::query!(
+            "UPDATE policies SET rule_engine=?, score_threshold=?, challenge_threshold=?
+             WHERE name=?",
+            rule_engine, score_threshold, challenge_threshold, name,
+        )
+        .execute(&state.db)
+        .await?;
+    }
 
-    sqlx::query!(
-        "UPDATE policies SET rule_engine=?, score_threshold=?, challenge_threshold=?,
-                             geoip_mode=?, geoip_countries=? WHERE name=?",
-        rule_engine, score_threshold, challenge_threshold,
-        geoip_mode, geoip_countries, name,
-    )
-    .execute(&state.db)
-    .await?;
+    if raw.contains_key("geoip_mode") {
+        let geoip_mode = match raw.get("geoip_mode").map(String::as_str) {
+            Some("block") => "block",
+            Some("allow") => "allow",
+            _             => "off",
+        };
+        // Stored normalised, so the module never has to guess at the formatting
+        // a person typed and the field reads back tidily in the form.
+        let geoip_countries =
+            normalize_countries(raw.get("geoip_countries").map(String::as_str).unwrap_or(""));
+        sqlx::query!(
+            "UPDATE policies SET geoip_mode=?, geoip_countries=? WHERE name=?",
+            geoip_mode, geoip_countries, name,
+        )
+        .execute(&state.db)
+        .await?;
+    }
 
-    flash_redirect("/policy", "success", &format!("Policy {} updated successfully", name))
+    flash_redirect(&back, "success", &format!("Policy {} updated successfully", name))
 }
 
 // ─── post_policy_delete ──────────────────────────────────

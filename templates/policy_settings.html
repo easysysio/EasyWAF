@@ -1,115 +1,243 @@
 {% extends "layout_default.html" %}
 
 {% block content %}
-<div class="row">
-    <div class="col-lg-8">
-        <div class="panel panel-default">
-            <div class="panel-heading"><h4>Policy Settings — {{ policy.name }}</h4></div>
-            <div class="panel-body">
-                <form method="post" action="/policy/{{ policy.name }}/update">
 
-                    <div class="form-group">
-                        <label>Policy Name</label>
-                        <input type="text" class="form-control" value="{{ policy.name }}" disabled>
+{% if result == "failed" %}
+<div class="alert alert-danger alert-dismissible">
+    <button type="button" class="close" data-dismiss="alert">&times;</button>
+    {{ msg }}
+</div>
+{% endif %}
+{% if result == "success" %}
+<div class="alert alert-success alert-dismissible">
+    <button type="button" class="close" data-dismiss="alert">&times;</button>
+    {{ msg }}
+</div>
+{% endif %}
+
+<h3 style="margin-top:0">
+    Policy <code>{{ policy.name }}</code>
+    <small class="text-muted">
+        {% if sites %}— applies on {{ sites | length }} site{% if sites | length != 1 %}s{% endif %}:
+        {% for s in sites %}<code>{{ s }}</code>{% if not loop.last %}, {% endif %}{% endfor %}
+        {% else %}— no site uses it yet{% endif %}
+    </small>
+</h3>
+
+{# The same tabs the create page has, plus exclusions, which cannot exist
+   before the rules they name. Each tab posts on its own: forms cannot be
+   nested, and the IP list and exclusion panels carry forms of their own. #}
+<ul class="nav nav-tabs" role="tablist" id="policy-tabs">
+    <li role="presentation" class="active">
+        <a href="#tab-policy" data-toggle="tab" role="tab">
+            <i class="fa fa-shield"></i> Policy</a></li>
+    <li role="presentation">
+        <a href="#tab-rules" data-toggle="tab" role="tab">
+            <i class="fa fa-book"></i> Rules
+            <span class="badge">{{ rule_count }}</span></a></li>
+    <li role="presentation">
+        <a href="#tab-countries" data-toggle="tab" role="tab">
+            <i class="fa fa-globe"></i> Countries</a></li>
+    <li role="presentation">
+        <a href="#tab-iplists" data-toggle="tab" role="tab">
+            <i class="fa fa-hand-stop-o"></i> IP Lists
+            <span class="badge">{{ blocked + allowed }}</span></a></li>
+    <li role="presentation">
+        <a href="#tab-exclusions" data-toggle="tab" role="tab">
+            <i class="fa fa-ban"></i> Exclusions
+            <span class="badge">{{ exclusions | length }}</span></a></li>
+</ul>
+
+<div class="tab-content settings-tabs">
+
+    <!-- ── Policy ─────────────────────────────────────────── -->
+    <div role="tabpanel" class="tab-pane active" id="tab-policy">
+        <div class="row">
+            <div class="col-lg-8">
+                <div class="panel panel-default">
+                    <div class="panel-heading"><strong><i class="fa fa-shield"></i> Policy Settings</strong></div>
+                    <div class="panel-body">
+                        <form method="post" action="/policy/{{ policy.name }}/update">
+                            <input type="hidden" name="back" value="{{ back }}">
+
+                            <div class="form-group">
+                                <label>Policy Name</label>
+                                <input type="text" class="form-control" value="{{ policy.name }}" disabled>
+                                <p class="help-block">
+                                    Everything on these tabs applies on {{ reach }}.
+                                    {% if sites %}
+                                    A site that needs something the others do not needs a policy
+                                    of its own — create one, starting from this policy.
+                                    {% endif %}
+                                </p>
+                            </div>
+
+                            <div class="form-group">
+                                <label>Rule Engine Mode</label>
+                                <select class="form-control" name="rule_engine">
+                                    <option value="DetectionOnly"
+                                        {% if policy.rule_engine == "DetectionOnly" %}selected{% endif %}>
+                                        DetectionOnly — log alerts, never block
+                                    </option>
+                                    <option value="On"
+                                        {% if policy.rule_engine == "On" %}selected{% endif %}>
+                                        On — enforce rules, block when threshold exceeded
+                                    </option>
+                                    <option value="Off"
+                                        {% if policy.rule_engine == "Off" %}selected{% endif %}>
+                                        Off — WAF disabled for this policy
+                                    </option>
+                                </select>
+                                <p class="help-block">
+                                    The IP lists and country rules follow this too: on
+                                    <strong>DetectionOnly</strong> a listed address is served and
+                                    recorded as <em>would block</em> or <em>would challenge</em>;
+                                    with the policy <strong>Off</strong> they do nothing.
+                                </p>
+                            </div>
+
+                            <div class="form-group">
+                                <label>Score Threshold
+                                    <small class="text-muted">
+                                        (block request when accumulated rule scores reach this value)
+                                    </small>
+                                </label>
+                                <input type="number" class="form-control" name="score_threshold"
+                                       value="{{ policy.score_threshold }}" min="1" max="1000" required>
+                            </div>
+
+                            <div class="form-group">
+                                <label>Challenge Threshold
+                                    <small class="text-muted">
+                                        (show a CAPTCHA when score reaches this — must be below the block
+                                        threshold; 0 disables score-based challenges)
+                                    </small>
+                                </label>
+                                <input type="number" class="form-control" name="challenge_threshold"
+                                       value="{{ policy.challenge_threshold }}" min="0" max="1000">
+                            </div>
+
+                            <button type="submit" class="btn btn-success admin-only">
+                                <i class="fa fa-save"></i> Save
+                            </button>
+                            <a href="/policy" class="btn btn-default">Back to policies</a>
+                        </form>
                     </div>
-
-                    <div class="form-group">
-                        <label>Rule Engine Mode</label>
-                        <select class="form-control" name="rule_engine">
-                            <option value="DetectionOnly"
-                                {% if policy.rule_engine == "DetectionOnly" %}selected{% endif %}>
-                                DetectionOnly — log alerts, never block
-                            </option>
-                            <option value="On"
-                                {% if policy.rule_engine == "On" %}selected{% endif %}>
-                                On — enforce rules, block when threshold exceeded
-                            </option>
-                            <option value="Off"
-                                {% if policy.rule_engine == "Off" %}selected{% endif %}>
-                                Off — WAF disabled for this policy
-                            </option>
-                        </select>
-                    </div>
-
-                    <div class="form-group">
-                        <label>Score Threshold
-                            <small class="text-muted">
-                                (block request when accumulated rule scores reach this value)
-                            </small>
-                        </label>
-                        <input type="number" class="form-control" name="score_threshold"
-                               value="{{ policy.score_threshold }}" min="1" max="1000" required>
-                    </div>
-
-                    <div class="form-group">
-                        <label>Challenge Threshold
-                            <small class="text-muted">
-                                (show a CAPTCHA when score reaches this — must be below the block
-                                threshold; 0 disables score-based challenges)
-                            </small>
-                        </label>
-                        <input type="number" class="form-control" name="challenge_threshold"
-                               value="{{ policy.challenge_threshold }}" min="0" max="1000">
-                    </div>
-
-                    <hr>
-
-                    <h4><i class="fa fa-flag"></i> Country Rules</h4>
-                    <p class="help-block" style="margin-top:-4px">
-                        Filter by the country the client IP resolves to, using the bundled
-                        DB-IP Lite database — no lookup leaves this host. Addresses with no
-                        country (private ranges, or any the database does not cover) are never
-                        matched, so they are not blocked by an allow list.
-                    </p>
-
-                    <div class="form-group">
-                        <label>Mode</label>
-                        <select class="form-control" name="geoip_mode">
-                            <option value="off"   {% if policy.geoip_mode == "off" %}selected{% endif %}>
-                                Off — no country filtering
-                            </option>
-                            <option value="block" {% if policy.geoip_mode == "block" %}selected{% endif %}>
-                                Block listed — deny these countries, allow the rest
-                            </option>
-                            <option value="allow" {% if policy.geoip_mode == "allow" %}selected{% endif %}>
-                                Allow listed only — deny every other country
-                            </option>
-                        </select>
-                    </div>
-
-                    <div class="form-group">
-                        <label>Countries
-                            <small class="text-muted">
-                                (ISO 3166-1 alpha-2 codes, e.g. <code>CN, RU, KP</code>)
-                            </small>
-                        </label>
-                        <input type="text" class="form-control" name="geoip_countries"
-                               value="{{ policy.geoip_countries }}" placeholder="CN, RU">
-                        <p class="help-block">
-                            An empty list matches nothing in either mode, so turning the mode on
-                            before choosing countries cannot lock a site out by accident.
-                            Country rules follow the Rule Engine setting above: on
-                            <strong>DetectionOnly</strong> a denied country is recorded in
-                            Traffic Monitor rather than blocked, which is the safe way to see
-                            what an allow list would cost you before enforcing it.
-                        </p>
-                    </div>
-
-                    <button type="submit" class="btn btn-success">
-                        <i class="fa fa-save"></i> Update Policy
-                    </button>
-                    <a href="/policy" class="btn btn-default">Cancel</a>
-
-                </form>
-
-                <hr>
-
-                <a href="/policy/{{ policy.name }}/rules" class="btn btn-primary">
-                    <i class="fa fa-shield"></i> Manage WAF Rules
-                </a>
-
+                </div>
             </div>
         </div>
     </div>
+
+    <!-- ── Rules ──────────────────────────────────────────── -->
+    <div role="tabpanel" class="tab-pane" id="tab-rules">
+        <div class="panel panel-default">
+            <div class="panel-heading" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+                <strong><i class="fa fa-book"></i> Rules</strong>
+                <span class="text-muted" style="font-size:12px">
+                    {{ rule_count }} in this policy, {{ enabled_count }} enabled
+                </span>
+                <span style="margin-left:auto">
+                    <a href="/policy/{{ policy.name }}/rules" class="btn btn-default btn-sm">
+                        <i class="fa fa-list"></i> Manage rules</a>
+                    <a href="/policy/{{ policy.name }}/rules/sets" class="btn btn-default btn-sm">
+                        <i class="fa fa-th-large"></i> Rule sets</a>
+                </span>
+            </div>
+            <div class="panel-body">
+                <p class="help-block" style="margin-top:0">
+                    Tick what to add. A rule this policy already holds is ticked and left
+                    alone. Editing a rule, disabling one, or removing a set is on
+                    <a href="/policy/{{ policy.name }}/rules">Manage rules</a> and
+                    <a href="/policy/{{ policy.name }}/rules/sets">Rule sets</a>.
+                </p>
+            </div>
+        </div>
+
+        <form class="admin-only" method="post" action="/policy/{{ policy.name }}/setup"
+              id="policyForm" onsubmit="collectIds()">
+            <input type="hidden" name="ids"     id="catalogIds" value="">
+            <input type="hidden" name="set_ids" id="setIds"     value="">
+
+            {% include "_rule_picker.html" %}
+
+            <div class="panel panel-default" style="position:sticky;bottom:0;z-index:10">
+                <div class="panel-body" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+                    <span class="text-muted" style="font-size:12px">
+                        <span id="selCountBottom">0</span> of {{ total_available }} rules selected
+                    </span>
+                    <button type="submit" class="btn btn-success" style="margin-left:auto">
+                        <i class="fa fa-plus"></i> Add to this policy
+                    </button>
+                </div>
+            </div>
+        </form>
+    </div>
+
+    <!-- ── Countries ──────────────────────────────────────── -->
+    <div role="tabpanel" class="tab-pane" id="tab-countries">
+        <div class="row">
+            <div class="col-lg-8">
+                <div class="panel panel-default">
+                    <div class="panel-heading"><strong><i class="fa fa-flag"></i> Country Rules</strong></div>
+                    <div class="panel-body">
+                        <form method="post" action="/policy/{{ policy.name }}/update">
+                            <input type="hidden" name="back" value="{{ back }}">
+
+                            <p class="help-block" style="margin-top:0">
+                                Filter by the country the client IP resolves to, using the bundled
+                                DB-IP Lite database — no lookup leaves this host. Addresses with no
+                                country (private ranges, or any the database does not cover) are never
+                                matched, so they are not blocked by an allow list.
+                            </p>
+
+                            <div class="form-group">
+                                <label>Mode</label>
+                                <select class="form-control" name="geoip_mode">
+                                    <option value="off"   {% if policy.geoip_mode == "off" %}selected{% endif %}>
+                                        Off — no country filtering
+                                    </option>
+                                    <option value="block" {% if policy.geoip_mode == "block" %}selected{% endif %}>
+                                        Block listed — deny these countries, allow the rest
+                                    </option>
+                                    <option value="allow" {% if policy.geoip_mode == "allow" %}selected{% endif %}>
+                                        Allow listed only — deny every other country
+                                    </option>
+                                </select>
+                            </div>
+
+                            <div class="form-group">
+                                <label>Countries
+                                    <small class="text-muted">
+                                        (ISO 3166-1 alpha-2 codes, e.g. <code>CN, RU, KP</code>)
+                                    </small>
+                                </label>
+                                <input type="text" class="form-control" name="geoip_countries"
+                                       value="{{ policy.geoip_countries }}" placeholder="CN, RU">
+                                <p class="help-block">
+                                    An empty list matches nothing in either mode, so turning the mode on
+                                    before choosing countries cannot lock a site out by accident.
+                                </p>
+                            </div>
+
+                            <button type="submit" class="btn btn-success admin-only">
+                                <i class="fa fa-save"></i> Save
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── IP lists ───────────────────────────────────────── -->
+    <div role="tabpanel" class="tab-pane" id="tab-iplists">
+        {% include "_ip_lists.html" %}
+    </div>
+
+    <!-- ── Exclusions ─────────────────────────────────────── -->
+    <div role="tabpanel" class="tab-pane" id="tab-exclusions">
+        {% include "_exclusions.html" %}
+    </div>
+
 </div>
 {% endblock %}

@@ -30,6 +30,24 @@ belongs to the policy it was written in; the message says how many were left.
 Exclusions are otherwise added later, from the traffic that shows you need them —
 see [False positives](#false-positives).
 
+## The policy's own page
+
+**Security Policy → the policy's settings** carries everything it holds, in the
+same tabs the create page uses:
+
+| Tab | What is there |
+|---|---|
+| **Policy** | Mode and thresholds. The heading names the sites the policy applies on |
+| **Rules** | What it holds, the catalogue to add more, and links to manage or remove them |
+| **Countries** | The country mode and list |
+| **IP Lists** | Its own blocked and allowed addresses, and its published lists |
+| **Exclusions** | Rules it does not run, and the form to add one |
+
+The IP Lists and Exclusions tabs are the same panels as the pages of those
+names, so anything added from either place shows up in both. Each tab saves on
+its own: saving the mode does not touch the country rules, and the other way
+round.
+
 ## Modes
 
 | Mode | Behaviour |

@@ -329,6 +329,8 @@ mod tests {
         }
         ctx.insert("policies", &vec!["nextcloud", "websites"]);
         ctx.insert("sites", &vec!["a.example", "b.example"]);
+        ctx.insert("show_picker", &true);
+        ctx.insert("back", "");
         ctx.insert("entries", &Vec::<String>::new());
         ctx.insert("allowed", &0);
         ctx.insert("blocked", &0);
@@ -453,6 +455,78 @@ mod tests {
     }
 
     #[test]
+    fn a_policys_own_page_shows_everything_it_holds() {
+        // Rules, country rules, IP lists and exclusions all belong to the
+        // policy, so editing one should not mean four pages. Every tab is
+        // rendered here: a field missing from one of them is a 500 on the page
+        // an operator opens to change what their sites enforce.
+        let tera = tera().expect("templates should build");
+        let mut ctx = tera::Context::new();
+        for (k, v) in [("username", "t"), ("title", "Policy Settings"), ("url", "/policy"),
+                       ("result", ""), ("msg", ""), ("back", "/policy/websites/edit"),
+                       ("sel_policy", "websites"), ("search", ""),
+                       ("reach", "every site using websites (2 sites)"),
+                       ("check_error", ""), ("checked", "2026-09-18 06:00"),
+                       ("feeds_error", ""), ("feeds_fetched", "2026-09-18 06:00"),
+                       ("feeds_fetch_error", "")] {
+            ctx.insert(k, v);
+        }
+        ctx.insert("policy", &serde_json::json!({
+            "id": 1, "name": "websites", "rule_engine": "On", "score_threshold": 10,
+            "challenge_threshold": 5, "geoip_mode": "block", "geoip_countries": "CN,RU",
+            "rule_count": 99, "enabled_count": 98 }));
+        ctx.insert("show_picker", &false);
+        ctx.insert("policies", &Vec::<String>::new());
+        ctx.insert("catalog", &Vec::<String>::new());
+        ctx.insert("total_available", &100);
+        ctx.insert("rule_count", &99);
+        ctx.insert("enabled_count", &98);
+        ctx.insert("sites", &vec!["a.example", "b.example"]);
+        ctx.insert("entries", &vec![serde_json::json!({
+            "id": 7, "ip": "203.0.113.9", "list_type": "block", "reason": "scanner",
+            "added_by": "admin", "created_at": "2026-09-18 09:00" })]);
+        ctx.insert("allowed", &0);
+        ctx.insert("blocked", &1);
+        ctx.insert("feeds", &vec![serde_json::json!({
+            "id": "tor-exits", "name": "Tor exit nodes", "description": "Relays.",
+            "licence": "CC0", "attribution": "The Tor Project", "version": "1",
+            "entries": 1349, "enabled": true, "response": "challenge",
+            "ranges": 693, "unreadable": 0, "error": null, "offered": true })]);
+        ctx.insert("feeds_check", &true);
+        ctx.insert("exclusions", &vec![serde_json::json!({
+            "id": 3, "policy_name": "websites", "rule_label": "SQLi union",
+            "external_id": 942100, "path_prefix": "/dav", "client_cidr": "",
+            "note": "WebDAV", "created_at": "2026-09-18 09:00" })]);
+        ctx.insert("candidates", &vec![serde_json::json!({
+            "value": "e:913015", "label": "913015 — Scanner probe", "set": "owasp-scanners" })]);
+
+        let html = tera.render("policy_settings.html", &ctx)
+            .unwrap_or_else(|e| panic!("policy_settings.html failed to render: {e:#?}"));
+
+        for (what, why) in [
+            ("tab-rules",       "no rules tab"),
+            ("tab-countries",   "no countries tab"),
+            ("tab-iplists",     "no IP lists tab"),
+            ("tab-exclusions",  "no exclusions tab"),
+            ("geoip_countries", "country rules cannot be edited here"),
+            ("203.0.113.9",     "the policy's IP entries are not shown"),
+            ("Tor exit nodes",  "the policy's published lists are not shown"),
+            ("SQLi union",      "the policy's exclusions are not shown"),
+            ("Exclude this rule", "an exclusion cannot be added here"),
+            ("/policy/websites/setup", "rules cannot be added here"),
+            // Tera escapes "/" in an attribute, so this is matched on the part
+            // that survives escaping; the browser decodes it before posting.
+            ("websites&#x2F;edit",     "a form does not return to this page"),
+        ] {
+            assert!(html.contains(what), "{why}");
+        }
+        // The panels are the shared ones: on a policy's page they come without
+        // the selector and search box that belong to the standalone pages.
+        assert!(!html.contains("every policy</option>"), "the exclusions picker leaked in");
+        assert!(!html.contains("Search address or reason"), "the IP list search box leaked in");
+    }
+
+    #[test]
     fn the_exclusions_page_is_reachable_from_the_menu() {
         // The page existed in 0.7.0 and was reachable only from an unlabelled
         // icon on the policy list. Someone looking for it in the Security
@@ -465,6 +539,8 @@ mod tests {
             ctx.insert(k, v);
         }
         ctx.insert("policies", &vec!["prod", "staging"]);
+        ctx.insert("show_picker", &true);
+        ctx.insert("back", "");
         ctx.insert("candidates", &Vec::<String>::new());
         ctx.insert("sites", &Vec::<String>::new());
         ctx.insert("reach", "");

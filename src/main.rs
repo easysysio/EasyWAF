@@ -266,6 +266,9 @@ async fn main() {
         .route("/policy/create",         post(routes::policy::post_policy_create))
         .route("/policy/{name}/edit",    get(routes::policy::get_policy_edit))
         .route("/policy/{name}/update",  post(routes::policy::post_policy_update))
+        // Rule sets and rules added from the policy's own page, the same
+        // choice the create page offers.
+        .route("/policy/{name}/setup",   post(routes::policy::post_policy_setup))
         .route("/policy/{name}/delete",  post(routes::policy::post_policy_delete))
         .route("/policy/{name}/rules/update/{set_id}",
                post(routes::policy::post_apply_rule_update))

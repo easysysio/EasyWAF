@@ -60,6 +60,23 @@ pub fn flash_redirect(
     Ok(Redirect::to(&flash_url(path, result, msg)).into_response())
 }
 
+/// Where a form says to return to afterwards, when that is somewhere this
+/// server serves.
+///
+/// A page that manages one thing from two places — IP lists on their own page
+/// and on a policy's — has to send the operator back where they were. The
+/// value arrives in a form field, so it is a path this application serves or
+/// it is the fallback: anything with a scheme, a host, or a leading `//`
+/// would turn a button into an open redirect.
+pub fn safe_back(raw: Option<&str>, fallback: &str) -> String {
+    match raw.map(str::trim) {
+        Some(p) if p.starts_with('/') && !p.starts_with("//") && !p.contains("://") => {
+            p.to_string()
+        }
+        _ => fallback.to_string(),
+    }
+}
+
 /// The redirect target, separated out so the separator logic is testable
 /// without building a response.
 fn flash_url(path: &str, result: &str, msg: &str) -> String {
@@ -69,7 +86,19 @@ fn flash_url(path: &str, result: &str, msg: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::flash_url;
+    use super::{flash_url, safe_back};
+
+    #[test]
+    fn a_return_path_is_followed_only_when_it_is_ours() {
+        assert_eq!(safe_back(Some("/policy/web/edit"), "/iplists"), "/policy/web/edit");
+        assert_eq!(safe_back(Some("/iplists?policy=a"), "/iplists"), "/iplists?policy=a");
+        // Anything that could leave this server falls back instead.
+        for away in ["https://elsewhere.example/x", "//elsewhere.example/x",
+                     "javascript:alert(1)", "elsewhere.example", "", "   "] {
+            assert_eq!(safe_back(Some(away), "/iplists"), "/iplists", "{away:?}");
+        }
+        assert_eq!(safe_back(None, "/iplists"), "/iplists");
+    }
 
     #[test]
     fn a_plain_path_starts_a_query_string() {

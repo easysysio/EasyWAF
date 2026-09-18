@@ -1,0 +1,292 @@
+{# The IP lists of one policy: its own allow and block entries, and the
+   published lists it has switched on.
+
+   Included by the IP Lists page and by a policy's own page, so the two cannot
+   drift apart. Two variables shape it:
+
+     show_picker  the policy selector and the search box, which belong to the
+                  page that lists every policy's entries, not to a policy's
+                  own page where the policy is already decided
+     back         where a form returns to afterwards; empty means the IP Lists
+                  page, which is what its own forms want
+#}
+<div class="row">
+    <div class="col-lg-11">
+        <div class="panel panel-default">
+            <div class="panel-heading">
+                <h4 style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+                    <span><i class="fa fa-hand-stop-o"></i> IP Lists</span>
+                    {% if policies and show_picker %}
+                    <form method="get" action="/iplists" style="margin:0">
+                        <select name="policy" class="form-control input-sm"
+                                onchange="this.form.submit()" style="width:auto;display:inline-block">
+                            {% for p in policies %}
+                            <option value="{{ p }}" {% if sel_policy == p %}selected{% endif %}>{{ p }}</option>
+                            {% endfor %}
+                        </select>
+                    </form>
+                    <span class="text-muted" style="font-size:12px">
+                        {{ blocked }} blocked, {{ allowed }} allowed
+                    </span>
+                    {% endif %}
+                    {% if show_picker %}
+                    <form method="get" action="/iplists" style="margin:0;margin-left:auto">
+                        <input type="hidden" name="policy" value="{{ sel_policy }}">
+                        <input type="text" name="q" value="{{ search }}"
+                               class="form-control input-sm" placeholder="Search address or reason"
+                               style="width:auto;display:inline-block">
+                    </form>
+                    {% endif %}
+                </h4>
+            </div>
+            <div class="panel-body">
+
+                {% if not sel_policy %}
+                <div class="alert alert-info">
+                    <i class="fa fa-info-circle"></i>
+                    IP lists belong to a security policy, and there are no policies yet.
+                    <a href="/policy/new">Create a policy</a> and attach it to the sites it
+                    should protect.
+                </div>
+                {% else %}
+                <p class="help-block" style="margin-top:0">
+                    These belong to the policy <code>{{ sel_policy }}</code> and apply,
+                    before anything else, on <strong>{{ reach }}</strong>{% if sites | length > 1 %}:
+                    {% for s in sites %}<code>{{ s }}</code>{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}.
+                    A site with no policy has no IP lists.
+                    <br>
+                    <strong>Blocked</strong> is refused outright, before any rule runs.
+                    <strong>Allowed</strong> skips everything: the rules, the country rules,
+                    the published lists and the CAPTCHA alike. That is deliberate and it is
+                    wide, so allow sparingly.
+                    <br>
+                    The lists follow the policy's mode: with the policy in
+                    <em>DetectionOnly</em> nothing is refused or challenged, and what would
+                    have been is recorded in Traffic Monitor; with it <em>Off</em>, they do
+                    nothing. An address is on at most one of a policy's lists; putting it
+                    on the other one moves it.
+                </p>
+
+                <form class="admin-only" method="post" action="/iplists/add"
+                      style="margin-bottom:16px;display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start">
+                    <input type="hidden" name="policy" value="{{ sel_policy }}">
+                    <input type="hidden" name="back"   value="{{ back }}">
+                    <input type="text" name="ip" class="form-control" required
+                           placeholder="203.0.113.9 or 203.0.113.0/24"
+                           spellcheck="false" style="width:260px">
+                    <select name="list_type" class="form-control" style="width:auto">
+                        <option value="block">Block</option>
+                        <option value="allow">Allow</option>
+                    </select>
+                    <input type="text" name="reason" class="form-control"
+                           placeholder="Why (optional)" style="width:280px">
+                    <button type="submit" class="btn btn-default">
+                        <i class="fa fa-plus"></i> Add
+                    </button>
+                </form>
+
+                {% if entries %}
+                <div style="overflow-x:auto">
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th>Address</th>
+                            <th>List</th>
+                            <th>Why</th>
+                            <th>Added by</th>
+                            <th>When</th>
+                            <th class="text-right"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    {% for e in entries %}
+                        <tr {% if e.list_type == "block" %}class="danger"{% endif %}>
+                            <td><code>{{ e.ip }}</code></td>
+                            <td>
+                                {% if e.list_type == "block" %}
+                                <span class="label label-danger">BLOCKED</span>
+                                {% else %}
+                                <span class="label label-success">ALLOWED</span>
+                                {% endif %}
+                            </td>
+                            <td>{{ e.reason | default(value="—") }}</td>
+                            <td>{{ e.added_by | default(value="—") }}</td>
+                            <td style="white-space:nowrap"><small class="text-muted">{{ e.created_at }}</small></td>
+                            <td class="text-right" style="white-space:nowrap">
+                                <form class="admin-only" method="post"
+                                      action="/iplists/{{ e.id }}/remove"
+                                      onsubmit="return confirm('Take {{ e.ip }} off {{ sel_policy }}\'s {{ e.list_type }} list?\n\nIt is inspected like any other client from the next request, on {{ reach }}.');"
+                                      style="display:inline">
+                                    <input type="hidden" name="back" value="{{ back }}">
+                                    <button type="submit" class="btn btn-default btn-xs"
+                                            title="Inspected like any other client again">
+                                        <i class="fa fa-undo"></i> Remove
+                                    </button>
+                                </form>
+                            </td>
+                        </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+                </div>
+                {% else %}
+                <p class="text-muted">
+                    {% if search %}
+                    Nothing matches <code>{{ search }}</code>.
+                    {% else %}
+                    No addresses are listed under <code>{{ sel_policy }}</code>. Every
+                    client is inspected by its rules.
+                    <br>
+                    <small>The usual way one appears is from
+                    <a href="/traffic">Traffic Monitor</a>: find the request, and block
+                    or allow the address that made it.</small>
+                    {% endif %}
+                </p>
+                {% endif %}
+                {% endif %}
+
+            </div>
+        </div>
+    </div>
+</div>
+
+{% if sel_policy %}
+<div class="row">
+    <div class="col-lg-11">
+        <div class="panel panel-default">
+            <div class="panel-heading">
+                <h4 style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+                    <span><i class="fa fa-globe"></i> Published Lists
+                        <small class="text-muted">— for <code>{{ sel_policy }}</code></small></span>
+                    <span class="text-muted" style="font-size:12px">
+                        {% if feeds_fetched %}updated {{ feeds_fetched }} UTC{% else %}not fetched yet{% endif %}
+                    </span>
+                    <form class="admin-only" method="post" action="/iplists/update" style="margin:0;margin-left:auto">
+                        <input type="hidden" name="policy" value="{{ sel_policy }}">
+                        <input type="hidden" name="back"   value="{{ back }}">
+                        <button type="submit" class="btn btn-default btn-sm"
+                                {% if not feeds_check %}disabled title="Checking the update channels is turned off under Settings → Rule Updates"{% endif %}>
+                            <i class="fa fa-refresh"></i> Update now
+                        </button>
+                    </form>
+                </h4>
+            </div>
+            <div class="panel-body">
+
+                <p class="help-block" style="margin-top:0">
+                    Addresses other people keep track of: hijacked netblocks, compromised
+                    hosts, Tor exits. <strong>The data updates itself; what it does does
+                    not.</strong> Every list is fetched from the signed channel and refreshed
+                    daily, but none of them changes anything until this policy switches it
+                    on and says what it should do.
+                    <br>
+                    <strong>Challenge</strong> asks for a CAPTCHA, which anyone human can
+                    pass, so a wrongly listed address is a speed bump rather than a wall.
+                    <strong>Block</strong> refuses the address before any rule runs.
+                    Either applies on {{ reach }}. An address on this policy's allow list
+                    above skips every published list.
+                </p>
+
+                {% if feeds_fetch_error %}
+                <div class="alert alert-warning">
+                    <i class="fa fa-exclamation-triangle"></i>
+                    The last update failed: {{ feeds_fetch_error }}.
+                    {% if feeds %}The lists below are from the last update that worked.{% endif %}
+                </div>
+                {% endif %}
+
+                {% if feeds %}
+                <div style="overflow-x:auto">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>List</th>
+                            <th>Size</th>
+                            <th>Source</th>
+                            <th>In force</th>
+                            <th class="admin-only"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    {% for f in feeds %}
+                        <tr {% if f.enabled and f.error %}class="warning"{% endif %}>
+                            <td>
+                                <strong>{{ f.name }}</strong>
+                                {% if f.description %}<br><small class="text-muted">{{ f.description }}</small>{% endif %}
+                                {% if not f.offered %}
+                                <br><small class="text-danger">No longer published. It is switched on and doing nothing — switch it off.</small>
+                                {% endif %}
+                                {% if f.enabled and f.error %}
+                                <br><small class="text-danger"><i class="fa fa-exclamation-triangle"></i>
+                                    Not in force: {{ f.error }}</small>
+                                {% endif %}
+                            </td>
+                            <td style="white-space:nowrap">
+                                {% if f.enabled and not f.error %}
+                                    {{ f.ranges }} ranges
+                                {% else %}
+                                    {{ f.entries }} entries
+                                {% endif %}
+                                {% if f.unreadable > 0 %}
+                                <br><small class="text-warning" title="Lines in the file that are not addresses — the list may have changed format">
+                                    {{ f.unreadable }} unreadable</small>
+                                {% endif %}
+                                {% if f.version %}<br><small class="text-muted">{{ f.version }}</small>{% endif %}
+                            </td>
+                            <td>
+                                <small>
+                                    {% if f.licence %}{{ f.licence }}{% endif %}
+                                    {% if f.attribution %}<br>{{ f.attribution }}{% endif %}
+                                </small>
+                            </td>
+                            <td style="white-space:nowrap">
+                                {% if not f.enabled %}
+                                <span class="label label-default">OFF</span>
+                                {% elif f.error %}
+                                <span class="label label-warning">NOT LOADED</span>
+                                {% elif f.response == "block" %}
+                                <span class="label label-danger">BLOCK</span>
+                                {% else %}
+                                <span class="label label-warning">CHALLENGE</span>
+                                {% endif %}
+                            </td>
+                            <td class="admin-only" style="white-space:nowrap">
+                                <form method="post" action="/iplists/feeds/{{ f.id }}/save"
+                                      style="margin:0;display:flex;gap:6px;align-items:center"
+                                      onsubmit="if (this.enabled.checked && this.response.value === 'block') { return confirm('Block every address on {{ f.name }}?\n\nThey are refused before any rule runs, on {{ reach }}. This policy\'s allow list still overrules it.'); } return true;">
+                                    <input type="hidden" name="policy" value="{{ sel_policy }}">
+                                    <input type="hidden" name="back"   value="{{ back }}">
+                                    <label class="checkbox-inline" style="margin:0">
+                                        <input type="checkbox" name="enabled" value="1" {% if f.enabled %}checked{% endif %}> On
+                                    </label>
+                                    <select name="response" class="form-control input-sm" style="width:auto">
+                                        <option value="challenge" {% if f.response == "challenge" %}selected{% endif %}>Challenge</option>
+                                        <option value="block" {% if f.response == "block" %}selected{% endif %}>Block</option>
+                                    </select>
+                                    <button type="submit" class="btn btn-default btn-sm">Save</button>
+                                </form>
+                            </td>
+                        </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+                </div>
+                {% else %}
+                <p class="text-muted">
+                    {% if feeds_error %}
+                    No published lists to show: {{ feeds_error }}.
+                    {% else %}
+                    The channel offers no lists.
+                    {% endif %}
+                    {% if not feeds_check %}
+                    <br><small>Checking the update channels is turned off under
+                    <a href="/settings">Settings → Rule Updates</a>.</small>
+                    {% endif %}
+                </p>
+                {% endif %}
+
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}

@@ -67,6 +67,8 @@ pub struct Candidate {
 pub struct ExclusionForm {
     /// The policy, by name, as the page's filter holds it.
     pub policy:      String,
+    /// Where to return to, for the form as rendered on the policy's own page.
+    pub back:        Option<String>,
     /// Either "e:913015" (catalogue number) or "r:42" (custom rule row).
     /// One field rather than two, because the form offers one list.
     pub rule:        String,
@@ -80,6 +82,7 @@ pub struct ExclusionForm {
 pub struct RemoveForm {
     /// The filter that was in view, so removing one does not lose the list.
     pub policy: Option<String>,
+    pub back:   Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -188,7 +191,7 @@ pub async fn list(state: &AppState, policy_id: Option<i64>) -> Result<Vec<Exclus
 ///
 /// Only enabled rules. A disabled rule is already not running, so offering it
 /// here would be offering to turn off something that is off.
-async fn candidates(state: &AppState, policy_id: i64) -> Result<Vec<Candidate>> {
+pub async fn candidates_for(state: &AppState, policy_id: i64) -> Result<Vec<Candidate>> {
     let rows = sqlx::query!(
         "SELECT id as \"id!\", external_id, name, rule_set
          FROM   waf_rules
@@ -241,7 +244,7 @@ pub async fn get_exclusions(
         .await?;
 
     let (candidates, sites) = match selected {
-        Some(id) => (candidates(&state, id).await?, sites_using(&state, id).await?),
+        Some(id) => (candidates_for(&state, id).await?, sites_using(&state, id).await?),
         None     => (Vec::new(), Vec::new()),
     };
 
@@ -249,6 +252,8 @@ pub async fn get_exclusions(
     crate::routes::who_context(&mut ctx, &session);
     ctx.insert("title",      "Rule Exclusions");
     ctx.insert("url",        "/exclusions");
+    ctx.insert("show_picker", &true);
+    ctx.insert("back",        "");
     ctx.insert("policies",   &policies);
     ctx.insert("sel_policy", &if selected.is_some() { wanted.clone() } else { String::new() });
     ctx.insert("exclusions", &list(&state, selected).await?);
@@ -270,7 +275,7 @@ pub async fn post_exclusion_add(
     Form(form): Form<ExclusionForm>,
 ) -> Result<Response> {
 
-    let back = page(&form.policy);
+    let back = crate::routes::safe_back(form.back.as_deref(), &page(&form.policy));
     let Some(policy) = policy_id(&state, &form.policy).await? else {
         return flash_redirect("/exclusions", "failed", "Select a policy first.");
     };
@@ -353,7 +358,8 @@ pub async fn post_exclusion_remove(
     Form(form): Form<RemoveForm>,
 ) -> Result<Response> {
 
-    let back = page(form.policy.as_deref().unwrap_or(""));
+    let back = crate::routes::safe_back(
+        form.back.as_deref(), &page(form.policy.as_deref().unwrap_or("")));
 
     let done = sqlx::query!("DELETE FROM policy_rule_exclusions WHERE id = ?", id)
         .execute(&state.db)
