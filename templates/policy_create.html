@@ -7,6 +7,28 @@
     <input type="hidden" name="set_ids" id="setIds" value="">
 
 
+    {# One form across four tabs. The tabs are presentation only: a hidden
+       tab-pane is still in the document, so its fields still submit — the same
+       arrangement the Settings page uses. The submit bar sits outside them, so
+       it is reachable from whichever tab you are on. #}
+    <ul class="nav nav-tabs" role="tablist" id="policy-tabs">
+        <li role="presentation" class="active">
+            <a href="#tab-policy" data-toggle="tab" role="tab">
+                <i class="fa fa-shield"></i> Policy</a></li>
+        <li role="presentation">
+            <a href="#tab-rules" data-toggle="tab" role="tab">
+                <i class="fa fa-book"></i> Rules
+                <span class="badge" id="selCountTab">0</span></a></li>
+        <li role="presentation">
+            <a href="#tab-countries" data-toggle="tab" role="tab">
+                <i class="fa fa-globe"></i> Countries</a></li>
+        <li role="presentation">
+            <a href="#tab-iplists" data-toggle="tab" role="tab">
+                <i class="fa fa-hand-stop-o"></i> IP Lists</a></li>
+    </ul>
+
+    <div class="tab-content settings-tabs">
+        <div role="tabpanel" class="tab-pane active" id="tab-policy">
     <div class="row">
         <div class="col-lg-8">
             <div class="panel panel-default">
@@ -86,127 +108,9 @@
     </div>
     {% endif %}
 
-    <!-- ── Country rules ──────────────────────────────────── -->
-    <div class="row">
-        <div class="col-lg-8">
-            <div class="panel panel-default">
-                <div class="panel-heading"><strong><i class="fa fa-globe"></i> Country Rules</strong></div>
-                <div class="panel-body">
-
-                    <div class="form-group">
-                        <label>Mode</label>
-                        <select class="form-control" name="geoip_mode">
-                            <option value="off">Off — no country filtering</option>
-                            <option value="block">Block listed — deny these countries, allow the rest</option>
-                            <option value="allow">Allow listed only — deny every other country</option>
-                        </select>
-                    </div>
-
-                    <div class="form-group">
-                        <label>Countries
-                            <small class="text-muted">
-                                (ISO 3166-1 alpha-2 codes, e.g. <code>CN, RU, KP</code>)
-                            </small>
-                        </label>
-                        <input type="text" class="form-control" name="geoip_countries"
-                               placeholder="CN, RU">
-                        <p class="help-block">
-                            An empty list matches nothing in either mode, so choosing a mode
-                            before choosing countries cannot lock a site out by accident.
-                            Country rules follow the Rule Engine mode above: on
-                            <strong>DetectionOnly</strong> a denied country is recorded rather
-                            than blocked.
-                        </p>
-                    </div>
-
-                </div>
-            </div>
         </div>
-    </div>
 
-    <!-- ── IP lists ───────────────────────────────────────── -->
-    <div class="row">
-        <div class="col-lg-8">
-            <div class="panel panel-default">
-                <div class="panel-heading"><strong><i class="fa fa-hand-stop-o"></i> IP Lists</strong></div>
-                <div class="panel-body">
-
-                    <p class="help-block" style="margin-top:0">
-                        One address or CIDR block per line; anything after <code>#</code> is a
-                        comment. These apply on every site using this policy, before any rule
-                        runs. Addresses can be added later from a Traffic Monitor row.
-                    </p>
-
-                    <div class="form-group">
-                        <label>Blocked <small class="text-muted">— refused before any rule runs</small></label>
-                        <textarea class="form-control" name="ip_block" rows="3"
-                                  spellcheck="false" placeholder="203.0.113.9
-198.51.100.0/24  # a netblock that only ever scans"></textarea>
-                    </div>
-
-                    <div class="form-group">
-                        <label>Allowed
-                            <small class="text-muted">— skips the rules, the country rules, the published lists and the CAPTCHA</small>
-                        </label>
-                        <textarea class="form-control" name="ip_allow" rows="3"
-                                  spellcheck="false" placeholder="192.0.2.4  # the office"></textarea>
-                        <p class="help-block">
-                            Wide, deliberately: an allowed address is never inspected here at
-                            all. Use it for callers you control, and sparingly.
-                        </p>
-                    </div>
-
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- ── Published lists ────────────────────────────────── -->
-    <div class="row">
-        <div class="col-lg-8">
-            <div class="panel panel-default">
-                <div class="panel-heading"><strong><i class="fa fa-globe"></i> Published Lists</strong></div>
-                <div class="panel-body">
-                    {% if lists %}
-                    <p class="help-block" style="margin-top:0">
-                        Lists other people maintain, fetched from the signed channel and
-                        refreshed daily. Each is off until this policy says what it should do.
-                    </p>
-                    <table class="table table-condensed">
-                        <tbody>
-                        {% for l in lists %}
-                        <tr>
-                            <td>
-                                <strong>{{ l.name }}</strong>
-                                {% if l.description %}<br><small class="text-muted">{{ l.description }}</small>{% endif %}
-                            </td>
-                            <td style="white-space:nowrap">{{ l.entries }} entries</td>
-                            <td style="white-space:nowrap;width:1%">
-                                <select class="form-control input-sm" name="list:{{ l.id }}">
-                                    <option value="off">Off</option>
-                                    <option value="challenge" {% if l.response == "challenge" %}data-suggested="1"{% endif %}>Challenge</option>
-                                    <option value="block" {% if l.response == "block" %}data-suggested="1"{% endif %}>Block</option>
-                                </select>
-                            </td>
-                        </tr>
-                        {% endfor %}
-                        </tbody>
-                    </table>
-                    {% else %}
-                    <p class="text-muted" style="margin:0">
-                        {% if lists_error %}
-                        No published lists to offer: {{ lists_error }}.
-                        {% else %}
-                        The channel offers no lists.
-                        {% endif %}
-                        They can be switched on later from <a href="/iplists">IP Lists</a>.
-                    </p>
-                    {% endif %}
-                </div>
-            </div>
-        </div>
-    </div>
-
+        <div role="tabpanel" class="tab-pane" id="tab-rules">
     <!-- ── Rule selection ─────────────────────────────────── -->
     <div class="panel panel-default">
         <div class="panel-heading" style="display:flex;flex-wrap:wrap;align-items:center;gap:8px">
@@ -328,6 +232,136 @@
     </div>
     {% endfor %}
 
+        </div>
+
+        <div role="tabpanel" class="tab-pane" id="tab-countries">
+    <!-- ── Country rules ──────────────────────────────────── -->
+    <div class="row">
+        <div class="col-lg-8">
+            <div class="panel panel-default">
+                <div class="panel-heading"><strong><i class="fa fa-globe"></i> Country Rules</strong></div>
+                <div class="panel-body">
+
+                    <div class="form-group">
+                        <label>Mode</label>
+                        <select class="form-control" name="geoip_mode">
+                            <option value="off">Off — no country filtering</option>
+                            <option value="block">Block listed — deny these countries, allow the rest</option>
+                            <option value="allow">Allow listed only — deny every other country</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Countries
+                            <small class="text-muted">
+                                (ISO 3166-1 alpha-2 codes, e.g. <code>CN, RU, KP</code>)
+                            </small>
+                        </label>
+                        <input type="text" class="form-control" name="geoip_countries"
+                               placeholder="CN, RU">
+                        <p class="help-block">
+                            An empty list matches nothing in either mode, so choosing a mode
+                            before choosing countries cannot lock a site out by accident.
+                            Country rules follow the Rule Engine mode above: on
+                            <strong>DetectionOnly</strong> a denied country is recorded rather
+                            than blocked.
+                        </p>
+                    </div>
+
+                </div>
+            </div>
+        </div>
+    </div>
+
+        </div>
+
+        <div role="tabpanel" class="tab-pane" id="tab-iplists">
+    <!-- ── IP lists ───────────────────────────────────────── -->
+    <div class="row">
+        <div class="col-lg-8">
+            <div class="panel panel-default">
+                <div class="panel-heading"><strong><i class="fa fa-hand-stop-o"></i> IP Lists</strong></div>
+                <div class="panel-body">
+
+                    <p class="help-block" style="margin-top:0">
+                        One address or CIDR block per line; anything after <code>#</code> is a
+                        comment. These apply on every site using this policy, before any rule
+                        runs. Addresses can be added later from a Traffic Monitor row.
+                    </p>
+
+                    <div class="form-group">
+                        <label>Blocked <small class="text-muted">— refused before any rule runs</small></label>
+                        <textarea class="form-control" name="ip_block" rows="3"
+                                  spellcheck="false" placeholder="203.0.113.9
+198.51.100.0/24  # a netblock that only ever scans"></textarea>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Allowed
+                            <small class="text-muted">— skips the rules, the country rules, the published lists and the CAPTCHA</small>
+                        </label>
+                        <textarea class="form-control" name="ip_allow" rows="3"
+                                  spellcheck="false" placeholder="192.0.2.4  # the office"></textarea>
+                        <p class="help-block">
+                            Wide, deliberately: an allowed address is never inspected here at
+                            all. Use it for callers you control, and sparingly.
+                        </p>
+                    </div>
+
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── Published lists ────────────────────────────────── -->
+    <div class="row">
+        <div class="col-lg-8">
+            <div class="panel panel-default">
+                <div class="panel-heading"><strong><i class="fa fa-globe"></i> Published Lists</strong></div>
+                <div class="panel-body">
+                    {% if lists %}
+                    <p class="help-block" style="margin-top:0">
+                        Lists other people maintain, fetched from the signed channel and
+                        refreshed daily. Each is off until this policy says what it should do.
+                    </p>
+                    <table class="table table-condensed">
+                        <tbody>
+                        {% for l in lists %}
+                        <tr>
+                            <td>
+                                <strong>{{ l.name }}</strong>
+                                {% if l.description %}<br><small class="text-muted">{{ l.description }}</small>{% endif %}
+                            </td>
+                            <td style="white-space:nowrap">{{ l.entries }} entries</td>
+                            <td style="white-space:nowrap;width:1%">
+                                <select class="form-control input-sm" name="list:{{ l.id }}">
+                                    <option value="off">Off</option>
+                                    <option value="challenge" {% if l.response == "challenge" %}data-suggested="1"{% endif %}>Challenge</option>
+                                    <option value="block" {% if l.response == "block" %}data-suggested="1"{% endif %}>Block</option>
+                                </select>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                        </tbody>
+                    </table>
+                    {% else %}
+                    <p class="text-muted" style="margin:0">
+                        {% if lists_error %}
+                        No published lists to offer: {{ lists_error }}.
+                        {% else %}
+                        The channel offers no lists.
+                        {% endif %}
+                        They can be switched on later from <a href="/iplists">IP Lists</a>.
+                    </p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+        </div>
+    </div>
+
     <!-- ── Submit bar ─────────────────────────────────────── -->
     <div style="position:sticky;bottom:0;background:#fff;border-top:1px solid #ddd;
                 padding:10px 0;text-align:right">
@@ -385,6 +419,8 @@ function updateCounts() {
 
     document.getElementById('selCount').textContent = total;
     document.getElementById('selCountBottom').textContent = total;
+    // Also on the Rules tab itself, so the count is visible from any tab.
+    document.getElementById('selCountTab').textContent = total;
 
     // Said on the page rather than at the end of a save: a policy with no rules
     // is a legitimate thing to create and a bad thing to create by accident,
