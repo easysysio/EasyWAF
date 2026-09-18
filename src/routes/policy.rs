@@ -581,12 +581,21 @@ fn parse_addresses(raw: &str) -> (Vec<String>, Vec<String>) {
 
 // ─── get_policy_edit ─────────────────────────────────────
 
+/// The policy page's own query: a flash, and which tab to open — so an action
+/// taken on a tab comes back to it rather than to the first one.
+#[derive(Debug, serde::Deserialize)]
+pub struct PolicyEditQuery {
+    pub result: Option<String>,
+    pub msg:    Option<String>,
+    pub tab:    Option<String>,
+}
+
 pub async fn get_policy_edit(
     State(state): State<AppState>,
     jar: SignedCookieJar,
     Viewer(session): Viewer,
     Path(name): Path<String>,
-    Query(flash): Query<FlashQuery>,
+    Query(flash): Query<PolicyEditQuery>,
 ) -> Result<Response> {
 
     let policy = fetch_policy(&state, &name).await?;
@@ -596,6 +605,12 @@ pub async fn get_policy_edit(
     .fetch_one(&state.db)
     .await?;
     let back = format!("/policy/{}/edit", name);
+    // Which tab the page opens on. Only the names it has, so a query cannot
+    // ask for anything else.
+    let tab = match flash.tab.as_deref() {
+        Some(t @ ("rules" | "countries" | "iplists" | "exclusions")) => t,
+        _ => "policy",
+    };
 
     let mut ctx = Context::new();
     crate::routes::who_context(&mut ctx, &session);
@@ -603,6 +618,11 @@ pub async fn get_policy_edit(
     ctx.insert("url",      "/policy");
     ctx.insert("policy",   &policy);
     ctx.insert("back",     &back);
+    ctx.insert("tab",      tab);
+    // Each panel returns to its own tab, so an address added on IP Lists does
+    // not come back on Policy with nothing to show for it.
+    ctx.insert("back_iplists",    &format!("{back}?tab=iplists"));
+    ctx.insert("back_exclusions", &format!("{back}?tab=exclusions"));
     // The panels below are the same ones the IP Lists and Rule Exclusions
     // pages show. Here the policy is already decided, so they come without
     // the selector and the search box those pages carry.
@@ -696,7 +716,7 @@ pub async fn post_policy_setup(
     Form(raw): Form<HashMap<String, String>>,
 ) -> Result<Response> {
 
-    let back = format!("/policy/{name}/edit");
+    let back = format!("/policy/{name}/edit?tab=rules");
     let policy_id: i64 = sqlx::query_scalar!(
         r#"SELECT id as "id!" FROM policies WHERE name = ?"#, name
     )
@@ -720,17 +740,28 @@ pub async fn post_policy_setup(
         }
     }
 
-    let msg = match (installed, added) {
-        (0, 0) => "Nothing selected, so nothing was added".to_string(),
-        (0, a) => format!("{a} rule(s) added to {name}"),
-        (i, 0) => format!("{i} rule set(s) installed into {name}"),
-        (i, a) => format!("{i} rule set(s) and {a} further rule(s) added to {name}"),
+    // "Nothing happened" has two causes and they are not the same thing to
+    // read: nothing was ticked, or everything ticked was already here.
+    let msg = match (installed, added, ids.len()) {
+        (0, 0, 0) => "Nothing selected, so nothing was added".to_string(),
+        (0, 0, n) => format!(
+            "Nothing new — {n} rule(s) selected, and {name} already holds every one"
+        ),
+        (0, a, _) => format!("{a} rule(s) added to {name}"),
+        (i, 0, _) => format!("{i} rule set(s) installed into {name}"),
+        (i, a, _) => format!("{i} rule set(s) and {a} further rule(s) added to {name}"),
     };
     if failed.is_empty() {
         flash_redirect(&back, "success", &msg)
     } else {
-        flash_redirect(&back, "failed",
-            &format!("{msg}. These could not be installed: {}", failed.join("; ")))
+        // A set is fetched and verified from the signed channel, so a failure
+        // here is usually the channel rather than the set: say so, and say
+        // what still works without it.
+        flash_redirect(&back, "failed", &format!(
+            "{msg}. These rule sets could not be installed: {}. A set comes from the \
+             signed channel — check Settings → Rule Updates, or tick individual rules, \
+             which are read from this installation's own copy.",
+            failed.join("; ")))
     }
 }
 

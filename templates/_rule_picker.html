@@ -87,6 +87,9 @@
             {% endif %}
             <span class="label label-default">{{ cat.code }}</span>
             <span class="text-muted" style="font-size:12px;margin-left:auto">
+                {% if cat.added_count > 0 %}
+                {{ cat.added_count }} of {{ cat.total }} already here ·
+                {% endif %}
                 <span class="cat-count" data-cat="{{ cat.code }}">0</span> / {{ cat.total }} selected
             </span>
         </div>
@@ -98,11 +101,21 @@
                     <tr class="rule-row"
                         data-text="{{ r.name | lower }} {{ r.description | lower }} {{ r.zone | lower }}">
                         <td style="width:34px;text-align:center;vertical-align:middle">
-                            <input type="checkbox" class="cat-chk"
-                                   data-cat="{{ cat.code }}" data-id="{{ r.external_id }}">
+                            {# A rule the policy already holds is shown ticked and
+                               left alone, under a class the script ignores: it is
+                               not a selection, and counting it would report work
+                               that is not about to happen. #}
+                            <input type="checkbox"
+                                   class="{% if r.added %}cat-held{% else %}cat-chk{% endif %}"
+                                   data-cat="{{ cat.code }}" data-id="{{ r.external_id }}"
+                                   {% if r.added %}checked disabled
+                                   title="Already in this policy"{% endif %}>
                         </td>
                         <td>
                             <strong>{{ r.name }}</strong>
+                            {% if r.added %}
+                            <span class="label label-default" style="font-weight:normal">in this policy</span>
+                            {% endif %}
                             {% if r.description %}
                             <br><small class="text-muted">{{ r.description }}</small>
                             {% endif %}

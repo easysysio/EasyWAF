@@ -28,21 +28,21 @@
    before the rules they name. Each tab posts on its own: forms cannot be
    nested, and the IP list and exclusion panels carry forms of their own. #}
 <ul class="nav nav-tabs" role="tablist" id="policy-tabs">
-    <li role="presentation" class="active">
+    <li role="presentation" {% if tab == "policy" %}class="active"{% endif %}>
         <a href="#tab-policy" data-toggle="tab" role="tab">
             <i class="fa fa-shield"></i> Policy</a></li>
-    <li role="presentation">
+    <li role="presentation" {% if tab == "rules" %}class="active"{% endif %}>
         <a href="#tab-rules" data-toggle="tab" role="tab">
             <i class="fa fa-book"></i> Rules
             <span class="badge">{{ rule_count }}</span></a></li>
-    <li role="presentation">
+    <li role="presentation" {% if tab == "countries" %}class="active"{% endif %}>
         <a href="#tab-countries" data-toggle="tab" role="tab">
             <i class="fa fa-globe"></i> Countries</a></li>
-    <li role="presentation">
+    <li role="presentation" {% if tab == "iplists" %}class="active"{% endif %}>
         <a href="#tab-iplists" data-toggle="tab" role="tab">
             <i class="fa fa-hand-stop-o"></i> IP Lists
             <span class="badge">{{ blocked + allowed }}</span></a></li>
-    <li role="presentation">
+    <li role="presentation" {% if tab == "exclusions" %}class="active"{% endif %}>
         <a href="#tab-exclusions" data-toggle="tab" role="tab">
             <i class="fa fa-ban"></i> Exclusions
             <span class="badge">{{ exclusions | length }}</span></a></li>
@@ -51,7 +51,7 @@
 <div class="tab-content settings-tabs">
 
     <!-- ── Policy ─────────────────────────────────────────── -->
-    <div role="tabpanel" class="tab-pane active" id="tab-policy">
+    <div role="tabpanel" class="tab-pane {% if tab == "policy" %}active{% endif %}" id="tab-policy">
         <div class="row">
             <div class="col-lg-8">
                 <div class="panel panel-default">
@@ -129,7 +129,7 @@
     </div>
 
     <!-- ── Rules ──────────────────────────────────────────── -->
-    <div role="tabpanel" class="tab-pane" id="tab-rules">
+    <div role="tabpanel" class="tab-pane {% if tab == "rules" %}active{% endif %}" id="tab-rules">
         <div class="panel panel-default">
             <div class="panel-heading" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
                 <strong><i class="fa fa-book"></i> Rules</strong>
@@ -174,14 +174,14 @@
     </div>
 
     <!-- ── Countries ──────────────────────────────────────── -->
-    <div role="tabpanel" class="tab-pane" id="tab-countries">
+    <div role="tabpanel" class="tab-pane {% if tab == "countries" %}active{% endif %}" id="tab-countries">
         <div class="row">
             <div class="col-lg-8">
                 <div class="panel panel-default">
                     <div class="panel-heading"><strong><i class="fa fa-flag"></i> Country Rules</strong></div>
                     <div class="panel-body">
                         <form method="post" action="/policy/{{ policy.name }}/update">
-                            <input type="hidden" name="back" value="{{ back }}">
+                            <input type="hidden" name="back" value="{{ back }}?tab=countries">
 
                             <p class="help-block" style="margin-top:0">
                                 Filter by the country the client IP resolves to, using the bundled
@@ -230,12 +230,14 @@
     </div>
 
     <!-- ── IP lists ───────────────────────────────────────── -->
-    <div role="tabpanel" class="tab-pane" id="tab-iplists">
+    <div role="tabpanel" class="tab-pane {% if tab == "iplists" %}active{% endif %}" id="tab-iplists">
+        {% set back = back_iplists %}
         {% include "_ip_lists.html" %}
     </div>
 
     <!-- ── Exclusions ─────────────────────────────────────── -->
-    <div role="tabpanel" class="tab-pane" id="tab-exclusions">
+    <div role="tabpanel" class="tab-pane {% if tab == "exclusions" %}active{% endif %}" id="tab-exclusions">
+        {% set back = back_exclusions %}
         {% include "_exclusions.html" %}
     </div>
 

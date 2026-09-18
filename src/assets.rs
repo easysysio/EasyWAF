@@ -466,6 +466,9 @@ mod tests {
                        ("result", ""), ("msg", ""), ("back", "/policy/websites/edit"),
                        ("sel_policy", "websites"), ("search", ""),
                        ("reach", "every site using websites (2 sites)"),
+                       ("tab", "iplists"),
+                       ("back_iplists", "/policy/websites/edit?tab=iplists"),
+                       ("back_exclusions", "/policy/websites/edit?tab=exclusions"),
                        ("check_error", ""), ("checked", "2026-09-18 06:00"),
                        ("feeds_error", ""), ("feeds_fetched", "2026-09-18 06:00"),
                        ("feeds_fetch_error", "")] {
@@ -477,7 +480,15 @@ mod tests {
             "rule_count": 99, "enabled_count": 98 }));
         ctx.insert("show_picker", &false);
         ctx.insert("policies", &Vec::<String>::new());
-        ctx.insert("catalog", &Vec::<String>::new());
+        ctx.insert("catalog", &vec![serde_json::json!({
+            "title": "Scanners", "code": "913", "set_id": "owasp-scanners",
+            "tier": "basic", "total": 2, "added_count": 1,
+            "rules": [
+                {"external_id": 913001, "name": "Scanner probe", "description": "",
+                 "zone": "ANY", "pattern": "x", "score": 5, "action": "score", "added": true},
+                {"external_id": 913002, "name": "Another probe", "description": "",
+                 "zone": "ANY", "pattern": "y", "score": 5, "action": "score", "added": false},
+            ]})]);
         ctx.insert("total_available", &100);
         ctx.insert("rule_count", &99);
         ctx.insert("enabled_count", &98);
@@ -514,6 +525,11 @@ mod tests {
             ("SQLi union",      "the policy's exclusions are not shown"),
             ("Exclude this rule", "an exclusion cannot be added here"),
             ("/policy/websites/setup", "rules cannot be added here"),
+            // A rule already installed is shown as such, and is not a choice:
+            // offering it again is how "nothing was added" happens.
+            ("in this policy",         "a rule the policy holds is not marked"),
+            ("cat-held",               "a held rule is offered as a selection"),
+            ("already here",           "the heading does not say how many are installed"),
             // Tera escapes "/" in an attribute, so this is matched on the part
             // that survives escaping; the browser decodes it before posting.
             ("websites&#x2F;edit",     "a form does not return to this page"),
@@ -524,6 +540,14 @@ mod tests {
         // the selector and search box that belong to the standalone pages.
         assert!(!html.contains("every policy</option>"), "the exclusions picker leaked in");
         assert!(!html.contains("Search address or reason"), "the IP list search box leaked in");
+
+        // The tab named in the query is the one that opens, and each panel's
+        // forms return to their own tab rather than to the first one.
+        assert!(html.contains(r#"class="tab-pane active" id="tab-iplists""#)
+                || html.contains(r#"class="tab-pane active"  id="tab-iplists""#),
+                "the tab asked for is not the one opened");
+        assert!(html.contains("tab=iplists"), "the IP list forms do not return to their tab");
+        assert!(html.contains("tab=exclusions"), "the exclusion forms do not return to their tab");
     }
 
     #[test]
