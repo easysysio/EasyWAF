@@ -317,22 +317,53 @@
     <div class="row">
         <div class="col-lg-8">
             <div class="panel panel-default">
-                <div class="panel-heading"><strong><i class="fa fa-globe"></i> Published Lists</strong></div>
+                <div class="panel-heading" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+                    <strong><i class="fa fa-globe"></i> Published Lists</strong>
+                    <span class="text-muted" style="font-size:12px">
+                        {% if lists_fetched %}channel updated {{ lists_fetched }} UTC{% else %}channel not fetched yet{% endif %}
+                    </span>
+                </div>
                 <div class="panel-body">
+                    {% if lists_fetch_error %}
+                    <div class="alert alert-warning" style="margin-bottom:12px">
+                        <i class="fa fa-exclamation-triangle"></i>
+                        The last channel update failed: {{ lists_fetch_error }}.
+                        {% if lists %}What is shown is from the last update that worked.{% endif %}
+                    </div>
+                    {% endif %}
                     {% if lists %}
                     <p class="help-block" style="margin-top:0">
                         Lists other people maintain, fetched from the signed channel and
                         refreshed daily. Each is off until this policy says what it should do.
+                        A list that is <strong>not loaded</strong> enforces nothing until
+                        the channel is reachable again, whatever is chosen here.
                     </p>
                     <table class="table table-condensed">
                         <tbody>
                         {% for l in lists %}
-                        <tr>
+                        <tr {% if l.error %}class="warning"{% endif %}>
                             <td>
                                 <strong>{{ l.name }}</strong>
                                 {% if l.description %}<br><small class="text-muted">{{ l.description }}</small>{% endif %}
+                                {% if l.licence %}<br><small class="text-muted">{{ l.licence }}{% if l.attribution %} · {{ l.attribution }}{% endif %}</small>{% endif %}
                             </td>
-                            <td style="white-space:nowrap">{{ l.entries }} entries</td>
+                            <td style="white-space:nowrap">
+                                {{ l.entries }} entries
+                                {% if l.version %}<br><small class="text-muted">{{ l.version }}</small>{% endif %}
+                            </td>
+                            <td style="white-space:nowrap">
+                                {% if l.error %}
+                                <span class="text-danger"><i class="fa fa-exclamation-triangle"></i> not loaded</span>
+                                <br><small class="text-danger">{{ l.error }}</small>
+                                {% elif l.ranges > 0 %}
+                                <span class="text-success"><i class="fa fa-check"></i> {{ l.ranges }} ranges ready</span>
+                                {% else %}
+                                <span class="text-muted">not loaded yet</span>
+                                {% endif %}
+                                {% if l.unreadable > 0 %}
+                                <br><small class="text-warning">{{ l.unreadable }} unreadable lines</small>
+                                {% endif %}
+                            </td>
                             <td style="white-space:nowrap;width:1%">
                                 <select class="form-control input-sm" name="list:{{ l.id }}">
                                     <option value="off">Off</option>

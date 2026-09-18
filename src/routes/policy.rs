@@ -238,8 +238,14 @@ pub async fn get_policy_new(
     // stored against 0: every list reads as off, with the publisher's
     // suggestion selected.
     let (lists, lists_error) = crate::iplist_feeds::catalogue(&state.db, 0).await;
-    ctx.insert("lists",       &lists);
-    ctx.insert("lists_error", &lists_error.unwrap_or_default());
+    // And how the channel itself is doing, so a list chosen here is not chosen
+    // blind: an installation that has never reached the channel, or whose last
+    // fetch failed, says so before anything is switched on.
+    let (fetched, fetch_error) = crate::iplist_feeds::status(&state.db).await;
+    ctx.insert("lists",            &lists);
+    ctx.insert("lists_error",      &lists_error.unwrap_or_default());
+    ctx.insert("lists_fetched",    &fetched.map(|t| crate::routes::settings::format_utc(&t)).unwrap_or_default());
+    ctx.insert("lists_fetch_error", &fetch_error.unwrap_or_default());
 
     Ok((jar, Html(state.tera.render("policy_create.html", &ctx)?)).into_response())
 }

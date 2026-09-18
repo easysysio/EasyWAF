@@ -393,7 +393,8 @@ mod tests {
         let mut ctx = tera::Context::new();
         for (k, v) in [("username", "t"), ("title", "Create Policy"), ("url", "/policy"),
                        ("check_error", ""), ("checked", "2026-09-18 06:00"),
-                       ("lists_error", "")] {
+                       ("lists_error", ""), ("lists_fetched", "2026-09-18 06:00"),
+                       ("lists_fetch_error", "")] {
             ctx.insert(k, v);
         }
         ctx.insert("catalog", &Vec::<String>::new());
@@ -402,11 +403,20 @@ mod tests {
             "id": 1, "name": "websites", "rule_engine": "On", "score_threshold": 10,
             "challenge_threshold": 0, "geoip_mode": "off", "geoip_countries": "",
             "rule_count": 99, "enabled_count": 99 })]);
-        ctx.insert("lists", &vec![serde_json::json!({
-            "id": "tor-exits", "name": "Tor exit nodes", "description": "Relays.",
-            "licence": "CC0", "attribution": "The Tor Project", "version": "1",
-            "entries": 1349, "enabled": false, "response": "challenge",
-            "ranges": 0, "unreadable": 0, "error": null, "offered": true })]);
+        let list = |id: &str, ranges: usize, unreadable: usize, error: Option<&str>| {
+            serde_json::json!({
+                "id": id, "name": format!("{id} list"), "description": "Relays.",
+                "licence": "CC0", "attribution": "The Tor Project", "version": "2026091801",
+                "entries": 1349, "enabled": false, "response": "challenge",
+                "ranges": ranges, "unreadable": unreadable, "error": error, "offered": true })
+        };
+        // Loaded, loaded with lines it could not read, and not loaded at all —
+        // a list chosen here must not look ready when it is not.
+        ctx.insert("lists", &vec![
+            list("tor-exits", 1342, 0, None),
+            list("et-compromised", 588, 3, None),
+            list("spamhaus-drop", 0, 0, Some("its file does not match the signed manifest")),
+        ]);
 
         let html = tera.render("policy_create.html", &ctx)
             .unwrap_or_else(|e| panic!("policy_create.html failed to render: {e:#?}"));
@@ -421,7 +431,17 @@ mod tests {
             assert!(html.contains(field), "{what}");
         }
         assert!(html.contains("websites"), "an existing policy is not offered to copy");
-        assert!(html.contains("Tor exit nodes"), "the published list is not named");
+        assert!(html.contains("tor-exits list"), "the published list is not named");
+        for (what, why) in [
+            ("1342 ranges ready", "a loaded list does not say it is ready"),
+            ("not loaded",        "a list that failed to load looks the same as a loaded one"),
+            ("does not match the signed manifest", "the reason a list is not loaded is hidden"),
+            ("3 unreadable lines", "unreadable lines are not counted"),
+            ("2026091801",        "the list version is not shown"),
+            ("channel updated",   "the channel's own status is missing"),
+        ] {
+            assert!(html.contains(what), "{why}");
+        }
 
         // With nothing published and no policies yet — a first installation.
         ctx.insert("lists", &Vec::<String>::new());
