@@ -240,6 +240,10 @@ pub async fn get_policy_new(
     // suggestion selected.
     let (lists, lists_error) = crate::iplist_feeds::catalogue(
         &state.db, crate::iplist_feeds::Scope::Policy(0)).await;
+    // What the new policy will be subject to whatever is chosen here.
+    let (all_mode, all_countries) = crate::routes::geoip::everywhere(&state).await?;
+    ctx.insert("all_geoip_mode",      &all_mode);
+    ctx.insert("all_geoip_countries", &all_countries);
     // And how the channel itself is doing, so a list chosen here is not chosen
     // blind: an installation that has never reached the channel, or whose last
     // fetch failed, says so before anything is switched on.
@@ -679,6 +683,9 @@ pub async fn get_policy_edit(
 
     let (feeds, feeds_error) = crate::iplist_feeds::catalogue(
         &state.db, crate::iplist_feeds::Scope::Policy(policy_id)).await;
+    let (all_mode, all_countries) = crate::routes::geoip::everywhere(&state).await?;
+    ctx.insert("all_geoip_mode",      &all_mode);
+    ctx.insert("all_geoip_countries", &all_countries);
     let (fetched, fetch_error) = crate::iplist_feeds::status(&state.db).await;
     let shared = sqlx::query!(
         r#"SELECT id as "id!", ip as "ip!", list_type as "list_type!",
@@ -920,7 +927,7 @@ pub async fn post_policy_delete(
 /// gets pasted. Entries that are not two letters are dropped rather than
 /// stored: a code that can never match would look like a working rule that
 /// silently does nothing. Duplicates are removed so the field reads back clean.
-fn normalize_countries(raw: &str) -> String {
+pub fn normalize_countries(raw: &str) -> String {
     let mut out: Vec<String> = Vec::new();
     for part in raw.split(|c: char| c == ',' || c.is_whitespace()) {
         let code = part.trim().to_uppercase();

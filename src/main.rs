@@ -297,6 +297,7 @@ async fn main() {
         .route("/rules/{id}/toggle",     post(routes::rules::post_rule_toggle_global))
         .route("/rules/{id}/delete",     post(routes::rules::post_rule_delete_global))
         .route("/geoip",                 get(routes::geoip::get_geoip))
+        .route("/geoip/all",             post(routes::geoip::post_geoip_all))
         .route("/traffic",               get(routes::traffic::get_traffic))
         // Static assets come out of the binary, with Cache-Control: no-cache
         // so the browser always revalidates — a stale cached stylesheet after

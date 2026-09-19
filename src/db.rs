@@ -78,9 +78,22 @@ pub async fn init(database_url: &str) -> SqlitePool {
     // drops the triggers on them, and 028 is what puts those back.
     run_migration_029(&pool).await;
     run_migration_028(&pool).await;
+    run_migration_030(&pool).await;
 
     info!("Database ready: {}", database_url);
     pool
+}
+
+// ─── run_migration_030 ───────────────────────────────────
+
+/// A country rule can apply to every policy. Every start: all of it is
+/// `IF NOT EXISTS` or `INSERT OR IGNORE`.
+async fn run_migration_030(pool: &SqlitePool) {
+    let sql = include_str!("../migrations/030_geoip_everywhere.sql");
+    sqlx::raw_sql(sql)
+        .execute(pool)
+        .await
+        .unwrap_or_else(|e| panic!("Migration 030 failed: {}", e));
 }
 
 // ─── run_migration_029 ───────────────────────────────────

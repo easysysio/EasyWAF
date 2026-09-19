@@ -198,6 +198,20 @@
                                 country (private ranges, or any the database does not cover) are never
                                 matched, so they are not blocked by an allow list.
                             </p>
+                            {% if all_geoip_mode | default(value="off") != "off" and all_geoip_countries | default(value="") %}
+                            <div class="alert alert-info" style="padding:8px 12px">
+                                <i class="fa fa-globe"></i>
+                                <strong>Already in force here, from
+                                <a href="/geoip">All policies</a>:</strong>
+                                {% if all_geoip_mode == "block" %}
+                                <code>{{ all_geoip_countries }}</code> refused
+                                {% else %}
+                                only <code>{{ all_geoip_countries }}</code> admitted
+                                {% endif %}
+                                — the rule below is applied as well, and neither lets in
+                                what the other refuses.
+                            </div>
+                            {% endif %}
 
                             <div class="form-group">
                                 <label>Mode</label>

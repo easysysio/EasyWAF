@@ -497,6 +497,11 @@ mod tests {
             "challenge_threshold": 5, "geoip_mode": "block", "geoip_countries": "CN,RU",
             "rule_count": 99, "enabled_count": 98 }));
         ctx.insert("show_picker", &false);
+        // A country rule is already in force for every policy, which this
+        // page has to say before somebody sets one that looks like the whole
+        // story.
+        ctx.insert("all_geoip_mode", "block");
+        ctx.insert("all_geoip_countries", "KP");
         ctx.insert("policies", &Vec::<String>::new());
         // Two sets the policy stands in a different relation to: one it holds
         // half of as loose rules, one it holds as an installed set.
@@ -529,6 +534,12 @@ mod tests {
             "added_by": "admin", "created_at": "2026-09-18 09:00" })]);
         ctx.insert("allowed", &0);
         ctx.insert("blocked", &1);
+        // An address blocked for every policy, which reaches this one and is
+        // changed elsewhere.
+        ctx.insert("shared", &vec![serde_json::json!({
+            "id": 9, "ip": "198.51.100.0/24", "list_type": "block",
+            "reason": "no honest traffic", "added_by": "admin",
+            "created_at": "2026-09-19 09:00" })]);
         ctx.insert("feeds", &vec![serde_json::json!({
             "id": "tor-exits", "name": "Tor exit nodes", "description": "Relays.",
             "licence": "CC0", "attribution": "The Tor Project", "version": "1",
@@ -562,6 +573,10 @@ mod tests {
             ("cat-held",               "a held rule is offered as a selection"),
             ("already here",           "the heading does not say how many are installed"),
             ("installed as a set",     "a set the policy holds is not said to be installed"),
+            // Two scopes now, and a page that shows only one of them reads as
+            // the whole rule.
+            ("Already in force here",  "the every-policy country rule is not shown"),
+            ("Also in force here",     "what reaches this policy from every policy is not shown"),
             // One rule of a set is often the one rule that is wrong here, so
             // the tick beside it is two-way: unticking switches that rule off
             // and it stays off through later updates of its set.

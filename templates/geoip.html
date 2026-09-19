@@ -3,11 +3,75 @@
 {% block content %}
 <div class="row">
     <div class="col-lg-9">
+        {% if result %}
+        <div class="alert alert-{% if result == 'success' %}success{% else %}danger{% endif %}">
+            <i class="fa fa-{% if result == 'success' %}check{% else %}exclamation-triangle{% endif %}"></i>
+            {{ msg }}
+        </div>
+        {% endif %}
+
         <div class="alert alert-info">
             <i class="fa fa-flag fa-fw"></i>
             <strong>Country rules live on the policy.</strong>
             A policy is already what a site points at for its WAF settings, so its
             countries are configured there and shared by every site using it.
+            The rule below applies on top of all of them.
+        </div>
+
+        <!-- ── Every policy ───────────────────────────────── -->
+        <div class="panel panel-default">
+            <div class="panel-heading">
+                <strong><i class="fa fa-globe"></i> All policies</strong>
+                <small class="text-muted">— applied as well as each policy's own rule</small>
+            </div>
+            <div class="panel-body">
+                <p class="help-block" style="margin-top:0">
+                    For a country nothing on this appliance should ever serve. It applies on
+                    <strong>every policy — the ones that exist and the ones made later</strong>,
+                    which is
+                    {% if all_sites == 0 %}no site yet, since none has a policy{% elif all_sites == 1 %}the one site that has a policy{% else %}the {{ all_sites }} sites that have one{% endif %}.
+                    <br>
+                    <strong>This rule only adds.</strong> A request refused by it or by the
+                    policy's own rule is refused; nothing here lets a country in that a
+                    policy refuses. The way past a country rule for one client is its
+                    address on an <a href="/iplists">allow list</a>, which skips every
+                    check including this one.
+                    <br>
+                    A site with no policy is not inspected and is not reached by this.
+                    In <em>DetectionOnly</em> a policy records what this would have done
+                    rather than doing it, and with a policy <em>Off</em> it does nothing.
+                </p>
+
+                <form class="admin-only" method="post" action="/geoip/all"
+                      style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start"
+                      onsubmit="return this.mode.value === 'off' || this.countries.value.trim() === '' || confirm('Apply this to every policy?\n\nIt is on top of what each policy already refuses, on {% if all_sites == 1 %}the one site that has a policy{% else %}{{ all_sites }} site(s) with a policy{% endif %}.');">
+                    <select name="mode" class="form-control" style="width:auto">
+                        <option value="off"   {% if all_mode == "off" %}selected{% endif %}>Off — no every-policy rule</option>
+                        <option value="block" {% if all_mode == "block" %}selected{% endif %}>Block listed countries</option>
+                        <option value="allow" {% if all_mode == "allow" %}selected{% endif %}>Allow only listed countries</option>
+                    </select>
+                    <input type="text" name="countries" value="{{ all_countries }}"
+                           class="form-control" style="width:320px" spellcheck="false"
+                           placeholder="CN, RU, KP — two-letter codes">
+                    <button type="submit" class="btn btn-primary">
+                        <i class="fa fa-check"></i> Save
+                    </button>
+                </form>
+                <p class="help-block" style="margin-bottom:0">
+                    In force now:
+                    {% if all_mode == "block" and all_countries %}
+                    <span class="label label-danger">BLOCK</span> <code>{{ all_countries }}</code>
+                    {% elif all_mode == "allow" and all_countries %}
+                    <span class="label label-info">ALLOW ONLY</span> <code>{{ all_countries }}</code>
+                    {% elif all_mode != "off" %}
+                    <span class="label label-default">{{ all_mode | upper }}</span>
+                    with no countries listed, so it does nothing — an empty list is never
+                    read as "refuse everyone".
+                    {% else %}
+                    <span class="text-muted">nothing — each policy's own rule is all that applies</span>
+                    {% endif %}
+                </p>
+            </div>
         </div>
 
         <div class="panel panel-default">
@@ -23,6 +87,20 @@
                         </tr>
                     </thead>
                     <tbody>
+                    {% if all_mode != "off" and all_countries %}
+                        <tr class="info">
+                            <td><strong>All policies</strong></td>
+                            <td><span class="text-muted">—</span></td>
+                            <td>
+                                {% if all_mode == "block" %}
+                                <span class="label label-danger">Block listed</span>
+                                {% else %}
+                                <span class="label label-info">Allow listed only</span>
+                                {% endif %}
+                            </td>
+                            <td><code>{{ all_countries }}</code></td>
+                        </tr>
+                    {% endif %}
                     {% if policies | length == 0 %}
                         <tr>
                             <td colspan="4" class="text-center text-muted">

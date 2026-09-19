@@ -194,7 +194,24 @@ address rather than turning a rule off for everyone who trips it.
 
 ## Country rules
 
-Per policy: block listed countries, or allow only listed ones.
+Per policy: block listed countries, or allow only listed ones — and, under
+**Security Policy → GeoLocation Rules**, one rule for **All policies**, for a
+country nothing on this appliance should ever serve.
+
+**The two add up.** A request refused by the policy's rule or by the
+every-policy one is refused; neither lets in a country the other refuses. The
+every-policy rule reaches policies that have no country rule of their own,
+including policies made later, and a policy's own page says what is already in
+force there. A site with no policy is not inspected and is not reached by it.
+
+The way past a country rule for one client is its address on an
+[allow list](ip-lists.md), which skips every check including this one.
+
+In *DetectionOnly* a policy records what either rule would have done rather
+than doing it; with a policy *Off*, neither does anything. A mode with no
+countries listed does nothing either — an empty allow list is never read as
+"refuse everyone", so switching the mode on before typing the list cannot take
+a site offline between two clicks.
 
 Lookups use a geolocation database compiled into the binary, so they are offline
 and there is nothing to download. Addresses with no country — private ranges,

@@ -123,6 +123,19 @@
                 <div class="panel-heading"><strong><i class="fa fa-globe"></i> Country Rules</strong></div>
                 <div class="panel-body">
 
+                    {% if all_geoip_mode | default(value="off") != "off" and all_geoip_countries | default(value="") %}
+                    <div class="alert alert-info" style="padding:8px 12px">
+                        <i class="fa fa-globe"></i>
+                        <strong>Whatever is chosen here, this policy will also be subject to the
+                        <a href="/geoip">All policies</a> rule:</strong>
+                        {% if all_geoip_mode == "block" %}
+                        <code>{{ all_geoip_countries }}</code> refused.
+                        {% else %}
+                        only <code>{{ all_geoip_countries }}</code> admitted.
+                        {% endif %}
+                    </div>
+                    {% endif %}
+
                     <div class="form-group">
                         <label>Mode</label>
                         <select class="form-control" name="geoip_mode">
