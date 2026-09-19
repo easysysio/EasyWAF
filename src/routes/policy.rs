@@ -427,7 +427,7 @@ pub async fn post_policy_create(
     flash_redirect(
         "/policy",
         "success",
-        &format!("{}{tail}", match (installed, added) {
+        &format!("{}{tail}", match (installed, added.total()) {
             // Nothing chosen is a legitimate thing to do and a bad thing to do
             // by accident, so it says what the policy is rather than reporting
             // a count of zero and leaving the reader to work it out.
@@ -717,10 +717,21 @@ pub async fn post_policy_setup(
     .await?
     .ok_or_else(|| AppError::NotFound(format!("Policy '{name}' not found")))?;
 
-    let ids: HashSet<i64> = raw.get("ids")
-        .map(|s| s.split(',').filter_map(|p| p.trim().parse::<i64>().ok()).collect())
-        .unwrap_or_default();
+    let list = |field: &str| -> HashSet<i64> {
+        raw.get(field)
+            .map(|s| s.split(',').filter_map(|p| p.trim().parse::<i64>().ok()).collect())
+            .unwrap_or_default()
+    };
+    let ids = list("ids");
+    let off = list("off_ids");
+
     let added = crate::routes::rules::add_rules_by_external_ids(&state, policy_id, &ids).await?;
+
+    // Unticking a rule the policy holds switches it off rather than deleting
+    // it: that is what survives the next update of its set, which would insert
+    // a deleted rule again and start matching on it with nobody told.
+    let switched_off =
+        crate::routes::rules::switch_off_by_external_ids(&state.db, policy_id, &off).await?;
 
     let mut installed = 0usize;
     let mut failed: Vec<String> = Vec::new();
@@ -733,20 +744,36 @@ pub async fn post_policy_setup(
         }
     }
 
-    // "Nothing happened" has two causes and they are not the same thing to
-    // read: nothing was ticked, or everything ticked was already here.
-    let msg = match (installed, added, ids.len()) {
-        // A set that was selected and could not be installed is not nothing
-        // selected: that reading arrived with the heading, which now follows a
-        // full set of ticks, so it is easy to send one set and no rules.
-        (0, 0, 0) if failed.is_empty() => "Nothing selected, so nothing was added".to_string(),
-        (0, 0, 0) => format!("Nothing was added to {name}"),
-        (0, 0, n) => format!(
-            "Nothing new — {n} rule(s) selected, and {name} already holds every one"
-        ),
-        (0, a, _) => format!("{a} rule(s) added to {name}"),
-        (i, 0, _) => format!("{i} rule set(s) installed into {name}"),
-        (i, a, _) => format!("{i} rule set(s) and {a} further rule(s) added to {name}"),
+    // Each thing that happened, named, because a page that reports only what it
+    // added leaves somebody who unticked a rule wondering whether it took.
+    let mut did: Vec<String> = Vec::new();
+    if installed > 0 {
+        did.push(format!("{installed} rule set(s) installed"));
+    }
+    if added.inserted > 0 {
+        did.push(format!("{} rule(s) added", added.inserted));
+    }
+    if added.switched_on > 0 {
+        did.push(format!("{} rule(s) switched back on", added.switched_on));
+    }
+    if switched_off > 0 {
+        did.push(format!("{switched_off} rule(s) switched off"));
+    }
+
+    // "Nothing happened" has more than one cause and they are not the same
+    // thing to read: nothing was ticked, everything ticked was already here, or
+    // a set was chosen and refused.
+    let msg = if !did.is_empty() {
+        format!("{} in {name}", did.join(", "))
+    } else if !failed.is_empty() {
+        format!("Nothing was changed in {name}")
+    } else if ids.is_empty() && off.is_empty() {
+        "Nothing selected, so nothing was changed".to_string()
+    } else {
+        format!(
+            "Nothing new — {} rule(s) selected, and {name} already holds every one",
+            ids.len()
+        )
     };
     if failed.is_empty() {
         flash_redirect(&back, "success", &msg)

@@ -145,9 +145,10 @@
             </div>
             <div class="panel-body">
                 <p class="help-block" style="margin-top:0">
-                    Tick what to add. A rule this policy already holds is ticked and left
-                    alone. Editing a rule, disabling one, or removing a set is on
-                    <a href="/policy/{{ policy.name }}/rules">Manage rules</a> and
+                    The tick beside a rule says whether it applies here: tick one to add
+                    it, untick one this policy holds to switch it off. Nothing happens
+                    until you apply. Editing a rule's pattern, or removing a whole set,
+                    is on <a href="/policy/{{ policy.name }}/rules">Manage rules</a> and
                     <a href="/policy/{{ policy.name }}/rules/sets">Rule sets</a>.
                 </p>
             </div>
@@ -163,16 +164,18 @@
               id="policyForm" onsubmit="collectIds()">
             <input type="hidden" name="ids"     id="catalogIds" value="">
             <input type="hidden" name="set_ids" id="setIds"     value="">
+            <input type="hidden" name="off_ids" id="offIds"     value="">
 
             {% include "_rule_picker.html" %}
 
             <div class="panel panel-default" style="position:sticky;bottom:0;z-index:10">
                 <div class="panel-body" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
                     <span class="text-muted" style="font-size:12px">
-                        <span id="selCountBottom">0</span> of {{ total_available }} rules selected
+                        <span id="selCountBottom">0</span> of {{ total_available }} rules
+                        selected<span id="offCount" class="text-warning"></span>
                     </span>
                     <button type="submit" class="btn btn-success" style="margin-left:auto">
-                        <i class="fa fa-plus"></i> Add to this policy
+                        <i class="fa fa-check"></i> Apply to this policy
                     </button>
                 </div>
             </div>

@@ -255,15 +255,14 @@ pub async fn post_rule_delete(
 
 // ─── post_rule_state ─────────────────────────────────────
 
-/// Switch one rule off, on again, or out of a policy, from the catalogue on
-/// the policy's own page.
+/// Delete one rule from a policy, from the catalogue on the policy's own page.
 ///
-/// Both ways of taking a rule out are offered because they do not survive the
-/// same things. `install_set` updates a rule it finds and never writes
-/// `enabled`, so a rule switched off stays off through every update of its
-/// set, while a deleted one is inserted again the next time that set is
-/// installed or updated. Which is wanted depends on why the rule is going, so
-/// the choice is the operator's and the message says what they chose.
+/// The other way out is unticking it, which switches it off, and the two do
+/// not survive the same things: `install_set` updates a rule it finds and
+/// never writes `enabled`, so a rule switched off stays off through every
+/// update of its set, while a deleted one is inserted again the next time that
+/// set is installed or updated. The message says so rather than leaving it to
+/// be discovered.
 pub async fn post_rule_state(
     State(state): State<AppState>,
     _jar: SignedCookieJar,
@@ -309,21 +308,10 @@ pub async fn post_rule_state(
     let from_set = rule.rule_set.clone().unwrap_or_default();
 
     let msg = match action.as_str() {
-        "disable" => {
-            sqlx::query!("UPDATE waf_rules SET enabled = 0 WHERE id = ?", rule.id)
-                .execute(&state.db).await?;
-            if from_set.is_empty() {
-                format!("{external_id} — {} is off in {policy_name}", rule.name)
-            } else {
-                format!("{external_id} — {} is off in {policy_name}, and stays off when \
-                         {from_set} is updated", rule.name)
-            }
-        }
-        "enable" => {
-            sqlx::query!("UPDATE waf_rules SET enabled = 1 WHERE id = ?", rule.id)
-                .execute(&state.db).await?;
-            format!("{external_id} — {} is on again in {policy_name}", rule.name)
-        }
+        // Switching a rule on and off is the tick beside it, which is a
+        // selection like any other and is applied with the rest of them.
+        // Deleting one is not undoable by re-ticking, so it is its own button
+        // and happens on its own.
         "remove" => {
             sqlx::query!("DELETE FROM waf_rules WHERE id = ?", rule.id)
                 .execute(&state.db).await?;
@@ -1135,12 +1123,16 @@ pub fn read_catalog_categories(held: &Held) -> Result<Vec<CatalogCategory>> {
         let mut rules = Vec::new();
         let mut added_count = 0;
         for r in parsed.rules {
-            let added = held.rules.contains(&r.id);
+            // Present and off is not the same as present: the tick means the
+            // rule applies here, and one switched off applies to nothing. It
+            // is shown unticked, with a label saying it is still in the policy.
+            let off   = held.off.contains(&r.id);
+            let added = held.rules.contains(&r.id) && !off;
             if added {
                 added_count += 1;
             }
             rules.push(CatalogRule {
-                off:         held.off.contains(&r.id),
+                off,
                 external_id: r.id,
                 name:        r.name,
                 description: r.description.unwrap_or_default(),
@@ -1220,20 +1212,24 @@ pub async fn installed_sets(db: &sqlx::SqlitePool, policy_id: i64) -> Result<Has
     .collect())
 }
 
-/// Insert the rules identified by `ids` (external_ids) into the given policy,
-/// skipping any that are already present. Returns the number actually added.
+/// Put the rules identified by `ids` (external_ids) into the given policy.
+///
+/// A rule already there and switched off is switched back on: the tick beside
+/// it means "this applies here", and a rule that is present and off does not
+/// apply, so ticking it has to do something. Returns how many were inserted
+/// and how many were switched back on.
 /// Used by both the catalog sync and the policy-creation flow.
 pub async fn add_rules_by_external_ids(
     state:     &AppState,
     policy_id: i64,
     ids:       &HashSet<i64>,
-) -> Result<usize> {
+) -> Result<Added> {
+    let mut count = Added::default();
     if ids.is_empty() {
-        return Ok(0);
+        return Ok(count);
     }
 
     let defs = read_rule_defs();
-    let mut added = 0usize;
 
     for id in ids {
         let (def, set_id) = match defs.get(id) {
@@ -1241,14 +1237,22 @@ pub async fn add_rules_by_external_ids(
             None    => continue, // unknown id — ignore
         };
 
-        // Skip if already present in this policy.
-        let exists: i64 = sqlx::query_scalar!(
-            "SELECT COUNT(*) FROM waf_rules WHERE policy_id = ? AND external_id = ?",
+        // Already here: nothing to insert, but a rule switched off is switched
+        // on, which is the whole of what re-ticking it can mean.
+        let existing = sqlx::query!(
+            r#"SELECT id as "id!", enabled as "enabled!: i64"
+               FROM waf_rules WHERE policy_id = ? AND external_id = ?"#,
             policy_id, id
         )
-        .fetch_one(&state.db)
+        .fetch_optional(&state.db)
         .await?;
-        if exists > 0 {
+        if let Some(row) = existing {
+            if row.enabled == 0 {
+                sqlx::query!("UPDATE waf_rules SET enabled = 1 WHERE id = ?", row.id)
+                    .execute(&state.db)
+                    .await?;
+                count.switched_on += 1;
+            }
             continue;
         }
 
@@ -1278,10 +1282,52 @@ pub async fn add_rules_by_external_ids(
         )
         .execute(&state.db)
         .await?;
-        added += 1;
+        count.inserted += 1;
     }
 
-    Ok(added)
+    Ok(count)
+}
+
+/// What [`add_rules_by_external_ids`] did: rules put in, and rules already
+/// there that were switched back on. They read differently on the page, and a
+/// policy where nothing was inserted has still changed if one came back on.
+#[derive(Default, Clone, Copy)]
+pub struct Added {
+    pub inserted:    usize,
+    pub switched_on: usize,
+}
+
+impl Added {
+    /// Rules that now apply and did not before.
+    pub fn total(&self) -> usize {
+        self.inserted + self.switched_on
+    }
+}
+
+/// Switch off the rules identified by `ids` (external_ids) in this policy.
+///
+/// Off rather than deleted, deliberately. `install_set` updates a rule it
+/// finds and never writes `enabled`, so a rule switched off here stays off
+/// through every later update of its set, while a deleted one would come back
+/// with the next update and match again with nobody told.
+pub async fn switch_off_by_external_ids(
+    db:        &sqlx::SqlitePool,
+    policy_id: i64,
+    ids:       &HashSet<i64>,
+) -> Result<usize> {
+    let mut off = 0usize;
+    for id in ids {
+        let n = sqlx::query!(
+            "UPDATE waf_rules SET enabled = 0
+             WHERE policy_id = ? AND external_id = ? AND enabled = 1",
+            policy_id, id
+        )
+        .execute(db)
+        .await?
+        .rows_affected();
+        off += n as usize;
+    }
+    Ok(off)
 }
 
 // ─── get_rules_catalog ───────────────────────────────────

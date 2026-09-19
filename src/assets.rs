@@ -499,11 +499,13 @@ mod tests {
         // half of as loose rules, one it holds as an installed set.
         ctx.insert("catalog", &vec![serde_json::json!({
             "title": "Scanners", "code": "913", "set_id": "owasp-scanners",
-            "tier": "basic", "total": 2, "added_count": 1, "set_added": false,
+            "tier": "basic", "total": 2, "added_count": 0, "set_added": false,
             "rules": [
+                // In the policy and switched off, which is not the same as in
+                // the policy: it applies to nothing, so it is not ticked.
                 {"external_id": 913001, "name": "Scanner probe", "description": "",
                  "zone": "ANY", "pattern": "x", "score": 5, "action": "score",
-                 "added": true, "off": true},
+                 "added": false, "off": true},
                 {"external_id": 913002, "name": "Another probe", "description": "",
                  "zone": "ANY", "pattern": "y", "score": 5, "action": "score",
                  "added": false, "off": false},
@@ -556,19 +558,20 @@ mod tests {
             ("in this policy",         "a rule the policy holds is not marked"),
             ("cat-held",               "a held rule is offered as a selection"),
             ("already here",           "the heading does not say how many are installed"),
-            // The heading follows a full set of ticks, and the rules already
-            // here are part of what makes a set full — so it has to know how
-            // many of them there are.
-            ("data-held=\"1\"",        "a heading cannot tell how many of its rules are here"),
             ("installed as a set",     "a set the policy holds is not said to be installed"),
             // One rule of a set is often the one rule that is wrong here, so
-            // both ways out are offered beside it — they differ in what a later
-            // update of the set does about it.
-            ("disable:942001",         "a rule in the policy cannot be switched off from here"),
-            ("enable:913001",          "a rule already off cannot be switched back on"),
-            ("remove:942001",          "a rule in the policy cannot be removed from here"),
-            ("/rules/state",           "the per-rule buttons have nowhere to post"),
-            (r#"form="ruleStateForm""#, "the buttons would post the selection form they sit in"),
+            // the tick beside it is two-way: unticking switches that rule off
+            // and it stays off through later updates of its set.
+            ("untick to switch it off", "a rule the policy holds cannot be unticked"),
+            (r#"name="off_ids""#,      "unticked rules have nowhere to be submitted"),
+            ("tick to switch it back on", "a rule already off cannot be switched back on"),
+            (r#"data-off="1""#,        "a rule that is off is not marked as still being here"),
+            ("in this policy, off",    "a rule switched off is not said to be in the policy"),
+            // Deleting it outright is a different act with a different
+            // consequence, so it is asked for separately.
+            ("remove:942001",          "a rule in the policy cannot be deleted from here"),
+            ("/rules/state",           "the delete button has nowhere to post"),
+            (r#"form="ruleStateForm""#, "the button would post the selection form it sits in"),
             // Tera escapes "/" in an attribute, so this is matched on the part
             // that survives escaping; the browser decodes it before posting.
             ("websites&#x2F;edit",     "a form does not return to this page"),
@@ -577,6 +580,10 @@ mod tests {
         }
         assert!(!html.contains("remove:913002"),
                 "a rule the policy does not hold is offered for removal");
+        // A held rule that cannot be unticked is the whole of the original
+        // complaint, so the disabled attribute must not come back with it.
+        assert!(!html.contains(r#"class="cat-held" data-cat="942" data-id="942001" checked disabled"#),
+                "a held rule is rendered disabled again");
 
         // The state form is declared beside the selection form. Nested forms do
         // not survive parsing, so the buttons would lose the action they name.

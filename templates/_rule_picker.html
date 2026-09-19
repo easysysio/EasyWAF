@@ -47,10 +47,12 @@
                 something legitimate.
                 <br>
                 {% if policy %}
-                One rule of a set can go without the set: <strong>switch off</strong>
-                keeps it out through every later update of that set, while
-                <strong>remove</strong> deletes it and the set's next install or
-                update brings it back.
+                <strong>Untick a rule the policy holds to switch it off.</strong> It
+                stays in the policy, matches nothing, and stays off through every
+                later update of its set — which is how one rule of a set goes
+                without the set. Tick it again to switch it back on. <strong>Delete</strong>
+                removes it outright, and the set's next install or update brings
+                it back.
                 <br>
                 {% endif %}
                 All of it can be changed afterwards from the policy's Rule Sets page.
@@ -92,8 +94,7 @@
                 {% else %}
                 <input type="checkbox" class="cat-master" data-cat="{{ cat.code }}"
                        data-set="{{ cat.set_id | default(value='') }}"
-                       data-tier="{{ cat.tier | default(value='') }}"
-                       data-held="{{ cat.added_count }}">
+                       data-tier="{{ cat.tier | default(value='') }}">
                 {% endif %}
                 {{ cat.title }}
             </label>
@@ -111,6 +112,7 @@
                 <span class="cat-whole" data-cat="{{ cat.code }}" style="display:none">whole set selected</span>
                 <span class="cat-some" data-cat="{{ cat.code }}"><span
                     class="cat-count" data-cat="{{ cat.code }}">0</span> / {{ cat.total }} selected</span>
+                <span class="cat-off text-warning" data-cat="{{ cat.code }}" style="display:none"></span>
             </span>
         </div>
         <!-- Collapsed by default; toggled by the header -->
@@ -121,46 +123,42 @@
                     <tr class="rule-row"
                         data-text="{{ r.name | lower }} {{ r.description | lower }} {{ r.zone | lower }}">
                         <td style="width:34px;text-align:center;vertical-align:middle">
-                            {# A rule the policy already holds is shown ticked and
-                               left alone, under a class the script ignores: it is
-                               not a selection, and counting it would report work
-                               that is not about to happen. #}
+                            {# The tick means "this rule applies here". A rule the
+                               policy holds is ticked and can be unticked, which
+                               switches it off; one already off is unticked
+                               and ticking it switches it back on. Held rules
+                               carry their own class so the counts can tell a
+                               selection from what is already true. #}
                             <input type="checkbox"
                                    class="{% if r.added %}cat-held{% else %}cat-chk{% endif %}"
                                    data-cat="{{ cat.code }}" data-id="{{ r.external_id }}"
-                                   {% if r.added %}checked disabled
-                                   title="{% if r.off %}In this policy, switched off{% else %}Already in this policy{% endif %}"{% endif %}>
+                                   {% if r.added %}checked
+                                   title="In this policy — untick to switch it off"
+                                   {% elif r.off %}data-off="1"
+                                   title="In this policy, switched off — tick to switch it back on"
+                                   {% endif %}>
                         </td>
                         <td>
                             <strong>{{ r.name }}</strong>
-                            {% if r.added %}
+                            {% if r.added or r.off %}
                                 {% if r.off %}
-                                <span class="label label-warning" style="font-weight:normal">off</span>
+                                <span class="label label-warning" style="font-weight:normal">in this policy, off</span>
                                 {% else %}
                                 <span class="label label-default" style="font-weight:normal">in this policy</span>
                                 {% endif %}
-                                {# One rule of a set is often the one rule that
-                                   is wrong here, so it can be taken out from
-                                   where it is read rather than from another
-                                   page. Buttons, not a form: this is inside the
+                                {# Unticking switches a rule off and it stays in
+                                   the policy, which is what survives the next
+                                   update of its set. Deleting it outright is a
+                                   different thing and is asked for separately.
+                                   A button, not a form: this is inside the
                                    selection form, which a form cannot nest in,
-                                   so each one submits the empty form declared
-                                   beside it by id. #}
+                                   so it submits the empty form declared beside
+                                   it by id. #}
                                 {% if policy %}
-                                <span class="admin-only" style="white-space:nowrap">
-                                    {% if r.off %}
-                                    <button type="submit" form="ruleStateForm" class="btn btn-xs btn-default"
-                                            name="do" value="enable:{{ r.external_id }}"
-                                            title="Match on this rule again">switch on</button>
-                                    {% else %}
-                                    <button type="submit" form="ruleStateForm" class="btn btn-xs btn-default"
-                                            name="do" value="disable:{{ r.external_id }}"
-                                            title="Stop matching on this rule. It stays off when its set is updated.">switch off</button>
-                                    {% endif %}
-                                    <button type="submit" form="ruleStateForm" class="btn btn-xs btn-default"
-                                            name="do" value="remove:{{ r.external_id }}"
-                                            title="Delete this rule from the policy. Installing or updating its set adds it back.">remove</button>
-                                </span>
+                                <button type="submit" form="ruleStateForm"
+                                        class="btn btn-xs btn-link admin-only" style="padding:0 4px"
+                                        name="do" value="remove:{{ r.external_id }}"
+                                        title="Delete this rule from the policy. Installing or updating its set adds it back — unticking it instead keeps it out.">delete</button>
                                 {% endif %}
                             {% endif %}
                             {% if r.description %}
@@ -196,7 +194,7 @@
 // model when the only thing you can pick is rules, and the wrong one now that
 // a set is a different act from the rules that happen to be in it.
 function updateCounts() {
-    var total = 0;
+    var total = 0, offTotal = 0;
 
     // Driven by the categories, not by the heading checkboxes: a set the policy
     // already holds has no heading to tick, and a rule under one — deleted
@@ -206,13 +204,17 @@ function updateCounts() {
         var master = document.querySelector('.cat-master[data-cat="' + cat + '"]');
         var boxes = document.querySelectorAll('.cat-chk[data-cat="' + cat + '"]');
         var chkd  = document.querySelectorAll('.cat-chk[data-cat="' + cat + '"]:checked');
+        var kept  = document.querySelectorAll('.cat-held[data-cat="' + cat + '"]:checked');
+        var dropped = document.querySelectorAll('.cat-held[data-cat="' + cat + '"]:not(:checked)');
 
-        // Rules the policy already holds are not selectable and count as taken:
-        // otherwise a set whose rules are all here, one by one, could never be
-        // ticked — there would be nothing left to tick — and the one policy that
-        // most wants the set recorded is the one that already has its rules.
-        var held  = master ? parseInt(master.dataset.held || '0', 10) : 0;
-        var every = (boxes.length + held) > 0 && chkd.length === boxes.length;
+        // Rules the policy already holds count as taken, so a set whose rules
+        // are all here one by one can still be ticked — there is nothing left
+        // to tick, and that policy is the one that most wants the set recorded.
+        // One of them unticked is a rule on its way off, which is the opposite
+        // of taking the set whole, so the heading does not follow then.
+        var every = (boxes.length + kept.length) > 0
+                    && chkd.length === boxes.length
+                    && dropped.length === 0;
 
         // A file with no [set] block cannot be installed as a set, so its
         // heading has nothing to mean but "all of these" — the old behaviour,
@@ -263,11 +265,24 @@ function updateCounts() {
         if (some) { some.style.display = whole ? 'none' : ''; }
         if (all)  { all.style.display  = whole ? '' : 'none'; }
 
+        // Rules on their way off are not a selection and are not counted as
+        // one, but they are a pending change and saying so is the difference
+        // between unticking something and wondering whether it took.
+        var going = document.querySelector('.cat-off[data-cat="' + cat + '"]');
+        if (going) {
+            going.textContent = dropped.length ? ' · ' + dropped.length + ' switching off' : '';
+            going.style.display = dropped.length ? '' : 'none';
+        }
+        offTotal += dropped.length;
+
         // Taking the set already takes every rule in it, so the individual
         // boxes have nothing left to say. Disabled rather than hidden: the
         // rules are still worth reading before deciding.
-        boxes.forEach(function (c) { c.disabled = !!whole && !follow; });
-        body.style.opacity = whole && !follow ? 0.55 : '';
+        var frozen = !!whole && !follow;
+        boxes.forEach(function (c) { c.disabled = frozen; });
+        document.querySelectorAll('.cat-held[data-cat="' + cat + '"]')
+                .forEach(function (c) { c.disabled = frozen; });
+        body.style.opacity = frozen ? 0.55 : '';
     });
 
     // Whichever of these the including page has: the create page carries all
@@ -276,6 +291,10 @@ function updateCounts() {
         var el = document.getElementById(id);
         if (el) { el.textContent = total; }
     });
+    var going = document.getElementById('offCount');
+    if (going) {
+        going.textContent = offTotal ? ', ' + offTotal + ' switching off' : '';
+    }
 
     // Said on the page rather than at the end of a save: a policy with no rules
     // is a legitimate thing to create and a bad thing to create by accident,
@@ -318,7 +337,7 @@ document.querySelectorAll('.cat-master').forEach(function (master) {
 });
 
 // ── Individual rule checkbox ──────────────────────────────
-document.querySelectorAll('.cat-chk').forEach(function (chk) {
+document.querySelectorAll('.cat-chk, .cat-held').forEach(function (chk) {
     chk.addEventListener('change', updateCounts);
 });
 
@@ -331,8 +350,14 @@ function selectAll(on) {
     });
     // Cleared, not ticked: a set that is taken whole does not also want its
     // rules listed individually, and a heading with no set ticks its own.
+    //
+    // A category can have no heading checkbox at all — the policy holds it as
+    // a set already — and then these rules are the only thing on offer, so
+    // they are ticked like any others. Held rules are not touched either way:
+    // All means take what is offered, not switch off what is already here.
     document.querySelectorAll('.cat-chk').forEach(function (c) {
-        c.checked = on && !document.querySelector('.cat-master[data-cat="' + c.dataset.cat + '"]').dataset.set;
+        var m = document.querySelector('.cat-master[data-cat="' + c.dataset.cat + '"]');
+        c.checked = on && !(m && m.dataset.set);
     });
     updateCounts();
 }
@@ -375,7 +400,7 @@ function collectIds() {
     // individual boxes are deliberately not sent: doing both would install the
     // set and then re-add every rule in it, which is the same rules twice
     // through two different mechanisms.
-    var sets = [], ids = [], covered = {};
+    var sets = [], ids = [], off = [], covered = {};
     document.querySelectorAll('.cat-master').forEach(function (m) {
         if (m.checked && m.dataset.set) {
             sets.push(m.dataset.set);
@@ -385,11 +410,22 @@ function collectIds() {
     // Every ticked rule not already covered by a set — including one under a
     // category with no heading checkbox, which the old pass over the headings
     // never reached, so it could be ticked and then quietly not submitted.
+    //
+    // A rule that is in the policy and switched off is sent even when its set
+    // is taken whole: installing a set updates the rules it finds and never
+    // switches one back on, so without this the last tick would appear to do
+    // nothing at all.
     document.querySelectorAll('.cat-chk:checked').forEach(function (c) {
-        if (!covered[c.dataset.cat]) { ids.push(c.dataset.id); }
+        if (!covered[c.dataset.cat] || c.dataset.off) { ids.push(c.dataset.id); }
+    });
+    // And the held rules unticked here, which are on their way off.
+    document.querySelectorAll('.cat-held:not(:checked)').forEach(function (c) {
+        off.push(c.dataset.id);
     });
     document.getElementById('catalogIds').value = ids.join(',');
     document.getElementById('setIds').value = sets.join(',');
+    var offField = document.getElementById('offIds');
+    if (offField) { offField.value = off.join(','); }
 }
 
 // ── Switching one rule off is a different form ─────────────
@@ -400,7 +436,8 @@ function collectIds() {
 var stateForm = document.getElementById('ruleStateForm');
 if (stateForm) {
     stateForm.addEventListener('submit', function (e) {
-        var n = document.querySelectorAll('.cat-chk:checked').length;
+        var n = document.querySelectorAll('.cat-chk:checked').length
+                + document.querySelectorAll('.cat-held:not(:checked)').length;
         document.querySelectorAll('.cat-master:checked').forEach(function (m) {
             if (!m.dataset.follow) { n += 1; }
         });
