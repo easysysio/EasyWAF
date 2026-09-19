@@ -6,7 +6,7 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
-## [Unreleased]
+## [0.12.2] — 2026-09-19
 
 ### Added
 - Creating a policy now sets up everything it holds — country rules, IP lists and published lists alongside the rule sets — arranged in tabs, instead of leaving three more pages to visit afterwards.

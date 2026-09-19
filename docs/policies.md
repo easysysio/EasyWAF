@@ -38,7 +38,7 @@ same tabs the create page uses:
 | Tab | What is there |
 |---|---|
 | **Policy** | Mode and thresholds. The heading names the sites the policy applies on |
-| **Rules** | What it holds, the catalogue to add more, and links to manage or remove them |
+| **Rules** | What it holds and the catalogue to change it — tick to add a rule or a whole set, untick to switch one off |
 | **Countries** | The country mode and list |
 | **IP Lists** | Its own blocked and allowed addresses, and its published lists |
 | **Exclusions** | Rules it does not run, and the form to add one |
@@ -103,6 +103,22 @@ update when the channel publishes a newer version. Open the heading and tick
 rules individually to take only those — single rules are copies, and nothing will
 ever correct them.
 
+**A heading is the set, and it follows the rules under it.** Tick every rule of
+a set and the heading ticks itself, so you get the set rather than copies of all
+of it. Untick one rule and the heading lets go, because a set with a rule taken
+out of it is not the set. Unticking a heading switches its whole set off.
+
+**The tick beside a rule says whether that rule applies here.** Untick one the
+policy holds and it is switched off: the rule stays in the policy, matches
+nothing, and stays off through every later update of its set — which is how one
+rule of a set goes without the set. Tick it again to switch it back on. Nothing
+happens until you press **Apply to this policy**, and the heading says how many
+rules are going off.
+
+**Delete**, beside the rule, removes it outright instead. That is not the same
+thing: installing or updating its set puts a deleted rule back, so switching it
+off is what keeps it out for good.
+
 ## Updates
 
 EasyWAF checks the channel on start and every six hours. The **Policy Manager**
@@ -148,8 +164,9 @@ shows the block, one click excludes that rule for the address that was refused.
 Under **Security Policy → Rule Exclusions** an exclusion can instead be narrowed
 to a path prefix, or to a CIDR block. The rule goes on protecting everyone else.
 
-**Disable the rule for the policy.** Wider: the rule stops running for every
-request on every site using the policy. The disabled state survives rule
+**Switch the rule off for the policy.** Wider: the rule stops running for every
+request on every site using the policy. Untick it in the policy's Rules tab, or
+disable it under **Manage rules**; either way the off state survives rule
 updates.
 
 **Clone and tune it.** Where the rule is right in principle and wrong in detail.
