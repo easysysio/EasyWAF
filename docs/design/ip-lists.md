@@ -2,7 +2,8 @@
 
 Status: the manual half **shipped in 0.10.0**; the published half **shipped in
 0.12.0**, 2026-09-16; both became **per policy in 0.12.1** — see *Per policy* at
-the end — engine, list builder and `github2repo.sh --lists`; see
+the end — and gained a second scope, **All policies, in 0.12.3** — see
+*All policies* — engine, list builder and `github2repo.sh --lists`; see
 *What was built*. The daily job runs from cron on the repo server. See
 [roadmap.md](roadmap.md).
 
@@ -506,3 +507,55 @@ identical exclusions merged; per-policy enforcement held; a change took effect
 within a second without a restart; DetectionOnly recorded `would_block` and
 served; Off did nothing; and a second start migrated nothing.
 
+## All policies (0.12.3)
+
+Decided 2026-09-19, at Yariv's request, with country rules taking the same
+shape in the same release.
+
+**What per-policy could not say.** Per policy is right for the lists that
+differ between sites, which is most of them. It has nothing to say about the
+few addresses that are about the appliance rather than about a group of sites:
+an office that must never be refused anywhere, a netblock with no honest reason
+to reach it at all. Those had to be typed into every policy and into the next
+one somebody made, and a copy that has to be repeated is a copy that will be
+missed.
+
+So `policy_id` is nullable and NULL means every policy — the ones that exist
+and the ones made later. **Nothing is copied**, which is the point: there is no
+second place for the same entry to drift from.
+
+**Allow wins wherever it was written.** The alternative, the narrower scope
+winning, means an address allowed for every policy can still be refused by one
+policy: a second rule to learn, and the one that surprises somebody during an
+incident. Blocks are additive, allows overrule, and which page the entry was
+typed on decides nothing else.
+
+**Published lists take the scope too**, with one difference: a list switched on
+for every policy reaches the policies that have said nothing about it, and a
+policy that has decided keeps its own answer — *off* included, since switching
+a list off is a decision somebody made on purpose. The row says what every
+policy does and that it is being overruled, and one button drops the override.
+
+**Country rules add rather than overrule.** They have no allow-this-one
+semantics to fall back on: an allow list there means "only these", so letting a
+policy's list re-admit a country the appliance refuses would make the
+every-policy rule a default rather than a rule. A request refused by either is
+refused, and a single client that must get past it is handled by its address on
+an allow list, which skips every check.
+
+**Sites with no policy are unchanged**: not inspected, no lists, no country
+rules. All policies means every policy, not every site.
+
+**The schema.** Migration 029 rebuilds both IP list tables, because SQLite
+cannot drop NOT NULL in place, and gives each two partial unique indexes — one
+for the rows that name a policy, one for the rows that do not — since NULL is
+not unique to a UNIQUE constraint. It runs before 028 on that start: rebuilding
+a table drops its triggers, and 028 is what puts them back. Migration 030 adds
+the one-row `geoip_everywhere` table with its own triggers. Nothing moves: every
+existing row still names the policy it named.
+
+Checked live: an upgraded database kept both tables and turned nothing into an
+every-policy row; an entry added for every policy stored NULL and reached a
+policy created afterwards with no rows of its own; a policy overruled a
+published list and then followed the every-policy choice again; and the
+every-policy view refused to "follow", having nothing wider to follow.
