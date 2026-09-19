@@ -913,6 +913,10 @@ pub struct CatalogCategory {
     pub tier:        String,
     pub total:       usize,
     pub added_count: usize,
+    /// Whether the policy holds this as an installed set, rather than as
+    /// rules that happen to be all of it. Only the first can be offered an
+    /// update, so the two look different on the page.
+    pub set_added:   bool,
     pub rules:       Vec<CatalogRule>,
 }
 
@@ -989,7 +993,10 @@ fn read_rule_defs() -> HashMap<i64, (RuleFileDef, Option<String>)> {
 /// marking each rule's `added` flag against the given set of external_ids.
 /// Pure file I/O — no database access — so it is reusable by any handler.
 /// Pass an empty set (e.g. for a brand-new policy) to get all rules unchecked.
-pub fn read_catalog_categories(existing: &HashSet<i64>) -> Result<Vec<CatalogCategory>> {
+pub fn read_catalog_categories(
+    existing: &HashSet<i64>,
+    sets:     &HashSet<String>,
+) -> Result<Vec<CatalogCategory>> {
     let dir = crate::rules_update::rules_source();
     let dir = dir.as_path();
     let mut categories = Vec::new();
@@ -1061,7 +1068,10 @@ pub fn read_catalog_categories(existing: &HashSet<i64>) -> Result<Vec<CatalogCat
             .as_ref()
             .and_then(|id| tiers.get(id).cloned())
             .unwrap_or_default();
-        categories.push(CatalogCategory { title, code, set_id, tier, total, added_count, rules });
+        let set_added = set_id.as_ref().is_some_and(|id| sets.contains(id));
+        categories.push(CatalogCategory {
+            title, code, set_id, tier, total, added_count, set_added, rules,
+        });
     }
 
     Ok(categories)
@@ -1079,8 +1089,21 @@ async fn load_catalog(state: &AppState, policy_id: i64) -> Result<Vec<CatalogCat
     .fetch_all(&state.db)
     .await?;
     let existing: HashSet<i64> = existing_rows.into_iter().collect();
+    let sets = installed_sets(&state.db, policy_id).await?;
 
-    read_catalog_categories(&existing)
+    read_catalog_categories(&existing, &sets)
+}
+
+/// The set ids this policy holds as installed sets.
+pub async fn installed_sets(db: &sqlx::SqlitePool, policy_id: i64) -> Result<HashSet<String>> {
+    Ok(sqlx::query_scalar!(
+        r#"SELECT set_id as "set_id!" FROM policy_rule_sets WHERE policy_id = ?"#,
+        policy_id
+    )
+    .fetch_all(db)
+    .await?
+    .into_iter()
+    .collect())
 }
 
 /// Insert the rules identified by `ids` (external_ids) into the given policy,
@@ -1443,7 +1466,7 @@ pub async fn get_all_rules(
         set_names.into_iter().map(|r| (r.set_id, r.name)).collect();
 
     // The disk snapshot, for rules with no set recorded.
-    let cats = read_catalog_categories(&HashSet::new()).unwrap_or_default();
+    let cats = read_catalog_categories(&HashSet::new(), &HashSet::new()).unwrap_or_default();
     let mut cat_of: HashMap<i64, (String, String)> = HashMap::new();
     for c in &cats {
         for r in &c.rules {

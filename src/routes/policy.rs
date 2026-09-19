@@ -212,7 +212,7 @@ pub async fn get_policy_new(
 ) -> Result<Response> {
 
     // Load the full rule catalog with nothing pre-checked (new policy).
-    let catalog = crate::routes::rules::read_catalog_categories(&HashSet::new())?;
+    let catalog = crate::routes::rules::read_catalog_categories(&HashSet::new(), &HashSet::new())?;
     let total_available: usize = catalog.iter().map(|c| c.total).sum();
 
     // The catalog above is read from the downloaded mirror, so it already
@@ -653,7 +653,8 @@ pub async fn get_policy_edit(
     ctx.insert("rule_count",    &counts.all);
     ctx.insert("enabled_count", &counts.on);
 
-    let catalog = crate::routes::rules::read_catalog_categories(&held)?;
+    let installed = crate::routes::rules::installed_sets(&state.db, policy_id).await?;
+    let catalog = crate::routes::rules::read_catalog_categories(&held, &installed)?;
     ctx.insert("total_available", &catalog.iter().map(|c| c.total).sum::<usize>());
     ctx.insert("catalog", &catalog);
     let (checked, check_error) = crate::rules_update::status(&state.db).await;

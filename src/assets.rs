@@ -490,14 +490,22 @@ mod tests {
             "rule_count": 99, "enabled_count": 98 }));
         ctx.insert("show_picker", &false);
         ctx.insert("policies", &Vec::<String>::new());
+        // Two sets the policy stands in a different relation to: one it holds
+        // half of as loose rules, one it holds as an installed set.
         ctx.insert("catalog", &vec![serde_json::json!({
             "title": "Scanners", "code": "913", "set_id": "owasp-scanners",
-            "tier": "basic", "total": 2, "added_count": 1,
+            "tier": "basic", "total": 2, "added_count": 1, "set_added": false,
             "rules": [
                 {"external_id": 913001, "name": "Scanner probe", "description": "",
                  "zone": "ANY", "pattern": "x", "score": 5, "action": "score", "added": true},
                 {"external_id": 913002, "name": "Another probe", "description": "",
                  "zone": "ANY", "pattern": "y", "score": 5, "action": "score", "added": false},
+            ]}), serde_json::json!({
+            "title": "SQL Injection", "code": "942", "set_id": "owasp-sqli",
+            "tier": "basic", "total": 1, "added_count": 1, "set_added": true,
+            "rules": [
+                {"external_id": 942001, "name": "Union select", "description": "",
+                 "zone": "ARGS", "pattern": "z", "score": 5, "action": "block", "added": true},
             ]})]);
         ctx.insert("total_available", &100);
         ctx.insert("rule_count", &99);
@@ -540,12 +548,25 @@ mod tests {
             ("in this policy",         "a rule the policy holds is not marked"),
             ("cat-held",               "a held rule is offered as a selection"),
             ("already here",           "the heading does not say how many are installed"),
+            // The heading follows a full set of ticks, and the rules already
+            // here are part of what makes a set full — so it has to know how
+            // many of them there are.
+            ("data-held=\"1\"",        "a heading cannot tell how many of its rules are here"),
+            ("installed as a set",     "a set the policy holds is not said to be installed"),
             // Tera escapes "/" in an attribute, so this is matched on the part
             // that survives escaping; the browser decodes it before posting.
             ("websites&#x2F;edit",     "a form does not return to this page"),
         ] {
             assert!(html.contains(what), "{why}");
         }
+        // A set already installed is not a choice: it is ticked, left alone, and
+        // has no heading checkbox to submit, so there is one of those and not
+        // two. Offering it again would install what is already there.
+        assert_eq!(html.matches("class=\"cat-master\"").count(), 1,
+                   "an installed set is still offered as a selection");
+        assert!(html.contains("This set is installed in this policy"),
+                "an installed set's heading does not say why it cannot be ticked");
+
         // The panels are the shared ones: on a policy's page they come without
         // the selector and search box that belong to the standalone pages.
         assert!(!html.contains("every policy</option>"), "the exclusions picker leaked in");

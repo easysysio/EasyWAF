@@ -77,9 +77,17 @@
             <!-- stopPropagation so ticking the box does not also toggle the panel -->
             <label style="margin:0;font-weight:bold;cursor:pointer"
                    onclick="event.stopPropagation()">
+                {% if cat.set_added %}
+                {# Held as a set already: ticked, left alone, and outside the
+                   script's selection entirely, like a rule the policy has. #}
+                <input type="checkbox" checked disabled
+                       title="This set is installed in this policy">
+                {% else %}
                 <input type="checkbox" class="cat-master" data-cat="{{ cat.code }}"
                        data-set="{{ cat.set_id | default(value='') }}"
-                       data-tier="{{ cat.tier | default(value='') }}">
+                       data-tier="{{ cat.tier | default(value='') }}"
+                       data-held="{{ cat.added_count }}">
+                {% endif %}
                 {{ cat.title }}
             </label>
             {% if cat.tier == "basic" %}
@@ -92,7 +100,10 @@
                 {% if cat.added_count > 0 %}
                 {{ cat.added_count }} of {{ cat.total }} already here ·
                 {% endif %}
-                <span class="cat-count" data-cat="{{ cat.code }}">0</span> / {{ cat.total }} selected
+                {% if cat.set_added %}installed as a set · {% endif %}
+                <span class="cat-whole" data-cat="{{ cat.code }}" style="display:none">whole set selected</span>
+                <span class="cat-some" data-cat="{{ cat.code }}"><span
+                    class="cat-count" data-cat="{{ cat.code }}">0</span> / {{ cat.total }} selected</span>
             </span>
         </div>
         <!-- Collapsed by default; toggled by the header -->
@@ -153,16 +164,30 @@
 function updateCounts() {
     var total = 0;
 
-    document.querySelectorAll('.cat-master').forEach(function (master) {
-        var cat   = master.dataset.cat;
+    // Driven by the categories, not by the heading checkboxes: a set the policy
+    // already holds has no heading to tick, and a rule under one — deleted
+    // since, and offered again — still counts and still has to be submitted.
+    document.querySelectorAll('.cat-body').forEach(function (body) {
+        var cat    = body.dataset.cat;
+        var master = document.querySelector('.cat-master[data-cat="' + cat + '"]');
         var boxes = document.querySelectorAll('.cat-chk[data-cat="' + cat + '"]');
         var chkd  = document.querySelectorAll('.cat-chk[data-cat="' + cat + '"]:checked');
-        var every = boxes.length > 0 && chkd.length === boxes.length;
+
+        // Rules the policy already holds are not selectable and count as taken:
+        // otherwise a set whose rules are all here, one by one, could never be
+        // ticked — there would be nothing left to tick — and the one policy that
+        // most wants the set recorded is the one that already has its rules.
+        var held  = master ? parseInt(master.dataset.held || '0', 10) : 0;
+        var every = (boxes.length + held) > 0 && chkd.length === boxes.length;
 
         // A file with no [set] block cannot be installed as a set, so its
         // heading has nothing to mean but "all of these" — the old behaviour,
         // kept for that one case rather than leaving an inert checkbox.
-        if (!master.dataset.set) {
+        if (!master) {
+            // No heading checkbox at all: the policy holds this as a set
+            // already, so there is nothing to install and only the leftover
+            // rules to take.
+        } else if (!master.dataset.set) {
             master.checked = every;
             master.indeterminate = chkd.length > 0 && !every;
         } else if (every) {
@@ -189,19 +214,26 @@ function updateCounts() {
         // A heading that only followed its rules leaves them alone: unticking
         // one is how you go back to all-but-that-one, and disabling them would
         // make the last tick a trap with no way out but clearing the heading.
-        var whole  = master.checked && master.dataset.set;
+        var whole  = !!master && master.checked && master.dataset.set;
         var follow = !!whole && !!master.dataset.follow;
 
+        // Counts are what is about to be added, so a set whose rules are all
+        // here counts nothing — which would read as an empty selection next to
+        // a ticked heading. The heading says which of the two it is instead.
         var n = whole ? boxes.length : chkd.length;
         total += n;
-        document.querySelector('.cat-count[data-cat="' + cat + '"]').textContent = n;
+        var count = document.querySelector('.cat-count[data-cat="' + cat + '"]');
+        if (count) { count.textContent = n; }
+        var some = document.querySelector('.cat-some[data-cat="' + cat + '"]');
+        var all  = document.querySelector('.cat-whole[data-cat="' + cat + '"]');
+        if (some) { some.style.display = whole ? 'none' : ''; }
+        if (all)  { all.style.display  = whole ? '' : 'none'; }
 
         // Taking the set already takes every rule in it, so the individual
         // boxes have nothing left to say. Disabled rather than hidden: the
         // rules are still worth reading before deciding.
         boxes.forEach(function (c) { c.disabled = !!whole && !follow; });
-        var body = document.querySelector('.cat-body[data-cat="' + cat + '"]');
-        if (body) { body.style.opacity = whole && !follow ? 0.55 : ''; }
+        body.style.opacity = whole && !follow ? 0.55 : '';
     });
 
     // Whichever of these the including page has: the create page carries all
@@ -309,12 +341,18 @@ function collectIds() {
     // individual boxes are deliberately not sent: doing both would install the
     // set and then re-add every rule in it, which is the same rules twice
     // through two different mechanisms.
-    var sets = [], ids = [];
+    var sets = [], ids = [], covered = {};
     document.querySelectorAll('.cat-master').forEach(function (m) {
-        var whole = m.checked && m.dataset.set;
-        if (whole) { sets.push(m.dataset.set); return; }
-        document.querySelectorAll('.cat-chk[data-cat="' + m.dataset.cat + '"]:checked')
-                .forEach(function (c) { ids.push(c.dataset.id); });
+        if (m.checked && m.dataset.set) {
+            sets.push(m.dataset.set);
+            covered[m.dataset.cat] = true;
+        }
+    });
+    // Every ticked rule not already covered by a set — including one under a
+    // category with no heading checkbox, which the old pass over the headings
+    // never reached, so it could be ticked and then quietly not submitted.
+    document.querySelectorAll('.cat-chk:checked').forEach(function (c) {
+        if (!covered[c.dataset.cat]) { ids.push(c.dataset.id); }
     });
     document.getElementById('catalogIds').value = ids.join(',');
     document.getElementById('setIds').value = sets.join(',');
