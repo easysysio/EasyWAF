@@ -46,6 +46,13 @@
                 for a stack you do not run cannot detect anything, and can only match
                 something legitimate.
                 <br>
+                {% if policy %}
+                One rule of a set can go without the set: <strong>switch off</strong>
+                keeps it out through every later update of that set, while
+                <strong>remove</strong> deletes it and the set's next install or
+                update brings it back.
+                <br>
+                {% endif %}
                 All of it can be changed afterwards from the policy's Rule Sets page.
             </p>
             {% if check_error %}
@@ -122,12 +129,39 @@
                                    class="{% if r.added %}cat-held{% else %}cat-chk{% endif %}"
                                    data-cat="{{ cat.code }}" data-id="{{ r.external_id }}"
                                    {% if r.added %}checked disabled
-                                   title="Already in this policy"{% endif %}>
+                                   title="{% if r.off %}In this policy, switched off{% else %}Already in this policy{% endif %}"{% endif %}>
                         </td>
                         <td>
                             <strong>{{ r.name }}</strong>
                             {% if r.added %}
-                            <span class="label label-default" style="font-weight:normal">in this policy</span>
+                                {% if r.off %}
+                                <span class="label label-warning" style="font-weight:normal">off</span>
+                                {% else %}
+                                <span class="label label-default" style="font-weight:normal">in this policy</span>
+                                {% endif %}
+                                {# One rule of a set is often the one rule that
+                                   is wrong here, so it can be taken out from
+                                   where it is read rather than from another
+                                   page. Buttons, not a form: this is inside the
+                                   selection form, which a form cannot nest in,
+                                   so each one submits the empty form declared
+                                   beside it by id. #}
+                                {% if policy %}
+                                <span class="admin-only" style="white-space:nowrap">
+                                    {% if r.off %}
+                                    <button type="submit" form="ruleStateForm" class="btn btn-xs btn-default"
+                                            name="do" value="enable:{{ r.external_id }}"
+                                            title="Match on this rule again">switch on</button>
+                                    {% else %}
+                                    <button type="submit" form="ruleStateForm" class="btn btn-xs btn-default"
+                                            name="do" value="disable:{{ r.external_id }}"
+                                            title="Stop matching on this rule. It stays off when its set is updated.">switch off</button>
+                                    {% endif %}
+                                    <button type="submit" form="ruleStateForm" class="btn btn-xs btn-default"
+                                            name="do" value="remove:{{ r.external_id }}"
+                                            title="Delete this rule from the policy. Installing or updating its set adds it back.">remove</button>
+                                </span>
+                                {% endif %}
                             {% endif %}
                             {% if r.description %}
                             <br><small class="text-muted">{{ r.description }}</small>
@@ -356,6 +390,26 @@ function collectIds() {
     });
     document.getElementById('catalogIds').value = ids.join(',');
     document.getElementById('setIds').value = sets.join(',');
+}
+
+// ── Switching one rule off is a different form ─────────────
+//
+// It posts and the page comes back, so anything ticked and not yet added goes
+// with it. Only a selection somebody made counts: a heading that ticked itself
+// because the policy already holds every rule under it is not one.
+var stateForm = document.getElementById('ruleStateForm');
+if (stateForm) {
+    stateForm.addEventListener('submit', function (e) {
+        var n = document.querySelectorAll('.cat-chk:checked').length;
+        document.querySelectorAll('.cat-master:checked').forEach(function (m) {
+            if (!m.dataset.follow) { n += 1; }
+        });
+        if (n > 0 && !window.confirm(
+                'You have ' + n + ' selection(s) here that have not been added yet. '
+                + 'Doing this reloads the page and loses them. Continue?')) {
+            e.preventDefault();
+        }
+    });
 }
 
 updateCounts();

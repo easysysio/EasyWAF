@@ -283,6 +283,7 @@ async fn main() {
                                                          .post(routes::rules::post_rules_catalog))
         .route("/policy/{name}/rules/{id}/toggle",    post(routes::rules::post_rule_toggle))
         .route("/policy/{name}/rules/{id}/delete",    post(routes::rules::post_rule_delete))
+        .route("/policy/{name}/rules/state",          post(routes::rules::post_rule_state))
         .route("/rules",                 get(routes::rules::get_all_rules))
         .route("/rules/new",             get(routes::rules::get_custom_rule_new))
         .route("/rules/create",          post(routes::rules::post_custom_rule_create))

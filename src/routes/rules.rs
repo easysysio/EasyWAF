@@ -253,6 +253,95 @@ pub async fn post_rule_delete(
     Ok(Redirect::to(&format!("/policy/{}/rules", policy_name)).into_response())
 }
 
+// ─── post_rule_state ─────────────────────────────────────
+
+/// Switch one rule off, on again, or out of a policy, from the catalogue on
+/// the policy's own page.
+///
+/// Both ways of taking a rule out are offered because they do not survive the
+/// same things. `install_set` updates a rule it finds and never writes
+/// `enabled`, so a rule switched off stays off through every update of its
+/// set, while a deleted one is inserted again the next time that set is
+/// installed or updated. Which is wanted depends on why the rule is going, so
+/// the choice is the operator's and the message says what they chose.
+pub async fn post_rule_state(
+    State(state): State<AppState>,
+    _jar: SignedCookieJar,
+    _: Admin,
+    Path(policy_name): Path<String>,
+    Form(raw): Form<HashMap<String, String>>,
+) -> Result<Response> {
+
+    let back = format!("/policy/{policy_name}/edit?tab=rules");
+    let policy_id: i64 = sqlx::query_scalar!(
+        r#"SELECT id as "id!" FROM policies WHERE name = ?"#, policy_name
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| AppError::NotFound(format!("Policy '{policy_name}' not found")))?;
+
+    // "disable:913005" — the action and the rule in one button, so a row needs
+    // no form of its own inside a form it cannot nest in.
+    let (action, id) = match raw.get("do").and_then(|v| v.split_once(':')) {
+        Some((a, id)) => (a.to_string(), id.trim().parse::<i64>().ok()),
+        None          => (String::new(), None),
+    };
+    let external_id = match id {
+        Some(id) => id,
+        None => return crate::routes::flash_redirect(&back, "failed", "No rule was named"),
+    };
+
+    let rule = sqlx::query!(
+        r#"SELECT id as "id!", name as "name!", rule_set
+           FROM waf_rules WHERE policy_id = ? AND external_id = ?"#,
+        policy_id, external_id
+    )
+    .fetch_optional(&state.db)
+    .await?;
+    let rule = match rule {
+        Some(r) => r,
+        None => return crate::routes::flash_redirect(&back, "failed", &format!(
+            "{external_id} is not in {policy_name}, so there was nothing to change")),
+    };
+
+    // What a set will do about it later, which is the whole reason there are
+    // two ways out rather than one.
+    let from_set = rule.rule_set.clone().unwrap_or_default();
+
+    let msg = match action.as_str() {
+        "disable" => {
+            sqlx::query!("UPDATE waf_rules SET enabled = 0 WHERE id = ?", rule.id)
+                .execute(&state.db).await?;
+            if from_set.is_empty() {
+                format!("{external_id} — {} is off in {policy_name}", rule.name)
+            } else {
+                format!("{external_id} — {} is off in {policy_name}, and stays off when \
+                         {from_set} is updated", rule.name)
+            }
+        }
+        "enable" => {
+            sqlx::query!("UPDATE waf_rules SET enabled = 1 WHERE id = ?", rule.id)
+                .execute(&state.db).await?;
+            format!("{external_id} — {} is on again in {policy_name}", rule.name)
+        }
+        "remove" => {
+            sqlx::query!("DELETE FROM waf_rules WHERE id = ?", rule.id)
+                .execute(&state.db).await?;
+            if from_set.is_empty() {
+                format!("{external_id} — {} removed from {policy_name}", rule.name)
+            } else {
+                format!("{external_id} — {} removed from {policy_name}. It belongs to \
+                         {from_set}, so installing or updating that set adds it back — \
+                         switch it off instead to keep it out", rule.name)
+            }
+        }
+        other => return crate::routes::flash_redirect(&back, "failed", &format!(
+            "'{other}' is not something that can be done to a rule")),
+    };
+
+    crate::routes::flash_redirect(&back, "success", &msg)
+}
+
 // ─── post_bulk_rules ─────────────────────────────────────
 
 /// Handle the bulk-action form: enable, disable, or delete a set of rules
@@ -895,6 +984,9 @@ pub struct CatalogRule {
     pub score:       i64,
     pub action:      String,
     pub added:       bool,   // already present in this policy
+    /// Present but switched off, so it is in the policy and matches nothing.
+    /// Meaningless unless `added`.
+    pub off:         bool,
 }
 
 /// A group of catalog rules sharing a source file / CRS category.
@@ -993,10 +1085,7 @@ fn read_rule_defs() -> HashMap<i64, (RuleFileDef, Option<String>)> {
 /// marking each rule's `added` flag against the given set of external_ids.
 /// Pure file I/O — no database access — so it is reusable by any handler.
 /// Pass an empty set (e.g. for a brand-new policy) to get all rules unchecked.
-pub fn read_catalog_categories(
-    existing: &HashSet<i64>,
-    sets:     &HashSet<String>,
-) -> Result<Vec<CatalogCategory>> {
+pub fn read_catalog_categories(held: &Held) -> Result<Vec<CatalogCategory>> {
     let dir = crate::rules_update::rules_source();
     let dir = dir.as_path();
     let mut categories = Vec::new();
@@ -1046,11 +1135,12 @@ pub fn read_catalog_categories(
         let mut rules = Vec::new();
         let mut added_count = 0;
         for r in parsed.rules {
-            let added = existing.contains(&r.id);
+            let added = held.rules.contains(&r.id);
             if added {
                 added_count += 1;
             }
             rules.push(CatalogRule {
+                off:         held.off.contains(&r.id),
                 external_id: r.id,
                 name:        r.name,
                 description: r.description.unwrap_or_default(),
@@ -1068,7 +1158,7 @@ pub fn read_catalog_categories(
             .as_ref()
             .and_then(|id| tiers.get(id).cloned())
             .unwrap_or_default();
-        let set_added = set_id.as_ref().is_some_and(|id| sets.contains(id));
+        let set_added = set_id.as_ref().is_some_and(|id| held.sets.contains(id));
         categories.push(CatalogCategory {
             title, code, set_id, tier, total, added_count, set_added, rules,
         });
@@ -1077,21 +1167,45 @@ pub fn read_catalog_categories(
     Ok(categories)
 }
 
+/// What a policy already holds, as the catalogue needs to know it.
+///
+/// Three questions about the same policy that used to be asked separately and
+/// passed around as loose sets. A brand-new policy holds nothing, which is
+/// what `default()` is for.
+#[derive(Default)]
+pub struct Held {
+    /// External ids of the rules in the policy.
+    pub rules: HashSet<i64>,
+    /// Of those, the ones switched off: in the policy, matching nothing.
+    pub off:   HashSet<i64>,
+    /// Sets the policy holds as sets, rather than as rules that are all of one.
+    pub sets:  HashSet<String>,
+}
+
+/// Read what a policy holds.
+pub async fn held(db: &sqlx::SqlitePool, policy_id: i64) -> Result<Held> {
+    let rows = sqlx::query!(
+        r#"SELECT external_id as "external_id!", enabled as "enabled!: i64"
+           FROM waf_rules WHERE policy_id = ? AND external_id IS NOT NULL"#,
+        policy_id
+    )
+    .fetch_all(db)
+    .await?;
+
+    let mut h = Held { sets: installed_sets(db, policy_id).await?, ..Default::default() };
+    for r in rows {
+        h.rules.insert(r.external_id);
+        if r.enabled == 0 {
+            h.off.insert(r.external_id);
+        }
+    }
+    Ok(h)
+}
+
 /// Build the grouped catalog for an existing policy, pre-checking the rules
 /// it already contains.
 async fn load_catalog(state: &AppState, policy_id: i64) -> Result<Vec<CatalogCategory>> {
-    // Which external_ids are already imported into this policy?
-    let existing_rows = sqlx::query_scalar!(
-        "SELECT external_id as \"external_id!\" FROM waf_rules
-         WHERE policy_id = ? AND external_id IS NOT NULL",
-        policy_id
-    )
-    .fetch_all(&state.db)
-    .await?;
-    let existing: HashSet<i64> = existing_rows.into_iter().collect();
-    let sets = installed_sets(&state.db, policy_id).await?;
-
-    read_catalog_categories(&existing, &sets)
+    read_catalog_categories(&held(&state.db, policy_id).await?)
 }
 
 /// The set ids this policy holds as installed sets.
@@ -1466,7 +1580,7 @@ pub async fn get_all_rules(
         set_names.into_iter().map(|r| (r.set_id, r.name)).collect();
 
     // The disk snapshot, for rules with no set recorded.
-    let cats = read_catalog_categories(&HashSet::new(), &HashSet::new()).unwrap_or_default();
+    let cats = read_catalog_categories(&Held::default()).unwrap_or_default();
     let mut cat_of: HashMap<i64, (String, String)> = HashMap::new();
     for c in &cats {
         for r in &c.rules {

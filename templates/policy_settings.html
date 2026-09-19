@@ -153,6 +153,12 @@
             </div>
         </div>
 
+        {# Declared empty, and beside the selection form rather than inside it:
+           the per-rule buttons sit among the rules, where a form cannot nest,
+           and post here by id — which is what the form attribute is for. #}
+        <form id="ruleStateForm" class="admin-only" method="post"
+              action="/policy/{{ policy.name }}/rules/state"></form>
+
         <form class="admin-only" method="post" action="/policy/{{ policy.name }}/setup"
               id="policyForm" onsubmit="collectIds()">
             <input type="hidden" name="ids"     id="catalogIds" value="">

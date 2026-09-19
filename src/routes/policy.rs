@@ -212,7 +212,8 @@ pub async fn get_policy_new(
 ) -> Result<Response> {
 
     // Load the full rule catalog with nothing pre-checked (new policy).
-    let catalog = crate::routes::rules::read_catalog_categories(&HashSet::new(), &HashSet::new())?;
+    let catalog = crate::routes::rules::read_catalog_categories(
+        &crate::routes::rules::Held::default())?;
     let total_available: usize = catalog.iter().map(|c| c.total).sum();
 
     // The catalog above is read from the downloaded mirror, so it already
@@ -634,15 +635,7 @@ pub async fn get_policy_edit(
     // What is installed, and what could still be added — the same catalogue
     // the create page offers, with what this policy already holds ticked and
     // left alone.
-    let held: HashSet<i64> = sqlx::query_scalar!(
-        r#"SELECT external_id as "external_id!" FROM waf_rules
-           WHERE policy_id = ? AND external_id IS NOT NULL"#,
-        policy_id
-    )
-    .fetch_all(&state.db)
-    .await?
-    .into_iter()
-    .collect();
+    let held = crate::routes::rules::held(&state.db, policy_id).await?;
     let counts = sqlx::query!(
         r#"SELECT COUNT(*) as "all!", COALESCE(SUM(enabled), 0) as "on!: i64"
            FROM waf_rules WHERE policy_id = ?"#,
@@ -653,8 +646,7 @@ pub async fn get_policy_edit(
     ctx.insert("rule_count",    &counts.all);
     ctx.insert("enabled_count", &counts.on);
 
-    let installed = crate::routes::rules::installed_sets(&state.db, policy_id).await?;
-    let catalog = crate::routes::rules::read_catalog_categories(&held, &installed)?;
+    let catalog = crate::routes::rules::read_catalog_categories(&held)?;
     ctx.insert("total_available", &catalog.iter().map(|c| c.total).sum::<usize>());
     ctx.insert("catalog", &catalog);
     let (checked, check_error) = crate::rules_update::status(&state.db).await;

@@ -460,6 +460,11 @@ mod tests {
         ctx.insert("policies", &Vec::<String>::new());
         ctx.insert("lists_error", "nothing has been fetched from the channel yet");
         let first = tera.render("policy_create.html", &ctx).expect("renders");
+        // The shared script mentions the form by id and finds nothing, which is
+        // the point: there is no policy here yet to switch a rule off in, so
+        // neither the form nor a button that posts it is on the page.
+        assert!(!html.contains(r#"id="ruleStateForm""#) && !html.contains(r#"form="ruleStateForm""#),
+                "the create page offers to change rules in a policy that does not exist yet");
         assert!(first.contains("nothing has been fetched"), "the empty state does not say why");
         assert!(!first.contains("copy_from"), "offers to copy when there is nothing to copy");
     }
@@ -497,15 +502,18 @@ mod tests {
             "tier": "basic", "total": 2, "added_count": 1, "set_added": false,
             "rules": [
                 {"external_id": 913001, "name": "Scanner probe", "description": "",
-                 "zone": "ANY", "pattern": "x", "score": 5, "action": "score", "added": true},
+                 "zone": "ANY", "pattern": "x", "score": 5, "action": "score",
+                 "added": true, "off": true},
                 {"external_id": 913002, "name": "Another probe", "description": "",
-                 "zone": "ANY", "pattern": "y", "score": 5, "action": "score", "added": false},
+                 "zone": "ANY", "pattern": "y", "score": 5, "action": "score",
+                 "added": false, "off": false},
             ]}), serde_json::json!({
             "title": "SQL Injection", "code": "942", "set_id": "owasp-sqli",
             "tier": "basic", "total": 1, "added_count": 1, "set_added": true,
             "rules": [
                 {"external_id": 942001, "name": "Union select", "description": "",
-                 "zone": "ARGS", "pattern": "z", "score": 5, "action": "block", "added": true},
+                 "zone": "ARGS", "pattern": "z", "score": 5, "action": "block",
+                 "added": true, "off": false},
             ]})]);
         ctx.insert("total_available", &100);
         ctx.insert("rule_count", &99);
@@ -553,12 +561,29 @@ mod tests {
             // many of them there are.
             ("data-held=\"1\"",        "a heading cannot tell how many of its rules are here"),
             ("installed as a set",     "a set the policy holds is not said to be installed"),
+            // One rule of a set is often the one rule that is wrong here, so
+            // both ways out are offered beside it — they differ in what a later
+            // update of the set does about it.
+            ("disable:942001",         "a rule in the policy cannot be switched off from here"),
+            ("enable:913001",          "a rule already off cannot be switched back on"),
+            ("remove:942001",          "a rule in the policy cannot be removed from here"),
+            ("/rules/state",           "the per-rule buttons have nowhere to post"),
+            (r#"form="ruleStateForm""#, "the buttons would post the selection form they sit in"),
             // Tera escapes "/" in an attribute, so this is matched on the part
             // that survives escaping; the browser decodes it before posting.
             ("websites&#x2F;edit",     "a form does not return to this page"),
         ] {
             assert!(html.contains(what), "{why}");
         }
+        assert!(!html.contains("remove:913002"),
+                "a rule the policy does not hold is offered for removal");
+
+        // The state form is declared beside the selection form. Nested forms do
+        // not survive parsing, so the buttons would lose the action they name.
+        let state_at = html.find("id=\"ruleStateForm\"").expect("no state form");
+        let select_at = html.find("id=\"policyForm\"").expect("no selection form");
+        assert!(state_at < select_at, "the state form is inside the selection form");
+
         // A set already installed is not a choice: it is ticked, left alone, and
         // has no heading checkbox to submit, so there is one of those and not
         // two. Offering it again would install what is already there.
