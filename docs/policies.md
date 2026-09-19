@@ -40,7 +40,7 @@ same tabs the create page uses:
 | **Policy** | Mode and thresholds. The heading names the sites the policy applies on |
 | **Rules** | What it holds and the catalogue to change it — tick to add a rule or a whole set, untick to switch one off |
 | **Countries** | The country mode and list |
-| **IP Lists** | Its own blocked and allowed addresses, and its published lists |
+| **IP Lists** | Its own blocked and allowed addresses, its published lists, and what reaches it from [All policies](ip-lists.md#all-policies) |
 | **Exclusions** | Rules it does not run, and the form to add one |
 
 The IP Lists and Exclusions tabs are the same panels as the pages of those

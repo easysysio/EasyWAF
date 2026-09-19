@@ -238,7 +238,8 @@ pub async fn get_policy_new(
     // What the published channel offers. Policy ids start at 1, so nothing is
     // stored against 0: every list reads as off, with the publisher's
     // suggestion selected.
-    let (lists, lists_error) = crate::iplist_feeds::catalogue(&state.db, 0).await;
+    let (lists, lists_error) = crate::iplist_feeds::catalogue(
+        &state.db, crate::iplist_feeds::Scope::Policy(0)).await;
     // And how the channel itself is doing, so a list chosen here is not chosen
     // blind: an installation that has never reached the channel, or whose last
     // fetch failed, says so before anything is switched on.
@@ -328,7 +329,8 @@ pub async fn post_policy_create(
             let done = sqlx::query!(
                 "INSERT INTO ip_rules (policy_id, ip, list_type, reason, added_by)
                  VALUES (?, ?, ?, ?, ?)
-                 ON CONFLICT(policy_id, ip) DO UPDATE SET list_type = excluded.list_type",
+                 ON CONFLICT(policy_id, ip) WHERE policy_id IS NOT NULL
+                 DO UPDATE SET list_type = excluded.list_type",
                 policy_id, ip, list_type, reason, session.username
             )
             .execute(&state.db)
@@ -353,7 +355,8 @@ pub async fn post_policy_create(
     // Only lists the channel actually offers. A field naming anything else
     // would store a decision about a list that does not exist, which reads on
     // the IP Lists page as one that has been withdrawn.
-    let (offered, _) = crate::iplist_feeds::catalogue(&state.db, 0).await;
+    let (offered, _) = crate::iplist_feeds::catalogue(
+        &state.db, crate::iplist_feeds::Scope::Policy(0)).await;
     let mut lists_on = 0usize;
     for (key, value) in raw.iter() {
         let Some(id) = key.strip_prefix("list:") else { continue };
@@ -363,7 +366,8 @@ pub async fn post_policy_create(
             continue;
         }
         if crate::iplist_feeds::save(
-            &state.db, policy_id, id, true, response, &session.username).await.is_ok()
+            &state.db, crate::iplist_feeds::Scope::Policy(policy_id), id, true,
+            response, &session.username).await.is_ok()
         {
             lists_on += 1;
         }
@@ -673,8 +677,20 @@ pub async fn get_policy_edit(
     ctx.insert("blocked", &entries.iter().filter(|e| e.list_type == "block").count());
     ctx.insert("entries", &entries);
 
-    let (feeds, feeds_error) = crate::iplist_feeds::catalogue(&state.db, policy_id).await;
+    let (feeds, feeds_error) = crate::iplist_feeds::catalogue(
+        &state.db, crate::iplist_feeds::Scope::Policy(policy_id)).await;
     let (fetched, fetch_error) = crate::iplist_feeds::status(&state.db).await;
+    let shared = sqlx::query!(
+        r#"SELECT id as "id!", ip as "ip!", list_type as "list_type!",
+                  reason, added_by, created_at as "created_at!"
+           FROM   ip_rules WHERE policy_id IS NULL
+           ORDER  BY created_at DESC, id DESC"#
+    )
+    .fetch_all(&state.db)
+    .await?;
+    ctx.insert("shared", &shared.into_iter().map(|r| serde_json::json!({
+        "id": r.id, "ip": r.ip, "list_type": r.list_type, "reason": r.reason,
+        "added_by": r.added_by, "created_at": r.created_at })).collect::<Vec<_>>());
     ctx.insert("feeds",             &feeds);
     ctx.insert("feeds_error",       &feeds_error.unwrap_or_default());
     ctx.insert("feeds_fetched",     &fetched.map(|t| crate::routes::settings::format_utc(&t)).unwrap_or_default());

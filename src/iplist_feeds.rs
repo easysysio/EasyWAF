@@ -280,16 +280,40 @@ fn status_map() -> &'static RwLock<HashMap<String, LoadStatus>> {
     STATUS.get_or_init(|| RwLock::new(HashMap::new()))
 }
 
+/// Whose lists these are.
+///
+/// A decision belongs to one policy, or to every policy — the second reaching
+/// the policies that exist and the ones made later, which is the only way to
+/// say "never here, wherever here turns out to be" once.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Scope {
+    Policy(i64),
+    Everywhere,
+}
+
+impl Scope {
+    /// The stored `policy_id`: NULL for every policy.
+    pub fn id(self) -> Option<i64> {
+        match self {
+            Scope::Policy(id)  => Some(id),
+            Scope::Everywhere  => None,
+        }
+    }
+}
+
 /// What an operator has decided about one list.
 struct Choice {
     enabled:  bool,
     response: Response,
 }
 
-async fn choices(db: &SqlitePool, policy_id: i64) -> HashMap<String, Choice> {
+async fn choices(db: &SqlitePool, scope: Scope) -> HashMap<String, Choice> {
+    // `IS` rather than `=`, so the every-policy rows — the ones with no
+    // policy_id — can be asked for with the same query.
+    let policy_id = scope.id();
     sqlx::query!(
         r#"SELECT id as "id!", enabled as "enabled!", response as "response!"
-           FROM ip_list_feeds WHERE policy_id = ?"#,
+           FROM ip_list_feeds WHERE policy_id IS ?"#,
         policy_id
     )
         .fetch_all(db)
@@ -422,24 +446,42 @@ pub struct ListView {
     /// False for a list that is switched on and no longer published — shown,
     /// because it is switched on and doing nothing.
     pub offered:     bool,
+    /// This policy has said nothing about the list and is following what was
+    /// decided for every policy. Always false in the every-policy view, where
+    /// there is nothing wider to follow.
+    pub from_all:    bool,
+    /// What every policy does about this list — `off`, `challenge` or `block`
+    /// — when anything was decided there. None means nothing was, so there is
+    /// nothing to follow and nothing being overruled.
+    pub all_choice:  Option<String>,
 }
 
 /// Every list the verified mirror offers, as one policy has decided about it,
 /// plus any that policy switched on and the mirror no longer offers — and why
 /// the mirror could not be read, if it could not.
-pub async fn catalogue(db: &SqlitePool, policy_id: i64) -> (Vec<ListView>, Option<String>) {
+pub async fn catalogue(db: &SqlitePool, scope: Scope) -> (Vec<ListView>, Option<String>) {
     let (offered, manifest_error) =
         match verified_manifest(&cache_dir(), &crate::rules_update::trusted_key()) {
             Ok(o)  => (o, None),
             Err(e) => (Vec::new(), Some(e)),
         };
-    let decided = choices(db, policy_id).await;
+    let decided = choices(db, scope).await;
+    // What was decided for every policy, which a policy follows until it says
+    // something of its own — including saying off, which is a decision.
+    let wider = match scope {
+        Scope::Everywhere => HashMap::new(),
+        Scope::Policy(_)  => choices(db, Scope::Everywhere).await,
+    };
     let status = status_map().read().map(|s| s.clone()).unwrap_or_default();
 
     let mut out: Vec<ListView> = offered
         .iter()
         .map(|l| {
-            let choice = decided.get(&l.id);
+            let from_all = !decided.contains_key(&l.id) && wider.contains_key(&l.id);
+            let all_choice = wider.get(&l.id).map(|c| {
+                if c.enabled { c.response.as_str().to_string() } else { "off".to_string() }
+            });
+            let choice = decided.get(&l.id).or_else(|| wider.get(&l.id));
             let loaded = status.get(&l.id).cloned().unwrap_or_default();
             ListView {
                 id:          l.id.clone(),
@@ -457,6 +499,8 @@ pub async fn catalogue(db: &SqlitePool, policy_id: i64) -> (Vec<ListView>, Optio
                 unreadable:  loaded.unreadable,
                 error:       loaded.error,
                 offered:     true,
+                from_all,
+                all_choice,
             }
         })
         .collect();
@@ -481,6 +525,8 @@ pub async fn catalogue(db: &SqlitePool, policy_id: i64) -> (Vec<ListView>, Optio
             unreadable:  0,
             error:       status.get(id).and_then(|s| s.error.clone()),
             offered:     false,
+            from_all:    false,
+            all_choice:  None,
         });
     }
 
@@ -493,7 +539,7 @@ pub async fn catalogue(db: &SqlitePool, policy_id: i64) -> (Vec<ListView>, Optio
 /// the matcher rebuilds from that on the next request.
 pub async fn save(
     db: &SqlitePool,
-    policy_id: i64,
+    scope: Scope,
     id: &str,
     enabled: bool,
     response: Response,
@@ -503,14 +549,46 @@ pub async fn save(
         return Err(format!("\"{id}\" is not a list"));
     }
     let (on, response) = (enabled as i64, response.as_str());
+
+    // Two statements for one write, because the row is kept unique by two
+    // partial indexes — one for the rows that name a policy and one for the
+    // rows that do not — and an upsert has to name the index it means.
+    match scope {
+        Scope::Policy(policy_id) => sqlx::query!(
+            "INSERT INTO ip_list_feeds (policy_id, id, enabled, response, changed_by, updated_at)
+             VALUES (?, ?, ?, ?, ?, datetime('now'))
+             ON CONFLICT(policy_id, id) WHERE policy_id IS NOT NULL
+             DO UPDATE SET enabled    = excluded.enabled,
+                           response   = excluded.response,
+                           changed_by = excluded.changed_by,
+                           updated_at = excluded.updated_at",
+            policy_id, id, on, response, by
+        )
+        .execute(db)
+        .await,
+        Scope::Everywhere => sqlx::query!(
+            "INSERT INTO ip_list_feeds (policy_id, id, enabled, response, changed_by, updated_at)
+             VALUES (NULL, ?, ?, ?, ?, datetime('now'))
+             ON CONFLICT(id) WHERE policy_id IS NULL
+             DO UPDATE SET enabled    = excluded.enabled,
+                           response   = excluded.response,
+                           changed_by = excluded.changed_by,
+                           updated_at = excluded.updated_at",
+            id, on, response, by
+        )
+        .execute(db)
+        .await,
+    }
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Forget a policy's own decision about a list, so it follows what was decided
+/// for every policy again.
+pub async fn follow_everywhere(db: &SqlitePool, policy_id: i64, id: &str) -> Result<(), String> {
     sqlx::query!(
-        "INSERT INTO ip_list_feeds (policy_id, id, enabled, response, changed_by, updated_at)
-         VALUES (?, ?, ?, ?, ?, datetime('now'))
-         ON CONFLICT(policy_id, id) DO UPDATE SET enabled    = excluded.enabled,
-                                       response   = excluded.response,
-                                       changed_by = excluded.changed_by,
-                                       updated_at = excluded.updated_at",
-        policy_id, id, on, response, by
+        "DELETE FROM ip_list_feeds WHERE policy_id = ? AND id = ?",
+        policy_id, id
     )
     .execute(db)
     .await

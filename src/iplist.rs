@@ -341,13 +341,26 @@ pub fn parse_feed(text: &str) -> (Vec<Cidr>, usize) {
 /// rather than dropped: a row that silently does nothing is an address
 /// somebody believes is blocked and is not.
 fn build_policies(
-    rows:    &[(i64, String, String)],
-    choices: &[(i64, String, Response)],
+    known:   &[i64],
+    rows:    &[(Option<i64>, String, String)],
+    choices: &[(Option<i64>, String, Response)],
+    muted:   &[(i64, String)],
     data:    &HashMap<String, Arc<FeedData>>,
 ) -> (HashMap<i64, Arc<Lists>>, Vec<String>) {
+    // Entries with no policy belong to every policy, so each policy's lists
+    // are its own rows and those, built together. Allow still wins over block
+    // wherever either was written: an address somebody said is fine is fine,
+    // and which page it was said on does not change that.
     let mut grouped: HashMap<i64, Vec<(&str, &str)>> = HashMap::new();
+    for id in known {
+        grouped.entry(*id).or_default();
+    }
     for (policy, ip, list_type) in rows {
-        grouped.entry(*policy).or_default().push((ip.as_str(), list_type.as_str()));
+        let entry = (ip.as_str(), list_type.as_str());
+        match policy {
+            Some(id) => grouped.entry(*id).or_default().push(entry),
+            None     => grouped.values_mut().for_each(|v| v.push(entry)),
+        }
     }
     let mut policies: HashMap<i64, Lists> = HashMap::new();
     let mut bad = Vec::new();
@@ -356,12 +369,33 @@ fn build_policies(
         bad.extend(unusable);
         policies.insert(policy, lists);
     }
+    // The same address listed for a policy and for every policy is reported
+    // once, not once per policy.
+    bad.sort();
+    bad.dedup();
 
     // A choice for a list that is not loaded — never fetched, withdrawn, or
     // refused verification — adds nothing. The IP Lists page says why.
+    //
+    // A list switched on for every policy reaches a policy that has said
+    // nothing about it. A policy that switched that same list off has said
+    // something, and keeps it off: the narrower decision is the later one and
+    // the only one anybody made on purpose.
     for (policy, id, response) in choices {
-        if let Some(d) = data.get(id) {
-            policies.entry(*policy).or_default().feeds.push(Feed::using(d, *response));
+        let Some(d) = data.get(id) else { continue };
+        match policy {
+            Some(p) => {
+                policies.entry(*p).or_default().feeds.push(Feed::using(d, *response));
+            }
+            None => {
+                for (p, lists) in policies.iter_mut() {
+                    let own = choices.iter().any(|(c, i, _)| *c == Some(*p) && i == id)
+                        || muted.iter().any(|(c, i)| c == p && i == id);
+                    if !own {
+                        lists.feeds.push(Feed::using(d, *response));
+                    }
+                }
+            }
         }
     }
 
@@ -422,8 +456,15 @@ async fn policy_lists(db: &SqlitePool, policy_id: i64) -> Option<Arc<Lists>> {
         return l.policies.get(&policy_id).cloned();
     }
 
-    let rows: Vec<(i64, String, String)> = sqlx::query!(
-        r#"SELECT policy_id as "policy_id!", ip as "ip!", list_type as "list_type!"
+    // A row with no policy belongs to every policy, so every policy has to be
+    // known: one with no entries of its own still gets those.
+    let known: Vec<i64> = sqlx::query_scalar!(r#"SELECT id as "id!" FROM policies"#)
+        .fetch_all(db)
+        .await
+        .unwrap_or_default();
+
+    let rows: Vec<(Option<i64>, String, String)> = sqlx::query!(
+        r#"SELECT policy_id, ip as "ip!", list_type as "list_type!"
            FROM ip_rules"#
     )
     .fetch_all(db)
@@ -433,8 +474,8 @@ async fn policy_lists(db: &SqlitePool, policy_id: i64) -> Option<Arc<Lists>> {
     .map(|r| (r.policy_id, r.ip, r.list_type))
     .collect();
 
-    let choices: Vec<(i64, String, Response)> = sqlx::query!(
-        r#"SELECT policy_id as "policy_id!", id as "id!", response as "response!"
+    let choices: Vec<(Option<i64>, String, Response)> = sqlx::query!(
+        r#"SELECT policy_id, id as "id!", response as "response!"
            FROM ip_list_feeds WHERE enabled = 1"#
     )
     .fetch_all(db)
@@ -446,8 +487,22 @@ async fn policy_lists(db: &SqlitePool, policy_id: i64) -> Option<Arc<Lists>> {
     .map(|r| (r.policy_id, r.id, Response::parse(&r.response).unwrap_or(Response::Challenge)))
     .collect();
 
+    // A policy that switched a list off has said so about that list, and an
+    // every-policy choice does not overrule it — so the rows that are off are
+    // needed too, if only to know which policies to leave alone.
+    let muted: Vec<(i64, String)> = sqlx::query!(
+        r#"SELECT policy_id as "policy_id!", id as "id!"
+           FROM ip_list_feeds WHERE enabled = 0 AND policy_id IS NOT NULL"#
+    )
+    .fetch_all(db)
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .map(|r| (r.policy_id, r.id))
+    .collect();
+
     let data = published().read().map(|p| p.lists.clone()).unwrap_or_default();
-    let (policies, bad) = build_policies(&rows, &choices, &data);
+    let (policies, bad) = build_policies(&known, &rows, &choices, &muted, &data);
     if !bad.is_empty() {
         tracing::warn!("Ignoring unusable IP list entries: {}", bad.join(", "));
     }
@@ -716,13 +771,13 @@ mod tests {
         // The public websites block an address and use DROP; the Nextcloud
         // policy allows that address and uses nothing published.
         let rows = vec![
-            (1, "203.0.113.9".to_string(), "block".to_string()),
-            (2, "203.0.113.9".to_string(), "allow".to_string()),
+            (Some(1), "203.0.113.9".to_string(), "block".to_string()),
+            (Some(2), "203.0.113.9".to_string(), "allow".to_string()),
         ];
-        let choices = vec![(1, "drop".to_string(), Response::Block)];
+        let choices = vec![(Some(1), "drop".to_string(), Response::Block)];
         let feeds: HashMap<_, _> = [data("drop", &["198.51.100.0/24"])].into();
 
-        let (policies, bad) = build_policies(&rows, &choices, &feeds);
+        let (policies, bad) = build_policies(&[1, 2], &rows, &choices, &[], &feeds);
         assert!(bad.is_empty());
         let websites = &policies[&1];
         let nextcloud = &policies[&2];
@@ -732,17 +787,17 @@ mod tests {
         assert_eq!(websites.check(ip("198.51.100.1")), published("drop", Response::Block));
         assert_eq!(nextcloud.check(ip("198.51.100.1")), None,
                    "a list one policy switched on reached another");
-        assert!(!policies.contains_key(&3), "a policy with nothing listed has nothing");
+        assert!(!policies.contains_key(&3), "a policy nobody mentioned came from nowhere");
     }
 
     #[test]
     fn two_policies_share_a_list_with_different_responses() {
         let choices = vec![
-            (1, "tor".to_string(), Response::Block),
-            (2, "tor".to_string(), Response::Challenge),
+            (Some(1), "tor".to_string(), Response::Block),
+            (Some(2), "tor".to_string(), Response::Challenge),
         ];
         let feeds: HashMap<_, _> = [data("tor", &["192.0.2.7"])].into();
-        let (policies, _) = build_policies(&[], &choices, &feeds);
+        let (policies, _) = build_policies(&[1, 2], &[], &choices, &[], &feeds);
         assert_eq!(policies[&1].check(ip("192.0.2.7")), published("tor", Response::Block));
         assert_eq!(policies[&2].check(ip("192.0.2.7")), published("tor", Response::Challenge));
         // Parsed once: both policies hold the same ranges, not two copies.
@@ -751,9 +806,141 @@ mod tests {
 
     #[test]
     fn a_switched_on_list_that_is_not_loaded_adds_nothing() {
-        let choices = vec![(1, "withdrawn".to_string(), Response::Block)];
-        let (policies, _) = build_policies(&[], &choices, &HashMap::new());
+        let choices = vec![(Some(1), "withdrawn".to_string(), Response::Block)];
+        let (policies, _) = build_policies(&[1], &[], &choices, &[], &HashMap::new());
         assert!(policies.get(&1).is_none_or(|l| l.check(ip("192.0.2.1")).is_none()));
+    }
+
+    // ── Entries that belong to every policy ──────────────
+
+    #[test]
+    fn an_entry_with_no_policy_reaches_every_policy_including_empty_ones() {
+        // The point of the scope: a policy that has never had a list entry of
+        // its own, and a policy made later, both get it without anybody
+        // remembering to copy it.
+        let rows = vec![
+            (None,    "198.51.100.0/24".to_string(), "block".to_string()),
+            (Some(1), "203.0.113.9".to_string(),     "block".to_string()),
+        ];
+        let (policies, bad) = build_policies(&[1, 2], &rows, &[], &[], &HashMap::new());
+        assert!(bad.is_empty());
+        for p in [1, 2] {
+            assert_eq!(policies[&p].check(ip("198.51.100.7")), Some(Listed::Blocked),
+                       "policy {p} did not get the every-policy entry");
+        }
+        assert_eq!(policies[&1].check(ip("203.0.113.9")), Some(Listed::Blocked));
+        assert_eq!(policies[&2].check(ip("203.0.113.9")), None,
+                   "one policy's own entry reached another");
+    }
+
+    #[test]
+    fn allow_wins_wherever_it_was_written() {
+        // Blocked everywhere, allowed by one policy: that policy allows it.
+        // And the other way round — allowed everywhere, blocked by a policy —
+        // is allowed too. Allow overruling block is the rule the whole design
+        // rests on, and making it depend on which page the entry was typed on
+        // would be a second rule to learn and a worse one to be caught by.
+        let rows = vec![
+            (None,    "203.0.113.9".to_string(), "block".to_string()),
+            (Some(1), "203.0.113.9".to_string(), "allow".to_string()),
+            (None,    "192.0.2.5".to_string(),   "allow".to_string()),
+            (Some(2), "192.0.2.5".to_string(),   "block".to_string()),
+        ];
+        let (policies, _) = build_policies(&[1, 2], &rows, &[], &[], &HashMap::new());
+        assert_eq!(policies[&1].check(ip("203.0.113.9")), Some(Listed::Allowed));
+        assert_eq!(policies[&2].check(ip("203.0.113.9")), Some(Listed::Blocked));
+        assert_eq!(policies[&1].check(ip("192.0.2.5")), Some(Listed::Allowed));
+        assert_eq!(policies[&2].check(ip("192.0.2.5")), Some(Listed::Allowed));
+    }
+
+    #[test]
+    fn a_list_switched_on_everywhere_reaches_policies_that_said_nothing() {
+        // Three policies: one that said nothing, one that switched the same
+        // list off, and one that switched it on with a stronger response.
+        let choices = vec![
+            (None,    "tor".to_string(), Response::Challenge),
+            (Some(3), "tor".to_string(), Response::Block),
+        ];
+        let muted = vec![(2, "tor".to_string())];
+        let feeds: HashMap<_, _> = [data("tor", &["192.0.2.7"])].into();
+
+        let (policies, _) = build_policies(&[1, 2, 3], &[], &choices, &muted, &feeds);
+        assert_eq!(policies[&1].check(ip("192.0.2.7")), published("tor", Response::Challenge),
+                   "a policy that said nothing did not get the every-policy list");
+        assert_eq!(policies[&2].check(ip("192.0.2.7")), None,
+                   "a policy that switched the list off had it switched back on");
+        assert_eq!(policies[&3].check(ip("192.0.2.7")), published("tor", Response::Block),
+                   "a policy's own response was overruled by the every-policy one");
+    }
+
+    /// The queries, not just the merge: `policy_id` is nullable now, and a row
+    /// with no policy has to come back from SQL and reach every policy's lists.
+    #[tokio::test]
+    async fn an_every_policy_entry_is_read_from_the_database_for_each_policy() {
+        let path = std::env::temp_dir()
+            .join(format!("easywaf-iplist-scope-{}.db", std::process::id()));
+        for sfx in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{sfx}", path.display()));
+        }
+        let db = crate::db::init(&format!("sqlite://{}", path.display())).await;
+
+        sqlx::raw_sql(
+            "INSERT INTO policies (name) VALUES ('websites'), ('apps');
+             INSERT INTO ip_rules (policy_id, ip, list_type)
+             VALUES (NULL, '198.51.100.0/24', 'block'),
+                    ((SELECT id FROM policies WHERE name = 'websites'), '203.0.113.9', 'block');",
+        )
+        .execute(&db)
+        .await
+        .expect("seed");
+
+        let id = |name: &'static str| {
+            let db = db.clone();
+            async move {
+                sqlx::query_scalar::<_, i64>("SELECT id FROM policies WHERE name = ?")
+                    .bind(name)
+                    .fetch_one(&db)
+                    .await
+                    .unwrap()
+            }
+        };
+        let (websites, apps) = (id("websites").await, id("apps").await);
+
+        for (name, policy) in [("websites", websites), ("apps", apps)] {
+            assert_eq!(check(&db, policy, ip("198.51.100.7")).await, Some(Listed::Blocked),
+                       "the every-policy entry did not reach {name}");
+        }
+        assert_eq!(check(&db, websites, ip("203.0.113.9")).await, Some(Listed::Blocked));
+        assert_eq!(check(&db, apps, ip("203.0.113.9")).await, None,
+                   "one policy's own entry reached another");
+
+        // Allowed for one policy, blocked for every policy: allowed there.
+        sqlx::raw_sql(
+            "INSERT INTO ip_rules (policy_id, ip, list_type)
+             VALUES ((SELECT id FROM policies WHERE name = 'apps'), '198.51.100.7', 'allow');",
+        )
+        .execute(&db)
+        .await
+        .expect("allow");
+        // The cache is keyed on the generation, which that insert moved; the
+        // check is at most a second old, so wait it out rather than reaching in.
+        tokio::time::sleep(crate::modules::generation::MAX_AGE + std::time::Duration::from_millis(50)).await;
+        assert_eq!(check(&db, apps, ip("198.51.100.7")).await, Some(Listed::Allowed),
+                   "a policy could not allow what every policy blocks");
+
+        db.close().await;
+        for sfx in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{sfx}", path.display()));
+        }
+    }
+
+    #[test]
+    fn an_unusable_every_policy_entry_is_reported_once() {
+        // Not once per policy: the operator typed it once and has one thing
+        // to correct.
+        let rows = vec![(None, "not-an-address".to_string(), "block".to_string())];
+        let (_, bad) = build_policies(&[1, 2, 3], &rows, &[], &[], &HashMap::new());
+        assert_eq!(bad, vec!["not-an-address".to_string()]);
     }
 }
 

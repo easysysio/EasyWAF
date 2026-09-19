@@ -9,19 +9,36 @@
                   own page where the policy is already decided
      back         where a form returns to afterwards; empty means the IP Lists
                   page, which is what its own forms want
+     scope        "all" while the entries that belong to every policy are being
+                  read; empty for one policy's own. Every form carries it, so a
+                  write lands in the scope that was being looked at
 #}
+{% set scope = scope | default(value="") %}
+{% set everywhere = scope == "all" %}
 <div class="row">
     <div class="col-lg-11">
         <div class="panel panel-default">
             <div class="panel-heading">
                 <h4 style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
                     <span><i class="fa fa-hand-stop-o"></i> IP Lists</span>
+                    {% if show_picker %}
+                    {# A link, not an option in the select: a policy may be
+                       called "all", and a scope that can be spelled the same
+                       as a policy name is a bug waiting for that policy. #}
+                    <a href="/iplists?scope=all"
+                       class="btn btn-sm {% if everywhere %}btn-primary{% else %}btn-default{% endif %}">
+                        <i class="fa fa-globe"></i> All policies
+                    </a>
+                    {% endif %}
                     {% if policies and show_picker %}
                     <form method="get" action="/iplists" style="margin:0">
                         <select name="policy" class="form-control input-sm"
                                 onchange="this.form.submit()" style="width:auto;display:inline-block">
+                            {% if everywhere %}
+                            <option value="" selected>a policy…</option>
+                            {% endif %}
                             {% for p in policies %}
-                            <option value="{{ p }}" {% if sel_policy == p %}selected{% endif %}>{{ p }}</option>
+                            <option value="{{ p }}" {% if not everywhere and sel_policy == p %}selected{% endif %}>{{ p }}</option>
                             {% endfor %}
                         </select>
                     </form>
@@ -32,6 +49,7 @@
                     {% if show_picker %}
                     <form method="get" action="/iplists" style="margin:0;margin-left:auto">
                         <input type="hidden" name="policy" value="{{ sel_policy }}">
+                        <input type="hidden" name="scope"  value="{{ scope }}">
                         <input type="text" name="q" value="{{ search }}"
                                class="form-control input-sm" placeholder="Search address or reason"
                                style="width:auto;display:inline-block">
@@ -41,7 +59,7 @@
             </div>
             <div class="panel-body">
 
-                {% if not sel_policy %}
+                {% if not sel_policy and not everywhere %}
                 <div class="alert alert-info">
                     <i class="fa fa-info-circle"></i>
                     IP lists belong to a security policy, and there are no policies yet.
@@ -50,26 +68,43 @@
                 </div>
                 {% else %}
                 <p class="help-block" style="margin-top:0">
+                    {% if everywhere %}
+                    These belong to <strong>every policy</strong> — the ones that exist and
+                    the ones made later — and apply, before anything else, on
+                    <strong>{{ reach }}</strong>. It is the place for an address that is
+                    not one policy's business: an office that must never be refused, a
+                    netblock with no honest reason to be here.
+                    A site with no policy is still not inspected and still gets no lists.
+                    {% else %}
                     These belong to the policy <code>{{ sel_policy }}</code> and apply,
                     before anything else, on <strong>{{ reach }}</strong>{% if sites | length > 1 %}:
                     {% for s in sites %}<code>{{ s }}</code>{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}.
                     A site with no policy has no IP lists.
+                    {% endif %}
                     <br>
                     <strong>Blocked</strong> is refused outright, before any rule runs.
                     <strong>Allowed</strong> skips everything: the rules, the country rules,
                     the published lists and the CAPTCHA alike. That is deliberate and it is
                     wide, so allow sparingly.
                     <br>
-                    The lists follow the policy's mode: with the policy in
-                    <em>DetectionOnly</em> nothing is refused or challenged, and what would
-                    have been is recorded in Traffic Monitor; with it <em>Off</em>, they do
-                    nothing. An address is on at most one of a policy's lists; putting it
-                    on the other one moves it.
+                    The lists follow each policy's mode: with a policy in
+                    <em>DetectionOnly</em> nothing is refused or challenged there, and what
+                    would have been is recorded in Traffic Monitor; with it <em>Off</em>,
+                    they do nothing. An address is on at most one list in each scope;
+                    putting it on the other one moves it.
+                    {% if everywhere %}
+                    <br>
+                    A policy can still list the same address for itself. <strong>Allow wins
+                    wherever it was written</strong>, so an address allowed here cannot be
+                    blocked by a policy, and one blocked here is let through by any policy
+                    that allows it.
+                    {% endif %}
                 </p>
 
                 <form class="admin-only" method="post" action="/iplists/add"
                       style="margin-bottom:16px;display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start">
                     <input type="hidden" name="policy" value="{{ sel_policy }}">
+                    <input type="hidden" name="scope"  value="{{ scope }}">
                     <input type="hidden" name="back"   value="{{ back }}">
                     <input type="text" name="ip" class="form-control" required
                            placeholder="203.0.113.9 or 203.0.113.0/24"
@@ -115,7 +150,7 @@
                             <td class="text-right" style="white-space:nowrap">
                                 <form class="admin-only" method="post"
                                       action="/iplists/{{ e.id }}/remove"
-                                      onsubmit="return confirm('Take {{ e.ip }} off {{ sel_policy }}\'s {{ e.list_type }} list?\n\nIt is inspected like any other client from the next request, on {{ reach }}.');"
+                                      onsubmit="return confirm('Take {{ e.ip }} off the {% if everywhere %}every-policy{% else %}{{ sel_policy }}{% endif %} {{ e.list_type }} list?\n\nIt is inspected like any other client from the next request, on {{ reach }}.');"
                                       style="display:inline">
                                     <input type="hidden" name="back" value="{{ back }}">
                                     <button type="submit" class="btn btn-default btn-xs"
@@ -133,6 +168,9 @@
                 <p class="text-muted">
                     {% if search %}
                     Nothing matches <code>{{ search }}</code>.
+                    {% elif everywhere %}
+                    No addresses are listed for every policy. Each policy's own lists are
+                    the only ones in force.
                     {% else %}
                     No addresses are listed under <code>{{ sel_policy }}</code>. Every
                     client is inspected by its rules.
@@ -143,6 +181,39 @@
                     {% endif %}
                 </p>
                 {% endif %}
+
+                {% if not everywhere and shared %}
+                {# Read here, changed elsewhere. An address blocked on a page
+                   nobody is looking at is the thing people go looking for when
+                   a client says it cannot reach them. #}
+                <p class="help-block" style="margin-bottom:6px">
+                    <strong>Also in force here, from
+                    <a href="/iplists?scope=all">All policies</a>:</strong>
+                    these belong to every policy and are changed there.
+                </p>
+                <div style="overflow-x:auto">
+                <table class="table table-condensed" style="font-size:12px">
+                    <tbody>
+                    {% for e in shared %}
+                        <tr>
+                            <td style="width:220px"><code>{{ e.ip }}</code></td>
+                            <td style="width:110px">
+                                {% if e.list_type == "block" %}
+                                <span class="label label-danger">BLOCKED</span>
+                                {% else %}
+                                <span class="label label-success">ALLOWED</span>
+                                {% endif %}
+                            </td>
+                            <td>{{ e.reason | default(value="—") }}</td>
+                            <td style="width:130px" class="text-right">
+                                <span class="label label-default">all policies</span>
+                            </td>
+                        </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+                </div>
+                {% endif %}
                 {% endif %}
 
             </div>
@@ -150,19 +221,21 @@
     </div>
 </div>
 
-{% if sel_policy %}
+{% if sel_policy or everywhere %}
 <div class="row">
     <div class="col-lg-11">
         <div class="panel panel-default">
             <div class="panel-heading">
                 <h4 style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
                     <span><i class="fa fa-globe"></i> Published Lists
-                        <small class="text-muted">— for <code>{{ sel_policy }}</code></small></span>
+                        <small class="text-muted">— for
+                        {% if everywhere %}<strong>every policy</strong>{% else %}<code>{{ sel_policy }}</code>{% endif %}</small></span>
                     <span class="text-muted" style="font-size:12px">
                         {% if feeds_fetched %}updated {{ feeds_fetched }} UTC{% else %}not fetched yet{% endif %}
                     </span>
                     <form class="admin-only" method="post" action="/iplists/update" style="margin:0;margin-left:auto">
                         <input type="hidden" name="policy" value="{{ sel_policy }}">
+                        <input type="hidden" name="scope"  value="{{ scope }}">
                         <input type="hidden" name="back"   value="{{ back }}">
                         <button type="submit" class="btn btn-default btn-sm"
                                 {% if not feeds_check %}disabled title="Checking the update channels is turned off under Settings → Rule Updates"{% endif %}>
@@ -177,8 +250,13 @@
                     Addresses other people keep track of: hijacked netblocks, compromised
                     hosts, Tor exits. <strong>The data updates itself; what it does does
                     not.</strong> Every list is fetched from the signed channel and refreshed
-                    daily, but none of them changes anything until this policy switches it
-                    on and says what it should do.
+                    daily, but none of them changes anything until it is switched on here
+                    and told what to do.
+                    {% if everywhere %}
+                    A list switched on here is on for <strong>every policy</strong> that has
+                    not decided about it itself; one that has keeps its own answer, and its
+                    row below says so.
+                    {% endif %}
                     <br>
                     <strong>Challenge</strong> asks for a CAPTCHA, which anyone human can
                     pass, so a wrongly listed address is a speed bump rather than a wall.
@@ -249,12 +327,20 @@
                                 {% else %}
                                 <span class="label label-warning">CHALLENGE</span>
                                 {% endif %}
+                                {% if f.from_all %}
+                                <br><small class="text-muted">from
+                                    <a href="/iplists?scope=all">all policies</a></small>
+                                {% elif f.all_choice and not everywhere %}
+                                <br><small class="text-muted">all policies:
+                                    {{ f.all_choice }} — overruled here</small>
+                                {% endif %}
                             </td>
                             <td class="admin-only" style="white-space:nowrap">
                                 <form method="post" action="/iplists/feeds/{{ f.id }}/save"
                                       style="margin:0;display:flex;gap:6px;align-items:center"
                                       onsubmit="if (this.enabled.checked && this.response.value === 'block') { return confirm('Block every address on {{ f.name }}?\n\nThey are refused before any rule runs, on {{ reach }}. This policy\'s allow list still overrules it.'); } return true;">
                                     <input type="hidden" name="policy" value="{{ sel_policy }}">
+                                    <input type="hidden" name="scope"  value="{{ scope }}">
                                     <input type="hidden" name="back"   value="{{ back }}">
                                     <label class="checkbox-inline" style="margin:0">
                                         <input type="checkbox" name="enabled" value="1" {% if f.enabled %}checked{% endif %}> On
@@ -265,6 +351,21 @@
                                     </select>
                                     <button type="submit" class="btn btn-default btn-sm">Save</button>
                                 </form>
+                                {% if f.all_choice and not f.from_all and not everywhere %}
+                                {# The way back from an override: this policy stops
+                                   answering for itself and follows every policy again. #}
+                                <form method="post" action="/iplists/feeds/{{ f.id }}/save"
+                                      style="margin:4px 0 0">
+                                    <input type="hidden" name="policy"   value="{{ sel_policy }}">
+                                    <input type="hidden" name="back"     value="{{ back }}">
+                                    <input type="hidden" name="response" value="challenge">
+                                    <input type="hidden" name="follow"   value="1">
+                                    <button type="submit" class="btn btn-link btn-xs" style="padding:0"
+                                            title="Stop deciding this here and follow the every-policy choice">
+                                        follow all policies
+                                    </button>
+                                </form>
+                                {% endif %}
                             </td>
                         </tr>
                     {% endfor %}

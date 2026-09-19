@@ -6,6 +6,12 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
+## [Unreleased]
+
+### Added
+- IP lists have a second scope: **All policies**, under Security Policy → IP Lists. An address or a published list set there applies on every policy — the ones that exist and the ones made later — without being copied into any of them, and a policy's own page shows what reaches it from there.
+- A policy can still decide a published list for itself, which overrules the every-policy choice, and *Follow all policies* beside the list gives that decision back.
+
 ## [0.12.2] — 2026-09-19
 
 ### Added

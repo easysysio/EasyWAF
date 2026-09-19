@@ -74,10 +74,51 @@ pub async fn init(database_url: &str) -> SqlitePool {
     run_migration_025(&pool).await;
     run_migration_026(&pool).await;
     run_migration_027(&pool).await;
+    // 029 before 028 deliberately: it rebuilds both IP list tables, which
+    // drops the triggers on them, and 028 is what puts those back.
+    run_migration_029(&pool).await;
     run_migration_028(&pool).await;
 
     info!("Database ready: {}", database_url);
     pool
+}
+
+// ─── run_migration_029 ───────────────────────────────────
+
+/// An IP list entry can belong to every policy.
+///
+/// Rebuilds both IP list tables so `policy_id` may be NULL, which means every
+/// policy — the ones that exist and the ones made later. Nothing moves: every
+/// existing row still names the policy it named.
+async fn run_migration_029(pool: &SqlitePool) {
+    // notnull is 1 while the column still refuses NULL, which is exactly the
+    // database this has not been applied to.
+    let pending: i64 = sqlx::query_scalar(
+        r#"SELECT COALESCE(MAX("notnull"), 0) FROM pragma_table_info('ip_rules')
+           WHERE name = 'policy_id'"#,
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0);
+    if pending == 0 {
+        return;
+    }
+
+    // One transaction: half of this leaves a database with no IP lists.
+    let sql = include_str!("../migrations/029_ip_lists_everywhere.sql");
+    let mut tx = pool
+        .begin()
+        .await
+        .unwrap_or_else(|e| panic!("Migration 029 could not start: {}", e));
+    sqlx::raw_sql(sql)
+        .execute(&mut *tx)
+        .await
+        .unwrap_or_else(|e| panic!("Migration 029 failed: {}", e));
+    tx.commit()
+        .await
+        .unwrap_or_else(|e| panic!("Migration 029 could not commit: {}", e));
+
+    info!("Migration 029 applied: an IP list entry can now belong to every policy");
 }
 
 // ─── run_migration_028 ───────────────────────────────────

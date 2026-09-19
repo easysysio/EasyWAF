@@ -23,6 +23,26 @@ makes it trustworthy, and why it should be used sparingly.
 An address is on at most one of a policy's lists. Putting it on the other one
 moves it. The same address can be on different lists in different policies.
 
+## All policies
+
+Some addresses are not one policy's business: an office that must never be
+refused anywhere, a netblock with no honest reason to reach this appliance at
+all. **Security Policy → IP Lists → All policies** is the second scope, and an
+entry there applies on **every policy — the ones that exist and the ones made
+later**. Nothing is copied into the policies, so there is nothing to keep in
+step and nothing to remember when the next policy is created.
+
+A policy's own page lists what reaches it from here, marked `all policies` and
+read-only; it is changed in the All policies view.
+
+**Allow wins wherever it was written.** An address allowed for every policy
+cannot be blocked by one policy, and one blocked for every policy is let through
+by a policy that allows it. Which page an entry was typed on decides nothing
+else, so there is one rule to remember rather than two.
+
+**A site with no policy is still not inspected**, and still gets no IP lists.
+All policies means every policy, not every site.
+
 ## The policy's mode
 
 The lists follow the policy's mode, as its rules do:
@@ -47,9 +67,12 @@ offers neither.
 A row whose client is already listed shows a badge instead of the buttons, so
 you cannot add it twice or silently move somebody else's entry.
 
-**From Security Policy → IP Lists**, choosing the policy at the top, for an
-address that arrives in a report rather than in your own traffic. The policy
-list links straight to each policy's IP lists too.
+**From Security Policy → IP Lists**, choosing the policy at the top — or
+**All policies**, for an address that no policy should see — for an address
+that arrives in a report rather than in your own traffic. The policy list links
+straight to each policy's IP lists too. Traffic Monitor always adds to the
+row's own policy; an entry for every policy is made here, deliberately, since
+it reaches sites the row says nothing about.
 
 Entries take effect on the **next request**. There is no restart and nothing to
 reload by hand.
@@ -78,6 +101,12 @@ gets rebuilt, or the address is reassigned to somebody else entirely.
 Addresses you have not seen yet: hijacked netblocks, compromised hosts, Tor exit
 nodes. Each is a separate list on **Security Policy → IP Lists**, with its
 source, licence and size beside it.
+
+A list can be switched on for one policy or, under **All policies**, for every
+policy at once. A policy that has decided about that list itself keeps its own
+answer — including *off*, which is a decision — and its row says what every
+policy does and that it is being overruled. **Follow all policies**, beside the
+row, drops the policy's own answer and lets it follow again.
 
 | List | Source | Suggested |
 |---|---|---|
