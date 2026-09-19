@@ -33,7 +33,9 @@
                 as a set — recorded, and offered an update when the channel publishes
                 a newer version. Open a heading and tick rules individually to take
                 only those: single rules are copies, and nothing will ever correct
-                them.
+                them. <strong>Tick every rule in a set and the heading ticks
+                itself</strong>, because that is the set — untick any one of them
+                and it lets go again.
                 <br>
                 <strong>Nothing is selected to begin with</strong>, so a policy is
                 whatever you choose to put in it. <strong>Basic sets</strong> ticks the
@@ -155,15 +157,40 @@ function updateCounts() {
         var cat   = master.dataset.cat;
         var boxes = document.querySelectorAll('.cat-chk[data-cat="' + cat + '"]');
         var chkd  = document.querySelectorAll('.cat-chk[data-cat="' + cat + '"]:checked');
-        var whole = master.checked && master.dataset.set;
+        var every = boxes.length > 0 && chkd.length === boxes.length;
 
         // A file with no [set] block cannot be installed as a set, so its
         // heading has nothing to mean but "all of these" — the old behaviour,
         // kept for that one case rather than leaving an inert checkbox.
         if (!master.dataset.set) {
-            master.checked = boxes.length > 0 && chkd.length === boxes.length;
-            master.indeterminate = chkd.length > 0 && chkd.length < boxes.length;
+            master.checked = every;
+            master.indeterminate = chkd.length > 0 && !every;
+        } else if (every) {
+            // Asking for every rule in a set is asking for the set, so the
+            // heading follows. The set is then installed as a set — recorded,
+            // and offered an update when a newer version is published — rather
+            // than as copies of the same rules that nothing will ever correct,
+            // which is not what anybody meant by ticking all of them.
+            master.checked = true;
+            master.indeterminate = false;
+            master.dataset.follow = '1';
+        } else {
+            // It has to let go as readily as it followed: a heading that
+            // followed the rules and then stayed ticked when one was untaken
+            // would answer "all but that one" with the whole set. Only a
+            // heading ticked on its own is left alone here.
+            if (master.dataset.follow) {
+                master.checked = false;
+                delete master.dataset.follow;
+            }
+            master.indeterminate = chkd.length > 0 && !master.checked;
         }
+
+        // A heading that only followed its rules leaves them alone: unticking
+        // one is how you go back to all-but-that-one, and disabling them would
+        // make the last tick a trap with no way out but clearing the heading.
+        var whole  = master.checked && master.dataset.set;
+        var follow = !!whole && !!master.dataset.follow;
 
         var n = whole ? boxes.length : chkd.length;
         total += n;
@@ -172,9 +199,9 @@ function updateCounts() {
         // Taking the set already takes every rule in it, so the individual
         // boxes have nothing left to say. Disabled rather than hidden: the
         // rules are still worth reading before deciding.
-        boxes.forEach(function (c) { c.disabled = !!whole; });
+        boxes.forEach(function (c) { c.disabled = !!whole && !follow; });
         var body = document.querySelector('.cat-body[data-cat="' + cat + '"]');
-        if (body) { body.style.opacity = whole ? 0.55 : ''; }
+        if (body) { body.style.opacity = whole && !follow ? 0.55 : ''; }
     });
 
     // Whichever of these the including page has: the create page carries all
@@ -200,6 +227,7 @@ function updateCounts() {
 function selectBasic() {
     document.querySelectorAll('.cat-master').forEach(function (m) {
         if (m.dataset.set) { m.checked = m.dataset.tier === 'basic'; }
+        delete m.dataset.follow;
     });
     document.querySelectorAll('.cat-chk').forEach(function (c) { c.checked = false; });
     updateCounts();
@@ -208,11 +236,17 @@ function selectBasic() {
 // ── Per-category master checkbox ──────────────────────────
 document.querySelectorAll('.cat-master').forEach(function (master) {
     master.addEventListener('change', function () {
+        var boxes = document.querySelectorAll('.cat-chk[data-cat="' + master.dataset.cat + '"]');
         if (!master.dataset.set) {
             var on = master.checked;
-            document.querySelectorAll('.cat-chk[data-cat="' + master.dataset.cat + '"]')
-                    .forEach(function (c) { c.checked = on; });
+            boxes.forEach(function (c) { c.checked = on; });
+        } else if (!master.checked) {
+            // The heading follows a full set of ticks, so unticking it while
+            // they are all ticked would only tick it again. Clearing them is
+            // the way out, and the only reading of the click that survives.
+            boxes.forEach(function (c) { c.checked = false; });
         }
+        delete master.dataset.follow;      // clicked, so no longer following
         updateCounts();
     });
 });
@@ -227,6 +261,7 @@ function selectAll(on) {
     // Whole sets, since that is what All means once a heading is a set.
     document.querySelectorAll('.cat-master').forEach(function (m) {
         if (m.dataset.set) { m.checked = on; }
+        delete m.dataset.follow;
     });
     // Cleared, not ticked: a set that is taken whole does not also want its
     // rules listed individually, and a heading with no set ticks its own.

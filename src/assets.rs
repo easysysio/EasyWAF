@@ -432,6 +432,16 @@ mod tests {
         ] {
             assert!(html.contains(field), "{what}");
         }
+        // A heading is a set and the rules under it are copies, so taking every
+        // rule of a set has to become the set — in the script, which sends the
+        // set id rather than the rules, and on the page, which says so.
+        assert!(html.contains("the heading ticks"), "the page does not say a full set ticks its heading");
+        for (js, what) in [
+            ("master.dataset.follow = '1'", "a full set of ticks no longer takes the heading with it"),
+            ("delete master.dataset.follow", "a heading that followed its rules never lets go"),
+        ] {
+            assert!(html.contains(js), "{what}");
+        }
         assert!(html.contains("websites"), "an existing policy is not offered to copy");
         assert!(html.contains("tor-exits list"), "the published list is not named");
         for (what, why) in [

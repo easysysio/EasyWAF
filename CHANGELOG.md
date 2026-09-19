@@ -13,6 +13,9 @@ Version bumps and tags are created only after explicit approval.
 - A new policy can be started from an existing one, copying its rules, installed sets, exclusions, IP entries, published-list choices and country rules; the two are independent afterwards.
 - A policy's own page carries everything it holds in the same tabs — rules, country rules, IP lists and exclusions — instead of a settings form with links elsewhere; the IP list and exclusion panels there are the same ones those pages show.
 
+### Changed
+- Ticking every rule of a set now ticks the set itself, so it is installed as a set and offered an update when a newer version is published, instead of leaving copies that nothing will ever correct; unticking any one of them releases the set again.
+
 ## [0.12.1] — 2026-09-17
 
 ### Added

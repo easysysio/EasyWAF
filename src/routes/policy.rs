@@ -743,7 +743,11 @@ pub async fn post_policy_setup(
     // "Nothing happened" has two causes and they are not the same thing to
     // read: nothing was ticked, or everything ticked was already here.
     let msg = match (installed, added, ids.len()) {
-        (0, 0, 0) => "Nothing selected, so nothing was added".to_string(),
+        // A set that was selected and could not be installed is not nothing
+        // selected: that reading arrived with the heading, which now follows a
+        // full set of ticks, so it is easy to send one set and no rules.
+        (0, 0, 0) if failed.is_empty() => "Nothing selected, so nothing was added".to_string(),
+        (0, 0, 0) => format!("Nothing was added to {name}"),
         (0, 0, n) => format!(
             "Nothing new — {n} rule(s) selected, and {name} already holds every one"
         ),
