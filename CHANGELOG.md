@@ -16,7 +16,7 @@ Version bumps and tags are created only after explicit approval.
 
 ### Changed
 - Ticking every rule of a set now ticks the set itself, so it is installed as a set and offered an update when a newer version is published, instead of leaving copies that nothing will ever correct; unticking any one of them releases the set again.
-- Rules a policy already holds count towards its set, so a policy holding all of a set's rules one by one is offered the set itself, and a set it already holds is shown as installed instead of being offered again.
+- A set's heading follows the rules under it both ways: rules the policy already holds count towards it, so a policy holding all of a set's rules one by one is offered the set itself, and it lets go the moment one rule is unticked — a set the policy holds as a set included, which used to be shown ticked and frozen. Unticking a heading switches its whole set off.
 
 ## [0.12.1] — 2026-09-17
 

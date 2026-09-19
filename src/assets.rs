@@ -435,10 +435,13 @@ mod tests {
         // A heading is a set and the rules under it are copies, so taking every
         // rule of a set has to become the set — in the script, which sends the
         // set id rather than the rules, and on the page, which says so.
-        assert!(html.contains("the heading ticks"), "the page does not say a full set ticks its heading");
+        assert!(html.contains("the heading ticks itself"),
+                "the page does not say a full set ticks its heading");
         for (js, what) in [
-            ("master.dataset.follow = '1'", "a full set of ticks no longer takes the heading with it"),
-            ("delete master.dataset.follow", "a heading that followed its rules never lets go"),
+            ("ticked.length === all.length",
+             "a heading no longer follows the rules under it"),
+            ("master.indeterminate = ticked.length > 0",
+             "a set that is partly taken looks the same as one nobody touched"),
         ] {
             assert!(html.contains(js), "{what}");
         }
@@ -591,13 +594,13 @@ mod tests {
         let select_at = html.find("id=\"policyForm\"").expect("no selection form");
         assert!(state_at < select_at, "the state form is inside the selection form");
 
-        // A set already installed is not a choice: it is ticked, left alone, and
-        // has no heading checkbox to submit, so there is one of those and not
-        // two. Offering it again would install what is already there.
-        assert_eq!(html.matches("class=\"cat-master\"").count(), 1,
-                   "an installed set is still offered as a selection");
-        assert!(html.contains("This set is installed in this policy"),
-                "an installed set's heading does not say why it cannot be ticked");
+        // Every category has a heading checkbox, the installed set included:
+        // unticking one of its rules is exactly when that heading has to stop
+        // claiming the whole set, and a heading nobody can untick cannot.
+        assert_eq!(html.matches("class=\"cat-master\"").count(), 2,
+                   "a category is missing its heading checkbox");
+        assert!(!html.contains("checked disabled\n                       title=\"This set"),
+                "an installed set's heading is frozen again");
 
         // The panels are the shared ones: on a policy's page they come without
         // the selector and search box that belong to the standalone pages.

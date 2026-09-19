@@ -29,13 +29,13 @@
         </div>
         <div class="panel-body" style="padding:0">
             <p class="text-muted" style="padding:10px 14px;margin:0;font-size:12px">
-                <strong>Tick a heading to take the whole set.</strong> It is installed
-                as a set — recorded, and offered an update when the channel publishes
-                a newer version. Open a heading and tick rules individually to take
-                only those: single rules are copies, and nothing will ever correct
-                them. <strong>Tick every rule in a set and the heading ticks
-                itself</strong>, because that is the set — untick any one of them
-                and it lets go again.
+                <strong>A heading is the whole set.</strong> Tick it and the set is
+                installed as a set — recorded, and offered an update when the channel
+                publishes a newer version. It follows the rules under it: tick every
+                one of them and the heading ticks itself, untick a single one and it
+                lets go, because a set with a rule missing from it is not the set.
+                Open a heading and tick rules individually to take only those: single
+                rules are copies, and nothing will ever correct them.
                 <br>
                 <strong>Nothing is selected to begin with</strong>, so a policy is
                 whatever you choose to put in it. <strong>Basic sets</strong> ticks the
@@ -50,9 +50,10 @@
                 <strong>Untick a rule the policy holds to switch it off.</strong> It
                 stays in the policy, matches nothing, and stays off through every
                 later update of its set — which is how one rule of a set goes
-                without the set. Tick it again to switch it back on. <strong>Delete</strong>
-                removes it outright, and the set's next install or update brings
-                it back.
+                without the set, and why the heading above it goes with it. Tick it
+                again to switch it back on, and untick a heading to switch its whole
+                set off. <strong>Delete</strong> removes a rule outright, and the
+                set's next install or update brings it back.
                 <br>
                 {% endif %}
                 All of it can be changed afterwards from the policy's Rule Sets page.
@@ -86,16 +87,15 @@
             <!-- stopPropagation so ticking the box does not also toggle the panel -->
             <label style="margin:0;font-weight:bold;cursor:pointer"
                    onclick="event.stopPropagation()">
-                {% if cat.set_added %}
-                {# Held as a set already: ticked, left alone, and outside the
-                   script's selection entirely, like a rule the policy has. #}
-                <input type="checkbox" checked disabled
-                       title="This set is installed in this policy">
-                {% else %}
+                {# The heading is the whole set: ticked when every rule under it
+                   applies here, and unticked the moment one does not. A set the
+                   policy already holds is no exception — taking one rule out of
+                   it is exactly when the heading must stop claiming the set. #}
                 <input type="checkbox" class="cat-master" data-cat="{{ cat.code }}"
                        data-set="{{ cat.set_id | default(value='') }}"
-                       data-tier="{{ cat.tier | default(value='') }}">
-                {% endif %}
+                       data-tier="{{ cat.tier | default(value='') }}"
+                       {% if cat.set_added %}data-installed="1"{% endif %}
+                       title="The whole set — tick to take all of it, untick to switch all of it off">
                 {{ cat.title }}
             </label>
             {% if cat.tier == "basic" %}
@@ -187,102 +187,63 @@
     {% endfor %}
 
 <script>
+// ── Every box in a category ──────────────────────────────
+//
+// Three kinds, and the difference is what applying them does: a rule the
+// policy holds (cat-held, ticked — untick it to switch it off), one it does
+// not hold or holds switched off (cat-chk, unticked — tick it to add or to
+// switch it back on), and the heading over them.
+function rulesIn(cat) {
+    return document.querySelectorAll(
+        '.cat-chk[data-cat="' + cat + '"], .cat-held[data-cat="' + cat + '"]');
+}
+
 // ── Update all counters ───────────────────────────────────
 //
-// A heading is an independent choice — "take this whole set" — not a summary
-// of the boxes under it. It used to be derived from them, which is the right
-// model when the only thing you can pick is rules, and the wrong one now that
-// a set is a different act from the rules that happen to be in it.
+// A heading is the whole set, so it says what is true of the rules under it:
+// ticked when every one of them applies here, indeterminate when some do, and
+// unticked as soon as one is taken out. A set with a rule missing from it is
+// not the set, and a heading that went on claiming it would be the one part of
+// this page that lied.
 function updateCounts() {
     var total = 0, offTotal = 0;
 
-    // Driven by the categories, not by the heading checkboxes: a set the policy
-    // already holds has no heading to tick, and a rule under one — deleted
-    // since, and offered again — still counts and still has to be submitted.
     document.querySelectorAll('.cat-body').forEach(function (body) {
-        var cat    = body.dataset.cat;
-        var master = document.querySelector('.cat-master[data-cat="' + cat + '"]');
-        var boxes = document.querySelectorAll('.cat-chk[data-cat="' + cat + '"]');
-        var chkd  = document.querySelectorAll('.cat-chk[data-cat="' + cat + '"]:checked');
-        var kept  = document.querySelectorAll('.cat-held[data-cat="' + cat + '"]:checked');
+        var cat     = body.dataset.cat;
+        var master  = document.querySelector('.cat-master[data-cat="' + cat + '"]');
+        var all     = rulesIn(cat);
+        var ticked  = body.parentNode.querySelectorAll(
+                          '.cat-chk[data-cat="' + cat + '"]:checked, ' +
+                          '.cat-held[data-cat="' + cat + '"]:checked');
+        // What applying would do: add or switch on the ticked ones that are not
+        // applying yet, and switch off the held ones that have been unticked.
+        var adding  = document.querySelectorAll('.cat-chk[data-cat="' + cat + '"]:checked');
         var dropped = document.querySelectorAll('.cat-held[data-cat="' + cat + '"]:not(:checked)');
 
-        // Rules the policy already holds count as taken, so a set whose rules
-        // are all here one by one can still be ticked — there is nothing left
-        // to tick, and that policy is the one that most wants the set recorded.
-        // One of them unticked is a rule on its way off, which is the opposite
-        // of taking the set whole, so the heading does not follow then.
-        var every = (boxes.length + kept.length) > 0
-                    && chkd.length === boxes.length
-                    && dropped.length === 0;
-
-        // A file with no [set] block cannot be installed as a set, so its
-        // heading has nothing to mean but "all of these" — the old behaviour,
-        // kept for that one case rather than leaving an inert checkbox.
-        if (!master) {
-            // No heading checkbox at all: the policy holds this as a set
-            // already, so there is nothing to install and only the leftover
-            // rules to take.
-        } else if (!master.dataset.set) {
-            master.checked = every;
-            master.indeterminate = chkd.length > 0 && !every;
-        } else if (every) {
-            // Asking for every rule in a set is asking for the set, so the
-            // heading follows. The set is then installed as a set — recorded,
-            // and offered an update when a newer version is published — rather
-            // than as copies of the same rules that nothing will ever correct,
-            // which is not what anybody meant by ticking all of them.
-            master.checked = true;
-            master.indeterminate = false;
-            master.dataset.follow = '1';
-        } else {
-            // It has to let go as readily as it followed: a heading that
-            // followed the rules and then stayed ticked when one was untaken
-            // would answer "all but that one" with the whole set. Only a
-            // heading ticked on its own is left alone here.
-            if (master.dataset.follow) {
-                master.checked = false;
-                delete master.dataset.follow;
-            }
-            master.indeterminate = chkd.length > 0 && !master.checked;
+        if (master) {
+            master.checked = all.length > 0 && ticked.length === all.length;
+            master.indeterminate = ticked.length > 0 && ticked.length < all.length;
         }
+        var whole = !!master && master.checked && master.dataset.set;
 
-        // A heading that only followed its rules leaves them alone: unticking
-        // one is how you go back to all-but-that-one, and disabling them would
-        // make the last tick a trap with no way out but clearing the heading.
-        var whole  = !!master && master.checked && master.dataset.set;
-        var follow = !!whole && !!master.dataset.follow;
+        total    += adding.length;
+        offTotal += dropped.length;
 
-        // Counts are what is about to be added, so a set whose rules are all
-        // here counts nothing — which would read as an empty selection next to
-        // a ticked heading. The heading says which of the two it is instead.
-        var n = whole ? boxes.length : chkd.length;
-        total += n;
         var count = document.querySelector('.cat-count[data-cat="' + cat + '"]');
-        if (count) { count.textContent = n; }
+        if (count) { count.textContent = adding.length; }
         var some = document.querySelector('.cat-some[data-cat="' + cat + '"]');
-        var all  = document.querySelector('.cat-whole[data-cat="' + cat + '"]');
+        var each = document.querySelector('.cat-whole[data-cat="' + cat + '"]');
         if (some) { some.style.display = whole ? 'none' : ''; }
-        if (all)  { all.style.display  = whole ? '' : 'none'; }
+        if (each) { each.style.display = whole ? '' : 'none'; }
 
         // Rules on their way off are not a selection and are not counted as
-        // one, but they are a pending change and saying so is the difference
+        // one, but they are a pending change, and saying so is the difference
         // between unticking something and wondering whether it took.
         var going = document.querySelector('.cat-off[data-cat="' + cat + '"]');
         if (going) {
             going.textContent = dropped.length ? ' · ' + dropped.length + ' switching off' : '';
             going.style.display = dropped.length ? '' : 'none';
         }
-        offTotal += dropped.length;
-
-        // Taking the set already takes every rule in it, so the individual
-        // boxes have nothing left to say. Disabled rather than hidden: the
-        // rules are still worth reading before deciding.
-        var frozen = !!whole && !follow;
-        boxes.forEach(function (c) { c.disabled = frozen; });
-        document.querySelectorAll('.cat-held[data-cat="' + cat + '"]')
-                .forEach(function (c) { c.disabled = frozen; });
-        body.style.opacity = frozen ? 0.55 : '';
     });
 
     // Whichever of these the including page has: the create page carries all
@@ -303,6 +264,11 @@ function updateCounts() {
     if (empty) { empty.style.display = total === 0 ? '' : 'none'; }
 }
 
+// ── Set a category's rules all one way ────────────────────
+function setCategory(cat, on) {
+    rulesIn(cat).forEach(function (c) { c.checked = on; });
+}
+
 // ── The recommended starting point ────────────────────────
 //
 // Basic sets used to be ticked when the page loaded. That made every new
@@ -311,27 +277,25 @@ function updateCounts() {
 // taking them is a decision — and so is not taking them.
 function selectBasic() {
     document.querySelectorAll('.cat-master').forEach(function (m) {
-        if (m.dataset.set) { m.checked = m.dataset.tier === 'basic'; }
-        delete m.dataset.follow;
+        setCategory(m.dataset.cat, !!m.dataset.set && m.dataset.tier === 'basic');
     });
-    document.querySelectorAll('.cat-chk').forEach(function (c) { c.checked = false; });
+    restoreHeld();
     updateCounts();
+}
+
+// ── Nothing selected is not everything switched off ───────
+//
+// None clears what has been chosen here. It deliberately does not untick the
+// rules the policy already holds: one button that switched off everything a
+// policy enforces is not a convenience.
+function restoreHeld() {
+    document.querySelectorAll('.cat-held').forEach(function (c) { c.checked = true; });
 }
 
 // ── Per-category master checkbox ──────────────────────────
 document.querySelectorAll('.cat-master').forEach(function (master) {
     master.addEventListener('change', function () {
-        var boxes = document.querySelectorAll('.cat-chk[data-cat="' + master.dataset.cat + '"]');
-        if (!master.dataset.set) {
-            var on = master.checked;
-            boxes.forEach(function (c) { c.checked = on; });
-        } else if (!master.checked) {
-            // The heading follows a full set of ticks, so unticking it while
-            // they are all ticked would only tick it again. Clearing them is
-            // the way out, and the only reading of the click that survives.
-            boxes.forEach(function (c) { c.checked = false; });
-        }
-        delete master.dataset.follow;      // clicked, so no longer following
+        setCategory(master.dataset.cat, master.checked);
         updateCounts();
     });
 });
@@ -343,22 +307,10 @@ document.querySelectorAll('.cat-chk, .cat-held').forEach(function (chk) {
 
 // ── Select / clear all ────────────────────────────────────
 function selectAll(on) {
-    // Whole sets, since that is what All means once a heading is a set.
     document.querySelectorAll('.cat-master').forEach(function (m) {
-        if (m.dataset.set) { m.checked = on; }
-        delete m.dataset.follow;
+        setCategory(m.dataset.cat, on);
     });
-    // Cleared, not ticked: a set that is taken whole does not also want its
-    // rules listed individually, and a heading with no set ticks its own.
-    //
-    // A category can have no heading checkbox at all — the policy holds it as
-    // a set already — and then these rules are the only thing on offer, so
-    // they are ticked like any others. Held rules are not touched either way:
-    // All means take what is offered, not switch off what is already here.
-    document.querySelectorAll('.cat-chk').forEach(function (c) {
-        var m = document.querySelector('.cat-master[data-cat="' + c.dataset.cat + '"]');
-        c.checked = on && !(m && m.dataset.set);
-    });
+    if (!on) { restoreHeld(); }
     updateCounts();
 }
 
@@ -393,56 +345,59 @@ function filterRules() {
     });
 }
 
-// ── Collect checked ids before submit ─────────────────────
+// ── Collect what was chosen, before submit ────────────────
 function collectIds() {
-    // A ticked heading means the whole set, and the set is then installed as a
-    // set rather than as a pile of rules that happens to be all of it. Its
-    // individual boxes are deliberately not sent: doing both would install the
-    // set and then re-add every rule in it, which is the same rules twice
-    // through two different mechanisms.
-    var sets = [], ids = [], off = [], covered = {};
+    // A ticked heading means the set, and the set is installed as a set rather
+    // than as a pile of rules that happens to be all of it: only the first is
+    // recorded and can be offered an update. The rules it covers are therefore
+    // not sent as rules — with one exception. A rule the policy holds switched
+    // off is switched back on by nothing that installing a set does, so ticking
+    // it has to travel on its own or the tick would appear to do nothing.
+    var sets = [], ids = [], off = [];
+
     document.querySelectorAll('.cat-master').forEach(function (m) {
-        if (m.checked && m.dataset.set) {
-            sets.push(m.dataset.set);
-            covered[m.dataset.cat] = true;
-        }
+        var cat   = m.dataset.cat;
+        var whole = m.checked && m.dataset.set;
+
+        // A rule of this set that is not applying yet: one the policy does not
+        // have, or has and has switched off.
+        var pending = document.querySelectorAll('.cat-chk[data-cat="' + cat + '"]:checked');
+        var missing = Array.prototype.some.call(pending, function (c) { return !c.dataset.off; });
+
+        // The set is sent when taking it would do something: it is not
+        // installed here, or it is and a rule of it has gone missing, which
+        // installing it again is what restores. A set already installed with
+        // every rule applying is left alone — otherwise pressing Apply with
+        // nothing changed would reinstall every set on the page.
+        if (whole && (!m.dataset.installed || missing)) { sets.push(m.dataset.set); }
+        var covered = whole && sets.indexOf(m.dataset.set) !== -1;
+
+        pending.forEach(function (c) {
+            if (!covered || c.dataset.off) { ids.push(c.dataset.id); }
+        });
+        // And the rules the policy holds that have been unticked here, which
+        // are on their way off.
+        document.querySelectorAll('.cat-held[data-cat="' + cat + '"]:not(:checked)')
+                .forEach(function (c) { off.push(c.dataset.id); });
     });
-    // Every ticked rule not already covered by a set — including one under a
-    // category with no heading checkbox, which the old pass over the headings
-    // never reached, so it could be ticked and then quietly not submitted.
-    //
-    // A rule that is in the policy and switched off is sent even when its set
-    // is taken whole: installing a set updates the rules it finds and never
-    // switches one back on, so without this the last tick would appear to do
-    // nothing at all.
-    document.querySelectorAll('.cat-chk:checked').forEach(function (c) {
-        if (!covered[c.dataset.cat] || c.dataset.off) { ids.push(c.dataset.id); }
-    });
-    // And the held rules unticked here, which are on their way off.
-    document.querySelectorAll('.cat-held:not(:checked)').forEach(function (c) {
-        off.push(c.dataset.id);
-    });
+
     document.getElementById('catalogIds').value = ids.join(',');
     document.getElementById('setIds').value = sets.join(',');
     var offField = document.getElementById('offIds');
     if (offField) { offField.value = off.join(','); }
 }
 
-// ── Switching one rule off is a different form ─────────────
+// ── Deleting one rule posts a different form ──────────────
 //
-// It posts and the page comes back, so anything ticked and not yet added goes
-// with it. Only a selection somebody made counts: a heading that ticked itself
-// because the policy already holds every rule under it is not one.
+// It posts and the page comes back, so anything ticked or unticked here and
+// not yet applied goes with it. Only changes somebody made count.
 var stateForm = document.getElementById('ruleStateForm');
 if (stateForm) {
     stateForm.addEventListener('submit', function (e) {
         var n = document.querySelectorAll('.cat-chk:checked').length
                 + document.querySelectorAll('.cat-held:not(:checked)').length;
-        document.querySelectorAll('.cat-master:checked').forEach(function (m) {
-            if (!m.dataset.follow) { n += 1; }
-        });
         if (n > 0 && !window.confirm(
-                'You have ' + n + ' selection(s) here that have not been added yet. '
+                'You have ' + n + ' change(s) here that have not been applied yet. '
                 + 'Doing this reloads the page and loses them. Continue?')) {
             e.preventDefault();
         }
