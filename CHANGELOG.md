@@ -6,6 +6,11 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
+## [Unreleased]
+
+### Changed
+- Security Policy → IP Lists → All policies now lists every entry in the installation, each with the policy whose list it is on — or *all policies* for the ones that belong to all of them — so an address can be found without opening each policy in turn; the search box matches the policy name too, and a published list that some policies answer for themselves says how many.
+
 ## [0.12.3] — 2026-09-19
 
 ### Added

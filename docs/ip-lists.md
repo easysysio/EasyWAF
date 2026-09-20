@@ -35,6 +35,13 @@ step and nothing to remember when the next policy is created.
 A policy's own page lists what reaches it from here, marked `all policies` and
 read-only; it is changed in the All policies view.
 
+**The All policies view is also the overview.** Its table is every entry in the
+installation, each with the policy whose list it is on — or `all policies` for
+the ones that belong to all of them — because "why is this address refused" is
+not a question one policy's page can answer. The search box matches the policy
+name as well as the address and the reason, and a published list that some
+policies answer for themselves says how many.
+
 **Allow wins wherever it was written.** An address allowed for every policy
 cannot be blocked by one policy, and one blocked for every policy is let through
 by a policy that allows it. Which page an entry was typed on decides nothing

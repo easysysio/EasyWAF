@@ -675,6 +675,8 @@ pub async fn get_policy_edit(
         .map(|r| crate::routes::iplists::Entry {
             id: r.id, ip: r.ip, list_type: r.list_type, reason: r.reason,
             added_by: r.added_by, created_at: r.created_at,
+            // This page is one policy's, and names it at the top.
+            policy_name: None,
         })
         .collect();
     ctx.insert("allowed", &entries.iter().filter(|e| e.list_type == "allow").count());

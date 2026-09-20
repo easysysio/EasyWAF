@@ -454,6 +454,10 @@ pub struct ListView {
     /// — when anything was decided there. None means nothing was, so there is
     /// nothing to follow and nothing being overruled.
     pub all_choice:  Option<String>,
+    /// How many policies answer for this list themselves. Only counted in the
+    /// every-policy view, which is where a choice can be quietly overruled and
+    /// the reader has no other way to find out.
+    pub overrides:   i64,
 }
 
 /// Every list the verified mirror offers, as one policy has decided about it,
@@ -472,6 +476,22 @@ pub async fn catalogue(db: &SqlitePool, scope: Scope) -> (Vec<ListView>, Option<
         Scope::Everywhere => HashMap::new(),
         Scope::Policy(_)  => choices(db, Scope::Everywhere).await,
     };
+    // Who answers for themselves. Asked only in the every-policy view: that is
+    // the one place a decision reaches policies that may not be taking it.
+    let overridden: HashMap<String, i64> = match scope {
+        Scope::Policy(_)  => HashMap::new(),
+        Scope::Everywhere => sqlx::query!(
+            r#"SELECT id as "id!", COUNT(*) as "n!: i64"
+               FROM ip_list_feeds WHERE policy_id IS NOT NULL GROUP BY id"#
+        )
+        .fetch_all(db)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .map(|r| (r.id, r.n))
+        .collect(),
+    };
+
     let status = status_map().read().map(|s| s.clone()).unwrap_or_default();
 
     let mut out: Vec<ListView> = offered
@@ -501,6 +521,7 @@ pub async fn catalogue(db: &SqlitePool, scope: Scope) -> (Vec<ListView>, Option<
                 offered:     true,
                 from_all,
                 all_choice,
+                overrides:   overridden.get(&l.id).copied().unwrap_or(0),
             }
         })
         .collect();
@@ -527,6 +548,7 @@ pub async fn catalogue(db: &SqlitePool, scope: Scope) -> (Vec<ListView>, Option<
             offered:     false,
             from_all:    false,
             all_choice:  None,
+            overrides:   overridden.get(id).copied().unwrap_or(0),
         });
     }
 

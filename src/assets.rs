@@ -342,6 +342,7 @@ mod tests {
                 "id": id, "name": format!("{id} name"), "description": "what it covers",
                 "licence": "CC0", "attribution": "Someone", "version": "2026091601",
                 "entries": 1432, "enabled": enabled, "response": response,
+                "overrides": 2, "all_choice": null, "from_all": false,
                 "ranges": 1400, "unreadable": unreadable, "error": error,
                 "offered": offered,
             })
@@ -356,6 +357,39 @@ mod tests {
 
         let html = tera.render("iplists.html", &ctx)
             .unwrap_or_else(|e| panic!("iplists.html failed to render: {e:#?}"));
+
+        // ── The All policies view ───────────────────────
+        //
+        // It lists every policy's entries, not only the ones that belong to
+        // every policy: an address refused without saying where is the
+        // question this page exists to answer.
+        let mut all = ctx.clone();
+        all.insert("scope", "all");
+        all.insert("sel_policy", "");
+        all.insert("reach", "every policy, old and new (2 sites have one)");
+        all.insert("entries", &vec![
+            serde_json::json!({
+                "id": 1, "ip": "198.51.100.0/24", "list_type": "block",
+                "reason": "no honest traffic", "added_by": "admin",
+                "created_at": "2026-09-20 09:00", "policy_name": null }),
+            serde_json::json!({
+                "id": 2, "ip": "203.0.113.9", "list_type": "block",
+                "reason": "scanner", "added_by": "admin",
+                "created_at": "2026-09-20 09:01", "policy_name": "websites" }),
+        ]);
+        let html_all = tera.render("iplists.html", &all)
+            .unwrap_or_else(|e| panic!("the All policies view failed to render: {e:#?}"));
+        for (what, why) in [
+            ("all policies",        "an every-policy entry is not marked as one"),
+            ("?policy=websites",    "an entry does not say which policy's list it is on"),
+            ("every policy's counted", "the count does not say how wide it is"),
+            ("scope=all",           "a removal here would land on another page"),
+            ("for this list",       "a list some policies overrule says nothing"),
+        ] {
+            assert!(html_all.contains(what), "{why}");
+        }
+        // And the per-policy view keeps its narrower shape.
+        assert!(!html.contains("all policies"), "a policy's own view claims entries it does not own");
         for label in ["OFF", "BLOCK", "CHALLENGE", "NOT LOADED"] {
             assert!(html.contains(label), "the {label} state is not shown");
         }

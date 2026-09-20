@@ -36,6 +36,12 @@ pub struct Entry {
     pub reason:     Option<String>,
     pub added_by:   Option<String>,
     pub created_at: String,
+    /// Which policy's list it is on. None means every policy.
+    ///
+    /// Only filled for the All policies view, which shows the whole
+    /// installation's entries and would otherwise say an address is refused
+    /// without saying where.
+    pub policy_name: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -231,27 +237,34 @@ pub async fn get_iplists(
     let like = format!("%{}%", search);
 
     if everywhere {
-        // The entries every policy has, and the lists switched on for all of
-        // them. There is no policy here, so no sites to name either.
+        // Every entry in the installation, not only the ones that belong to
+        // every policy: this is the page somebody opens to find out why an
+        // address is refused, and an entry without the policy it is on does
+        // not answer that. The every-policy rows come first, then each
+        // policy's, so the widest are read before the narrowest.
         let rows = sqlx::query!(
-            r#"SELECT id as "id!", ip as "ip!", list_type as "list_type!",
-                      reason, added_by, created_at as "created_at!"
-               FROM   ip_rules
-               WHERE  policy_id IS NULL
-                 AND  (?1 = '' OR ip LIKE ?2 OR COALESCE(reason, '') LIKE ?2)
-               ORDER  BY created_at DESC, id DESC"#,
+            r#"SELECT r.id as "id!", r.ip as "ip!", r.list_type as "list_type!",
+                      r.reason, r.added_by, r.created_at as "created_at!",
+                      p.name as "policy_name?: String"
+               FROM   ip_rules r
+               LEFT   JOIN policies p ON p.id = r.policy_id
+               WHERE  (?1 = '' OR r.ip LIKE ?2 OR COALESCE(r.reason, '') LIKE ?2
+                       OR COALESCE(p.name, '') LIKE ?2)
+               ORDER  BY (r.policy_id IS NOT NULL), p.name,
+                         r.created_at DESC, r.id DESC"#,
             search, like
         )
         .fetch_all(&state.db)
         .await?;
 
         let entries: Vec<Entry> = rows.into_iter().map(|r| Entry {
-            id:         r.id,
-            ip:         r.ip,
-            list_type:  r.list_type,
-            reason:     r.reason,
-            added_by:   r.added_by,
-            created_at: r.created_at,
+            id:          r.id,
+            ip:          r.ip,
+            list_type:   r.list_type,
+            reason:      r.reason,
+            added_by:    r.added_by,
+            created_at:  r.created_at,
+            policy_name: r.policy_name,
         }).collect();
 
         let (feeds, feeds_error) =
@@ -303,12 +316,13 @@ pub async fn get_iplists(
     .await?;
 
     let entries: Vec<Entry> = rows.into_iter().map(|r| Entry {
-        id:         r.id,
-        ip:         r.ip,
-        list_type:  r.list_type,
-        reason:     r.reason,
-        added_by:   r.added_by,
-        created_at: r.created_at,
+        id:          r.id,
+        ip:          r.ip,
+        list_type:   r.list_type,
+        reason:      r.reason,
+        added_by:    r.added_by,
+        created_at:  r.created_at,
+        policy_name: None,
     }).collect();
 
     let allowed = entries.iter().filter(|e| e.list_type == "allow").count();
@@ -333,12 +347,13 @@ pub async fn get_iplists(
     .fetch_all(&state.db)
     .await?;
     let shared: Vec<Entry> = shared.into_iter().map(|r| Entry {
-        id:         r.id,
-        ip:         r.ip,
-        list_type:  r.list_type,
-        reason:     r.reason,
-        added_by:   r.added_by,
-        created_at: r.created_at,
+        id:          r.id,
+        ip:          r.ip,
+        list_type:   r.list_type,
+        reason:      r.reason,
+        added_by:    r.added_by,
+        created_at:  r.created_at,
+        policy_name: None,
     }).collect();
 
     ctx.insert("shared",            &shared);

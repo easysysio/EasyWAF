@@ -43,7 +43,7 @@
                         </select>
                     </form>
                     <span class="text-muted" style="font-size:12px">
-                        {{ blocked }} blocked, {{ allowed }} allowed
+                        {{ blocked }} blocked, {{ allowed }} allowed{% if everywhere %}, every policy's counted{% endif %}
                     </span>
                     {% endif %}
                     {% if show_picker %}
@@ -69,11 +69,15 @@
                 {% else %}
                 <p class="help-block" style="margin-top:0">
                     {% if everywhere %}
-                    These belong to <strong>every policy</strong> — the ones that exist and
-                    the ones made later — and apply, before anything else, on
+                    <strong>The form adds an entry for every policy</strong> — the ones that
+                    exist and the ones made later — applying, before anything else, on
                     <strong>{{ reach }}</strong>. It is the place for an address that is
                     not one policy's business: an office that must never be refused, a
                     netblock with no honest reason to be here.
+                    <br>
+                    <strong>The table below is every entry in this installation</strong>, each
+                    with the policy whose list it is on, because "why is this address
+                    refused" is not a question one policy's page can answer.
                     A site with no policy is still not inspected and still gets no lists.
                     {% else %}
                     These belong to the policy <code>{{ sel_policy }}</code> and apply,
@@ -127,6 +131,7 @@
                         <tr>
                             <th>Address</th>
                             <th>List</th>
+                            {% if everywhere %}<th>On</th>{% endif %}
                             <th>Why</th>
                             <th>Added by</th>
                             <th>When</th>
@@ -144,15 +149,29 @@
                                 <span class="label label-success">ALLOWED</span>
                                 {% endif %}
                             </td>
+                            {% if everywhere %}
+                            <td style="white-space:nowrap">
+                                {% if e.policy_name %}
+                                <a href="/iplists?policy={{ e.policy_name }}">{{ e.policy_name }}</a>
+                                {% else %}
+                                <span class="label label-primary">all policies</span>
+                                {% endif %}
+                            </td>
+                            {% endif %}
                             <td>{{ e.reason | default(value="—") }}</td>
                             <td>{{ e.added_by | default(value="—") }}</td>
                             <td style="white-space:nowrap"><small class="text-muted">{{ e.created_at }}</small></td>
                             <td class="text-right" style="white-space:nowrap">
                                 <form class="admin-only" method="post"
                                       action="/iplists/{{ e.id }}/remove"
-                                      onsubmit="return confirm('Take {{ e.ip }} off the {% if everywhere %}every-policy{% else %}{{ sel_policy }}{% endif %} {{ e.list_type }} list?\n\nIt is inspected like any other client from the next request, on {{ reach }}.');"
+                                      onsubmit="return confirm('Take {{ e.ip }} off the {% if e.policy_name %}{{ e.policy_name }}{% elif everywhere %}every-policy{% else %}{{ sel_policy }}{% endif %} {{ e.list_type }} list?\n\nIt is inspected like any other client from the next request{% if not e.policy_name %}, on {{ reach }}{% endif %}.');"
                                       style="display:inline">
-                                    <input type="hidden" name="back" value="{{ back }}">
+                                    {# From the All policies view, back here: it lists
+                                       every policy's entries, so a removal that landed
+                                       on the owning policy's page would leave the
+                                       reader somewhere they did not ask to be. #}
+                                    <input type="hidden" name="back"
+                                           value="{% if back %}{{ back }}{% elif everywhere %}/iplists?scope=all{% endif %}">
                                     <button type="submit" class="btn btn-default btn-xs"
                                             title="Inspected like any other client again">
                                         <i class="fa fa-undo"></i> Remove
@@ -169,8 +188,8 @@
                     {% if search %}
                     Nothing matches <code>{{ search }}</code>.
                     {% elif everywhere %}
-                    No addresses are listed for every policy. Each policy's own lists are
-                    the only ones in force.
+                    No addresses are listed anywhere — not for every policy, and not on any
+                    policy's own list. Every client is inspected by the rules.
                     {% else %}
                     No addresses are listed under <code>{{ sel_policy }}</code>. Every
                     client is inspected by its rules.
@@ -333,6 +352,11 @@
                                 {% elif f.all_choice and not everywhere %}
                                 <br><small class="text-muted">all policies:
                                     {{ f.all_choice }} — overruled here</small>
+                                {% endif %}
+                                {% if everywhere and f.overrides > 0 %}
+                                <br><small class="text-warning">{{ f.overrides }}
+                                    polic{% if f.overrides == 1 %}y answers{% else %}ies answer{% endif %}
+                                    for this list {% if f.overrides == 1 %}itself{% else %}themselves{% endif %}</small>
                                 {% endif %}
                             </td>
                             <td class="admin-only" style="white-space:nowrap">
