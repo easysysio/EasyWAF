@@ -25,9 +25,10 @@ Current as of **0.9.1**.
   rotation after three failed requests and tried again thirty seconds later, so
   nothing notices a backend is back until that request. There is no active
   health check, and no way to tune the thresholds yet.
-  - **No session affinity.** Requests go round the backends in turn, so a
-    backend keeping state in memory — a PHP session, an in-process cache — sees
-    a client's requests spread across the pool. Coming in **0.13.0**.
+  - **Session affinity needs a client that keeps cookies.** The pin is a
+    signed cookie, since many clients share one address behind NAT; a client
+    that discards cookies goes round the pool in turn. There is no
+    address-based affinity.
 - **IPv6 literal hostnames do not route.** Host matching truncates at the first
   colon, so `[::1]:8080` does not match. Name-based hosts are unaffected.
 - **No health or metrics endpoint.** Nothing to point a load balancer's health

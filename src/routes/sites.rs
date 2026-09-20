@@ -53,6 +53,8 @@ pub struct Site {
     /// Every upstream, in order. One for almost every site; the pages only
     /// show a pool when there is one.
     pub upstreams:      Vec<Upstream>,
+    /// Whether a client stays on the backend that first served it.
+    pub affinity:       bool,
     pub listen_port:    i64,
     /// HTTPS port, or None when the site serves plain HTTP only.
     pub tls_port:       Option<i64>,
@@ -104,6 +106,8 @@ pub struct SiteForm {
     pub x_frame_value:  Option<String>,
     pub x_content_type: Option<String>,
     pub xss_protection: Option<String>,
+    /// Session affinity: absent means off, as an unticked checkbox sends nothing.
+    pub affinity:       Option<String>,
     /// Create-form only: request a certificate as part of creating the site.
     pub acme:           Option<String>,
 }
@@ -217,6 +221,7 @@ pub async fn post_site_create(
     };
     let x_content_type = form.x_content_type.is_some();
     let xss_protection = form.xss_protection.is_some();
+    let affinity       = form.affinity.is_some();
     let waf_policy_id  = parse_policy_id(&form.waf_policy_id);
     let cert_id        = parse_policy_id(&form.cert_id);
     let tls_redirect   = form.tls_redirect.is_some();
@@ -233,10 +238,12 @@ pub async fn post_site_create(
     let site_id = sqlx::query!(
         "INSERT INTO sites
          (name, server_name, listen_port, tls_port, cert_id, tls_redirect,
-          waf_policy_id, hsts, x_frame, x_frame_value, x_content_type, xss_protection)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          waf_policy_id, hsts, x_frame, x_frame_value, x_content_type, xss_protection,
+          affinity)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         name, server_name, listen_port, tls_port, cert_id, tls_redirect,
         waf_policy_id, hsts, x_frame, x_frame_value, x_content_type, xss_protection,
+        affinity,
     )
     .execute(&state.db)
     .await?
@@ -404,6 +411,7 @@ pub async fn post_site_update(
     };
     let x_content_type = form.x_content_type.is_some();
     let xss_protection = form.xss_protection.is_some();
+    let affinity       = form.affinity.is_some();
     let server_name    = normalize_server_name(&form.server_name);
     let waf_policy_id  = parse_policy_id(&form.waf_policy_id);
 
@@ -445,11 +453,11 @@ pub async fn post_site_update(
            server_name=?, listen_port=?, tls_port=?, cert_id=?,
            tls_redirect=?, waf_policy_id=?,
            hsts=?, x_frame=?, x_frame_value=?, x_content_type=?, xss_protection=?,
-           updated_at=datetime('now')
+           affinity=?, updated_at=datetime('now')
          WHERE name=?",
         server_name, listen_port, tls_port, cert_id,
         tls_redirect, waf_policy_id,
-        hsts, x_frame, x_frame_value, x_content_type, xss_protection,
+        hsts, x_frame, x_frame_value, x_content_type, xss_protection, affinity,
         name,
     )
     .execute(&state.db)
@@ -581,7 +589,8 @@ async fn fetch_sites(state: &AppState) -> Result<Vec<Site>> {
                 x_frame        as \"x_frame!: bool\",
                 x_frame_value  as \"x_frame_value!\",
                 x_content_type as \"x_content_type!: bool\",
-                xss_protection as \"xss_protection!: bool\"
+                xss_protection as \"xss_protection!: bool\",
+                affinity       as \"affinity!: bool\"
          FROM sites ORDER BY name"
     )
     .fetch_all(&state.db)
@@ -627,6 +636,7 @@ async fn fetch_sites(state: &AppState) -> Result<Vec<Site>> {
         server_name:    r.server_name,
         target:         upstreams.first().map(|u| u.url.clone()).unwrap_or_default(),
         upstreams,
+        affinity:       r.affinity,
         listen_port:    r.listen_port,
         tls_port:       r.tls_port,
         cert_id:        r.cert_id,
@@ -893,7 +903,8 @@ async fn fetch_site(state: &AppState, name: &str) -> Result<Site> {
                 x_frame        as \"x_frame!: bool\",
                 x_frame_value  as \"x_frame_value!\",
                 x_content_type as \"x_content_type!: bool\",
-                xss_protection as \"xss_protection!: bool\"
+                xss_protection as \"xss_protection!: bool\",
+                affinity       as \"affinity!: bool\"
          FROM sites WHERE name = ?",
         name
     )
@@ -918,6 +929,7 @@ async fn fetch_site(state: &AppState, name: &str) -> Result<Site> {
         server_name:    r.server_name,
         target:         upstreams.first().map(|u| u.url.clone()).unwrap_or_default(),
         upstreams,
+        affinity:       r.affinity,
         listen_port:    r.listen_port,
         tls_port:       r.tls_port,
         cert_id:        r.cert_id,

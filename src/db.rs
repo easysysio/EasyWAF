@@ -80,9 +80,34 @@ pub async fn init(database_url: &str) -> SqlitePool {
     run_migration_028(&pool).await;
     run_migration_030(&pool).await;
     run_migration_031(&pool).await;
+    run_migration_032(&pool).await;
 
     info!("Database ready: {}", database_url);
     pool
+}
+
+// ─── run_migration_032 ───────────────────────────────────
+
+/// Session affinity, per site. Added when the column is missing, since
+/// `ALTER TABLE ADD COLUMN` fails on a database that already has it.
+async fn run_migration_032(pool: &SqlitePool) {
+    let done: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM pragma_table_info('sites') WHERE name = 'affinity'",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0);
+    if done > 0 {
+        return;
+    }
+
+    let sql = include_str!("../migrations/032_site_affinity.sql");
+    sqlx::raw_sql(sql)
+        .execute(pool)
+        .await
+        .unwrap_or_else(|e| panic!("Migration 032 failed: {}", e));
+
+    info!("Migration 032 applied: a site can pin a client to one backend");
 }
 
 // ─── run_migration_031 ───────────────────────────────────

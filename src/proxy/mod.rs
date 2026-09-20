@@ -197,6 +197,8 @@ struct SiteRow {
     x_frame_value:  String,
     x_content_type: bool,
     xss_protection: bool,
+    /// Whether a client is pinned to the backend that first served it.
+    affinity:       bool,
     /// The site's policy and its mode, which decide whether its IP lists apply.
     policy_id:      Option<i64>,
     rule_engine:    Option<String>,
@@ -1110,7 +1112,16 @@ async fn handle_request(
     };
     // Which backend serves this request. With one upstream it is that one,
     // every time, as it was before a site could have more.
-    let Some(chosen) = crate::upstream::choose(site.id, &site.upstreams) else {
+    //
+    // With affinity on, the cookie the client sends back decides — as long as
+    // the backend it names is still in this site's pool and still answering.
+    let pinned = if site.affinity {
+        cookie_value(&headers, crate::upstream::AFFINITY_COOKIE)
+            .and_then(|v| crate::upstream::read_pin(&state.secret, &v))
+    } else {
+        None
+    };
+    let Some(chosen) = crate::upstream::choose_pinned(site.id, &site.upstreams, pinned) else {
         // A site with no upstream at all: nothing to forward to, and saying so
         // beats a generic gateway error nobody can act on.
         tracing::warn!(site = %site.name, "no upstream is configured for this site");
@@ -1119,6 +1130,11 @@ async fn handle_request(
     let mut chosen_id  = chosen.upstream.id;
     let mut chosen_url = chosen.upstream.url.clone();
     let all_out        = chosen.all_out;
+    // A cookie is set when the site pins and this request did not arrive with
+    // the right one — first request, or a re-pin because the old backend has
+    // gone. Sending it every time would be a header on every response for
+    // nothing.
+    let repin = site.affinity && pinned != Some(chosen_id);
     let upstream_url   = format!(
         "{}{}",
         chosen_url.trim_end_matches('/'),
@@ -1329,6 +1345,22 @@ async fn handle_request(
                 copy_response_headers(headers_mut, &resp_headers);
                 // Inject any security headers configured for this site.
                 inject_security_headers(headers_mut, &site);
+
+                // Pin the client to the backend that served it. A session
+                // cookie: affinity that outlives the browser session would
+                // hold a client to a backend long after anything it was
+                // keeping in memory had gone. HttpOnly because no page has
+                // any business reading it, and Secure over TLS so it is not
+                // sent back in clear.
+                if repin
+                    && let Ok(v) = axum::http::HeaderValue::from_str(&format!(
+                        "{}={}; Path=/; HttpOnly; SameSite=Lax{}",
+                        crate::upstream::AFFINITY_COOKIE,
+                        crate::upstream::make_pin(&state.secret, chosen_id),
+                        if state.is_tls { "; Secure" } else { "" }))
+                {
+                    headers_mut.append(axum::http::header::SET_COOKIE, v);
+                }
             }
 
             // Log the completed request asynchronously.
@@ -1430,6 +1462,7 @@ async fn lookup_site(db: &SqlitePool, host: &str) -> Option<SiteRow> {
                 x_frame_value  as \"x_frame_value!\",
                 x_content_type as \"x_content_type!: bool\",
                 xss_protection as \"xss_protection!: bool\",
+                affinity       as \"affinity!: bool\",
                 waf_policy_id,
                 (SELECT rule_engine FROM policies p WHERE p.id = sites.waf_policy_id)
                                as \"rule_engine?: String\"
@@ -1456,6 +1489,7 @@ async fn lookup_site(db: &SqlitePool, host: &str) -> Option<SiteRow> {
         x_frame_value:  r.x_frame_value,
         x_content_type: r.x_content_type,
         xss_protection: r.xss_protection,
+        affinity:       r.affinity,
         policy_id:      r.waf_policy_id,
         rule_engine:    r.rule_engine,
     })

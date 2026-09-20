@@ -392,9 +392,9 @@ scheduled or decided — the roadmap lives in [docs/design/roadmap.md](docs/desi
   after three failed requests and let back in by one request thirty seconds later, so a
   backend that has recovered is not noticed until then. No active prober, and the
   thresholds are not configurable.
-* **No session affinity.** Requests go round a site's backends in turn, so a backend
-  keeping state in memory sees one client's requests spread across the pool. Coming in
-  **0.13.0**.
+* **Session affinity needs a client that keeps cookies.** The pin is a signed cookie,
+  because many clients share one address behind NAT. A client that discards cookies —
+  most API clients — goes round the pool in turn. There is no address-based affinity.
 * **IPv6 literal hostnames do not route.** Host matching truncates at the first colon, so
   `[::1]:8080` does not match. Name-based hosts are unaffected.
 * **No health or metrics endpoint.** Nothing to point a load balancer's health check at, and

@@ -74,6 +74,74 @@ pub fn parse_pool(raw: &str) -> Vec<Upstream> {
         .collect()
 }
 
+// ─── Affinity ────────────────────────────────────────────
+//
+// By cookie rather than by client address: NAT puts many clients behind one
+// address, and a shared office address would pin a whole building to one
+// backend. The cookie is signed the way the CAPTCHA clearance cookie is, with
+// the same per-installation secret, so a client cannot choose its own backend
+// — which would otherwise be a way to aim every request at the one backend
+// worth overloading.
+
+/// Name of the cookie that remembers which backend a client is pinned to.
+pub const AFFINITY_COOKIE: &str = "easywaf_upstream";
+
+type HmacSha256 = hmac::Hmac<sha2::Sha256>;
+
+/// `<upstream id>.<signature>`, for a client to send back.
+pub fn make_pin(secret: &str, upstream_id: i64) -> String {
+    format!("{upstream_id}.{}", sign_pin(secret, upstream_id))
+}
+
+/// The upstream a cookie pins to, if it is one this installation signed.
+///
+/// No expiry of its own: it is a session cookie, so it lasts as long as the
+/// browser keeps it, and an id that no longer exists or is out of rotation is
+/// handled where the choice is made rather than here.
+pub fn read_pin(secret: &str, value: &str) -> Option<i64> {
+    let (id, sig) = value.split_once('.')?;
+    let id: i64 = id.parse().ok()?;
+    let expected = sign_pin(secret, id);
+    // Constant time: a signature check that returns early tells an attacker
+    // how much of their guess was right.
+    if sig.len() == expected.len()
+        && sig.bytes().zip(expected.bytes()).fold(0u8, |acc, (a, b)| acc | (a ^ b)) == 0
+    {
+        Some(id)
+    } else {
+        None
+    }
+}
+
+fn sign_pin(secret: &str, upstream_id: i64) -> String {
+    use hmac::Mac;
+    let mut mac = HmacSha256::new_from_slice(secret.as_bytes())
+        .expect("HMAC accepts any key length");
+    mac.update(b"upstream|");
+    mac.update(upstream_id.to_string().as_bytes());
+    mac.finalize().into_bytes().iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// The backend for a request, honouring a pin when the site asks for one.
+///
+/// A pin is followed only while the backend it names is in this site's pool
+/// and taking requests. A client whose backend has gone is re-pinned to
+/// another rather than refused: the alternative is a client that cannot be
+/// served until it clears its cookies, which it will not think to do.
+pub fn choose_pinned<'a>(
+    site_id: i64,
+    pool:    &'a [Upstream],
+    pinned:  Option<i64>,
+) -> Option<Chosen<'a>> {
+    if let Some(id) = pinned {
+        let now = Instant::now();
+        if let Some(u) = pool.iter().find(|u| u.id == id && taking_requests(u.id, now)) {
+            return Some(Chosen { upstream: u, all_out: false });
+        }
+    }
+    choose(site_id, pool)
+}
+
 // ─── Health ──────────────────────────────────────────────
 //
 // Passive, circuit-breaker shaped: failures are counted on real traffic rather
@@ -162,16 +230,6 @@ pub fn state_of(id: i64) -> (u32, Option<u64>) {
             None => (0, None),
         },
         Err(_) => (0, None),
-    }
-}
-
-/// Forget everything observed. Tests only — the state is process-wide, and a
-/// test that inherits another's failures is a test that fails for a reason
-/// that is not in it.
-#[cfg(test)]
-fn forget_health() {
-    if let Ok(mut h) = health().lock() {
-        h.clear();
     }
 }
 
@@ -280,8 +338,12 @@ fn pick<'a>(pool: &[&'a Upstream], offset: u64) -> Option<&'a Upstream> {
 mod tests {
     use super::*;
 
-    /// Ids are handed out from a counter so no two test pools share one:
-    /// health is remembered per id for the whole process.
+    /// Ids are handed out from a counter so no two test pools share one.
+    ///
+    /// Health is remembered per id for the whole process and these tests run
+    /// in parallel, so this is what keeps one test's failures out of another's
+    /// pool — clearing the map instead would be one test wiping another's
+    /// state halfway through it.
     fn pool(spec: &[(&str, i64)]) -> Vec<Upstream> {
         use std::sync::atomic::{AtomicI64, Ordering};
         static NEXT: AtomicI64 = AtomicI64::new(1);
@@ -370,11 +432,68 @@ mod tests {
         assert_eq!(chose(5, &p).unwrap(), "http://b");
     }
 
+    // ── Affinity ────────────────────────────────────────
+
+    #[test]
+    fn a_pin_survives_the_round_trip_and_nothing_else_does() {
+        let secret = "a-secret-this-installation-generated";
+        let pin = make_pin(secret, 42);
+        assert_eq!(read_pin(secret, &pin), Some(42));
+
+        // A client choosing its own backend would be a way to aim every
+        // request at the one backend worth overloading.
+        assert_eq!(read_pin(secret, "42.deadbeef"), None, "an unsigned pin was accepted");
+        assert_eq!(read_pin("another secret", &pin), None,
+                   "a pin signed by somebody else was accepted");
+        assert_eq!(read_pin(secret, "42"), None, "a pin with no signature was accepted");
+        assert_eq!(read_pin(secret, ""), None);
+        assert_eq!(read_pin(secret, "not-a-number.abc"), None);
+
+        // The signature covers the id, so moving it to another backend fails.
+        let (_, sig) = pin.split_once('.').unwrap();
+        assert_eq!(read_pin(secret, &format!("43.{sig}")), None,
+                   "a pin was moved to another backend");
+    }
+
+    #[test]
+    fn a_pinned_client_stays_where_it_was_put() {
+        let p = pool(&[("http://a", 1), ("http://b", 1)]);
+        let second = p[1].id;
+        for _ in 0..6 {
+            let c = choose_pinned(200, &p, Some(second)).unwrap();
+            assert_eq!(c.upstream.url, "http://b", "the pin was not followed");
+        }
+        // And without one, the rotation goes round as usual.
+        let got: Vec<String> = (0..2).map(|_| chose(201, &p).unwrap()).collect();
+        assert_ne!(got[0], got[1], "an unpinned client was not rotated");
+    }
+
+    #[test]
+    fn a_pin_to_a_backend_that_is_out_is_moved_rather_than_refused() {
+        // A client that cannot be served until it clears its cookies is a
+        // client that will never think to.
+        let p = pool(&[("http://a", 1), ("http://b", 1)]);
+        let gone = p[1].id;
+        for _ in 0..FAILURES_BEFORE_OUT { failed(gone); }
+
+        let c = choose_pinned(202, &p, Some(gone)).unwrap();
+        assert_eq!(c.upstream.url, "http://a", "a client was held to a dead backend");
+    }
+
+    #[test]
+    fn a_pin_to_a_backend_of_another_site_is_ignored() {
+        // Ids are unique across sites, so a cookie from one site names
+        // nothing in another's pool — and is simply not found.
+        let mine   = pool(&[("http://a", 1)]);
+        let theirs = pool(&[("http://elsewhere", 1)]);
+        let c = choose_pinned(203, &mine, Some(theirs[0].id)).unwrap();
+        assert_eq!(c.upstream.url, "http://a");
+    }
+
     // ── Health ──────────────────────────────────────────
 
     #[test]
     fn a_backend_leaves_the_rotation_after_three_failures_in_a_row() {
-        forget_health();
         let p = pool(&[("http://good", 1), ("http://bad", 1)]);
         let bad = p[1].id;
 
@@ -392,7 +511,6 @@ mod tests {
 
     #[test]
     fn a_success_clears_what_was_counted_against_a_backend() {
-        forget_health();
         let p = pool(&[("http://a", 1), ("http://b", 1)]);
         let id = p[0].id;
         failed(id);
@@ -410,7 +528,6 @@ mod tests {
         // All of them failing is not a reason to stop asking: they may have
         // been restarted together, which is what a deploy looks like. The
         // caller is told, so the client can be given the right answer.
-        forget_health();
         let p = pool(&[("http://a", 1), ("http://b", 1)]);
         for u in &p {
             for _ in 0..FAILURES_BEFORE_OUT { failed(u.id); }
@@ -423,7 +540,6 @@ mod tests {
     fn a_pool_of_one_is_never_left_without_a_backend() {
         // Nothing to fail over to, so the request is worth more than the
         // refusal — and the answer still says every backend is out.
-        forget_health();
         let p = pool(&[("http://only", 1)]);
         for _ in 0..FAILURES_BEFORE_OUT { failed(p[0].id); }
         let c = choose(104, &p).expect("the only backend");
@@ -433,7 +549,6 @@ mod tests {
 
     #[test]
     fn a_retry_does_not_go_back_to_the_backend_that_just_failed() {
-        forget_health();
         let p = pool(&[("http://a", 1), ("http://b", 1)]);
         let first = choose(105, &p).unwrap().upstream.id;
         let second = choose_except(105, &p, &[first]).expect("another backend");
@@ -444,7 +559,6 @@ mod tests {
 
     #[test]
     fn what_the_page_shows_follows_what_happened() {
-        forget_health();
         let p = pool(&[("http://a", 1)]);
         let id = p[0].id;
         assert_eq!(state_of(id), (0, None));

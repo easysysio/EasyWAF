@@ -302,7 +302,7 @@ mod tests {
             "enabled": true, "listen_port": 80, "tls_port": null, "cert_id": null,
             "tls_redirect": false, "waf_policy_id": pid, "hsts": false,
             "x_frame": false, "x_frame_value": "SAMEORIGIN",
-            "x_content_type": false, "xss_protection": false });
+            "x_content_type": false, "xss_protection": false, "affinity": false });
 
         sctx.insert("site", &site(None));
         let none = tera.render("site_settings.html", &sctx).expect("site settings render");

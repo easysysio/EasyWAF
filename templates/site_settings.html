@@ -20,7 +20,8 @@
         <div class="panel panel-default">
             <div class="panel-heading"><h4>Site Settings — {{ site.name }}</h4></div>
             <div class="panel-body">
-                <form class="admin-only" method="post" action="/sites/{{ site.name }}/update">
+                <form class="admin-only" id="site-settings-form" method="post"
+                      action="/sites/{{ site.name }}/update">
 
                     <div class="form-group">
                         <label>Site Name
@@ -203,6 +204,26 @@
                             {% endfor %}
                             </tbody>
                         </table>
+                        </div>
+
+                        <div class="checkbox admin-only" style="margin-top:0">
+                            <label>
+                                <input type="checkbox" form="site-settings-form" name="affinity" value="1"
+                                       {% if site.affinity %}checked{% endif %}>
+                                <strong>Session affinity</strong> — keep a client on the backend
+                                that first served it
+                            </label>
+                            <p class="help-block" style="margin:0 0 10px 20px">
+                                For a backend that keeps something in memory: a session, an
+                                in-process cache. Without it a client's requests are spread
+                                across the pool, and the symptom is a user logged out at random
+                                rather than anything that looks like a proxy problem.
+                                <br>
+                                The client is pinned by a signed cookie, not by its address —
+                                many clients share one address behind NAT. If its backend goes
+                                out of rotation it is pinned to another rather than refused.
+                                Saved with the settings above.
+                            </p>
                         </div>
 
                         <form class="admin-only" method="post"

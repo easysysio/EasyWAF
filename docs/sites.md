@@ -66,6 +66,28 @@ one node cannot reach may be perfectly reachable from another.
 Each traffic record names the backend that served it, so a site that is
 intermittently slow can be traced to one of them.
 
+### Session affinity
+
+Off by default. Switch it on — the checkbox under **Upstreams** — when a
+backend keeps something in memory: a session, an in-process cache, an upload
+being assembled. Without it a client's requests are spread across the pool, and
+the symptom is a user logged out at random rather than anything that looks like
+a proxy problem.
+
+**A client is pinned by a signed cookie, not by its address.** Many clients
+share one address behind NAT, and pinning by address would hold a whole office
+to one backend. The cookie holds only which backend, is signed with this
+installation's own key, and is rejected if it is tampered with — a client
+cannot choose its own backend and aim traffic at one of them. It is a session
+cookie, `HttpOnly`, and `Secure` on an HTTPS site.
+
+**If the pinned backend goes out of rotation the client is pinned to another**,
+not refused: a client that cannot be served until it clears its cookies is a
+client that will never think to. It stays on the new backend afterwards.
+
+A client that keeps no cookies — most API clients — cannot be pinned, and goes
+round the pool in turn as usual.
+
 ## Ports
 
 One or more HTTP ports, and optionally one or more HTTPS ports, comma separated.
