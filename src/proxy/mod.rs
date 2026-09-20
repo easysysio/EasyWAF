@@ -1116,8 +1116,10 @@ async fn handle_request(
         tracing::warn!(site = %site.name, "no upstream is configured for this site");
         return error_response(StatusCode::BAD_GATEWAY, "No upstream is configured for this site");
     };
-    let chosen_url = chosen.url.clone();
-    let upstream_url = format!(
+    let mut chosen_id  = chosen.upstream.id;
+    let mut chosen_url = chosen.upstream.url.clone();
+    let all_out        = chosen.all_out;
+    let upstream_url   = format!(
         "{}{}",
         chosen_url.trim_end_matches('/'),
         path_and_query
@@ -1197,22 +1199,61 @@ async fn handle_request(
     // Otherwise the inspected start goes first and the rest follows as it
     // arrives from the client — with the client's own Content-Length, which is
     // forwarded unchanged and still matches, since not one byte is altered.
-    let request_body = if prefix.complete {
-        reqwest::Body::from(prefix.head)
+    // A body that ended within the inspected prefix is held whole, so it can be
+    // sent again to a second backend. One that is still arriving cannot: it is
+    // a stream, the first attempt consumes it, and there is nothing left to
+    // replay. So a large upload gets one attempt and an honest 502, rather than
+    // a retry that would send half a body.
+    let replayable = prefix.complete;
+    let head       = prefix.head.clone();
+    let mut streamed = if prefix.complete {
+        None
     } else {
-        let head = futures::stream::once(std::future::ready(
+        let first = futures::stream::once(std::future::ready(
             Ok::<bytes::Bytes, axum::Error>(prefix.head),
         ));
-        reqwest::Body::wrap_stream(futures::StreamExt::chain(head, prefix.rest))
+        Some(reqwest::Body::wrap_stream(futures::StreamExt::chain(first, prefix.rest)))
     };
 
-    let upstream_result = state
-        .client
-        .request(to_reqwest_method(&method), &upstream_url)
-        .headers(to_reqwest_headers(&fwd_headers))
-        .body(request_body)
-        .send()
-        .await;
+    // At most three backends: a pool large enough for a fourth attempt is a
+    // pool where the client has waited long enough to be told.
+    const ATTEMPTS: usize = 3;
+    let mut tried: Vec<i64> = Vec::new();
+    let mut url = upstream_url.clone();
+
+    let upstream_result = loop {
+        let body = match streamed.take() {
+            Some(b) => b,
+            None    => reqwest::Body::from(head.clone()),
+        };
+        let result = state
+            .client
+            .request(to_reqwest_method(&method), &url)
+            .headers(to_reqwest_headers(&fwd_headers))
+            .body(body)
+            .send()
+            .await;
+
+        let Err(ref e) = result else {
+            break result;
+        };
+
+        // Could not be reached: that is the backend's fault, whatever the
+        // application would have said.
+        crate::upstream::failed(chosen_id);
+        tried.push(chosen_id);
+        if !replayable || tried.len() >= ATTEMPTS {
+            break result;
+        }
+        let Some(next) = crate::upstream::choose_except(site.id, &site.upstreams, &tried) else {
+            break result;
+        };
+        tracing::warn!(upstream = %url, error = %e, next = %next.upstream.url,
+                       "upstream unreachable, trying another backend");
+        chosen_id  = next.upstream.id;
+        chosen_url = next.upstream.url.clone();
+        url = format!("{}{}", chosen_url.trim_end_matches('/'), path_and_query);
+    };
 
     match upstream_result {
         // ── Upstream unreachable ──────────────────────────
@@ -1244,12 +1285,30 @@ async fn handle_request(
                     detection,
                 }).await;
             });
-            error_response(StatusCode::BAD_GATEWAY, "Upstream unreachable")
+            // Two different problems with two different next steps, so they
+            // are not given the same sentence: one backend is unreachable, or
+            // every backend of this site is.
+            if all_out || tried.len() > 1 {
+                error_response(StatusCode::BAD_GATEWAY,
+                               "All upstreams for this site are down")
+            } else {
+                error_response(StatusCode::BAD_GATEWAY, "Upstream unreachable")
+            }
         }
 
         // ── Upstream responded — stream back to client ────
         Ok(upstream_resp) => {
             let status       = upstream_resp.status();
+            // A 5xx is the backend saying it cannot answer, and counts against
+            // it. A 404 is the application answering, and does not: taking a
+            // working backend out of rotation because somebody asked for a
+            // missing page would be a worse fault than the one being guarded
+            // against.
+            if status.is_server_error() {
+                crate::upstream::failed(chosen_id);
+            } else {
+                crate::upstream::succeeded(chosen_id);
+            }
             let resp_headers = upstream_resp.headers().clone();
             let elapsed      = started_at.elapsed().as_millis() as i64;
 
@@ -1361,7 +1420,7 @@ async fn lookup_site(db: &SqlitePool, host: &str) -> Option<SiteRow> {
         // back the cost that 0.11.0's caching took out. A URL holds neither a
         // space nor a newline, so `url weight` per line needs no escaping.
         "SELECT id as \"id!\", name,
-                (SELECT group_concat(url || ' ' || weight, char(10))
+                (SELECT group_concat(id || ' ' || url || ' ' || weight, char(10))
                    FROM upstreams
                   WHERE site_id = sites.id AND enabled = 1) as \"pool?: String\",
                 tls_port,
