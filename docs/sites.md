@@ -33,10 +33,19 @@ appeared on only one of the names.
 
 ## Upstreams
 
-A site starts with one backend — the **Upstream Target** field — and that is all
-most sites ever need. Add a second under **Upstreams** on the site's page and
-requests go round them **in turn**, a heavier **weight** taking a larger share,
-which is what backends on unequal hardware are for.
+A site starts with what you type in **Upstream** when you create it — one
+backend for most sites, or **several at once**, one per line or comma
+separated. After that the site's own page has an **Upstreams** panel: add more
+(again, one or several at a time), change a **weight**, switch one off, remove
+one.
+
+Requests go round the backends **in turn**, a heavier weight taking a larger
+share, which is what backends on unequal hardware are for.
+
+The single **Upstream** field on the site's settings form edits the backend of a
+site that has exactly one. It refuses a list — that could mean either replacing
+the pool or adding to it — and a site with several shows the pool's size there
+instead.
 
 **A backend that stops answering is taken out of the rotation** after three
 failures in a row, and one request is let through thirty seconds later to find

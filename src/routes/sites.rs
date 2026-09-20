@@ -235,6 +235,17 @@ pub async fn post_site_create(
     let (listen_port, tls_port) = (ports.listen, ports.tls);
     let (extra_http, extra_https) = (ports.extra_http, ports.extra_https);
 
+    // Checked here for the same reason the ports are: a rejected backend
+    // should leave no half-made site behind.
+    let (upstreams, bad) = parse_upstreams(&form.target);
+    if let Some(why) = bad.first() {
+        return flash_redirect("/sites", "failed", why);
+    }
+    if upstreams.is_empty() {
+        return flash_redirect("/sites", "failed",
+                              "A site needs somewhere to forward requests to");
+    }
+
     let site_id = sqlx::query!(
         "INSERT INTO sites
          (name, server_name, listen_port, tls_port, cert_id, tls_redirect,
@@ -252,11 +263,14 @@ pub async fn post_site_create(
     // second query on a different one.
     .last_insert_rowid();
 
-    // The upstream is a row of its own since 0.13.0. A site starts with one,
-    // which is what the form asks for and what most sites keep.
-    sqlx::query!("INSERT INTO upstreams (site_id, url) VALUES (?, ?)", site_id, form.target)
-        .execute(&state.db)
-        .await?;
+    // Upstreams are rows of their own since 0.13.0, and the field takes a list:
+    // a site that is served by three backends should not have to be created
+    // with one and corrected twice.
+    for url in &upstreams {
+        sqlx::query!("INSERT INTO upstreams (site_id, url) VALUES (?, ?)", site_id, url)
+            .execute(&state.db)
+            .await?;
+    }
 
     save_extra_ports(&state.db, site_id, &extra_http, &extra_https).await?;
     save_aliases(&state.db, site_id, &aliases).await?;
@@ -448,6 +462,22 @@ pub async fn post_site_update(
     let (listen_port, tls_port) = (ports.listen, ports.tls);
     let (extra_http, extra_https) = (ports.extra_http, ports.extra_https);
 
+    // Before the UPDATE, for the same reason: this form carries one upstream,
+    // and a site with several is left alone by it — collapsing a pool to the
+    // single field it posts would take backends out of service on a save that
+    // was about a header. A list pasted into it would have to mean either
+    // "replace the pool" or "add to it", and guessing between those is the
+    // same fault by another route.
+    let edit = format!("/sites/{name}/edit");
+    let (urls, bad) = parse_upstreams(&form.target);
+    if let Some(why) = bad.first() {
+        return flash_redirect(&edit, "failed", why);
+    }
+    if urls.len() > 1 {
+        return flash_redirect(&edit, "failed",
+            "That field is one backend. Add the others under Upstreams, below");
+    }
+
     sqlx::query!(
         "UPDATE sites SET
            server_name=?, listen_port=?, tls_port=?, cert_id=?,
@@ -463,11 +493,9 @@ pub async fn post_site_update(
     .execute(&state.db)
     .await?;
 
-    // This form carries one upstream. A site that has several is edited on its
-    // own page, and is left alone here: collapsing a pool to the single field
-    // this form posts would take backends out of service on a save that was
-    // about a header.
-    update_single_upstream(&state.db, site_id, &form.target).await?;
+    if let Some(url) = urls.first() {
+        update_single_upstream(&state.db, site_id, url).await?;
+    }
 
     save_extra_ports(&state.db, site_id, &extra_http, &extra_https).await?;
     save_aliases(&state.db, site_id, &aliases).await?;
@@ -713,6 +741,29 @@ pub struct UpstreamForm {
     pub enabled: Option<String>,
 }
 
+/// Read a field that may hold several backends.
+///
+/// One per line or comma separated, the way every other list in this interface
+/// is typed. Returns the URLs that are usable and, separately, the entries
+/// that are not — named back rather than dropped, because an upstream nobody
+/// mentioned is a backend that silently never receives a request.
+pub fn parse_upstreams(raw: &str) -> (Vec<String>, Vec<String>) {
+    let (mut good, mut bad) = (Vec::new(), Vec::new());
+    for entry in raw.split(|c: char| c == ',' || c.is_whitespace()) {
+        let entry = entry.trim();
+        if entry.is_empty() {
+            continue;
+        }
+        match valid_upstream(entry) {
+            // The same backend twice in one paste is a typo, not two backends.
+            Ok(url) if good.contains(&url) => {}
+            Ok(url)  => good.push(url),
+            Err(why) => bad.push(why),
+        }
+    }
+    (good, bad)
+}
+
 /// A URL this proxy can actually forward to.
 ///
 /// Checked here rather than at the first request, where the answer would be a
@@ -766,34 +817,51 @@ pub async fn post_upstream_add(
     let back = format!("/sites/{name}/edit");
     let site_id = site_id_of(&state, &name).await?;
 
-    let url = match valid_upstream(form.url.as_deref().unwrap_or("")) {
-        Ok(u)  => u,
-        Err(e) => return flash_redirect(&back, "failed", &e),
-    };
+    let (urls, bad) = parse_upstreams(form.url.as_deref().unwrap_or(""));
+    if let Some(why) = bad.first() {
+        return flash_redirect(&back, "failed", why);
+    }
+    if urls.is_empty() {
+        return flash_redirect(&back, "failed", "An upstream needs a URL");
+    }
     let weight: i64 = form.weight.as_deref().unwrap_or("1").trim().parse().unwrap_or(1).max(1);
 
-    let existing: i64 = sqlx::query_scalar!(
-        r#"SELECT COUNT(*) as "n!" FROM upstreams WHERE site_id = ? AND url = ?"#,
-        site_id, url
-    )
-    .fetch_one(&state.db)
-    .await?;
-    if existing > 0 {
-        return flash_redirect(&back, "failed", &format!(
-            "{name} already forwards to {url}"));
+    let mut added: Vec<String> = Vec::new();
+    let mut already: Vec<String> = Vec::new();
+    for url in urls {
+        let existing: i64 = sqlx::query_scalar!(
+            r#"SELECT COUNT(*) as "n!" FROM upstreams WHERE site_id = ? AND url = ?"#,
+            site_id, url
+        )
+        .fetch_one(&state.db)
+        .await?;
+        if existing > 0 {
+            already.push(url);
+            continue;
+        }
+        sqlx::query!(
+            "INSERT INTO upstreams (site_id, url, weight) VALUES (?, ?, ?)",
+            site_id, url, weight
+        )
+        .execute(&state.db)
+        .await?;
+        tracing::info!(site = %name, upstream = %url, weight, by = %session.username,
+                       "upstream added");
+        added.push(url);
     }
 
-    sqlx::query!(
-        "INSERT INTO upstreams (site_id, url, weight) VALUES (?, ?, ?)",
-        site_id, url, weight
-    )
-    .execute(&state.db)
-    .await?;
-
-    tracing::info!(site = %name, upstream = %url, weight, by = %session.username,
-                   "upstream added");
-    flash_redirect(&back, "success", &format!(
-        "{name} now forwards to {url} as well — requests go round its backends in turn"))
+    // What happened to each one, since a paste of four where one was already
+    // there should not read as though all four were new.
+    let msg = match (added.len(), already.len()) {
+        (0, _) => format!("{name} already forwards to {}", already.join(", ")),
+        (_, 0) => format!(
+            "{name} now forwards to {} as well — requests go round its backends in turn",
+            added.join(", ")),
+        (_, _) => format!(
+            "{name} now forwards to {} as well; it already forwarded to {}",
+            added.join(", "), already.join(", ")),
+    };
+    flash_redirect(&back, "success", &msg)
 }
 
 // ─── post_upstream_save ──────────────────────────────────
@@ -1413,6 +1481,46 @@ fn parse_policy_id(raw: &Option<String>) -> Option<i64> {
 
 // ─── Flash redirect helper ───────────────────────────────
 
+
+#[cfg(test)]
+mod upstream_field_tests {
+    use super::*;
+
+    #[test]
+    fn a_field_takes_one_backend_or_several() {
+        let (good, bad) = parse_upstreams("http://a:3000");
+        assert_eq!(good, vec!["http://a:3000"]);
+        assert!(bad.is_empty());
+
+        // One per line or comma separated, the way every other list in this
+        // interface is typed — and a trailing slash is not a different backend.
+        let (good, bad) = parse_upstreams("http://a:3000\n http://b:3000/ ,https://c:8443");
+        assert_eq!(good, vec!["http://a:3000", "http://b:3000", "https://c:8443"]);
+        assert!(bad.is_empty());
+    }
+
+    #[test]
+    fn the_same_backend_twice_in_one_paste_is_one_backend() {
+        let (good, _) = parse_upstreams("http://a:3000, http://a:3000/");
+        assert_eq!(good, vec!["http://a:3000"], "a typo became two backends");
+    }
+
+    #[test]
+    fn what_is_not_a_backend_is_named_rather_than_dropped() {
+        // Silently dropping one is a backend that never receives a request and
+        // nobody knows why.
+        let (good, bad) = parse_upstreams("http://a:3000\n127.0.0.1:9000\nhttp://b/app");
+        assert_eq!(good, vec!["http://a:3000"]);
+        assert_eq!(bad.len(), 2);
+        assert!(bad[0].contains("needs a scheme"), "{:?}", bad[0]);
+        assert!(bad[1].contains("has a path"), "{:?}", bad[1]);
+    }
+
+    #[test]
+    fn an_empty_field_yields_nothing_rather_than_an_empty_backend() {
+        assert_eq!(parse_upstreams("   \n , \n").0.len(), 0);
+    }
+}
 
 #[cfg(test)]
 mod tests {

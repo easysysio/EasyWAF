@@ -72,8 +72,9 @@
                         <label>Upstream Target <small class="text-muted">(where requests are forwarded — full URL, including scheme)</small></label>
                         <input type="text" class="form-control" name="target" value="{{ site.target }}" placeholder="http://127.0.0.1:3000" required>
                         <p class="help-block">
-                            One backend. Add a second under <strong>Upstreams</strong> below and
-                            requests go round them in turn.
+                            This site's one backend. To add more, use <strong>Upstreams</strong>
+                            below — a list pasted here is refused, because it could mean either
+                            replacing the pool or adding to it.
                         </p>
                     </div>
                     {% endif %}
@@ -229,14 +230,19 @@
                         <form class="admin-only" method="post"
                               action="/sites/{{ site.name }}/upstreams/add"
                               style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-                            <input type="text" name="url" class="form-control" required
-                                   placeholder="http://127.0.0.1:3001" spellcheck="false"
-                                   style="width:280px">
+                            <textarea name="url" class="form-control" required rows="2"
+                                      spellcheck="false" style="width:280px"
+                                      placeholder="http://127.0.0.1:3001"></textarea>
                             <input type="number" name="weight" value="1" min="1"
                                    class="form-control" style="width:90px" title="Weight">
                             <button type="submit" class="btn btn-default">
                                 <i class="fa fa-plus"></i> Add backend
                             </button>
+                            <span class="help-block" style="width:100%;margin:4px 0 0">
+                                One per line, or comma separated, to add several at once —
+                                they all take the weight beside them, which each row can
+                                change afterwards.
+                            </span>
                         </form>
                     </div>
                 </div>
