@@ -31,6 +31,41 @@ appeared on only one of the names.
   certificate covers it — [request one](tls.md#lets-encrypt) and every name on
   the site is included.
 
+## Upstreams
+
+A site starts with one backend — the **Upstream Target** field — and that is all
+most sites ever need. Add a second under **Upstreams** on the site's page and
+requests go round them **in turn**, a heavier **weight** taking a larger share,
+which is what backends on unequal hardware are for.
+
+**A backend that stops answering is taken out of the rotation** after three
+failures in a row, and one request is let through thirty seconds later to find
+out whether it is back. Unreachable counts as a failure and so does a `5xx` —
+that is the backend saying it cannot answer. A `404` does not: that is the
+application answering, and a missing page is no reason to stop using a working
+backend.
+
+**A request that can safely be sent again is retried on another backend**, so
+one backend failing costs nothing. A request whose body is still arriving cannot
+be retried — the body is a stream, and the first attempt consumes it — so a
+large upload to a backend that dies mid-request gets a 502.
+
+Two things the pool will not do:
+
+- **A site is never left with nothing to forward to.** The last backend cannot
+  be removed or switched off; disable the site itself instead.
+- **A pool where every backend is out still gets asked.** All of them failing at
+  once is what a deploy looks like. If none answers, the response says *all
+  upstreams for this site are down*, which is a different problem from one
+  unreachable backend.
+
+The rotation state shown beside each backend — in rotation, failing, out — is
+what **this node** has observed. It is never shared with another node: a backend
+one node cannot reach may be perfectly reachable from another.
+
+Each traffic record names the backend that served it, so a site that is
+intermittently slow can be traced to one of them.
+
 ## Ports
 
 One or more HTTP ports, and optionally one or more HTTPS ports, comma separated.

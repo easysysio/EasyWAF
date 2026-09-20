@@ -296,6 +296,9 @@ mod tests {
         let site = |pid: Option<i64>| serde_json::json!({
             "id": 1, "name": "s", "server_name": "s.example", "aliases": "",
             "target": "http://a",
+            // One backend, in rotation: the shape almost every site has.
+            "upstreams": [{ "id": 1, "url": "http://a", "weight": 1,
+                            "enabled": true, "failures": 0, "out_for": null }],
             "enabled": true, "listen_port": 80, "tls_port": null, "cert_id": null,
             "tls_redirect": false, "waf_policy_id": pid, "hsts": false,
             "x_frame": false, "x_frame_value": "SAMEORIGIN",
@@ -304,6 +307,47 @@ mod tests {
         sctx.insert("site", &site(None));
         let none = tera.render("site_settings.html", &sctx).expect("site settings render");
         assert!(none.contains("This site is not inspected"), "no warning without a policy");
+
+        // ── The pool, and the states a backend can be in ──
+        //
+        // A backend silently out of the rotation is the thing an operator has
+        // no other way to learn, so every state is rendered here: the page is
+        // where it has to be legible.
+        let mut pool = sctx.clone();
+        let mut many = site(Some(3));
+        many["upstreams"] = serde_json::json!([
+            { "id": 1, "url": "http://a:3000", "weight": 3, "enabled": true,
+              "failures": 0, "out_for": null },
+            { "id": 2, "url": "http://b:3000", "weight": 1, "enabled": true,
+              "failures": 2, "out_for": null },
+            { "id": 3, "url": "http://c:3000", "weight": 1, "enabled": true,
+              "failures": 3, "out_for": 24 },
+            { "id": 4, "url": "http://d:3000", "weight": 1, "enabled": false,
+              "failures": 0, "out_for": null },
+        ]);
+        pool.insert("site", &many);
+        let html = tera.render("site_settings.html", &pool).expect("pool render");
+        for (what, why) in [
+            ("IN ROTATION",     "a healthy backend is not said to be in rotation"),
+            ("FAILING",         "a backend with failures against it looks healthy"),
+            ("2 in a row",      "the failures counted against a backend are not shown"),
+            ("OUT",             "an ejected backend is not marked"),
+            ("back in 24s",     "an ejected backend does not say when it is tried again"),
+            ("SWITCHED OFF",    "a backend switched off looks like one in rotation"),
+            ("upstreams/2/save", "a backend cannot be edited"),
+            ("upstreams/2/remove", "a backend cannot be removed"),
+            ("upstreams/add",   "no way to add a backend"),
+            ("4 backends",      "the settings form does not say the site has a pool"),
+        ] {
+            assert!(html.contains(what), "{why}");
+        }
+        // The single-URL field must not be on a page where it could collapse a
+        // pool: this form posts one target, and the update path ignores it for
+        // a site with several — but offering it would still be a lie.
+        assert!(!html.contains(r#"name="target""#),
+                "the single-upstream field is offered for a site with a pool");
+        assert!(none.contains(r#"name="target""#),
+                "a site with one backend lost its upstream field");
 
         sctx.insert("site", &site(Some(3)));
         let with = tera.render("site_settings.html", &sctx).expect("site settings render");

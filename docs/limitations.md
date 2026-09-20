@@ -21,9 +21,13 @@ Current as of **0.9.1**.
   hostnames, but there are no path prefixes and no wildcard hostnames like
   `*.example.com`. Two applications behind one hostname cannot be split. Not
   scheduled.
-- **One upstream per site.** No load balancing, no health checks, no failover —
-  an application running more than one instance needs a load balancer behind
-  EasyWAF. Scheduled for **0.13.0**.
+- **Upstream health is observed, not probed.** A backend is taken out of the
+  rotation after three failed requests and tried again thirty seconds later, so
+  nothing notices a backend is back until that request. There is no active
+  health check, and no way to tune the thresholds yet.
+  - **No session affinity.** Requests go round the backends in turn, so a
+    backend keeping state in memory — a PHP session, an in-process cache — sees
+    a client's requests spread across the pool. Coming in **0.13.0**.
 - **IPv6 literal hostnames do not route.** Host matching truncates at the first
   colon, so `[::1]:8080` does not match. Name-based hosts are unaffected.
 - **No health or metrics endpoint.** Nothing to point a load balancer's health

@@ -10,6 +10,7 @@ Version bumps and tags are created only after explicit approval.
 
 ### Added
 - A site's upstream is now a row rather than a column, so a site can have more than one: requests go round the pool in turn, weighted for backends on unequal hardware. A site with one upstream behaves exactly as before, and every traffic record names the upstream that served it.
+- A site's backends are added, weighted, switched off and removed under **Upstreams** on its page, which also shows what this node has observed of each one — in rotation, failing, or out and when it will be tried again. A site can never be left with nothing to forward to.
 - A backend that stops answering is taken out of the rotation after three failures in a row and let back in by a single request thirty seconds later, and a request that can safely be sent again is retried on another backend rather than failing — so one dead backend of several costs nothing. When every backend is down the answer says so, instead of repeating the message for one unreachable upstream.
 
 ### Changed

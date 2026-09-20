@@ -25,13 +25,18 @@ use tera::Context;
 
 // ─── Models ──────────────────────────────────────────────
 
-/// One backend a site can be served from.
+/// One backend a site can be served from, as its page shows it.
 #[derive(Debug, Serialize)]
 pub struct Upstream {
     pub id:      i64,
     pub url:     String,
     pub weight:  i64,
     pub enabled: bool,
+    /// Consecutive failures counted against it, and how many seconds it is
+    /// out of the rotation for. A backend quietly ejected is exactly the thing
+    /// an operator needs to see and has no other way to learn.
+    pub failures: u32,
+    pub out_for:  Option<u64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -594,8 +599,9 @@ async fn fetch_sites(state: &AppState) -> Result<Vec<Site>> {
     .await
     .unwrap_or_default()
     {
+        let (failures, out_for) = crate::upstream::state_of(u.id);
         pools.entry(u.site_id).or_default().push(Upstream {
-            id: u.id, url: u.url, weight: u.weight, enabled: u.enabled,
+            id: u.id, url: u.url, weight: u.weight, enabled: u.enabled, failures, out_for,
         });
     }
 
@@ -666,17 +672,211 @@ async fn update_single_upstream(db: &SqlitePool, site_id: i64, url: &str) -> Res
     Ok(())
 }
 
-/// Every upstream of a site, in a stable order.
+/// Every upstream of a site, in a stable order, with what this node has
+/// observed of each.
 pub async fn upstreams_of(db: &SqlitePool, site_id: i64) -> Result<Vec<Upstream>> {
-    Ok(sqlx::query_as!(
-        Upstream,
+    let rows = sqlx::query!(
         r#"SELECT id as "id!", url as "url!", weight as "weight!",
                   enabled as "enabled!: bool"
            FROM upstreams WHERE site_id = ? ORDER BY id"#,
         site_id
     )
     .fetch_all(db)
-    .await?)
+    .await?;
+
+    Ok(rows.into_iter().map(|r| {
+        // Health is this node's own observation, held in memory, never stored
+        // and never synced — see the note in upstream.rs.
+        let (failures, out_for) = crate::upstream::state_of(r.id);
+        Upstream { id: r.id, url: r.url, weight: r.weight, enabled: r.enabled, failures, out_for }
+    }).collect())
+}
+
+// ─── The pool editor ─────────────────────────────────────
+
+/// What the pool forms post.
+#[derive(Debug, Deserialize)]
+pub struct UpstreamForm {
+    pub url:     Option<String>,
+    pub weight:  Option<String>,
+    /// An unticked checkbox sends nothing, so its absence is the answer.
+    pub enabled: Option<String>,
+}
+
+/// A URL this proxy can actually forward to.
+///
+/// Checked here rather than at the first request, where the answer would be a
+/// 502 with the reason in a log nobody is reading yet.
+fn valid_upstream(raw: &str) -> std::result::Result<String, String> {
+    let url = raw.trim().trim_end_matches('/').to_string();
+    if url.is_empty() {
+        return Err("An upstream needs a URL".to_string());
+    }
+    let rest = match url.split_once("://") {
+        Some(("http", rest))  => rest,
+        Some(("https", rest)) => rest,
+        _ => return Err(format!(
+            "\"{url}\" needs a scheme — http:// or https:// — and a host, like \
+             http://127.0.0.1:3000")),
+    };
+    // A path would be silently prepended to every request, which is not what
+    // this field means and has surprised somebody on every proxy that allows it.
+    let host = rest.split('/').next().unwrap_or("");
+    if host.is_empty() {
+        return Err(format!("\"{url}\" has no host"));
+    }
+    if rest.contains('/') && !rest.ends_with('/') {
+        return Err(format!(
+            "\"{url}\" has a path. An upstream is a scheme, a host and a port; the \
+             request's own path is added to it"));
+    }
+    Ok(format!("{}{}", url.split_once("://").map(|(s, _)| format!("{s}://")).unwrap_or_default(), host))
+}
+
+/// The site an upstream form is about, and its id.
+async fn site_id_of(state: &AppState, name: &str) -> Result<i64> {
+    sqlx::query_scalar!("SELECT id FROM sites WHERE name = ?", name)
+        .fetch_optional(&state.db)
+        .await?
+        .flatten()
+        .ok_or_else(|| AppError::NotFound(format!("Site '{name}' not found")))
+}
+
+// ─── post_upstream_add ───────────────────────────────────
+
+/// POST /sites/{name}/upstreams/add — another backend for this site.
+pub async fn post_upstream_add(
+    State(state): State<AppState>,
+    _jar: SignedCookieJar,
+    Admin(session): Admin,
+    Path(name): Path<String>,
+    Form(form): Form<UpstreamForm>,
+) -> Result<Response> {
+
+    let back = format!("/sites/{name}/edit");
+    let site_id = site_id_of(&state, &name).await?;
+
+    let url = match valid_upstream(form.url.as_deref().unwrap_or("")) {
+        Ok(u)  => u,
+        Err(e) => return flash_redirect(&back, "failed", &e),
+    };
+    let weight: i64 = form.weight.as_deref().unwrap_or("1").trim().parse().unwrap_or(1).max(1);
+
+    let existing: i64 = sqlx::query_scalar!(
+        r#"SELECT COUNT(*) as "n!" FROM upstreams WHERE site_id = ? AND url = ?"#,
+        site_id, url
+    )
+    .fetch_one(&state.db)
+    .await?;
+    if existing > 0 {
+        return flash_redirect(&back, "failed", &format!(
+            "{name} already forwards to {url}"));
+    }
+
+    sqlx::query!(
+        "INSERT INTO upstreams (site_id, url, weight) VALUES (?, ?, ?)",
+        site_id, url, weight
+    )
+    .execute(&state.db)
+    .await?;
+
+    tracing::info!(site = %name, upstream = %url, weight, by = %session.username,
+                   "upstream added");
+    flash_redirect(&back, "success", &format!(
+        "{name} now forwards to {url} as well — requests go round its backends in turn"))
+}
+
+// ─── post_upstream_save ──────────────────────────────────
+
+/// POST /sites/{name}/upstreams/{id}/save — its weight, and whether it is used.
+pub async fn post_upstream_save(
+    State(state): State<AppState>,
+    _jar: SignedCookieJar,
+    Admin(session): Admin,
+    Path((name, id)): Path<(String, i64)>,
+    Form(form): Form<UpstreamForm>,
+) -> Result<Response> {
+
+    let back = format!("/sites/{name}/edit");
+    let site_id = site_id_of(&state, &name).await?;
+    let weight: i64 = form.weight.as_deref().unwrap_or("1").trim().parse().unwrap_or(1).max(1);
+    let enabled = form.enabled.is_some();
+
+    // The last one that is actually used cannot be switched off from here: a
+    // site with nothing in rotation answers nothing, and that is a decision
+    // taken by disabling the site, not by editing a backend.
+    if !enabled {
+        let others: i64 = sqlx::query_scalar!(
+            r#"SELECT COUNT(*) as "n!" FROM upstreams
+               WHERE site_id = ? AND id != ? AND enabled = 1"#,
+            site_id, id
+        )
+        .fetch_one(&state.db)
+        .await?;
+        if others == 0 {
+            return flash_redirect(&back, "failed", &format!(
+                "{name} would have no backend left to forward to. Add another first, or disable the site itself"));
+        }
+    }
+
+    let on = enabled as i64;
+    let done = sqlx::query!(
+        "UPDATE upstreams SET weight = ?, enabled = ? WHERE id = ? AND site_id = ?",
+        weight, on, id, site_id
+    )
+    .execute(&state.db)
+    .await?
+    .rows_affected();
+    if done == 0 {
+        return flash_redirect(&back, "failed", "That backend is no longer there");
+    }
+
+    tracing::info!(site = %name, upstream = id, weight, enabled, by = %session.username,
+                   "upstream saved");
+    flash_redirect(&back, "success", &if enabled {
+        format!("Saved — weight {weight}")
+    } else {
+        "Saved — that backend is out of the rotation until it is switched back on".to_string()
+    })
+}
+
+// ─── post_upstream_remove ────────────────────────────────
+
+/// POST /sites/{name}/upstreams/{id}/remove — one fewer backend.
+pub async fn post_upstream_remove(
+    State(state): State<AppState>,
+    _jar: SignedCookieJar,
+    Admin(session): Admin,
+    Path((name, id)): Path<(String, i64)>,
+) -> Result<Response> {
+
+    let back = format!("/sites/{name}/edit");
+    let site_id = site_id_of(&state, &name).await?;
+
+    let others: i64 = sqlx::query_scalar!(
+        r#"SELECT COUNT(*) as "n!" FROM upstreams WHERE site_id = ? AND id != ?"#,
+        site_id, id
+    )
+    .fetch_one(&state.db)
+    .await?;
+    if others == 0 {
+        return flash_redirect(&back, "failed", &format!(
+            "{name} has to forward somewhere. Change this backend's URL instead, or delete the site"));
+    }
+
+    let gone = sqlx::query!(
+        "DELETE FROM upstreams WHERE id = ? AND site_id = ? RETURNING url",
+        id, site_id
+    )
+    .fetch_optional(&state.db)
+    .await?;
+
+    let Some(gone) = gone else {
+        return flash_redirect(&back, "failed", "That backend is no longer there");
+    };
+    tracing::info!(site = %name, upstream = %gone.url, by = %session.username,
+                   "upstream removed");
+    flash_redirect(&back, "success", &format!("{} is no longer a backend for {name}", gone.url))
 }
 
 /// Fetch a single site by name; returns NotFound if the site does not exist.

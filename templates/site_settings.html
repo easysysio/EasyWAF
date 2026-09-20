@@ -55,10 +55,27 @@
                         </p>
                     </div>
 
+                    {% if site.upstreams | length > 1 %}
+                    {# The single field cannot say what a pool holds, and a form
+                       that posts one URL must not be able to collapse several.
+                       The pool has its own panel below. #}
+                    <div class="form-group">
+                        <label>Upstreams</label>
+                        <p class="form-control-static">
+                            {{ site.upstreams | length }} backends, in rotation —
+                            edited under <strong>Upstreams</strong> below.
+                        </p>
+                    </div>
+                    {% else %}
                     <div class="form-group">
                         <label>Upstream Target <small class="text-muted">(where requests are forwarded — full URL, including scheme)</small></label>
                         <input type="text" class="form-control" name="target" value="{{ site.target }}" placeholder="http://127.0.0.1:3000" required>
+                        <p class="help-block">
+                            One backend. Add a second under <strong>Upstreams</strong> below and
+                            requests go round them in turn.
+                        </p>
                     </div>
+                    {% endif %}
 
                     <div class="form-group">
                         <label>HTTP Ports
@@ -110,6 +127,98 @@
                             inspected</strong> — no rules, no country rules, no IP lists.
                         </span>
                     </div>
+
+                <!-- ── Upstreams ──────────────────────────────── -->
+                <div class="panel panel-default">
+                    <div class="panel-heading">
+                        <strong><i class="fa fa-server"></i> Upstreams</strong>
+                        <small class="text-muted">— the backends this site is served from</small>
+                    </div>
+                    <div class="panel-body">
+                        <p class="help-block" style="margin-top:0">
+                            Requests go round the backends <strong>in turn</strong>, a heavier
+                            weight taking a larger share — for backends on unequal hardware.
+                            <br>
+                            <strong>A backend that stops answering is taken out of the rotation</strong>
+                            after three failures in a row, and one request is let through thirty
+                            seconds later to find out whether it is back. Unreachable counts as a
+                            failure and so does a 5xx; a 404 does not, since that is the
+                            application answering. A request that can safely be sent again is
+                            retried on another backend, so one backend failing costs nothing —
+                            a request whose body is still arriving cannot be, and gets a 502.
+                            <br>
+                            The state below is what <em>this</em> node has seen, and is not
+                            shared with any other: a backend one node cannot reach may be
+                            perfectly reachable from another.
+                        </p>
+
+                        <div style="overflow-x:auto">
+                        <table class="table table-hover">
+                            <thead>
+                                <tr>
+                                    <th>URL</th>
+                                    <th style="width:110px">Weight</th>
+                                    <th style="width:190px">Rotation</th>
+                                    <th class="admin-only" style="width:210px"></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                            {% for u in site.upstreams %}
+                                <tr {% if u.out_for %}class="danger"{% elif not u.enabled %}class="warning"{% endif %}>
+                                    <td style="vertical-align:middle"><code>{{ u.url }}</code></td>
+                                    <td style="vertical-align:middle">{{ u.weight }}</td>
+                                    <td style="vertical-align:middle">
+                                        {% if not u.enabled %}
+                                        <span class="label label-default">SWITCHED OFF</span>
+                                        {% elif u.out_for %}
+                                        <span class="label label-danger">OUT</span>
+                                        <small class="text-muted">back in {{ u.out_for }}s</small>
+                                        {% elif u.failures > 0 %}
+                                        <span class="label label-warning">FAILING</span>
+                                        <small class="text-muted">{{ u.failures }} in a row</small>
+                                        {% else %}
+                                        <span class="label label-success">IN ROTATION</span>
+                                        {% endif %}
+                                    </td>
+                                    <td class="admin-only">
+                                        <form method="post" style="display:flex;gap:6px;align-items:center"
+                                              action="/sites/{{ site.name }}/upstreams/{{ u.id }}/save">
+                                            <input type="number" name="weight" value="{{ u.weight }}"
+                                                   min="1" class="form-control input-sm" style="width:70px">
+                                            <label class="checkbox-inline" style="margin:0">
+                                                <input type="checkbox" name="enabled" value="1"
+                                                       {% if u.enabled %}checked{% endif %}> Use
+                                            </label>
+                                            <button type="submit" class="btn btn-default btn-sm">Save</button>
+                                        </form>
+                                        {% if site.upstreams | length > 1 %}
+                                        <form method="post" style="margin-top:4px"
+                                              action="/sites/{{ site.name }}/upstreams/{{ u.id }}/remove"
+                                              onsubmit="return confirm('Stop forwarding {{ site.name }} to {{ u.url }}?\n\nThe other backends take its share from the next request.');">
+                                            <button type="submit" class="btn btn-link btn-xs" style="padding:0">remove</button>
+                                        </form>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                            {% endfor %}
+                            </tbody>
+                        </table>
+                        </div>
+
+                        <form class="admin-only" method="post"
+                              action="/sites/{{ site.name }}/upstreams/add"
+                              style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+                            <input type="text" name="url" class="form-control" required
+                                   placeholder="http://127.0.0.1:3001" spellcheck="false"
+                                   style="width:280px">
+                            <input type="number" name="weight" value="1" min="1"
+                                   class="form-control" style="width:90px" title="Weight">
+                            <button type="submit" class="btn btn-default">
+                                <i class="fa fa-plus"></i> Add backend
+                            </button>
+                        </form>
+                    </div>
+                </div>
 
                     <div class="panel panel-default">
                         <div class="panel-heading">Security Headers</div>
