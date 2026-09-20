@@ -57,6 +57,12 @@ pub fn parse_pool(raw: &str) -> Vec<Upstream> {
 
 /// Where each site's rotation has got to. Per process, not per node cluster:
 /// which backend served the last request is an observation, not configuration.
+///
+/// Nothing invalidates this when a pool changes, and nothing needs to: the
+/// counter is taken modulo the weights of the pool in hand, so a count left
+/// over from three backends only starts the rotation over two at a different
+/// place — which a round robin has no opinion about. An entry per site id ever
+/// seen is a few bytes and is gone on restart.
 static TURN: OnceLock<Mutex<HashMap<i64, u64>>> = OnceLock::new();
 
 fn turn() -> &'static Mutex<HashMap<i64, u64>> {
@@ -104,14 +110,6 @@ fn pick(pool: &[Upstream], offset: u64) -> Option<&Upstream> {
         }
     }
     pool.last()
-}
-
-/// Forget a site's place in the rotation. Called when its pool changes, so a
-/// counter from a pool of three does not land oddly in a pool of two.
-pub fn forget(site_id: i64) {
-    if let Ok(mut t) = turn().lock() {
-        t.remove(&site_id);
-    }
 }
 
 #[cfg(test)]
@@ -188,12 +186,17 @@ mod tests {
     }
 
     #[test]
-    fn a_changed_pool_starts_again() {
+    fn a_pool_that_shrinks_keeps_rotating() {
+        // The counter is not reset when a backend is removed, because it does
+        // not have to be: every choice is taken modulo the pool in hand, so
+        // what is left goes on being handed out in turn.
         let three = pool(&[("http://a", 1), ("http://b", 1), ("http://c", 1)]);
         assert_eq!(choose(7, &three).unwrap().url, "http://a");
         assert_eq!(choose(7, &three).unwrap().url, "http://b");
-        forget(7);
+
         let two = pool(&[("http://a", 1), ("http://b", 1)]);
-        assert_eq!(choose(7, &two).unwrap().url, "http://a");
+        let got: Vec<&str> = (0..4).map(|_| choose(7, &two).unwrap().url.as_str()).collect();
+        assert_eq!(got.iter().filter(|u| **u == "http://a").count(), 2);
+        assert_eq!(got.iter().filter(|u| **u == "http://b").count(), 2);
     }
 }
