@@ -187,7 +187,9 @@ pub struct ProxyState {
 struct SiteRow {
     id:             i64,
     name:           String,
-    target:         String,
+    /// Every upstream this site can be served from, already parsed. One for
+    /// almost every site, and then the choice below is that one.
+    upstreams:      Vec<crate::upstream::Upstream>,
     tls_port:       Option<i64>,
     tls_redirect:   bool,
     hsts:           bool,
@@ -872,6 +874,7 @@ async fn handle_request(
 
         tokio::spawn(async move {
             log_event(db, logger, TrafficRecord {
+                upstream:     None,
                 site_id,
                 client_ip:    ip_l,
                 method:       method_str,
@@ -1003,6 +1006,7 @@ async fn handle_request(
         let reason_log = reason.clone();
         tokio::spawn(async move {
             log_event(db, logger, TrafficRecord {
+                upstream:     None,
                 site_id:      site.id,
                 client_ip:    client_ip.to_string(),
                 method:       method_str,
@@ -1049,6 +1053,7 @@ async fn handle_request(
             let ip_l       = client_ip.to_string();
             tokio::spawn(async move {
                 log_event(db, logger, TrafficRecord {
+                    upstream:     None,
                     site_id:      site.id,
                     client_ip:    ip_l,
                     method:       method_str,
@@ -1103,9 +1108,18 @@ async fn handle_request(
         Some(q) => format!("{}?{}", path, q),
         None    => path.clone(),
     };
+    // Which backend serves this request. With one upstream it is that one,
+    // every time, as it was before a site could have more.
+    let Some(chosen) = crate::upstream::choose(site.id, &site.upstreams) else {
+        // A site with no upstream at all: nothing to forward to, and saying so
+        // beats a generic gateway error nobody can act on.
+        tracing::warn!(site = %site.name, "no upstream is configured for this site");
+        return error_response(StatusCode::BAD_GATEWAY, "No upstream is configured for this site");
+    };
+    let chosen_url = chosen.url.clone();
     let upstream_url = format!(
         "{}{}",
-        site.target.trim_end_matches('/'),
+        chosen_url.trim_end_matches('/'),
         path_and_query
     );
 
@@ -1140,9 +1154,11 @@ async fn handle_request(
         let site_id    = site.id;
         let ip         = client_ip.to_string();
         let found      = detected.clone();
+        let up_l       = chosen_url.clone();
         tokio::spawn(async move {
             let (score, hits, detection, why) = split_detection(found);
             log_event(db, logger, TrafficRecord {
+                upstream:     Some(up_l.clone()),
                 site_id,
                 client_ip:    ip,
                 method:       method_str,
@@ -1207,9 +1223,11 @@ async fn handle_request(
             let logger     = state.logger.clone();
             let method_str = method.to_string();
             let found      = detected.clone();
+            let up_l       = chosen_url.clone();
             tokio::spawn(async move {
                 let (score, hits, detection, why) = split_detection(found);
                 log_event(db, logger, TrafficRecord {
+                    upstream:     Some(up_l.clone()),
                     site_id:      site.id,
                     client_ip:    client_ip.to_string(),
                     method:       method_str,
@@ -1259,9 +1277,11 @@ async fn handle_request(
             let logger     = state.logger.clone();
             let method_str = method.to_string();
             let found      = detected.clone();
+            let up_l       = chosen_url.clone();
             tokio::spawn(async move {
                 let (score, hits, detection, why) = split_detection(found);
                 log_event(db, logger, TrafficRecord {
+                    upstream:     Some(up_l.clone()),
                     site_id:      site.id,
                     client_ip:    client_ip.to_string(),
                     method:       method_str,
@@ -1337,7 +1357,13 @@ fn stronger(
 /// Returns None if no enabled site matches, so the proxy returns 404.
 async fn lookup_site(db: &SqlitePool, host: &str) -> Option<SiteRow> {
     sqlx::query!(
-        "SELECT id as \"id!\", name, target,
+        // The pool travels with the row: a second query per request would put
+        // back the cost that 0.11.0's caching took out. A URL holds neither a
+        // space nor a newline, so `url weight` per line needs no escaping.
+        "SELECT id as \"id!\", name,
+                (SELECT group_concat(url || ' ' || weight, char(10))
+                   FROM upstreams
+                  WHERE site_id = sites.id AND enabled = 1) as \"pool?: String\",
                 tls_port,
                 tls_redirect   as \"tls_redirect!: bool\",
                 hsts           as \"hsts!: bool\",
@@ -1363,7 +1389,7 @@ async fn lookup_site(db: &SqlitePool, host: &str) -> Option<SiteRow> {
     .map(|r| SiteRow {
         id:             r.id,
         name:           r.name,
-        target:         r.target,
+        upstreams:      crate::upstream::parse_pool(r.pool.as_deref().unwrap_or("")),
         tls_port:       r.tls_port,
         tls_redirect:   r.tls_redirect,
         hsts:           r.hsts,

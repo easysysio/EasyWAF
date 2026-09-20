@@ -79,9 +79,46 @@ pub async fn init(database_url: &str) -> SqlitePool {
     run_migration_029(&pool).await;
     run_migration_028(&pool).await;
     run_migration_030(&pool).await;
+    run_migration_031(&pool).await;
 
     info!("Database ready: {}", database_url);
     pool
+}
+
+// ─── run_migration_031 ───────────────────────────────────
+
+/// A site can have more than one upstream.
+///
+/// Moves `sites.target` into an `upstreams` table, one row per site, and adds
+/// the traffic column naming the upstream that served a request. Nothing
+/// changes for a site until a second upstream is added to it.
+async fn run_migration_031(pool: &SqlitePool) {
+    let done: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'upstreams'",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0);
+    if done > 0 {
+        return;
+    }
+
+    // One transaction: half of this is a database whose sites have no upstream
+    // at all, which is every site down.
+    let sql = include_str!("../migrations/031_upstreams.sql");
+    let mut tx = pool
+        .begin()
+        .await
+        .unwrap_or_else(|e| panic!("Migration 031 could not start: {}", e));
+    sqlx::raw_sql(sql)
+        .execute(&mut *tx)
+        .await
+        .unwrap_or_else(|e| panic!("Migration 031 failed: {}", e));
+    tx.commit()
+        .await
+        .unwrap_or_else(|e| panic!("Migration 031 could not commit: {}", e));
+
+    info!("Migration 031 applied: a site's upstream moved into the upstreams table");
 }
 
 // ─── run_migration_030 ───────────────────────────────────

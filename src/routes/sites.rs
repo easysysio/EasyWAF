@@ -25,6 +25,15 @@ use tera::Context;
 
 // ─── Models ──────────────────────────────────────────────
 
+/// One backend a site can be served from.
+#[derive(Debug, Serialize)]
+pub struct Upstream {
+    pub id:      i64,
+    pub url:     String,
+    pub weight:  i64,
+    pub enabled: bool,
+}
+
 #[derive(Debug, Serialize)]
 pub struct Site {
     pub id:             i64,
@@ -33,7 +42,12 @@ pub struct Site {
     /// The other hostnames this site answers for, space separated for display
     /// and for the form field that edits them.
     pub aliases:        String,
+    /// The first upstream's URL — what the single-upstream form edits, and
+    /// what the list page shows for a site with one.
     pub target:         String,
+    /// Every upstream, in order. One for almost every site; the pages only
+    /// show a pool when there is one.
+    pub upstreams:      Vec<Upstream>,
     pub listen_port:    i64,
     /// HTTPS port, or None when the site serves plain HTTP only.
     pub tls_port:       Option<i64>,
@@ -213,10 +227,10 @@ pub async fn post_site_create(
 
     let site_id = sqlx::query!(
         "INSERT INTO sites
-         (name, server_name, target, listen_port, tls_port, cert_id, tls_redirect,
+         (name, server_name, listen_port, tls_port, cert_id, tls_redirect,
           waf_policy_id, hsts, x_frame, x_frame_value, x_content_type, xss_protection)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        name, server_name, form.target, listen_port, tls_port, cert_id, tls_redirect,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        name, server_name, listen_port, tls_port, cert_id, tls_redirect,
         waf_policy_id, hsts, x_frame, x_frame_value, x_content_type, xss_protection,
     )
     .execute(&state.db)
@@ -225,6 +239,12 @@ pub async fn post_site_create(
     // that value is per connection, and the pool would be free to answer the
     // second query on a different one.
     .last_insert_rowid();
+
+    // The upstream is a row of its own since 0.13.0. A site starts with one,
+    // which is what the form asks for and what most sites keep.
+    sqlx::query!("INSERT INTO upstreams (site_id, url) VALUES (?, ?)", site_id, form.target)
+        .execute(&state.db)
+        .await?;
 
     save_extra_ports(&state.db, site_id, &extra_http, &extra_https).await?;
     save_aliases(&state.db, site_id, &aliases).await?;
@@ -417,18 +437,24 @@ pub async fn post_site_update(
 
     sqlx::query!(
         "UPDATE sites SET
-           server_name=?, target=?, listen_port=?, tls_port=?, cert_id=?,
+           server_name=?, listen_port=?, tls_port=?, cert_id=?,
            tls_redirect=?, waf_policy_id=?,
            hsts=?, x_frame=?, x_frame_value=?, x_content_type=?, xss_protection=?,
            updated_at=datetime('now')
          WHERE name=?",
-        server_name, form.target, listen_port, tls_port, cert_id,
+        server_name, listen_port, tls_port, cert_id,
         tls_redirect, waf_policy_id,
         hsts, x_frame, x_frame_value, x_content_type, xss_protection,
         name,
     )
     .execute(&state.db)
     .await?;
+
+    // This form carries one upstream. A site that has several is edited on its
+    // own page, and is left alone here: collapsing a pool to the single field
+    // this form posts would take backends out of service on a save that was
+    // about a header.
+    update_single_upstream(&state.db, site_id, &form.target).await?;
 
     save_extra_ports(&state.db, site_id, &extra_http, &extra_https).await?;
     save_aliases(&state.db, site_id, &aliases).await?;
@@ -539,7 +565,7 @@ pub async fn post_site_delete(
 /// Fetch all sites ordered by name.
 async fn fetch_sites(state: &AppState) -> Result<Vec<Site>> {
     let rows = sqlx::query!(
-        "SELECT id as \"id!\", name, server_name, target,
+        "SELECT id as \"id!\", name, server_name,
                 listen_port    as \"listen_port!\",
                 tls_port,
                 cert_id,
@@ -556,6 +582,23 @@ async fn fetch_sites(state: &AppState) -> Result<Vec<Site>> {
     .fetch_all(&state.db)
     .await?;
 
+    // The upstreams of every site in one query, for the reason the aliases
+    // below are read in one.
+    let mut pools: std::collections::HashMap<i64, Vec<Upstream>> = std::collections::HashMap::new();
+    for u in sqlx::query!(
+        r#"SELECT site_id as "site_id!", id as "id!", url as "url!",
+                  weight as "weight!", enabled as "enabled!: bool"
+           FROM upstreams ORDER BY site_id, id"#
+    )
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default()
+    {
+        pools.entry(u.site_id).or_default().push(Upstream {
+            id: u.id, url: u.url, weight: u.weight, enabled: u.enabled,
+        });
+    }
+
     // One grouped query rather than one per site: the list page renders every
     // site, and a query each would grow with the table for no reason.
     let mut aliases: std::collections::HashMap<i64, String> = sqlx::query!(
@@ -569,12 +612,15 @@ async fn fetch_sites(state: &AppState) -> Result<Vec<Site>> {
     .map(|r| (r.site_id, r.names))
     .collect();
 
-    Ok(rows.into_iter().map(|r| Site {
+    Ok(rows.into_iter().map(|r| {
+        let upstreams = pools.remove(&r.id).unwrap_or_default();
+        Site {
         aliases:        aliases.remove(&r.id).unwrap_or_default(),
         id:             r.id,
         name:           r.name,
         server_name:    r.server_name,
-        target:         r.target,
+        target:         upstreams.first().map(|u| u.url.clone()).unwrap_or_default(),
+        upstreams,
         listen_port:    r.listen_port,
         tls_port:       r.tls_port,
         cert_id:        r.cert_id,
@@ -586,13 +632,57 @@ async fn fetch_sites(state: &AppState) -> Result<Vec<Site>> {
         x_frame_value:  r.x_frame_value,
         x_content_type: r.x_content_type,
         xss_protection: r.xss_protection,
-    }).collect())
+    }}).collect())
+}
+
+// ─── update_single_upstream ──────────────────────────────
+
+/// Point a site's one upstream at `url`.
+///
+/// Only when it has exactly one. A site with a pool is edited where the pool
+/// is, and the site form — which carries a single field — must not be able to
+/// delete backends as a side effect of saving a header. A site with none, which
+/// no path creates but a hand-edited database could, gets one.
+async fn update_single_upstream(db: &SqlitePool, site_id: i64, url: &str) -> Result<()> {
+    let n: i64 = sqlx::query_scalar!(
+        r#"SELECT COUNT(*) as "n!" FROM upstreams WHERE site_id = ?"#, site_id
+    )
+    .fetch_one(db)
+    .await?;
+
+    match n {
+        0 => {
+            sqlx::query!("INSERT INTO upstreams (site_id, url) VALUES (?, ?)", site_id, url)
+                .execute(db)
+                .await?;
+        }
+        1 => {
+            sqlx::query!("UPDATE upstreams SET url = ? WHERE site_id = ?", url, site_id)
+                .execute(db)
+                .await?;
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+/// Every upstream of a site, in a stable order.
+pub async fn upstreams_of(db: &SqlitePool, site_id: i64) -> Result<Vec<Upstream>> {
+    Ok(sqlx::query_as!(
+        Upstream,
+        r#"SELECT id as "id!", url as "url!", weight as "weight!",
+                  enabled as "enabled!: bool"
+           FROM upstreams WHERE site_id = ? ORDER BY id"#,
+        site_id
+    )
+    .fetch_all(db)
+    .await?)
 }
 
 /// Fetch a single site by name; returns NotFound if the site does not exist.
 async fn fetch_site(state: &AppState, name: &str) -> Result<Site> {
     let r = sqlx::query!(
-        "SELECT id as \"id!\", name, server_name, target,
+        "SELECT id as \"id!\", name, server_name,
                 listen_port    as \"listen_port!\",
                 tls_port,
                 cert_id,
@@ -619,12 +709,15 @@ async fn fetch_site(state: &AppState, name: &str) -> Result<Site> {
         .collect::<Vec<_>>()
         .join(" ");
 
+    let upstreams = upstreams_of(&state.db, r.id).await?;
+
     Ok(Site {
         aliases,
         id:             r.id,
         name:           r.name,
         server_name:    r.server_name,
-        target:         r.target,
+        target:         upstreams.first().map(|u| u.url.clone()).unwrap_or_default(),
+        upstreams,
         listen_port:    r.listen_port,
         tls_port:       r.tls_port,
         cert_id:        r.cert_id,

@@ -195,8 +195,8 @@ mod tests {
         let writes: &[(&str, &str)] = &[
             ("policies insert",   "INSERT INTO policies (name) VALUES ('g')"),
             ("policies update",   "UPDATE policies SET score_threshold = 11 WHERE name = 'g'"),
-            ("sites insert",      "INSERT INTO sites (name, server_name, target, waf_policy_id)
-                                   VALUES ('g', 'g.example', 'http://x', (SELECT id FROM policies WHERE name = 'g'))"),
+            ("sites insert",      "INSERT INTO sites (name, server_name, waf_policy_id)
+                                   VALUES ('g', 'g.example', (SELECT id FROM policies WHERE name = 'g'))"),
             ("sites update",      "UPDATE sites SET enabled = 0 WHERE name = 'g'"),
             ("rules insert",      "INSERT INTO waf_rules (policy_id, name, pattern)
                                    VALUES ((SELECT id FROM policies WHERE name = 'g'), 'r', 'x')"),
@@ -225,7 +225,7 @@ mod tests {
         }
 
         // And the converse: traffic must not churn the cache.
-        sqlx::raw_sql("INSERT INTO sites (name, server_name, target) VALUES ('t', 't.example', 'http://x')")
+        sqlx::raw_sql("INSERT INTO sites (name, server_name) VALUES ('t', 't.example')")
             .execute(&db).await.unwrap();
         let before = value().await;
         sqlx::raw_sql("INSERT INTO traffic_events (site_id, client_ip, method, host, path, status_code)

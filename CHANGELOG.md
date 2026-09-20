@@ -8,6 +8,9 @@ Version bumps and tags are created only after explicit approval.
 
 ## [Unreleased]
 
+### Added
+- A site's upstream is now a row rather than a column, so a site can have more than one: requests go round the pool in turn, weighted for backends on unequal hardware. A site with one upstream behaves exactly as before, and every traffic record names the upstream that served it.
+
 ### Changed
 - Security Policy → IP Lists → All policies now lists every entry in the installation, each with the policy whose list it is on — or *all policies* for the ones that belong to all of them — so an address can be found without opening each policy in turn; the search box matches the policy name too, and a published list that some policies answer for themselves says how many.
 

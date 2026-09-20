@@ -70,16 +70,15 @@ EasyWAF replace Traefik in front of the author's own sites. It would: none of
 these blocks that migration. They are recorded because they block *someone*,
 and because a product described as a reverse proxy is expected to have them.
 
-* **WebSockets do not work, and fail quietly.** `connection` and `upgrade` are
-  in `HOP_HEADERS` ([proxy/mod.rs](../../src/proxy/mod.rs)) and stripped before
-  forwarding — correct for ordinary hop-by-hop headers, but a proxy supporting
-  WebSockets must special-case the upgrade and then tunnel bytes both ways.
-  There is no `on_upgrade`, no 101 handling, no `copy_bidirectional`. This is
-  not a small fix: the upstream client is **reqwest**, which has no
-  protocol-upgrade API at all, so upgraded requests need a separate connection
-  path through hyper. It also raises a question this product should answer
-  deliberately — a tunnelled connection is inspected once, at the handshake,
-  and never again.
+* **WebSockets — done.** They did not work and failed quietly: `connection` and
+  `upgrade` are in `HOP_HEADERS` ([proxy/mod.rs](../../src/proxy/mod.rs)) and
+  were stripped before forwarding, with no `on_upgrade`, no 101 handling and no
+  `copy_bidirectional`. Upgrades now take a separate connection path through
+  hyper, since reqwest has no protocol-upgrade API at all. The question it
+  raised was answered rather than avoided: a tunnelled connection is inspected
+  once, at the handshake, and the README says so — the frames after it are not
+  HTTP and there is nothing for HTTP rules to match. An upgrade to an
+  `https://` upstream is refused rather than half-worked.
 * **No HTTP/2 to clients.** No ALPN is configured, and rustls will not
   negotiate `h2` without it. Adding `alpn_protocols` is small; making the proxy
   actually serve h2 is not.

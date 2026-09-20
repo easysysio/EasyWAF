@@ -28,6 +28,7 @@ mod proxy;
 mod routes;
 mod rules_update;
 mod tls;
+mod upstream;
 
 use auth::make_key;
 use axum::{

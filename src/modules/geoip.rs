@@ -327,8 +327,8 @@ mod tests {
         sqlx::raw_sql(
             "INSERT INTO policies (name, geoip_mode, geoip_countries)
              VALUES ('apps', 'off', '');
-             INSERT INTO sites (name, server_name, target, waf_policy_id)
-             VALUES ('a', 'a.example', 'http://x', (SELECT id FROM policies WHERE name = 'apps'));
+             INSERT INTO sites (name, server_name, waf_policy_id)
+             VALUES ('a', 'a.example', (SELECT id FROM policies WHERE name = 'apps'));
              UPDATE geoip_everywhere SET mode = 'block', countries = 'KP' WHERE id = 1;",
         )
         .execute(&db)

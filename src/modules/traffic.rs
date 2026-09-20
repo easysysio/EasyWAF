@@ -63,6 +63,13 @@ pub struct TrafficRecord {
     /// What the WAF would have done, when it did not do it — see
     /// `modules::Detection`. None on clean traffic and on actual blocks.
     pub detection:    Option<String>,
+    /// Which upstream served the request. None when none was reached: a
+    /// blocked request, or a site with nothing to forward to.
+    ///
+    /// Without it, "this site is intermittently slow" cannot be traced to one
+    /// bad backend, which is the most common thing load balancing is asked to
+    /// help diagnose.
+    pub upstream:     Option<String>,
 }
 
 // ─── flow_line ───────────────────────────────────────────
@@ -154,8 +161,8 @@ pub async fn log_event(db: SqlitePool, logger: crate::logging::Logger, r: Traffi
         "INSERT INTO traffic_events
          (site_id, client_ip, method, host, path, status_code,
           response_ms, blocked, block_reason, waf_score, country, matched_rules,
-          detection)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          detection, upstream)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         r.site_id,
         r.client_ip,
         r.method,
@@ -169,6 +176,7 @@ pub async fn log_event(db: SqlitePool, logger: crate::logging::Logger, r: Traffi
         r.country,
         r.matched_rules,
         r.detection,
+        r.upstream,
     )
     .execute(&db)
     .await;
