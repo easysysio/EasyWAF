@@ -266,14 +266,7 @@ pub async fn post_site_create(
     // Upstreams are rows of their own since 0.13.0, and the field takes a list:
     // a site that is served by three backends should not have to be created
     // with one and corrected twice.
-    for (url, weight) in &upstreams {
-        sqlx::query!(
-            "INSERT INTO upstreams (site_id, url, weight) VALUES (?, ?, ?)",
-            site_id, url, weight
-        )
-        .execute(&state.db)
-        .await?;
-    }
+    apply_pool(&state.db, site_id, &upstreams).await?;
 
     save_extra_ports(&state.db, site_id, &extra_http, &extra_https).await?;
     save_aliases(&state.db, site_id, &aliases).await?;
@@ -465,22 +458,19 @@ pub async fn post_site_update(
     let (listen_port, tls_port) = (ports.listen, ports.tls);
     let (extra_http, extra_https) = (ports.extra_http, ports.extra_https);
 
-    // Before the UPDATE, for the same reason: this form carries one upstream,
-    // and a site with several is left alone by it — collapsing a pool to the
-    // single field it posts would take backends out of service on a save that
-    // was about a header. A list pasted into it would have to mean either
-    // "replace the pool" or "add to it", and guessing between those is the
-    // same fault by another route.
+    // The field holds the whole pool and arrives filled in with what it is
+    // now, so saving it means "the pool is what this says" — the way the
+    // aliases field beside it already works. No guessing between replacing and
+    // adding, because the reader can see what they are changing.
     let edit = format!("/sites/{name}/edit");
-    let (urls, bad) = parse_upstreams(&form.target);
+    let (wanted, bad) = parse_upstreams(&form.target);
     if let Some(why) = bad.first() {
         return flash_redirect(&edit, "failed", why);
     }
-    if urls.len() > 1 {
+    if wanted.is_empty() {
         return flash_redirect(&edit, "failed",
-            "That field is one backend. Add the others under Upstreams, below");
+            "A site needs somewhere to forward requests to");
     }
-    let urls: Vec<String> = urls.into_iter().map(|(u, _)| u).collect();
 
     sqlx::query!(
         "UPDATE sites SET
@@ -497,9 +487,7 @@ pub async fn post_site_update(
     .execute(&state.db)
     .await?;
 
-    if let Some(url) = urls.first() {
-        update_single_upstream(&state.db, site_id, url).await?;
-    }
+    let pool = apply_pool(&state.db, site_id, &wanted).await?;
 
     save_extra_ports(&state.db, site_id, &extra_http, &extra_https).await?;
     save_aliases(&state.db, site_id, &aliases).await?;
@@ -510,7 +498,7 @@ pub async fn post_site_update(
     // Said rather than left to be found in a browser: the certificate is not
     // reissued by saving the form, so a name added here is not covered until
     // somebody asks for one.
-    let msg = if aliases.is_empty() {
+    let mut msg = if aliases.is_empty() {
         format!("Site {} updated successfully", name)
     } else {
         format!(
@@ -519,6 +507,23 @@ pub async fn post_site_update(
             name, server_name, aliases.len(), if aliases.len() == 1 { "" } else { "es" }
         )
     };
+
+    // What happened to the pool, named. A backend removed by editing a field
+    // is the one change on this form that takes something out of service, and
+    // it should not be discovered later from a graph.
+    let mut pool_said: Vec<String> = Vec::new();
+    if !pool.added.is_empty() {
+        pool_said.push(format!("added {}", pool.added.join(", ")));
+    }
+    if !pool.removed.is_empty() {
+        pool_said.push(format!("removed {}", pool.removed.join(", ")));
+    }
+    if !pool.changed.is_empty() {
+        pool_said.push(format!("changed {}", pool.changed.join(", ")));
+    }
+    if !pool_said.is_empty() {
+        msg.push_str(&format!(" Backends: {}.", pool_said.join("; ")));
+    }
     flash_redirect("/sites", "success", &msg)
 }
 
@@ -683,37 +688,6 @@ async fn fetch_sites(state: &AppState) -> Result<Vec<Site>> {
     }}).collect())
 }
 
-// ─── update_single_upstream ──────────────────────────────
-
-/// Point a site's one upstream at `url`.
-///
-/// Only when it has exactly one. A site with a pool is edited where the pool
-/// is, and the site form — which carries a single field — must not be able to
-/// delete backends as a side effect of saving a header. A site with none, which
-/// no path creates but a hand-edited database could, gets one.
-async fn update_single_upstream(db: &SqlitePool, site_id: i64, url: &str) -> Result<()> {
-    let n: i64 = sqlx::query_scalar!(
-        r#"SELECT COUNT(*) as "n!" FROM upstreams WHERE site_id = ?"#, site_id
-    )
-    .fetch_one(db)
-    .await?;
-
-    match n {
-        0 => {
-            sqlx::query!("INSERT INTO upstreams (site_id, url) VALUES (?, ?)", site_id, url)
-                .execute(db)
-                .await?;
-        }
-        1 => {
-            sqlx::query!("UPDATE upstreams SET url = ? WHERE site_id = ?", url, site_id)
-                .execute(db)
-                .await?;
-        }
-        _ => {}
-    }
-    Ok(())
-}
-
 /// Every upstream of a site, in a stable order, with what this node has
 /// observed of each.
 pub async fn upstreams_of(db: &SqlitePool, site_id: i64) -> Result<Vec<Upstream>> {
@@ -736,13 +710,85 @@ pub async fn upstreams_of(db: &SqlitePool, site_id: i64) -> Result<Vec<Upstream>
 
 // ─── The pool editor ─────────────────────────────────────
 
-/// What the pool forms post.
-#[derive(Debug, Deserialize)]
-pub struct UpstreamForm {
-    pub url:     Option<String>,
-    pub weight:  Option<String>,
-    /// An unticked checkbox sends nothing, so its absence is the answer.
-    pub enabled: Option<String>,
+/// A backend as one line of the Upstream field describes it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Backend {
+    pub url:     String,
+    pub weight:  i64,
+    /// `off` at the end of the line: kept, with its weight, and out of the
+    /// rotation until the word is removed. Parking a backend for an hour
+    /// should not mean retyping it afterwards.
+    pub enabled: bool,
+}
+
+/// What changed when a site's pool was saved.
+#[derive(Debug, Default)]
+pub struct PoolChange {
+    pub added:    Vec<String>,
+    pub removed:  Vec<String>,
+    pub changed:  Vec<String>,
+}
+
+/// Make a site's pool be what the field says.
+///
+/// Matched on URL, so a backend that is still listed keeps its row — and with
+/// it the health this node has observed and any client pinned to it. One that
+/// is no longer listed goes; one that is new arrives. The alternative, writing
+/// the rows afresh each save, would re-pin every client and forget which
+/// backends were failing on every unrelated edit.
+pub async fn apply_pool(
+    db:      &SqlitePool,
+    site_id: i64,
+    wanted:  &[Backend],
+) -> Result<PoolChange> {
+    let mut change = PoolChange::default();
+
+    let existing = sqlx::query!(
+        r#"SELECT id as "id!", url as "url!", weight as "weight!",
+                  enabled as "enabled!: bool"
+           FROM upstreams WHERE site_id = ?"#,
+        site_id
+    )
+    .fetch_all(db)
+    .await?;
+
+    for b in wanted {
+        match existing.iter().find(|e| e.url == b.url) {
+            Some(e) => {
+                if e.weight != b.weight || e.enabled != b.enabled {
+                    let on = b.enabled as i64;
+                    sqlx::query!(
+                        "UPDATE upstreams SET weight = ?, enabled = ? WHERE id = ?",
+                        b.weight, on, e.id
+                    )
+                    .execute(db)
+                    .await?;
+                    change.changed.push(b.url.clone());
+                }
+            }
+            None => {
+                let on = b.enabled as i64;
+                sqlx::query!(
+                    "INSERT INTO upstreams (site_id, url, weight, enabled) VALUES (?, ?, ?, ?)",
+                    site_id, b.url, b.weight, on
+                )
+                .execute(db)
+                .await?;
+                change.added.push(b.url.clone());
+            }
+        }
+    }
+
+    for e in &existing {
+        if !wanted.iter().any(|b| b.url == e.url) {
+            sqlx::query!("DELETE FROM upstreams WHERE id = ?", e.id)
+                .execute(db)
+                .await?;
+            change.removed.push(e.url.clone());
+        }
+    }
+
+    Ok(change)
 }
 
 /// Read a field that may hold several backends, each with an optional weight.
@@ -752,8 +798,8 @@ pub struct UpstreamForm {
 /// interface is typed. Returns what is usable and, separately, the entries
 /// that are not: named back rather than dropped, because an upstream nobody
 /// mentioned is a backend that silently never receives a request.
-pub fn parse_upstreams(raw: &str) -> (Vec<(String, i64)>, Vec<String>) {
-    let (mut good, mut bad): (Vec<(String, i64)>, Vec<String>) = (Vec::new(), Vec::new());
+pub fn parse_upstreams(raw: &str) -> (Vec<Backend>, Vec<String>) {
+    let (mut good, mut bad): (Vec<Backend>, Vec<String>) = (Vec::new(), Vec::new());
 
     // Lines first, so a weight can sit beside its URL; then commas within a
     // line, for the common case of a list with no weights in it.
@@ -763,25 +809,37 @@ pub fn parse_upstreams(raw: &str) -> (Vec<(String, i64)>, Vec<String>) {
             if entry.is_empty() {
                 continue;
             }
-            // `url weight`, and a trailing word that is not a number is a
-            // mistake worth naming rather than a weight of 1 silently.
-            let (url, weight) = match entry.rsplit_once(char::is_whitespace) {
+            // `url`, `url weight`, `url off`, or `url weight off`. A
+            // trailing word that is none of those is a mistake worth naming
+            // rather than a weight of 1 silently.
+            let mut rest = entry;
+            let mut enabled = true;
+            // The space before it is what makes it a word of its own, so
+            // "http://takeoff:3000" is a backend and not a parked one.
+            if let Some(head) = rest.strip_suffix("off")
+                && head.ends_with(char::is_whitespace)
+            {
+                enabled = false;
+                rest = head.trim_end();
+            }
+            let (url, weight) = match rest.rsplit_once(char::is_whitespace) {
                 Some((u, w)) => match w.trim().parse::<i64>() {
                     Ok(n) if n >= 1 => (u.trim(), n),
                     _ => {
                         bad.push(format!(
                             "\"{}\" is not a weight — a whole number of 1 or more, \
-                             as in \"{} 3\"", w.trim(), u.trim()));
+                             as in \"{} 3\", optionally followed by \"off\"",
+                            w.trim(), u.trim()));
                         continue;
                     }
                 },
-                None => (entry, 1),
+                None => (rest, 1),
             };
             match valid_upstream(url) {
                 // The same backend twice in one paste is a typo, not two
-                // backends; the first weight given for it stands.
-                Ok(url) if good.iter().any(|(u, _)| *u == url) => {}
-                Ok(url)  => good.push((url, weight)),
+                // backends; the first line given for it stands.
+                Ok(url) if good.iter().any(|b| b.url == url) => {}
+                Ok(url)  => good.push(Backend { url, weight, enabled }),
                 Err(why) => bad.push(why),
             }
         }
@@ -817,172 +875,6 @@ fn valid_upstream(raw: &str) -> std::result::Result<String, String> {
              request's own path is added to it"));
     }
     Ok(format!("{}{}", url.split_once("://").map(|(s, _)| format!("{s}://")).unwrap_or_default(), host))
-}
-
-/// The site an upstream form is about, and its id.
-async fn site_id_of(state: &AppState, name: &str) -> Result<i64> {
-    sqlx::query_scalar!("SELECT id FROM sites WHERE name = ?", name)
-        .fetch_optional(&state.db)
-        .await?
-        .flatten()
-        .ok_or_else(|| AppError::NotFound(format!("Site '{name}' not found")))
-}
-
-// ─── post_upstream_add ───────────────────────────────────
-
-/// POST /sites/{name}/upstreams/add — another backend for this site.
-pub async fn post_upstream_add(
-    State(state): State<AppState>,
-    _jar: SignedCookieJar,
-    Admin(session): Admin,
-    Path(name): Path<String>,
-    Form(form): Form<UpstreamForm>,
-) -> Result<Response> {
-
-    let back = format!("/sites/{name}/edit");
-    let site_id = site_id_of(&state, &name).await?;
-
-    let (urls, bad) = parse_upstreams(form.url.as_deref().unwrap_or(""));
-    if let Some(why) = bad.first() {
-        return flash_redirect(&back, "failed", why);
-    }
-    if urls.is_empty() {
-        return flash_redirect(&back, "failed", "An upstream needs a URL");
-    }
-    // The box applies to every line that does not carry its own weight, so a
-    // paste of four backends at weight 2 needs the number typed once.
-    let fallback: i64 = form.weight.as_deref().unwrap_or("1").trim().parse().unwrap_or(1).max(1);
-
-    let mut added: Vec<String> = Vec::new();
-    let mut already: Vec<String> = Vec::new();
-    for (url, line_weight) in urls {
-        let weight = if line_weight > 1 { line_weight } else { fallback };
-        let existing: i64 = sqlx::query_scalar!(
-            r#"SELECT COUNT(*) as "n!" FROM upstreams WHERE site_id = ? AND url = ?"#,
-            site_id, url
-        )
-        .fetch_one(&state.db)
-        .await?;
-        if existing > 0 {
-            already.push(url);
-            continue;
-        }
-        sqlx::query!(
-            "INSERT INTO upstreams (site_id, url, weight) VALUES (?, ?, ?)",
-            site_id, url, weight
-        )
-        .execute(&state.db)
-        .await?;
-        tracing::info!(site = %name, upstream = %url, weight, by = %session.username,
-                       "upstream added");
-        added.push(url);
-    }
-
-    // What happened to each one, since a paste of four where one was already
-    // there should not read as though all four were new.
-    let msg = match (added.len(), already.len()) {
-        (0, _) => format!("{name} already forwards to {}", already.join(", ")),
-        (_, 0) => format!(
-            "{name} now forwards to {} as well — requests go round its backends in turn",
-            added.join(", ")),
-        (_, _) => format!(
-            "{name} now forwards to {} as well; it already forwarded to {}",
-            added.join(", "), already.join(", ")),
-    };
-    flash_redirect(&back, "success", &msg)
-}
-
-// ─── post_upstream_save ──────────────────────────────────
-
-/// POST /sites/{name}/upstreams/{id}/save — its weight, and whether it is used.
-pub async fn post_upstream_save(
-    State(state): State<AppState>,
-    _jar: SignedCookieJar,
-    Admin(session): Admin,
-    Path((name, id)): Path<(String, i64)>,
-    Form(form): Form<UpstreamForm>,
-) -> Result<Response> {
-
-    let back = format!("/sites/{name}/edit");
-    let site_id = site_id_of(&state, &name).await?;
-    let weight: i64 = form.weight.as_deref().unwrap_or("1").trim().parse().unwrap_or(1).max(1);
-    let enabled = form.enabled.is_some();
-
-    // The last one that is actually used cannot be switched off from here: a
-    // site with nothing in rotation answers nothing, and that is a decision
-    // taken by disabling the site, not by editing a backend.
-    if !enabled {
-        let others: i64 = sqlx::query_scalar!(
-            r#"SELECT COUNT(*) as "n!" FROM upstreams
-               WHERE site_id = ? AND id != ? AND enabled = 1"#,
-            site_id, id
-        )
-        .fetch_one(&state.db)
-        .await?;
-        if others == 0 {
-            return flash_redirect(&back, "failed", &format!(
-                "{name} would have no backend left to forward to. Add another first, or disable the site itself"));
-        }
-    }
-
-    let on = enabled as i64;
-    let done = sqlx::query!(
-        "UPDATE upstreams SET weight = ?, enabled = ? WHERE id = ? AND site_id = ?",
-        weight, on, id, site_id
-    )
-    .execute(&state.db)
-    .await?
-    .rows_affected();
-    if done == 0 {
-        return flash_redirect(&back, "failed", "That backend is no longer there");
-    }
-
-    tracing::info!(site = %name, upstream = id, weight, enabled, by = %session.username,
-                   "upstream saved");
-    flash_redirect(&back, "success", &if enabled {
-        format!("Saved — weight {weight}")
-    } else {
-        "Saved — that backend is out of the rotation until it is switched back on".to_string()
-    })
-}
-
-// ─── post_upstream_remove ────────────────────────────────
-
-/// POST /sites/{name}/upstreams/{id}/remove — one fewer backend.
-pub async fn post_upstream_remove(
-    State(state): State<AppState>,
-    _jar: SignedCookieJar,
-    Admin(session): Admin,
-    Path((name, id)): Path<(String, i64)>,
-) -> Result<Response> {
-
-    let back = format!("/sites/{name}/edit");
-    let site_id = site_id_of(&state, &name).await?;
-
-    let others: i64 = sqlx::query_scalar!(
-        r#"SELECT COUNT(*) as "n!" FROM upstreams WHERE site_id = ? AND id != ?"#,
-        site_id, id
-    )
-    .fetch_one(&state.db)
-    .await?;
-    if others == 0 {
-        return flash_redirect(&back, "failed", &format!(
-            "{name} has to forward somewhere. Change this backend's URL instead, or delete the site"));
-    }
-
-    let gone = sqlx::query!(
-        "DELETE FROM upstreams WHERE id = ? AND site_id = ? RETURNING url",
-        id, site_id
-    )
-    .fetch_optional(&state.db)
-    .await?;
-
-    let Some(gone) = gone else {
-        return flash_redirect(&back, "failed", "That backend is no longer there");
-    };
-    tracing::info!(site = %name, upstream = %gone.url, by = %session.username,
-                   "upstream removed");
-    flash_redirect(&back, "success", &format!("{} is no longer a backend for {name}", gone.url))
 }
 
 /// Fetch a single site by name; returns NotFound if the site does not exist.
@@ -1515,13 +1407,23 @@ mod upstream_field_tests {
     use super::*;
 
     fn urls(raw: &str) -> Vec<String> {
-        parse_upstreams(raw).0.into_iter().map(|(u, _)| u).collect()
+        parse_upstreams(raw).0.into_iter().map(|b| b.url).collect()
+    }
+
+    /// `url weight on/off`, which is what each line of the field means.
+    fn spec(raw: &str) -> Vec<String> {
+        parse_upstreams(raw)
+            .0
+            .into_iter()
+            .map(|b| format!("{} {} {}", b.url, b.weight, if b.enabled { "on" } else { "off" }))
+            .collect()
     }
 
     #[test]
     fn a_field_takes_one_backend_or_several() {
         let (good, bad) = parse_upstreams("http://a:3000");
-        assert_eq!(good, vec![("http://a:3000".to_string(), 1)]);
+        assert_eq!(spec("http://a:3000"), vec!["http://a:3000 1 on"]);
+        assert_eq!(good.len(), 1);
         assert!(bad.is_empty());
 
         // One per line or comma separated, the way every other list in this
@@ -1534,9 +1436,9 @@ mod upstream_field_tests {
     fn a_number_after_a_url_is_its_weight() {
         // The whole point of setting a pool up in one field: backends on
         // unequal hardware, said once, when the site is created.
-        let (good, bad) = parse_upstreams("http://big:3000 3\nhttp://small:3000");
-        assert_eq!(good, vec![("http://big:3000".to_string(), 3),
-                              ("http://small:3000".to_string(), 1)]);
+        let (_, bad) = parse_upstreams("http://big:3000 3\nhttp://small:3000");
+        assert_eq!(spec("http://big:3000 3\nhttp://small:3000"),
+                   vec!["http://big:3000 3 on", "http://small:3000 1 on"]);
         assert!(bad.is_empty());
     }
 
@@ -1556,9 +1458,20 @@ mod upstream_field_tests {
     }
 
     #[test]
+    fn off_at_the_end_of_a_line_parks_a_backend() {
+        // Kept, with its weight, and out of the rotation until the word goes:
+        // parking a backend for an hour should not mean retyping it after.
+        assert_eq!(spec("http://a:3000 off"), vec!["http://a:3000 1 off"]);
+        assert_eq!(spec("http://a:3000 3 off"), vec!["http://a:3000 3 off"]);
+        assert_eq!(spec("http://a:3000 3"), vec!["http://a:3000 3 on"]);
+
+        // A URL that merely ends in those letters is not switched off.
+        assert_eq!(spec("http://takeoff:3000"), vec!["http://takeoff:3000 1 on"]);
+    }
+
+    #[test]
     fn the_same_backend_twice_in_one_paste_is_one_backend() {
-        let (good, _) = parse_upstreams("http://a:3000 2, http://a:3000/");
-        assert_eq!(good, vec![("http://a:3000".to_string(), 2)],
+        assert_eq!(spec("http://a:3000 2, http://a:3000/"), vec!["http://a:3000 2 on"],
                    "a typo became two backends");
     }
 
@@ -1567,7 +1480,8 @@ mod upstream_field_tests {
         // Silently dropping one is a backend that never receives a request and
         // nobody knows why.
         let (good, bad) = parse_upstreams("http://a:3000\n127.0.0.1:9000\nhttp://b/app");
-        assert_eq!(good, vec![("http://a:3000".to_string(), 1)]);
+        assert_eq!(urls("http://a:3000\n127.0.0.1:9000\nhttp://b/app"), vec!["http://a:3000"]);
+        assert_eq!(good.len(), 1);
         assert_eq!(bad.len(), 2);
         assert!(bad[0].contains("needs a scheme"), "{:?}", bad[0]);
         assert!(bad[1].contains("has a path"), "{:?}", bad[1]);

@@ -223,12 +223,6 @@ async fn main() {
         .route("/sites/{name}/acme",     post(routes::sites::post_site_acme))
         .route("/sites/{name}/toggle",   post(routes::sites::post_site_toggle))
         .route("/sites/{name}/delete",   post(routes::sites::post_site_delete))
-        .route("/sites/{name}/upstreams/add",
-               post(routes::sites::post_upstream_add))
-        .route("/sites/{name}/upstreams/{id}/save",
-               post(routes::sites::post_upstream_save))
-        .route("/sites/{name}/upstreams/{id}/remove",
-               post(routes::sites::post_upstream_remove))
         // Exclusions were per site until 0.12.1; the old page now redirects to
         // the policy that holds them.
         .route("/sites/{name}/exclusions",

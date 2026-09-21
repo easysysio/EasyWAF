@@ -334,20 +334,46 @@ mod tests {
             ("OUT",             "an ejected backend is not marked"),
             ("back in 24s",     "an ejected backend does not say when it is tried again"),
             ("SWITCHED OFF",    "a backend switched off looks like one in rotation"),
-            ("upstreams/2/save", "a backend cannot be edited"),
-            ("upstreams/2/remove", "a backend cannot be removed"),
-            ("upstreams/add",   "no way to add a backend"),
-            ("4 backends",      "the settings form does not say the site has a pool"),
+            ("b:3000",          "a backend is missing from the field"),
         ] {
             assert!(html.contains(what), "{why}");
         }
-        // The single-URL field must not be on a page where it could collapse a
-        // pool: this form posts one target, and the update path ignores it for
-        // a site with several — but offering it would still be a lie.
-        assert!(!html.contains(r#"name="target""#),
-                "the single-upstream field is offered for a site with a pool");
+
+        // The field is the pool, on both pages and in the same words: every
+        // backend on its own line, its weight when it is not 1, and `off` when
+        // it is parked. A page that showed only the first would make the rest
+        // disappear the moment somebody saved it.
+        //
+        // Matched on the part of each line that survives escaping — Tera turns
+        // the slashes of a URL into entities, which the browser turns back.
+        for line in ["a:3000 3", "b:3000", "c:3000", "d:3000 off"] {
+            assert!(html.contains(line), "the field does not carry {line}");
+        }
+        assert!(html.contains(r#"name="target""#),
+                "a site with a pool has no upstream field");
         assert!(none.contains(r#"name="target""#),
                 "a site with one backend lost its upstream field");
+
+        // The same fields, from the same file, on the page that creates one.
+        let mut fresh = tera::Context::new();
+        for (k, v) in [("username", "t"), ("title", "New site"), ("url", "/sites"),
+                       ("result", ""), ("msg", "")] {
+            fresh.insert(k, v);
+        }
+        fresh.insert("policies", &Vec::<String>::new());
+        fresh.insert("certs",    &Vec::<String>::new());
+        let create = tera.render("site_create.html", &fresh)
+            .unwrap_or_else(|e| panic!("site_create.html failed to render: {e:#?}"));
+        for (what, why) in [
+            (r#"name="target""#,   "no upstream field when creating a site"),
+            (r#"name="affinity""#, "session affinity cannot be set when creating a site"),
+            (r#"name="aliases""#,  "no aliases field when creating a site"),
+            ("weight",             "the create page does not mention weights"),
+        ] {
+            assert!(create.contains(what), "{why}");
+        }
+        assert!(!create.contains("IN ROTATION"),
+                "a site that does not exist yet is reporting rotation state");
 
         sctx.insert("site", &site(Some(3)));
         let with = tera.render("site_settings.html", &sctx).expect("site settings render");

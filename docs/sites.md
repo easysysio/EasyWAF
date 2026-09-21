@@ -47,8 +47,19 @@ times the share of the second, which is what backends on unequal hardware are
 for. **Session affinity** is a checkbox on the same form. Nothing about a pool
 has to wait until the site exists.
 
-Afterwards the site's own page has an **Upstreams** panel: add more (one or
-several at a time, with weights), change a weight, switch one off, remove one.
+**The site's own page has the same field**, filled in with the pool as it
+stands — one backend per line, its weight when it is not 1, and `off` when it
+is parked. Editing that text is how a pool is changed: add a line to add a
+backend, delete one to remove it, change a number to reweight it, add `off` to
+take one out of the rotation while keeping it and its weight. The message after
+saving names what was added, removed and changed.
+
+A backend that is still listed keeps its place: the row, the health this node
+has observed of it, and any client pinned to it. The **Upstreams** panel below
+the form shows that state — in rotation, failing, out, or switched off — which
+is the part the field cannot say.
+
+A site cannot be left with nothing to forward to: an empty field is refused.
 
 The single **Upstream** field on the site's settings form edits the backend of a
 site that has exactly one. It refuses a list — that could mean either replacing

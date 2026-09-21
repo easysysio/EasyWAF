@@ -23,61 +23,7 @@
                 <form class="admin-only" id="site-settings-form" method="post"
                       action="/sites/{{ site.name }}/update">
 
-                    <div class="form-group">
-                        <label>Site Name
-                            <small class="text-muted">(friendly label — fixed once the site exists)</small></label>
-                        <input type="text" class="form-control" value="{{ site.name }}" disabled>
-                    </div>
-
-                    <div class="form-group">
-                        <label>Hostname <small class="text-muted">(routes requests by Host: header — bare name, no http:// and no port)</small></label>
-                        <input type="text" class="form-control" name="server_name" value="{{ site.server_name }}" placeholder="example.com" required>
-                    </div>
-
-                    <div class="form-group">
-                        <label>Aliases
-                            <small class="text-muted">(other hostnames this same site answers for — one per line)</small></label>
-                        <textarea class="form-control" name="aliases" rows="2" spellcheck="false"
-                                  style="font-family: monospace; font-size: 12px"
-                                  placeholder="www.example.com&#10;example.net">{{ site.aliases }}</textarea>
-                        <p class="help-block">
-                            Every alias is served by this site, with the same upstream,
-                            policy, ports and headers — which is the point: two names for one
-                            application used to mean two sites kept in step by hand, and any
-                            divergence was a bug that appeared on only one of the names.
-                            <br>
-                            A hostname can belong to one site only. Wildcards are not
-                            supported: the Host header is matched exactly, and a wildcard
-                            certificate needs a DNS-01 challenge EasyWAF does not implement.
-                            <br>
-                            A certificate must cover every name, or a browser reaching the
-                            site by an uncovered one gets a warning. Requesting one from this
-                            page asks for all of them at once.
-                        </p>
-                    </div>
-
-                    {% if site.upstreams | length > 1 %}
-                    {# The single field cannot say what a pool holds, and a form
-                       that posts one URL must not be able to collapse several.
-                       The pool has its own panel below. #}
-                    <div class="form-group">
-                        <label>Upstreams</label>
-                        <p class="form-control-static">
-                            {{ site.upstreams | length }} backends, in rotation —
-                            edited under <strong>Upstreams</strong> below.
-                        </p>
-                    </div>
-                    {% else %}
-                    <div class="form-group">
-                        <label>Upstream Target <small class="text-muted">(where requests are forwarded — full URL, including scheme)</small></label>
-                        <input type="text" class="form-control" name="target" value="{{ site.target }}" placeholder="http://127.0.0.1:3000" required>
-                        <p class="help-block">
-                            This site's one backend. To add more, use <strong>Upstreams</strong>
-                            below — a list pasted here is refused, because it could mean either
-                            replacing the pool or adding to it.
-                        </p>
-                    </div>
-                    {% endif %}
+{% include "_site_fields.html" %}
 
                     <div class="form-group">
                         <label>HTTP Ports
@@ -134,34 +80,35 @@
                 <div class="panel panel-default">
                     <div class="panel-heading">
                         <strong><i class="fa fa-server"></i> Upstreams</strong>
-                        <small class="text-muted">— the backends this site is served from</small>
+                        <small class="text-muted">— what this node has seen of each backend</small>
                     </div>
                     <div class="panel-body">
                         <p class="help-block" style="margin-top:0">
-                            Requests go round the backends <strong>in turn</strong>, a heavier
-                            weight taking a larger share — for backends on unequal hardware.
+                            The backends themselves are the <strong>Upstream</strong> field
+                            above: edit the list to add one, weight one, park one with
+                            <code>off</code>, or remove one. This is the part the field cannot
+                            say.
                             <br>
                             <strong>A backend that stops answering is taken out of the rotation</strong>
                             after three failures in a row, and one request is let through thirty
-                            seconds later to find out whether it is back. Unreachable counts as a
-                            failure and so does a 5xx; a 404 does not, since that is the
+                            seconds later to find out whether it is back. Unreachable counts as
+                            a failure and so does a 5xx; a 404 does not, since that is the
                             application answering. A request that can safely be sent again is
                             retried on another backend, so one backend failing costs nothing —
                             a request whose body is still arriving cannot be, and gets a 502.
                             <br>
-                            The state below is what <em>this</em> node has seen, and is not
-                            shared with any other: a backend one node cannot reach may be
-                            perfectly reachable from another.
+                            This is <em>this</em> node's own observation and is not shared with
+                            any other: a backend one node cannot reach may be perfectly
+                            reachable from another.
                         </p>
 
                         <div style="overflow-x:auto">
-                        <table class="table table-hover">
+                        <table class="table">
                             <thead>
                                 <tr>
                                     <th>URL</th>
                                     <th style="width:110px">Weight</th>
-                                    <th style="width:190px">Rotation</th>
-                                    <th class="admin-only" style="width:210px"></th>
+                                    <th style="width:260px">Rotation</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -172,6 +119,7 @@
                                     <td style="vertical-align:middle">
                                         {% if not u.enabled %}
                                         <span class="label label-default">SWITCHED OFF</span>
+                                        <small class="text-muted">remove <code>off</code> above to use it</small>
                                         {% elif u.out_for %}
                                         <span class="label label-danger">OUT</span>
                                         <small class="text-muted">back in {{ u.out_for }}s</small>
@@ -182,69 +130,11 @@
                                         <span class="label label-success">IN ROTATION</span>
                                         {% endif %}
                                     </td>
-                                    <td class="admin-only">
-                                        <form method="post" style="display:flex;gap:6px;align-items:center"
-                                              action="/sites/{{ site.name }}/upstreams/{{ u.id }}/save">
-                                            <input type="number" name="weight" value="{{ u.weight }}"
-                                                   min="1" class="form-control input-sm" style="width:70px">
-                                            <label class="checkbox-inline" style="margin:0">
-                                                <input type="checkbox" name="enabled" value="1"
-                                                       {% if u.enabled %}checked{% endif %}> Use
-                                            </label>
-                                            <button type="submit" class="btn btn-default btn-sm">Save</button>
-                                        </form>
-                                        {% if site.upstreams | length > 1 %}
-                                        <form method="post" style="margin-top:4px"
-                                              action="/sites/{{ site.name }}/upstreams/{{ u.id }}/remove"
-                                              onsubmit="return confirm('Stop forwarding {{ site.name }} to {{ u.url }}?\n\nThe other backends take its share from the next request.');">
-                                            <button type="submit" class="btn btn-link btn-xs" style="padding:0">remove</button>
-                                        </form>
-                                        {% endif %}
-                                    </td>
                                 </tr>
                             {% endfor %}
                             </tbody>
                         </table>
                         </div>
-
-                        <div class="checkbox admin-only" style="margin-top:0">
-                            <label>
-                                <input type="checkbox" form="site-settings-form" name="affinity" value="1"
-                                       {% if site.affinity %}checked{% endif %}>
-                                <strong>Session affinity</strong> — keep a client on the backend
-                                that first served it
-                            </label>
-                            <p class="help-block" style="margin:0 0 10px 20px">
-                                For a backend that keeps something in memory: a session, an
-                                in-process cache. Without it a client's requests are spread
-                                across the pool, and the symptom is a user logged out at random
-                                rather than anything that looks like a proxy problem.
-                                <br>
-                                The client is pinned by a signed cookie, not by its address —
-                                many clients share one address behind NAT. If its backend goes
-                                out of rotation it is pinned to another rather than refused.
-                                Saved with the settings above.
-                            </p>
-                        </div>
-
-                        <form class="admin-only" method="post"
-                              action="/sites/{{ site.name }}/upstreams/add"
-                              style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-                            <textarea name="url" class="form-control" required rows="2"
-                                      spellcheck="false" style="width:280px"
-                                      placeholder="http://127.0.0.1:3001"></textarea>
-                            <input type="number" name="weight" value="1" min="1"
-                                   class="form-control" style="width:90px" title="Weight">
-                            <button type="submit" class="btn btn-default">
-                                <i class="fa fa-plus"></i> Add backend
-                            </button>
-                            <span class="help-block" style="width:100%;margin:4px 0 0">
-                                One per line, or comma separated, to add several at once. The
-                                weight beside the box applies to every line that does not carry
-                                its own — <code>http://10.0.0.8:3000 3</code> sets one line's
-                                weight, and each row can be changed afterwards.
-                            </span>
-                        </form>
                     </div>
                 </div>
 
