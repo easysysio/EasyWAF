@@ -55,9 +55,13 @@ take one out of the rotation while keeping it and its weight. The message after
 saving names what was added, removed and changed.
 
 A backend that is still listed keeps its place: the row, the health this node
-has observed of it, and any client pinned to it. The **Upstreams** panel below
-the form shows that state — in rotation, failing, out, or switched off — which
-is the part the field cannot say.
+has observed of it, and any client pinned to it.
+
+Under the field, **Now:** says what each backend is doing — in rotation,
+failing with the count, out and when it will be tried again, or switched off.
+That is the part the field cannot carry, since it changes on its own while you
+are reading it, and it is what this node has seen rather than anything shared
+between nodes.
 
 A site cannot be left with nothing to forward to: an empty field is refused.
 

@@ -76,68 +76,6 @@
                         </span>
                     </div>
 
-                <!-- ── Upstreams ──────────────────────────────── -->
-                <div class="panel panel-default">
-                    <div class="panel-heading">
-                        <strong><i class="fa fa-server"></i> Upstreams</strong>
-                        <small class="text-muted">— what this node has seen of each backend</small>
-                    </div>
-                    <div class="panel-body">
-                        <p class="help-block" style="margin-top:0">
-                            The backends themselves are the <strong>Upstream</strong> field
-                            above: edit the list to add one, weight one, park one with
-                            <code>off</code>, or remove one. This is the part the field cannot
-                            say.
-                            <br>
-                            <strong>A backend that stops answering is taken out of the rotation</strong>
-                            after three failures in a row, and one request is let through thirty
-                            seconds later to find out whether it is back. Unreachable counts as
-                            a failure and so does a 5xx; a 404 does not, since that is the
-                            application answering. A request that can safely be sent again is
-                            retried on another backend, so one backend failing costs nothing —
-                            a request whose body is still arriving cannot be, and gets a 502.
-                            <br>
-                            This is <em>this</em> node's own observation and is not shared with
-                            any other: a backend one node cannot reach may be perfectly
-                            reachable from another.
-                        </p>
-
-                        <div style="overflow-x:auto">
-                        <table class="table">
-                            <thead>
-                                <tr>
-                                    <th>URL</th>
-                                    <th style="width:110px">Weight</th>
-                                    <th style="width:260px">Rotation</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                            {% for u in site.upstreams %}
-                                <tr {% if u.out_for %}class="danger"{% elif not u.enabled %}class="warning"{% endif %}>
-                                    <td style="vertical-align:middle"><code>{{ u.url }}</code></td>
-                                    <td style="vertical-align:middle">{{ u.weight }}</td>
-                                    <td style="vertical-align:middle">
-                                        {% if not u.enabled %}
-                                        <span class="label label-default">SWITCHED OFF</span>
-                                        <small class="text-muted">remove <code>off</code> above to use it</small>
-                                        {% elif u.out_for %}
-                                        <span class="label label-danger">OUT</span>
-                                        <small class="text-muted">back in {{ u.out_for }}s</small>
-                                        {% elif u.failures > 0 %}
-                                        <span class="label label-warning">FAILING</span>
-                                        <small class="text-muted">{{ u.failures }} in a row</small>
-                                        {% else %}
-                                        <span class="label label-success">IN ROTATION</span>
-                                        {% endif %}
-                                    </td>
-                                </tr>
-                            {% endfor %}
-                            </tbody>
-                        </table>
-                        </div>
-                    </div>
-                </div>
-
                     <div class="panel panel-default">
                         <div class="panel-heading">Security Headers</div>
                         <div class="panel-body">

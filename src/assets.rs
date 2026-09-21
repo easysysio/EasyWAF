@@ -328,16 +328,20 @@ mod tests {
         pool.insert("site", &many);
         let html = tera.render("site_settings.html", &pool).expect("pool render");
         for (what, why) in [
-            ("IN ROTATION",     "a healthy backend is not said to be in rotation"),
-            ("FAILING",         "a backend with failures against it looks healthy"),
-            ("2 in a row",      "the failures counted against a backend are not shown"),
-            ("OUT",             "an ejected backend is not marked"),
-            ("back in 24s",     "an ejected backend does not say when it is tried again"),
-            ("SWITCHED OFF",    "a backend switched off looks like one in rotation"),
-            ("b:3000",          "a backend is missing from the field"),
+            ("in rotation",       "a healthy backend is not said to be in rotation"),
+            ("failing",           "a backend with failures against it looks healthy"),
+            ("2 in a row",        "the failures counted against a backend are not shown"),
+            ("out</span>",        "an ejected backend is not marked"),
+            ("tried again in 24s", "an ejected backend does not say when it is tried again"),
+            ("switched off",      "a backend switched off looks like one in rotation"),
+            ("b:3000",            "a backend is missing from the field"),
         ] {
             assert!(html.contains(what), "{why}");
         }
+        // The state sits beside the field, not in a panel repeating its URLs
+        // and weights: one place is about backends, and it is the one you edit.
+        assert!(!html.contains("<th>Weight</th>"),
+                "the pool is listed twice, in the field and in a table");
 
         // The field is the pool, on both pages and in the same words: every
         // backend on its own line, its weight when it is not 1, and `off` when

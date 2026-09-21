@@ -69,10 +69,40 @@
                             {% if site %}
                             <br>
                             <strong>This field is the whole pool.</strong> A line removed from
-                            it is a backend removed from the site; the state each one is in is
-                            below.
+                            it is a backend removed from the site.
                             {% endif %}
                         </p>
+
+                        {% if site and site.upstreams %}
+                        {# What the field cannot say, beside the field rather
+                           than in a panel of its own repeating its URLs and
+                           weights: a backend quietly out of the rotation is the
+                           thing an operator has no other way to learn, and it
+                           changes while they are looking at it. #}
+                        <p class="help-block" style="margin-top:6px">
+                            <strong>Now:</strong>
+                            {% for u in site.upstreams %}
+                            <span style="display:inline-block;margin-right:14px;white-space:nowrap">
+                                <code>{{ u.url }}</code>
+                                {% if not u.enabled %}
+                                <span class="label label-default">switched off</span>
+                                {% elif u.out_for %}
+                                <span class="label label-danger">out</span>, tried again in {{ u.out_for }}s
+                                {% elif u.failures > 0 %}
+                                <span class="label label-warning">failing</span>, {{ u.failures }} in a row
+                                {% else %}
+                                <span class="label label-success">in rotation</span>
+                                {% endif %}
+                            </span>
+                            {% endfor %}
+                            <br>
+                            A backend that stops answering is taken out after three failures in
+                            a row and one request is let through thirty seconds later to see
+                            whether it is back; a request that can safely be sent again goes to
+                            another backend meanwhile. This is what <em>this</em> node has seen,
+                            and is not shared with any other.
+                        </p>
+                        {% endif %}
                     </div>
 
                     <div class="checkbox">
