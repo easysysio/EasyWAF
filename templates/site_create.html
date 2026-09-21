@@ -42,14 +42,40 @@
                     </div>
                     <div class="form-group">
                         <label>Upstream <small class="text-muted">(where requests are forwarded — full URL, including scheme)</small></label>
-                        <textarea class="form-control" name="target" rows="2" required
+                        <textarea class="form-control" name="target" rows="3" required
                                   spellcheck="false"
-                                  placeholder="http://127.0.0.1:3000"></textarea>
+                                  style="font-family: monospace; font-size: 12px"
+                                  placeholder="http://127.0.0.1:3000&#10;http://127.0.0.1:3001 3"></textarea>
                         <p class="help-block">
                             One backend is the usual case. <strong>List several</strong> — one
                             per line, or comma separated — and requests go round them in turn.
-                            Weights, health and session affinity are on the site's page once it
-                            exists.
+                            <br>
+                            A number after a URL is its <strong>weight</strong>:
+                            <code>http://10.0.0.8:3000 3</code> takes three times the share of
+                            an unweighted one, which is what backends on unequal hardware are
+                            for. Weights, and which backends are in rotation, can be changed on
+                            the site's page afterwards.
+                            <br>
+                            A backend that stops answering is taken out of the rotation after
+                            three failures in a row and tried again thirty seconds later; a
+                            request that can safely be sent again goes to another backend, so
+                            one failing costs nothing.
+                        </p>
+                    </div>
+
+                    <div class="checkbox">
+                        <label>
+                            <input type="checkbox" name="affinity" value="1">
+                            <strong>Session affinity</strong> — keep a client on the backend
+                            that first served it
+                        </label>
+                        <p class="help-block" style="margin:0 0 10px 20px">
+                            Only matters with more than one backend, and only for a backend that
+                            keeps something in memory: a session, an in-process cache. Without
+                            it a client's requests are spread across the pool, and the symptom
+                            is a user logged out at random rather than anything that looks like
+                            a proxy problem. The client is pinned by a signed cookie, not by its
+                            address — many clients share one address behind NAT.
                         </p>
                     </div>
 

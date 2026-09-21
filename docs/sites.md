@@ -33,14 +33,22 @@ appeared on only one of the names.
 
 ## Upstreams
 
-A site starts with what you type in **Upstream** when you create it — one
-backend for most sites, or **several at once**, one per line or comma
-separated. After that the site's own page has an **Upstreams** panel: add more
-(again, one or several at a time), change a **weight**, switch one off, remove
-one.
+**A site is created with its pool, not corrected into one.** The **Upstream**
+field on the create form takes one backend or several — one per line, or comma
+separated — and a number after a URL is that backend's **weight**:
 
-Requests go round the backends **in turn**, a heavier weight taking a larger
-share, which is what backends on unequal hardware are for.
+```
+http://10.0.0.8:3000 3
+http://10.0.0.9:3000
+```
+
+Requests go round the backends **in turn**, and the first of those takes three
+times the share of the second, which is what backends on unequal hardware are
+for. **Session affinity** is a checkbox on the same form. Nothing about a pool
+has to wait until the site exists.
+
+Afterwards the site's own page has an **Upstreams** panel: add more (one or
+several at a time, with weights), change a weight, switch one off, remove one.
 
 The single **Upstream** field on the site's settings form edits the backend of a
 site that has exactly one. It refuses a list — that could mean either replacing

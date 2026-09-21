@@ -266,10 +266,13 @@ pub async fn post_site_create(
     // Upstreams are rows of their own since 0.13.0, and the field takes a list:
     // a site that is served by three backends should not have to be created
     // with one and corrected twice.
-    for url in &upstreams {
-        sqlx::query!("INSERT INTO upstreams (site_id, url) VALUES (?, ?)", site_id, url)
-            .execute(&state.db)
-            .await?;
+    for (url, weight) in &upstreams {
+        sqlx::query!(
+            "INSERT INTO upstreams (site_id, url, weight) VALUES (?, ?, ?)",
+            site_id, url, weight
+        )
+        .execute(&state.db)
+        .await?;
     }
 
     save_extra_ports(&state.db, site_id, &extra_http, &extra_https).await?;
@@ -477,6 +480,7 @@ pub async fn post_site_update(
         return flash_redirect(&edit, "failed",
             "That field is one backend. Add the others under Upstreams, below");
     }
+    let urls: Vec<String> = urls.into_iter().map(|(u, _)| u).collect();
 
     sqlx::query!(
         "UPDATE sites SET
@@ -741,24 +745,45 @@ pub struct UpstreamForm {
     pub enabled: Option<String>,
 }
 
-/// Read a field that may hold several backends.
+/// Read a field that may hold several backends, each with an optional weight.
 ///
-/// One per line or comma separated, the way every other list in this interface
-/// is typed. Returns the URLs that are usable and, separately, the entries
-/// that are not — named back rather than dropped, because an upstream nobody
+/// One per line, `http://host:port` or `http://host:port 3`, or comma
+/// separated when nobody needs a weight — the way every other list in this
+/// interface is typed. Returns what is usable and, separately, the entries
+/// that are not: named back rather than dropped, because an upstream nobody
 /// mentioned is a backend that silently never receives a request.
-pub fn parse_upstreams(raw: &str) -> (Vec<String>, Vec<String>) {
-    let (mut good, mut bad) = (Vec::new(), Vec::new());
-    for entry in raw.split(|c: char| c == ',' || c.is_whitespace()) {
-        let entry = entry.trim();
-        if entry.is_empty() {
-            continue;
-        }
-        match valid_upstream(entry) {
-            // The same backend twice in one paste is a typo, not two backends.
-            Ok(url) if good.contains(&url) => {}
-            Ok(url)  => good.push(url),
-            Err(why) => bad.push(why),
+pub fn parse_upstreams(raw: &str) -> (Vec<(String, i64)>, Vec<String>) {
+    let (mut good, mut bad): (Vec<(String, i64)>, Vec<String>) = (Vec::new(), Vec::new());
+
+    // Lines first, so a weight can sit beside its URL; then commas within a
+    // line, for the common case of a list with no weights in it.
+    for line in raw.lines() {
+        for entry in line.split(',') {
+            let entry = entry.trim();
+            if entry.is_empty() {
+                continue;
+            }
+            // `url weight`, and a trailing word that is not a number is a
+            // mistake worth naming rather than a weight of 1 silently.
+            let (url, weight) = match entry.rsplit_once(char::is_whitespace) {
+                Some((u, w)) => match w.trim().parse::<i64>() {
+                    Ok(n) if n >= 1 => (u.trim(), n),
+                    _ => {
+                        bad.push(format!(
+                            "\"{}\" is not a weight — a whole number of 1 or more, \
+                             as in \"{} 3\"", w.trim(), u.trim()));
+                        continue;
+                    }
+                },
+                None => (entry, 1),
+            };
+            match valid_upstream(url) {
+                // The same backend twice in one paste is a typo, not two
+                // backends; the first weight given for it stands.
+                Ok(url) if good.iter().any(|(u, _)| *u == url) => {}
+                Ok(url)  => good.push((url, weight)),
+                Err(why) => bad.push(why),
+            }
         }
     }
     (good, bad)
@@ -824,11 +849,14 @@ pub async fn post_upstream_add(
     if urls.is_empty() {
         return flash_redirect(&back, "failed", "An upstream needs a URL");
     }
-    let weight: i64 = form.weight.as_deref().unwrap_or("1").trim().parse().unwrap_or(1).max(1);
+    // The box applies to every line that does not carry its own weight, so a
+    // paste of four backends at weight 2 needs the number typed once.
+    let fallback: i64 = form.weight.as_deref().unwrap_or("1").trim().parse().unwrap_or(1).max(1);
 
     let mut added: Vec<String> = Vec::new();
     let mut already: Vec<String> = Vec::new();
-    for url in urls {
+    for (url, line_weight) in urls {
+        let weight = if line_weight > 1 { line_weight } else { fallback };
         let existing: i64 = sqlx::query_scalar!(
             r#"SELECT COUNT(*) as "n!" FROM upstreams WHERE site_id = ? AND url = ?"#,
             site_id, url
@@ -1486,23 +1514,52 @@ fn parse_policy_id(raw: &Option<String>) -> Option<i64> {
 mod upstream_field_tests {
     use super::*;
 
+    fn urls(raw: &str) -> Vec<String> {
+        parse_upstreams(raw).0.into_iter().map(|(u, _)| u).collect()
+    }
+
     #[test]
     fn a_field_takes_one_backend_or_several() {
         let (good, bad) = parse_upstreams("http://a:3000");
-        assert_eq!(good, vec!["http://a:3000"]);
+        assert_eq!(good, vec![("http://a:3000".to_string(), 1)]);
         assert!(bad.is_empty());
 
         // One per line or comma separated, the way every other list in this
         // interface is typed — and a trailing slash is not a different backend.
-        let (good, bad) = parse_upstreams("http://a:3000\n http://b:3000/ ,https://c:8443");
-        assert_eq!(good, vec!["http://a:3000", "http://b:3000", "https://c:8443"]);
+        assert_eq!(urls("http://a:3000\n http://b:3000/ ,https://c:8443"),
+                   vec!["http://a:3000", "http://b:3000", "https://c:8443"]);
+    }
+
+    #[test]
+    fn a_number_after_a_url_is_its_weight() {
+        // The whole point of setting a pool up in one field: backends on
+        // unequal hardware, said once, when the site is created.
+        let (good, bad) = parse_upstreams("http://big:3000 3\nhttp://small:3000");
+        assert_eq!(good, vec![("http://big:3000".to_string(), 3),
+                              ("http://small:3000".to_string(), 1)]);
         assert!(bad.is_empty());
     }
 
     #[test]
+    fn a_trailing_word_that_is_not_a_weight_is_named() {
+        // Treating it as weight 1 would quietly halve a backend's share of the
+        // traffic somebody meant to triple.
+        let (good, bad) = parse_upstreams("http://a:3000 three");
+        assert!(good.is_empty());
+        assert_eq!(bad.len(), 1);
+        assert!(bad[0].contains("is not a weight"), "{:?}", bad[0]);
+
+        // Nor is nought or a negative: a weight cannot take a backend out of
+        // the rotation while leaving it listed in it.
+        assert!(parse_upstreams("http://a:3000 0").0.is_empty());
+        assert!(parse_upstreams("http://a:3000 -2").0.is_empty());
+    }
+
+    #[test]
     fn the_same_backend_twice_in_one_paste_is_one_backend() {
-        let (good, _) = parse_upstreams("http://a:3000, http://a:3000/");
-        assert_eq!(good, vec!["http://a:3000"], "a typo became two backends");
+        let (good, _) = parse_upstreams("http://a:3000 2, http://a:3000/");
+        assert_eq!(good, vec![("http://a:3000".to_string(), 2)],
+                   "a typo became two backends");
     }
 
     #[test]
@@ -1510,7 +1567,7 @@ mod upstream_field_tests {
         // Silently dropping one is a backend that never receives a request and
         // nobody knows why.
         let (good, bad) = parse_upstreams("http://a:3000\n127.0.0.1:9000\nhttp://b/app");
-        assert_eq!(good, vec!["http://a:3000"]);
+        assert_eq!(good, vec![("http://a:3000".to_string(), 1)]);
         assert_eq!(bad.len(), 2);
         assert!(bad[0].contains("needs a scheme"), "{:?}", bad[0]);
         assert!(bad[1].contains("has a path"), "{:?}", bad[1]);
