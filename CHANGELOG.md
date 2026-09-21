@@ -6,7 +6,7 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
-## [Unreleased]
+## [0.13.0] — 2026-09-21
 
 ### Added
 - A site's upstream is now a row rather than a column, so a site can have more than one: requests go round the pool in turn, weighted for backends on unequal hardware. A site with one upstream behaves exactly as before, and every traffic record names the upstream that served it.
