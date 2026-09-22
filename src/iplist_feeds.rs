@@ -212,19 +212,62 @@ pub async fn sync(db: &SqlitePool) -> Result<usize, String> {
         return Err("the channel's manifest offers no lists".to_string());
     }
 
+    // Every file in hand before anything is written, so the mirror is built
+    // the same way whether the bundle arrived over HTTP or was carried in.
+    let mut files: HashMap<String, Vec<u8>> = HashMap::new();
+    for list in &offered {
+        if !safe_relative(&list.file) {
+            return Err(format!("{}: refusing the file path {:?}", list.id, list.file));
+        }
+        files.insert(list.id.clone(), fetch(format!("{base}/{}", list.file)).await?);
+    }
+
+    let written = install_bundle(&manifest, &signature, &files)?;
+    tracing::info!(lists = written, "Mirrored the IP list channel");
+    Ok(written)
+}
+
+/// Build the list mirror from a manifest, its signature and the files it
+/// names, whether they were fetched or uploaded.
+///
+/// All or nothing, and the same bar either way: the signature is checked
+/// before anything is written, every file against the hash the signed manifest
+/// gives for it, and the new mirror is staged and renamed into place — so a
+/// refused bundle leaves yesterday's lists, which are better than none.
+///
+/// Files are keyed by list id rather than by the path the manifest gives:
+/// nothing a channel or an uploader says may decide where a file is written.
+pub fn install_bundle(
+    manifest:  &[u8],
+    signature: &str,
+    files:     &HashMap<String, Vec<u8>>,
+) -> Result<usize, String> {
+    let key = crate::rules_update::trusted_key();
+    crate::pgp_verify::verify_detached(&key, manifest, signature)?;
+    let text = String::from_utf8(manifest.to_vec())
+        .map_err(|_| "the manifest is not text".to_string())?;
+
+    let offered = parse_manifest(&text);
+    if offered.is_empty() {
+        return Err("that manifest offers no lists".to_string());
+    }
+
     let dir = cache_dir();
     let stage = dir.with_extension("new");
     let _ = std::fs::remove_dir_all(&stage);
     std::fs::create_dir_all(stage.join(FILES))
         .map_err(|e| format!("{}: {e}", stage.display()))?;
 
-    let staged: Result<(), String> = async {
+    let staged: Result<(), String> = (|| {
         for list in &offered {
             if !safe_relative(&list.file) {
                 return Err(format!("{}: refusing the file path {:?}", list.id, list.file));
             }
-            let body = fetch(format!("{base}/{}", list.file)).await?;
-            let digest = sha256_hex(&body);
+            let Some(body) = files.get(&list.id) else {
+                return Err(format!(
+                    "{} is named in the manifest and is not in the bundle", list.file));
+            };
+            let digest = sha256_hex(body);
             if digest != list.sha256 {
                 return Err(format!(
                     "{} does not match the signed manifest: {} rather than {}",
@@ -233,16 +276,14 @@ pub async fn sync(db: &SqlitePool) -> Result<usize, String> {
                     short(&list.sha256)
                 ));
             }
-            std::fs::write(local_file(&stage, &list.id), &body)
+            std::fs::write(local_file(&stage, &list.id), body)
                 .map_err(|e| format!("{}: {e}", list.id))?;
         }
-        std::fs::write(stage.join(MANIFEST), &manifest)
+        std::fs::write(stage.join(MANIFEST), manifest)
             .map_err(|e| format!("{MANIFEST}: {e}"))?;
         std::fs::write(stage.join(SIGNATURE), signature.as_bytes())
-            .map_err(|e| format!("{SIGNATURE}: {e}"))?;
-        Ok(())
-    }
-    .await;
+            .map_err(|e| format!("{SIGNATURE}: {e}"))
+    })();
     if let Err(e) = staged {
         let _ = std::fs::remove_dir_all(&stage);
         return Err(e);
@@ -260,7 +301,6 @@ pub async fn sync(db: &SqlitePool) -> Result<usize, String> {
     }
     let _ = std::fs::remove_dir_all(&old);
 
-    tracing::info!(lists = offered.len(), dir = %dir.display(), "Mirrored the IP list channel");
     Ok(offered.len())
 }
 

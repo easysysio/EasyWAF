@@ -41,7 +41,7 @@ pub const KEY_AUTO_RULES: &str = "auto_apply_rules";
 #[derive(Debug, Deserialize)]
 pub struct UpdatesQuery {
     pub result: Option<String>,
-    pub msg:    Option<String>,
+    pub msg: Option<String>,
 }
 
 /// Whether a kind is applied as it arrives, with the defaults above.
@@ -49,7 +49,7 @@ pub async fn auto(db: &sqlx::SqlitePool, key: &str) -> bool {
     let default = key != KEY_AUTO_RULES;
     match get_setting(db, key).await {
         Some(v) => v.trim() == "1",
-        None    => default,
+        None => default,
     }
 }
 
@@ -66,9 +66,9 @@ pub async fn get_updates(
     let mut ctx = Context::new();
     crate::routes::who_context(&mut ctx, &session);
     ctx.insert("title",  "Updates");
-    ctx.insert("url",    "/updates");
+    ctx.insert("url", "/updates");
     ctx.insert("result", &q.result.unwrap_or_default());
-    ctx.insert("msg",    &q.msg.unwrap_or_default());
+    ctx.insert("msg", &q.msg.unwrap_or_default());
 
     // ── Whether anything reaches out at all ──
     ctx.insert("check_enabled", &crate::rules_update::enabled(&state.db).await);
@@ -81,7 +81,7 @@ pub async fn get_updates(
         .await
         .unwrap_or_default();
     let (checked, check_error) = crate::rules_update::status(&state.db).await;
-    ctx.insert("rules_url",     &rules_url);
+    ctx.insert("rules_url", &rules_url);
     ctx.insert("rules_default", crate::rules_update::DEFAULT_URL);
     ctx.insert("rules_checked", &checked.map(|t| crate::routes::settings::format_utc(&t)).unwrap_or_default());
     ctx.insert("rules_error",   &check_error.unwrap_or_default());
@@ -97,11 +97,11 @@ pub async fn get_updates(
     let (fetched, fetch_error) = crate::iplist_feeds::status(&state.db).await;
     let (lists, lists_error) =
         crate::iplist_feeds::catalogue(&state.db, crate::iplist_feeds::Scope::Everywhere).await;
-    ctx.insert("lists_url",     &lists_url);
+    ctx.insert("lists_url", &lists_url);
     ctx.insert("lists_default", crate::iplist_feeds::DEFAULT_URL);
     ctx.insert("lists_fetched", &fetched.map(|t| crate::routes::settings::format_utc(&t)).unwrap_or_default());
     ctx.insert("lists_error",   &fetch_error.or(lists_error).unwrap_or_default());
-    ctx.insert("lists",         &lists);
+    ctx.insert("lists", &lists);
     // How many policies each list is switched on for, so a list that is doing
     // nothing anywhere reads as what it is.
     let in_use: HashMap<String, i64> = sqlx::query!(
@@ -170,6 +170,136 @@ pub async fn post_updates_settings(
         "Saved"
     };
     flash_redirect("/updates", "success", msg)
+}
+
+// ─── post_upload ─────────────────────────────────────────
+
+/// POST /updates/{kind}/upload — a bundle carried in by hand.
+///
+/// The way in for an appliance with no outbound access, and **not** a lower
+/// bar: a rule set or IP list bundle is checked exactly as a download is —
+/// the manifest's detached signature first, then every file against the hash
+/// that signed manifest gives for it. What makes offline safe here is that the
+/// signature travels with the files.
+///
+/// The country database is the exception and says so: DB-IP and MaxMind do not
+/// sign their databases, so a file an operator supplies is checked for being a
+/// database and nothing more. The page records that it was not verified.
+pub async fn post_upload(
+    State(state): State<AppState>,
+    _jar: SignedCookieJar,
+    Admin(session): Admin,
+    Path(kind): Path<String>,
+    mut parts: axum::extract::Multipart,
+) -> Result<Response> {
+
+    // Read every part first: which file is the manifest and which are its
+    // contents is decided by name, not by the order a browser sent them.
+    let mut files: HashMap<String, Vec<u8>> = HashMap::new();
+    while let Ok(Some(field)) = parts.next_field().await {
+        let Some(name) = field.file_name().map(|n| {
+            // The last component only. A part claiming to be called
+            // "../../etc/passwd" names nothing here.
+            std::path::Path::new(n)
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default()
+        }) else {
+            continue;
+        };
+        if name.is_empty() {
+            continue;
+        }
+        match field.bytes().await {
+            Ok(b)  => { files.insert(name, b.to_vec()); }
+            Err(e) => return flash_redirect("/updates", "failed",
+                          &format!("Could not read the upload: {e}")),
+        }
+    }
+
+    if files.is_empty() {
+        return flash_redirect("/updates", "failed", "No files were uploaded");
+    }
+
+    let outcome = match kind.as_str() {
+        "rules" => bundle(&files, "sets.toml", |m, sig, rest| {
+            crate::rules_update::install_bundle(m, sig, rest)
+                .map(|n| format!(
+                    "{n} rule set(s) verified and mirrored from the upload. Nothing is in force until it is applied to a policy"))
+        }),
+        "lists" => bundle(&files, "lists.toml", |m, sig, rest| {
+            // Keyed by list id, which is the file's own name without .txt.
+            let by_id = rest.iter()
+                .map(|(name, body)| {
+                    (name.trim_end_matches(".txt").to_string(), body.clone())
+                })
+                .collect();
+            crate::iplist_feeds::install_bundle(m, sig, &by_id)
+                .map(|n| format!("{n} published list(s) verified, mirrored and in force"))
+        }),
+        "geo" => {
+            // One file, and no manifest to check it against: nobody signs a
+            // country database.
+            let Some((name, body)) = files.iter().next() else {
+                return flash_redirect("/updates", "failed", "No file was uploaded");
+            };
+            if files.len() > 1 {
+                return flash_redirect("/updates", "failed",
+                    "Upload one country database, not several");
+            }
+            crate::geo::install(body, crate::geo::Source::Uploaded).map(|s| format!(
+                "{} is in force — built {}. It was not signature-checked: a database an operator supplies cannot be, and the page says so",
+                name,
+                s.built.unwrap_or_else(|| "on an unstated date".to_string())))
+        }
+        other => Err(format!("\"{other}\" is not something that can be uploaded")),
+    };
+
+    match outcome {
+        Ok(msg) => {
+            tracing::info!(kind = %kind, files = files.len(), by = %session.username,
+                           "Bundle uploaded");
+            // A list bundle changes what is in force, so it is reloaded here
+            // rather than at the next check.
+            if kind == "lists" {
+                crate::iplist_feeds::reload();
+            }
+            flash_redirect("/updates", "success", &msg)
+        }
+        // Verbatim, as for a download: a refusal is a signature that did not
+        // verify or a hash that did not match, and "upload failed" would hide
+        // the one detail worth acting on.
+        Err(e) => flash_redirect("/updates", "failed", &format!("Refused: {e}")),
+    }
+}
+
+/// Split an uploaded bundle into its manifest, its signature and the rest.
+fn bundle<F>(
+    files: &HashMap<String, Vec<u8>>,
+    manifest: &str,
+    install:  F,
+) -> std::result::Result<String, String>
+where
+    F: FnOnce(&[u8], &str, &HashMap<String, Vec<u8>>) -> std::result::Result<String, String>,
+{
+    let signature = format!("{manifest}.asc");
+    let Some(m) = files.get(manifest) else {
+        return Err(format!("the bundle has no {manifest}"));
+    };
+    let Some(sig) = files.get(&signature) else {
+        return Err(format!(
+            "the bundle has no {signature} — the signature is what makes an upload \
+safe, so a bundle without one is refused"));
+    };
+    let sig = String::from_utf8(sig.clone())
+        .map_err(|_| format!("{signature} is not text"))?;
+
+    let rest: HashMap<String, Vec<u8>> = files.iter()
+        .filter(|(name, _)| *name != manifest && **name != signature)
+        .map(|(name, body)| (name.clone(), body.clone()))
+        .collect();
+
+    install(m, &sig, &rest)
 }
 
 // ─── post_update_now ─────────────────────────────────────

@@ -804,6 +804,19 @@ mod tests {
         // Applying returns to the page it was pressed on.
         assert!(html.contains(r#"name="back" value="/updates""#),
                 "applying from here would land on another page");
+
+        // The way in for an appliance with no outbound access, one form per
+        // kind, and the country database saying what it cannot promise.
+        for (what, why) in [
+            ("/updates/rules/upload", "a rule bundle cannot be uploaded"),
+            ("/updates/lists/upload", "a list bundle cannot be uploaded"),
+            ("/updates/geo/upload",   "a country database cannot be uploaded"),
+            ("multipart/form-data",   "the upload forms cannot carry a file"),
+            ("sets.toml.asc",         "the rule bundle does not say it needs its signature"),
+            ("Not signature-checked", "an uploaded database does not say it is unverified"),
+        ] {
+            assert!(html.contains(what), "{why}");
+        }
     }
 
     #[test]

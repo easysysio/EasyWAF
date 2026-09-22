@@ -679,11 +679,62 @@ pub async fn sync_cache(db: &SqlitePool) -> std::result::Result<usize, String> {
     let signature_text =
         String::from_utf8(signature).map_err(|_| "the signature is not text".to_string())?;
 
-    // Verified before anything is written, so a channel that cannot prove
-    // itself never reaches the disk at all.
+    // Verified before anything is fetched, so a channel that cannot prove
+    // itself is not even read from — and verified again by install_bundle,
+    // which is the one place that writes the mirror.
     crate::pgp_verify::verify_detached(&key, &manifest, &signature_text)?;
     let manifest_text =
         String::from_utf8(manifest.clone()).map_err(|_| "the manifest is not text".to_string())?;
+
+    // Every file in hand before anything is written, so the mirror is built
+    // from a complete bundle whether it arrived over HTTP or was carried in on
+    // a memory stick.
+    let mut files: std::collections::HashMap<String, Vec<u8>> =
+        std::collections::HashMap::new();
+    for set in parse_manifest(&manifest_text) {
+        let Some(entry) = manifest_entry(&manifest_text, &set.id) else { continue };
+        let body = fetch(format!("{base}/{}", entry.file)).await?;
+        files.insert(basename(&entry.file), body);
+    }
+
+    let written = install_bundle(&manifest, &signature_text, &files)?;
+    tracing::info!(sets = written, "Mirrored the rule channel to disk");
+    Ok(written)
+}
+
+/// The name a file is stored under in the mirror, which is its last path
+/// component and never the path the manifest gave: nothing a channel says may
+/// decide where a file is written.
+fn basename(path: &str) -> String {
+    std::path::Path::new(path)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| path.to_string())
+}
+
+/// Build the mirror from a manifest, its detached signature, and the files it
+/// names — however they arrived.
+///
+/// The download and an uploaded bundle are the same act from here on: the
+/// signature is checked before anything is written, every file is checked
+/// against the hash the signed manifest gives for it, and the new mirror is
+/// staged and renamed into place, so a refused bundle leaves yesterday's rules
+/// exactly where they were. An upload is a different transport, never a lower
+/// bar.
+pub fn install_bundle(
+    manifest:  &[u8],
+    signature: &str,
+    files:     &std::collections::HashMap<String, Vec<u8>>,
+) -> std::result::Result<usize, String> {
+    let key = trusted_key();
+    crate::pgp_verify::verify_detached(&key, manifest, signature)?;
+    let manifest_text =
+        String::from_utf8(manifest.to_vec()).map_err(|_| "the manifest is not text".to_string())?;
+
+    let offered = parse_manifest(&manifest_text);
+    if offered.is_empty() {
+        return Err("that manifest offers no rule sets".to_string());
+    }
 
     let dir = cache_dir();
     let stage = dir.with_extension("new");
@@ -691,38 +742,44 @@ pub async fn sync_cache(db: &SqlitePool) -> std::result::Result<usize, String> {
     std::fs::create_dir_all(stage.join("sets")).map_err(|e| format!("{}: {e}", stage.display()))?;
 
     let mut written = 0usize;
-    for set in parse_manifest(&manifest_text) {
-        let Some(entry) = manifest_entry(&manifest_text, &set.id) else { continue };
-        let body = fetch(format!("{base}/{}", entry.file)).await?;
+    let staged: std::result::Result<(), String> = (|| {
+        for set in &offered {
+            let Some(entry) = manifest_entry(&manifest_text, &set.id) else { continue };
+            let name = basename(&entry.file);
+            let Some(body) = files.get(&name) else {
+                return Err(format!(
+                    "{} is named in the manifest and is not in the bundle", entry.file));
+            };
 
-        let digest: String = {
-            use sha2::{Digest, Sha256};
-            Sha256::digest(&body).iter().map(|b| format!("{b:02x}")).collect()
-        };
-        if digest != entry.sha256 {
-            let _ = std::fs::remove_dir_all(&stage);
-            return Err(format!(
-                "{} does not match the signed manifest: {} rather than {}",
-                entry.file,
-                &digest[..12.min(digest.len())],
-                &entry.sha256[..12.min(entry.sha256.len())]
-            ));
+            let digest: String = {
+                use sha2::{Digest, Sha256};
+                Sha256::digest(body).iter().map(|b| format!("{b:02x}")).collect()
+            };
+            if digest != entry.sha256 {
+                return Err(format!(
+                    "{} does not match the signed manifest: {} rather than {}",
+                    entry.file,
+                    &digest[..12.min(digest.len())],
+                    &entry.sha256[..12.min(entry.sha256.len())]
+                ));
+            }
+
+            std::fs::write(stage.join("sets").join(&name), body)
+                .map_err(|e| format!("{name}: {e}"))?;
+            written += 1;
         }
-
-        let name = std::path::Path::new(&entry.file)
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| format!("{}.rules.toml", set.id));
-        std::fs::write(stage.join("sets").join(&name), &body)
-            .map_err(|e| format!("{name}: {e}"))?;
-        written += 1;
+        std::fs::write(stage.join("sets.toml"), manifest)
+            .map_err(|e| format!("sets.toml: {e}"))?;
+        std::fs::write(stage.join("sets.toml.asc"), signature.as_bytes())
+            .map_err(|e| format!("sets.toml.asc: {e}"))
+    })();
+    if let Err(e) = staged {
+        let _ = std::fs::remove_dir_all(&stage);
+        return Err(e);
     }
 
-    std::fs::write(stage.join("sets.toml"), &manifest).map_err(|e| format!("sets.toml: {e}"))?;
-    std::fs::write(stage.join("sets.toml.asc"), signature_text.as_bytes())
-        .map_err(|e| format!("sets.toml.asc: {e}"))?;
-
-    // Both under the same parent, so these are renames rather than copies.
+    // Both under the same parent, so these are renames rather than copies. The
+    // one it replaces is kept until the swap has worked.
     let old = dir.with_extension("old");
     let _ = std::fs::remove_dir_all(&old);
     if dir.exists() {
@@ -734,7 +791,6 @@ pub async fn sync_cache(db: &SqlitePool) -> std::result::Result<usize, String> {
     }
     let _ = std::fs::remove_dir_all(&old);
 
-    tracing::info!(sets = written, dir = %dir.display(), "Mirrored the rule channel to disk");
     Ok(written)
 }
 

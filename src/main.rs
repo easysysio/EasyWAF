@@ -300,6 +300,13 @@ async fn main() {
         .route("/updates",               get(routes::updates::get_updates))
         .route("/updates/settings",      post(routes::updates::post_updates_settings))
         .route("/updates/{kind}/fetch",  post(routes::updates::post_update_now))
+        // An uploaded bundle is the way in for an appliance with no outbound
+        // access, and a country database is about eight megabytes — well past
+        // the two the default body limit allows, which refuses it before any
+        // of this is reached. Raised for this route alone.
+        .route("/updates/{kind}/upload",
+               post(routes::updates::post_upload)
+                   .layer(axum::extract::DefaultBodyLimit::max(64 * 1024 * 1024)))
         .route("/geoip",                 get(routes::geoip::get_geoip))
         .route("/geoip/all",             post(routes::geoip::post_geoip_all))
         .route("/traffic",               get(routes::traffic::get_traffic))
