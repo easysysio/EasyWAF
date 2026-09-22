@@ -365,7 +365,12 @@ repository and a `--geo` mode in `github2repo.sh`. Until that exists, upload
 and `geoip_db` are the routes that work, and the switch for applying it
 automatically governs nothing.
 
-**Rollback for rule sets** remains the prerequisite for making automatic apply
-a defensible default rather than a decision an operator takes on. It is the
-next thing, and the mirror already keeps the copy an update replaced, which is
-the same idea one level up.
+**Rollback for rule sets — done in 0.13.2.** The version a policy held is kept
+when an update overwrites it, and can be put back from the policy's Rule Sets
+page: the rules as they were, what the newer version added deleted, the
+recorded version restored. One step, consumed on use.
+
+It does not make automatic apply a *default* — that remains off, and a switch
+somebody turns on. What it changes is what turning it on means: an update that
+refuses traffic it should not is now a click to undo rather than an evening
+spent reconstructing eighteen patterns from memory.
