@@ -6,6 +6,17 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
+## [Unreleased]
+
+### Added
+- **Settings → Updates**: rule sets, published IP lists and the country database in one page, each saying what it holds, when it last arrived and what is waiting to be applied — replacing a panel named after one of the three, and showing the country database, which nothing in the interface reported before.
+- The country database now says what it is, when it was built and how long ago, what it covers, where it came from, and whether that path was signature-verified.
+- **Update now** for each kind, including rule sets, whose fetch existed with nothing calling it. It says what it found, and is refused — with the way in named — on an installation that has turned checking off.
+- Every policy that is behind is listed in one place, with the same apply as its own page, and applying from there returns there.
+
+### Changed
+- The update channels and the switch that governs them moved from Settings → General to Settings → Updates, which now owns them; the three kinds each have their own "apply as it arrives" switch, on for lists and the country database and off for rule sets.
+
 ## [0.13.0] — 2026-09-21
 
 ### Added

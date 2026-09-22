@@ -739,6 +739,73 @@ mod tests {
         assert!(html.contains("tab=exclusions"), "the exclusion forms do not return to their tab");
     }
 
+    /// The page that replaced a panel named after one of the three kinds it
+    /// governed, and the one that showed nothing at all about the third.
+    #[test]
+    fn the_updates_page_shows_all_three_kinds() {
+        let tera = tera().expect("templates should build");
+        let mut ctx = tera::Context::new();
+        for (k, v) in [("username", "t"), ("title", "Updates"), ("url", "/updates"),
+                       ("result", ""), ("msg", ""),
+                       ("rules_url", ""), ("rules_default", "https://repo.example/rules"),
+                       ("rules_checked", "2026-09-22 07:00"), ("rules_error", ""),
+                       ("lists_url", ""), ("lists_default", "https://repo.example/lists"),
+                       ("lists_fetched", "2026-09-22 07:00"), ("lists_error", "")] {
+            ctx.insert(k, v);
+        }
+        for (k, v) in [("check_enabled", true), ("auto_lists", true),
+                       ("auto_geo", true), ("auto_rules", false)] {
+            ctx.insert(k, &v);
+        }
+        ctx.insert("offered_sets", &vec![serde_json::json!({
+            "id": "owasp-rfi", "name": "Remote file inclusion", "version": 2,
+            "tier": "basic", "description": "Remote file inclusion." })]);
+        ctx.insert("behind", &vec![serde_json::json!({
+            "policy_id": 1, "policy_name": "websites", "set_id": "owasp-rfi",
+            "set_name": "Remote file inclusion", "have": 1, "offered": 2 })]);
+        ctx.insert("lists", &vec![serde_json::json!({
+            "id": "tor-exits", "name": "Tor exit nodes", "description": "Relays.",
+            "licence": "CC0", "attribution": "The Tor Project", "version": "2026092201",
+            "entries": 1349, "enabled": true, "response": "challenge", "ranges": 1342,
+            "unreadable": 0, "error": null, "offered": true, "from_all": false,
+            "all_choice": null, "overrides": 0 })]);
+        ctx.insert("lists_in_use", &serde_json::json!({ "tor-exits": 2 }));
+        ctx.insert("geo", &serde_json::json!({
+            "source": "bundled", "database_type": "DBIP-Country-Lite",
+            "built": "2026-07-01", "age_days": 83, "ip_version": 6, "nodes": 1119298 }));
+        ctx.insert("geo_previous", &false);
+
+        let html = tera.render("updates.html", &ctx)
+            .unwrap_or_else(|e| panic!("updates.html failed to render: {e:#?}"));
+
+        for (what, why) in [
+            // The three kinds, in one place.
+            ("Rule sets",          "rule sets are not on the updates page"),
+            ("IP lists",           "IP lists are not on the updates page"),
+            ("Country database",   "the country database is still invisible"),
+            // What each one says about itself.
+            ("2026-07-01",         "the country database does not say when it was built"),
+            ("83 day",             "the age is left as arithmetic for the reader"),
+            ("DBIP-Country-Lite",  "the country database does not say what it is"),
+            ("2026092201",         "a list does not give its version"),
+            ("1342 ranges",        "a list does not say what is in force"),
+            ("2 policies",         "a list does not say who uses it"),
+            ("v1",                 "a policy behind does not say what it holds"),
+            ("v2",                 "a policy behind does not say what is offered"),
+            // And the two stages, named where somebody acts on them.
+            ("Update now",         "nothing can be fetched by hand"),
+            ("/updates/rules/fetch", "rule sets cannot be fetched by hand"),
+            ("/updates/lists/fetch", "IP lists cannot be fetched by hand"),
+            ("/updates/geo/fetch",   "the country database cannot be fetched by hand"),
+            ("Apply to websites",  "a policy behind cannot be brought up to date here"),
+        ] {
+            assert!(html.contains(what), "{why}");
+        }
+        // Applying returns to the page it was pressed on.
+        assert!(html.contains(r#"name="back" value="/updates""#),
+                "applying from here would land on another page");
+    }
+
     #[test]
     fn the_exclusions_page_is_reachable_from_the_menu() {
         // The page existed in 0.7.0 and was reachable only from an unlabelled

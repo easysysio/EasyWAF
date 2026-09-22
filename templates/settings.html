@@ -42,7 +42,7 @@
                         <i class="fa fa-file-text-o"></i> Logging</a></li>
                 <li role="presentation">
                     <a href="#tab-rules" data-toggle="tab" role="tab">
-                        <i class="fa fa-download"></i> Rule Updates</a></li>
+                        <i class="fa fa-download"></i> Updates</a></li>
             </ul>
 
             <div class="tab-content settings-tabs">
@@ -384,129 +384,14 @@
                 <div role="tabpanel" class="tab-pane" id="tab-rules">
 
             <div class="panel panel-default">
-                <div class="panel-heading"><h4>Rule Updates</h4></div>
+                <div class="panel-heading"><h4>Updates</h4></div>
                 <div class="panel-body">
-                    <div class="form-group">
-                        <div class="checkbox">
-                            <label>
-                                <input type="checkbox" name="rule_update_check" value="1"
-                                       {% if rule_update_check %}checked{% endif %}>
-                                Check the update channels for rule sets and IP lists
-                            </label>
-                        </div>
-                        <p class="help-block">
-                            Looked at on start and every six hours. <strong>Nothing is ever
-                            applied on its own</strong> — the Policy Manager shows which
-                            policies are behind, and applying is a button someone presses.
-                            An auto-applied bad rule is an outage across every site using
-                            that policy.
-                            <br>
-                            Published IP lists are fetched on the same schedule, and their
-                            data <em>is</em> refreshed automatically — but a list does nothing
-                            until it is switched on under <a href="/iplists">IP Lists</a>.
-                            <br>
-                            Turn it off on an installation with no outbound access, or one
-                            whose rules are managed by hand.
-                        </p>
-                    </div>
-
-                    <div class="form-group">
-                        <label>Channel</label>
-                        <input type="text" class="form-control" name="rule_update_url"
-                               value="{{ rule_update_url }}" spellcheck="false"
-                               style="font-family: monospace; font-size: 12px;"
-                               placeholder="{{ rule_update_default }}">
-                        <p class="help-block">
-                            Where the manifest and the sets are fetched from. Leave it empty
-                            for the default, <code>{{ rule_update_default }}</code>.
-                            <br>
-                            <strong>Pointing this elsewhere does not lower the bar.</strong>
-                            An update is applied only if the manifest carries a valid
-                            signature from the key in <code>rules/key.gpg</code>, which ships
-                            with EasyWAF, and only if the set matches the SHA-256 that signed
-                            manifest gives for it. A channel serving something else is
-                            refused, whoever it belongs to.
-                        </p>
-                    </div>
-
-                    <div class="form-group">
-                        <label>IP List Channel</label>
-                        <input type="text" class="form-control" name="ip_list_url"
-                               value="{{ ip_list_url }}" spellcheck="false"
-                               style="font-family: monospace; font-size: 12px;"
-                               placeholder="{{ ip_list_default }}">
-                        <p class="help-block">
-                            Where the published IP lists come from. Leave it empty for the
-                            default, <code>{{ ip_list_default }}</code>. The same rule applies
-                            as for rule sets: a list is loaded only if the manifest is signed by
-                            the key that ships with EasyWAF and the file matches its hash.
-                            <br>
-                            {% if ip_list_error %}
-                                <span class="text-danger"><i class="fa fa-exclamation-triangle"></i>
-                                    Last update failed: {{ ip_list_error }}</span>
-                                {% if ip_list_checked %}<small class="text-muted">— last worked {{ ip_list_checked }} UTC</small>{% endif %}
-                            {% elif ip_list_checked %}
-                                <span class="text-success"><i class="fa fa-check"></i>
-                                    Updated {{ ip_list_checked }} UTC</span>
-                            {% else %}
-                                <span class="text-muted">Not fetched yet</span>
-                            {% endif %}
-                        </p>
-                    </div>
-
-                    <div class="form-group">
-                        <label>Local Mirror</label>
-                        <p class="form-control-static">
-                            {% if mirror_error %}
-                                <span class="text-danger"><i class="fa fa-exclamation-triangle"></i>
-                                    {{ mirror_error }}</span>
-                            {% elif mirrored_sets > 0 %}
-                                <span class="text-success"><i class="fa fa-check"></i>
-                                    {{ mirrored_sets }} sets mirrored</span>
-                            {% else %}
-                                <span class="text-muted">Nothing mirrored yet</span>
-                            {% endif %}
-                        </p>
-                        <p class="help-block">
-                            The channel is copied to <code>{{ mirror_dir }}</code> on the same
-                            schedule as the check above, and installing a set reads from there
-                            rather than the network — so a set can be installed or updated with
-                            the channel unreachable.
-                            <br>
-                            <strong>The copy is not trusted for being local.</strong> The
-                            signature and the per-set hash are checked when a set is installed,
-                            exactly as they would be over the network. Editing a file in that
-                            directory does not install anything; it makes the install refuse.
-                            <br>
-                            A set the mirror does not have — published since the last sync —
-                            is fetched over the network as before.
-                        </p>
-                    </div>
-
-                    <div class="form-group">
-                        <label>Last Check</label>
-                        <p class="form-control-static">
-                            {% if rule_update_error %}
-                                <span class="text-danger"><i class="fa fa-exclamation-triangle"></i>
-                                    {{ rule_update_error }}</span>
-                                {% if rule_update_checked %}
-                                    <br><small class="text-muted">Last succeeded {{ rule_update_checked }} UTC.
-                                    The versions shown in the Policy Manager are from then.</small>
-                                {% endif %}
-                            {% elif rule_update_checked %}
-                                <span class="text-success"><i class="fa fa-check"></i>
-                                    {{ rule_update_checked }} UTC</span>
-                            {% else %}
-                                <span class="text-muted">Not checked yet</span>
-                            {% endif %}
-                        </p>
-                        <p class="help-block">
-                            A failure is shown here rather than logged every six hours. A WAF
-                            often runs where nothing outbound is allowed, and a proxy that
-                            fills its log with a repository it cannot reach teaches its
-                            operator to stop reading the log.
-                        </p>
-                    </div>
+                    <p class="help-block" style="margin:0">
+                        Rule sets, published IP lists and the country database moved to
+                        <a href="/updates"><strong>Settings &rarr; Updates</strong></a> in
+                        0.13.1 — one page for the three of them, with what each holds, when
+                        it last arrived, and what is waiting to be applied.
+                    </p>
                 </div>
             </div>
 

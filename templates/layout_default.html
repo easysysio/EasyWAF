@@ -165,6 +165,7 @@
                            offering controls it should not. #}
                         {% if is_admin | default(value=false) %}
                         <li><a href="/settings"><i class="fa fa-sliders"></i> General</a></li>
+                        <li><a href="/updates"><i class="fa fa-download"></i> Updates</a></li>
                         {% endif %}
                         <li><a href="/account"><i class="fa fa-key"></i> Change Password</a></li>
                         {% if is_admin | default(value=false) %}

@@ -1,0 +1,343 @@
+{% extends "layout_default.html" %}
+
+{% block content %}
+{% if result == "failed" %}
+<div class="alert alert-danger">
+    <i class="fa fa-exclamation-triangle"></i> {{ msg }}
+</div>
+{% endif %}
+{% if result == "success" %}
+<div class="alert alert-success">
+    <i class="fa fa-check"></i> {{ msg }}
+</div>
+{% endif %}
+
+<div class="row">
+    <div class="col-lg-11">
+
+        <div class="alert alert-info">
+            <i class="fa fa-download fa-fw"></i>
+            <strong>Everything that arrives from outside, in two stages.</strong>
+            A <em>fetch</em> reads the channel, checks the signature over its manifest
+            before reading anything from it, checks every file against the hash that
+            signed manifest gives, and puts what survives in the mirror beside the
+            database. <em>Applying</em> is what puts something in force.
+            <br>
+            <strong>IP lists and the country database apply as they arrive</strong> —
+            their value is their freshness. <strong>Rule sets wait for you</strong>: a
+            new pattern can refuse traffic that was fine yesterday, on every site using
+            the policy.
+        </div>
+
+        <!-- ── Channels and what is applied without asking ── -->
+        <div class="panel panel-default">
+            <div class="panel-heading"><strong><i class="fa fa-cog"></i> Channels</strong></div>
+            <div class="panel-body">
+                <form class="admin-only" method="post" action="/updates/settings">
+                    <div class="checkbox">
+                        <label>
+                            <input type="checkbox" name="check_enabled" value="1"
+                                   {% if check_enabled %}checked{% endif %}>
+                            <strong>Check the update channels</strong> — on start and every
+                            six hours
+                        </label>
+                        <p class="help-block" style="margin-left:20px">
+                            Turn it off on an appliance with no outbound access, or one whose
+                            rules are managed by hand. Nothing is fetched while it is off, and
+                            <strong>Update now</strong> is refused rather than quietly
+                            overriding it — such an installation uses Upload instead.
+                        </p>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Rule set channel</label>
+                        <input type="text" class="form-control" name="rules_url"
+                               value="{{ rules_url }}" spellcheck="false"
+                               style="font-family: monospace; font-size: 12px"
+                               placeholder="{{ rules_default }}">
+                    </div>
+                    <div class="form-group">
+                        <label>IP list channel</label>
+                        <input type="text" class="form-control" name="lists_url"
+                               value="{{ lists_url }}" spellcheck="false"
+                               style="font-family: monospace; font-size: 12px"
+                               placeholder="{{ lists_default }}">
+                        <p class="help-block">
+                            Empty means the default. <strong>Pointing either elsewhere lowers
+                            no bar</strong>: the manifest must still carry a valid signature
+                            from the key EasyWAF ships with, and every file must match the
+                            hash that manifest gives for it.
+                        </p>
+                    </div>
+
+                    <p><strong>Applied as it arrives</strong></p>
+                    <div class="checkbox">
+                        <label>
+                            <input type="checkbox" name="auto_lists" value="1"
+                                   {% if auto_lists %}checked{% endif %}>
+                            IP lists
+                        </label>
+                        <span class="text-muted" style="font-size:12px">
+                            — a refreshed list changes which addresses are on it, not what any
+                            policy decided to do about them
+                        </span>
+                    </div>
+                    <div class="checkbox">
+                        <label>
+                            <input type="checkbox" name="auto_geo" value="1"
+                                   {% if auto_geo %}checked{% endif %}>
+                            Country database
+                        </label>
+                        <span class="text-muted" style="font-size:12px">
+                            — a stale one mis-locates clients, quietly
+                        </span>
+                    </div>
+                    <div class="checkbox">
+                        <label>
+                            <input type="checkbox" name="auto_rules" value="1"
+                                   id="auto-rules" {% if auto_rules %}checked{% endif %}>
+                            <strong>Rule sets</strong>
+                        </label>
+                        <span class="text-warning" style="font-size:12px">
+                            — applies new patterns to every policy holding the set, with no
+                            way back yet
+                        </span>
+                    </div>
+
+                    <button type="submit" class="btn btn-primary" style="margin-top:8px">
+                        <i class="fa fa-check"></i> Save
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <!-- ── Rule sets ───────────────────────────────── -->
+        <div class="panel panel-default">
+            <div class="panel-heading" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+                <strong><i class="fa fa-shield"></i> Rule sets</strong>
+                <span class="text-muted" style="font-size:12px">
+                    {% if rules_checked %}channel read {{ rules_checked }} UTC{% else %}never read{% endif %}
+                </span>
+                <form class="admin-only" method="post" action="/updates/rules/fetch" style="margin:0 0 0 auto">
+                    <button type="submit" class="btn btn-default btn-sm">
+                        <i class="fa fa-refresh"></i> Update now
+                    </button>
+                </form>
+            </div>
+            <div class="panel-body">
+                {% if rules_error %}
+                <div class="alert alert-warning" style="margin-bottom:12px">
+                    <i class="fa fa-exclamation-triangle"></i>
+                    The last read failed: {{ rules_error }}.
+                    {% if rules_checked %}The mirror below is from {{ rules_checked }} UTC.{% endif %}
+                </div>
+                {% endif %}
+
+                {% if behind %}
+                <p class="help-block" style="margin-top:0">
+                    <strong>Waiting for you.</strong> A set is listed here only for a policy
+                    that holds it — an update to a set nobody installed is not news.
+                </p>
+                <div style="overflow-x:auto">
+                <table class="table table-hover">
+                    <thead>
+                        <tr><th>Policy</th><th>Set</th><th>Holds</th><th>Offered</th>
+                            <th class="admin-only"></th></tr>
+                    </thead>
+                    <tbody>
+                    {% for u in behind %}
+                        <tr class="warning">
+                            <td><a href="/policy/{{ u.policy_name }}/rules/sets">{{ u.policy_name }}</a></td>
+                            <td>{{ u.set_name }} <span class="label label-default">{{ u.set_id }}</span></td>
+                            <td>v{{ u.have }}</td>
+                            <td><strong>v{{ u.offered }}</strong></td>
+                            <td class="admin-only">
+                                <form method="post"
+                                      action="/policy/{{ u.policy_name }}/rules/update/{{ u.set_id }}"
+                                      style="margin:0">
+                                    <input type="hidden" name="back" value="/updates">
+                                    <button type="submit" class="btn btn-primary btn-xs">
+                                        Apply to {{ u.policy_name }}
+                                    </button>
+                                </form>
+                            </td>
+                        </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+                </div>
+                {% else %}
+                <p class="text-muted" style="margin-top:0">
+                    No policy is behind. Every set a policy holds is the version the mirror
+                    offers.
+                </p>
+                {% endif %}
+
+                {% if offered_sets %}
+                <p class="help-block" style="margin-bottom:4px"><strong>In the mirror</strong></p>
+                <div style="overflow-x:auto">
+                <table class="table table-condensed" style="font-size:12px">
+                    <thead><tr><th>Set</th><th>Version</th><th>Tier</th><th>Covers</th></tr></thead>
+                    <tbody>
+                    {% for s in offered_sets %}
+                        <tr>
+                            <td><code>{{ s.id }}</code></td>
+                            <td>v{{ s.version }}</td>
+                            <td>{% if s.tier %}<span class="label label-default">{{ s.tier }}</span>{% endif %}</td>
+                            <td>{{ s.name }}{% if s.description %} — {{ s.description }}{% endif %}</td>
+                        </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+                </div>
+                {% else %}
+                <p class="text-muted">
+                    The mirror holds no manifest yet. What ships with the binary is still
+                    available to install from a policy's Rule Sets page.
+                </p>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- ── Published IP lists ──────────────────────── -->
+        <div class="panel panel-default">
+            <div class="panel-heading" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+                <strong><i class="fa fa-hand-stop-o"></i> IP lists</strong>
+                <span class="text-muted" style="font-size:12px">
+                    {% if lists_fetched %}fetched {{ lists_fetched }} UTC{% else %}never fetched{% endif %}
+                </span>
+                <form class="admin-only" method="post" action="/updates/lists/fetch" style="margin:0 0 0 auto">
+                    <button type="submit" class="btn btn-default btn-sm">
+                        <i class="fa fa-refresh"></i> Update now
+                    </button>
+                </form>
+            </div>
+            <div class="panel-body">
+                {% if lists_error %}
+                <div class="alert alert-warning" style="margin-bottom:12px">
+                    <i class="fa fa-exclamation-triangle"></i> {{ lists_error }}
+                </div>
+                {% endif %}
+
+                {% if lists %}
+                <div style="overflow-x:auto">
+                <table class="table table-condensed" style="font-size:12px">
+                    <thead>
+                        <tr><th>List</th><th>Version</th><th>Entries</th><th>In force</th>
+                            <th>Used by</th><th>Source</th></tr>
+                    </thead>
+                    <tbody>
+                    {% for l in lists %}
+                        <tr {% if l.error %}class="warning"{% endif %}>
+                            <td><strong>{{ l.name }}</strong> <code>{{ l.id }}</code></td>
+                            <td>{{ l.version }}</td>
+                            <td>{{ l.entries }}</td>
+                            <td>
+                                {% if l.error %}
+                                <span class="text-danger">not loaded — {{ l.error }}</span>
+                                {% else %}
+                                {{ l.ranges }} ranges
+                                {% if l.unreadable > 0 %}
+                                <br><small class="text-warning">{{ l.unreadable }} unreadable lines</small>
+                                {% endif %}
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% set used = lists_in_use[l.id] | default(value=0) %}
+                                {% if used > 0 %}
+                                {{ used }} polic{% if used == 1 %}y{% else %}ies{% endif %}
+                                {% else %}
+                                <span class="text-muted">no policy</span>
+                                {% endif %}
+                            </td>
+                            <td><small>{{ l.attribution }}</small></td>
+                        </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+                </div>
+                <p class="help-block">
+                    A list does nothing until a policy switches it on — under
+                    <a href="/iplists">IP Lists</a>, per policy or for all of them.
+                </p>
+                {% else %}
+                <p class="text-muted">Nothing has been fetched from the list channel yet.</p>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- ── Country database ────────────────────────── -->
+        <div class="panel panel-default">
+            <div class="panel-heading" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+                <strong><i class="fa fa-flag"></i> Country database</strong>
+                <form class="admin-only" method="post" action="/updates/geo/fetch" style="margin:0 0 0 auto">
+                    <button type="submit" class="btn btn-default btn-sm">
+                        <i class="fa fa-refresh"></i> Update now
+                    </button>
+                </form>
+            </div>
+            <div class="panel-body">
+                {% if geo %}
+                <table class="table table-condensed" style="font-size:13px;max-width:640px">
+                    <tbody>
+                        <tr>
+                            <td style="width:180px">Database</td>
+                            <td><code>{{ geo.database_type }}</code></td>
+                        </tr>
+                        <tr>
+                            <td>Built</td>
+                            <td>
+                                {% if geo.built %}
+                                {{ geo.built }}
+                                <span class="{% if geo.age_days > 120 %}text-warning{% else %}text-muted{% endif %}">
+                                    — {{ geo.age_days }} day{% if geo.age_days != 1 %}s{% endif %} ago
+                                </span>
+                                {% else %}
+                                <span class="text-muted">the file does not say</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        <tr>
+                            <td>Where it came from</td>
+                            <td>
+                                {% if geo.source == "bundled" %}
+                                Compiled into EasyWAF — DB-IP Lite, CC BY 4.0
+                                <span class="label label-success">signed</span>
+                                {% elif geo.source == "configured" %}
+                                <code>geoip_db</code> in config.toml
+                                <span class="label label-default">not signed</span>
+                                {% elif geo.source == "channel" %}
+                                The signed channel
+                                <span class="label label-success">signed</span>
+                                {% else %}
+                                Uploaded here
+                                <span class="label label-default">not signed</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        <tr>
+                            <td>Covers</td>
+                            <td>IPv{{ geo.ip_version }}{% if geo.ip_version == 6 %} and IPv4{% endif %},
+                                {{ geo.nodes }} nodes</td>
+                        </tr>
+                    </tbody>
+                </table>
+                <p class="help-block">
+                    Lookups never leave this host. A database named in
+                    <code>config.toml</code> is always the one used — a deliberate local
+                    choice is not overridden from a web page.
+                    {% if geo_previous %}
+                    <br>The database this one replaced is kept, so it can be put back.
+                    {% endif %}
+                </p>
+                {% else %}
+                <p class="text-danger">
+                    No country database is loaded, so country rules match nothing.
+                </p>
+                {% endif %}
+            </div>
+        </div>
+
+    </div>
+</div>
+{% endblock %}

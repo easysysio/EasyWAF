@@ -17,6 +17,7 @@ pub mod settings;
 pub mod setup;
 pub mod sites;
 pub mod traffic;
+pub mod updates;
 
 // ─── who_context ─────────────────────────────────────────
 

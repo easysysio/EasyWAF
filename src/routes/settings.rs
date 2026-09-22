@@ -105,9 +105,6 @@ pub struct SettingsForm {
     pub acme_directory:         Option<String>,
     pub trusted_proxies:        Option<String>,
     pub body_inspect_kb:        Option<String>,
-    pub rule_update_check:      Option<String>,
-    pub rule_update_url:        Option<String>,
-    pub ip_list_url:            Option<String>,
     pub syslog_enabled:         Option<String>,
     pub syslog_host:            Option<String>,
     pub syslog_port:            Option<String>,
@@ -402,26 +399,9 @@ pub async fn post_settings_update(
     // collector rather than the one this appliance was started with.
     state.logger.set_collector(syslog_target(&state.db).await);
 
-    // The update channels, rule sets and IP lists, each checked before it is
-    // stored — see `channel_url`.
-    //
-    // An empty field means the default, not "no channel" — turning the check
-    // off is the checkbox, and conflating the two would leave a checked box
-    // that quietly does nothing.
-    let channel = match channel_url(form.rule_update_url.as_deref(), "Rule channel") {
-        Ok(c)  => c,
-        Err(e) => return flash_redirect("/settings", "failed", &e),
-    };
-    let lists_channel = match channel_url(form.ip_list_url.as_deref(), "IP list channel") {
-        Ok(c)  => c,
-        Err(e) => return flash_redirect("/settings", "failed", &e),
-    };
-    set_setting(&state.db, crate::rules_update::KEY_URL, &channel).await?;
-    set_setting(&state.db, crate::iplist_feeds::KEY_URL, &lists_channel).await?;
-
-    // An unticked checkbox sends nothing at all, so the absence is the answer.
-    let check = form.rule_update_check.is_some();
-    set_setting(&state.db, crate::rules_update::KEY_ENABLED, if check { "1" } else { "0" }).await?;
+    // The update channels and the switches that govern them are owned by the
+    // Updates page since 0.13.1, and are deliberately not touched here: a
+    // setting written from two forms is a setting one of them resets.
 
     set_setting(&state.db, KEY_MANAGEMENT_CERT, &mgmt).await?;
     set_setting(&state.db, KEY_TLS_PROFILE, profile.as_str()).await?;
@@ -455,7 +435,7 @@ pub async fn post_settings_update(
 /// http or https URL. Checked before it is stored, because a channel that is
 /// not fetchable fails hours later in a background task, and the only sign of
 /// it would be a "last check" that never advances.
-fn channel_url(raw: Option<&str>, what: &str) -> std::result::Result<String, String> {
+pub(crate) fn channel_url(raw: Option<&str>, what: &str) -> std::result::Result<String, String> {
     let channel = raw.unwrap_or("").trim().to_string();
     if channel.is_empty() {
         return Ok(channel);
@@ -613,7 +593,7 @@ pub async fn get_trusted_proxies(db: &SqlitePool) -> String {
 }
 
 /// Fetch one raw setting value. None when the key is not present.
-async fn get_setting(db: &SqlitePool, key: &str) -> Option<String> {
+pub(crate) async fn get_setting(db: &SqlitePool, key: &str) -> Option<String> {
     sqlx::query_scalar!("SELECT value FROM settings WHERE key = ?", key)
         .fetch_optional(db)
         .await
@@ -622,7 +602,7 @@ async fn get_setting(db: &SqlitePool, key: &str) -> Option<String> {
 }
 
 /// Insert or replace one setting value.
-async fn set_setting(db: &SqlitePool, key: &str, value: &str) -> Result<()> {
+pub(crate) async fn set_setting(db: &SqlitePool, key: &str, value: &str) -> Result<()> {
     sqlx::query!(
         "INSERT INTO settings (key, value, updated_at)
          VALUES (?, ?, datetime('now'))

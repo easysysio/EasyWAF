@@ -60,6 +60,7 @@ pub async fn post_apply_rule_update(
     _jar: SignedCookieJar,
     _: Admin,
     Path((name, set_id)): Path<(String, String)>,
+    Form(form): Form<HashMap<String, String>>,
 ) -> Result<Response> {
 
     let policy_id: Option<i64> =
@@ -71,7 +72,12 @@ pub async fn post_apply_rule_update(
         return flash_redirect("/policy", "failed", "No such policy");
     };
 
-    let back = format!("/policy/{}/rules/sets", urlencoding::encode(&name));
+    // Applying is offered from two places — the policy's own Rule Sets page and
+    // the Updates page that lists every policy behind — and each returns where
+    // it was pressed.
+    let back = crate::routes::safe_back(
+        form.get("back").map(String::as_str),
+        &format!("/policy/{}/rules/sets", urlencoding::encode(&name)));
 
     match crate::rules_update::apply(&state.db, policy_id, &set_id).await {
         Ok(msg) => flash_redirect(&back, "success", &msg),

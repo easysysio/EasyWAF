@@ -778,6 +778,18 @@ pub async fn status(db: &SqlitePool) -> (Option<String>, Option<String>) {
     (fetched, error)
 }
 
+/// Every set the mirrored manifest offers, with its version.
+///
+/// What the channel has, as distinct from what a policy holds — the Updates
+/// page shows both, and the difference between them is the whole notion of
+/// being behind.
+pub async fn offered(db: &SqlitePool) -> Vec<OfferedSet> {
+    match cached_manifest(db).await {
+        Some(text) => parse_manifest(&text),
+        None       => Vec::new(),
+    }
+}
+
 async fn cached_manifest(db: &SqlitePool) -> Option<String> {
     get(db, KEY_MANIFEST).await.filter(|v| !v.trim().is_empty())
 }
