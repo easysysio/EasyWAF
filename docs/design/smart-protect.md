@@ -91,11 +91,19 @@ query string happens to look like SQL.
 * **Refused, or would have been** — counts. This is the whole of it.
 * **A rule matched and the request was served** — does not. That is the WAF
   working as intended.
-* **A CAPTCHA challenge** — does not, by default. A challenge means "maybe a
-  person", and a person who is asked is not an attacker. A *failed* challenge
-  is a reasonable signal and can be offered as a switch; the default is off,
-  because failing a CAPTCHA is also what a person does when the picture is
-  unreadable.
+* **A CAPTCHA challenge, passed or failed** — does not. Yariv, 2026-09-22: a
+  failed challenge is itself a refusal, so it is already the answer rather than
+  evidence towards a different one. A visitor who cannot read the picture is
+  the other person it happens to, and neither of them should accumulate towards
+  a ten-minute ban.
+
+  **This is already true mechanically, which is the best kind of rule.** A
+  challenged request is logged with `blocked = false` and no detection — it is
+  a 200 with a puzzle in it — so both the live counter and the history preview
+  exclude it without a special case for challenges existing anywhere. A failed
+  answer is not recorded as an event at all: the verify path re-renders the
+  page. Counting failures would mean first inventing the record, which is a
+  second reason not to.
 
 ## Where the state lives
 
@@ -168,6 +176,7 @@ inform a decision, not to replace one.
 several EasyWAF installations have seen is a different product with different
 consent questions, and nothing here should quietly become the first half of it.
 
-**Blocking on anything but refusals.** Response codes, request rates and
-payload sizes are rate limiting's business, and mixing them in here would make
-"attacking" mean whatever the last person to edit the definition thought.
+**Blocking on anything but refusals.** Response codes, request rates, payload
+sizes and failed challenges are all either rate limiting's business or already
+an answer of their own. Mixing them in would make "attacking" mean whatever the
+last person to edit the definition thought, and the definition is the feature.
