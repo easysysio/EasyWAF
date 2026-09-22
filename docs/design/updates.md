@@ -88,6 +88,34 @@ It is also what an operator who wants the automatic half switched off needs: a
 fetch that is held rather than applied has to sit somewhere that is not in
 force.
 
+## Fetching by hand
+
+**An Update now beside each kind**, because waiting six hours to find out
+whether a channel is reachable is not a way to diagnose anything, and because
+somebody who has just fixed a proxy or a firewall rule wants to know now.
+
+Where each stands today:
+
+| Kind | Fetch on demand |
+|---|---|
+| IP lists | **exists** — the button on the IP Lists page; it moves here |
+| Rule sets | **the function exists and nothing calls it**: `sync_cache` fetches, verifies and mirrors the channel, and is reachable only from the six-hourly task. There is no route and no button |
+| Country database | nothing to press, because there is nothing to press it for yet |
+
+**It says what it found**, in the three words that differ: a newer version is
+here, everything is already current, or the channel could not be read and why.
+"Nothing happened" is the answer people re-press buttons over.
+
+**It respects the switch.** Pressing Update now on an installation that has
+turned checking off is refused rather than quietly overriding it — that switch
+is how an installation says it must not reach out at all, and a button that
+ignored it would make it a suggestion. The route for those installations is
+upload, below, and the refusal should say so rather than just declining.
+
+**What a hand fetch does not do is apply.** It fills the mirror; what happens
+next is the split above — lists and the country database go into force, rule
+sets wait for somebody. The button's message should not blur the two.
+
 ## Upload, for an appliance off the grid
 
 **The same bundle, a different transport.** An operator downloads the channel's
@@ -270,6 +298,8 @@ carry the same risk.
 * **The copy that was replaced is kept**, so an applied update can be undone
   for lists and for the country database, and so a held fetch has somewhere to
   wait when the automatic half is switched off.
+* **Update now** for each kind, including rule sets, whose fetch exists as a
+  function with nothing calling it.
 * **Upload** of a signed bundle — rule sets and IP lists — verified exactly as
   a download is.
 * **The country database**: what is in force, an update from the signed channel
