@@ -45,6 +45,19 @@ words:
 * **Country database** — what is in force (the bundled DB-IP Lite, a file from
   the channel, or one an administrator supplied) and its date.
 
+**Nothing is applied by itself, and that now includes lists.** Yariv's rule,
+2026-09-22: an update is fetched, a notification appears, and somebody applies
+it. Rule sets already work that way. Lists do not — today a switched-on list's
+ranges are replaced the moment a fresh copy is fetched — and under this rule
+they stop: a fetched list waits, like a set, until it is applied.
+
+That is a real trade-off and it is the operator's to make. A list whose value
+is freshness goes stale until somebody clicks: Tor exits turn over in under an
+hour, and a list applied on Monday is describing Monday's network on Friday.
+What it buys is that no third party's mistake reaches traffic without a person
+in between — and the guards in `publish-lists.sh` exist because a source
+serving an error page or an empty file is a thing that happens.
+
 **Two stages, named.** They already exist and are already the right model; the
 interface does not say so.
 
@@ -54,9 +67,19 @@ interface does not say so.
    database: `rules-cache/`, `lists-cache/`. Nothing that fails verification is
    written.
 2. **Install** — a set is imported *into a policy*, which is why one policy can
-   hold v2 while another has v3. IP lists and the country database have no
-   second stage: switching a list on is a policy's own decision, and the
-   database is one file for the host.
+   hold v2 while another has v3. A list is put in force for the installation,
+   which is where its ranges are parsed and shared; which policies use it, and
+   what they do about it, is theirs and is not touched by an update. The
+   country database is one file for the host.
+
+**In force and available are different copies.** A fetch cannot overwrite what
+is serving traffic, or "apply" would mean nothing. The mirror keeps what is in
+force where it is now — `rules-cache/`, `lists-cache/` — and what has been
+fetched beside it; applying is a rename, which is what the fetch already does
+to stage a download. The copy that was in force is kept rather than deleted,
+which is where the rollback the 0.6.0 note asked for comes from for lists and
+for the country database, nearly free. Sets are the harder case and are dealt
+with below.
 
 ## Upload, for an appliance off the grid
 
@@ -96,6 +119,22 @@ in `config.toml`, when set, stays the last word: it is a deliberate local
 choice, and a file uploaded through the GUI must not silently override what an
 operator wrote in a file.
 
+## The notification
+
+**In the menu, because that is where somebody is when they are not looking for
+it.** Today `available()` computes exactly the right thing — a set is reported
+only for a policy that actually holds it, because an update to a set nobody has
+installed is not news and reporting it trains people to ignore the notice — and
+it is shown on one page. It should carry a count in the navigation, covering
+all three kinds: policies behind, lists with a newer version fetched, and a
+newer country database.
+
+**Quiet when offline**, as the 0.6.0 note insisted: a channel that cannot be
+reached is not a badge, not a banner, and not a log line every six hours. The
+badge counts updates that are *here and unapplied*, which is a different fact
+from "we could not reach the channel", and the second belongs on the Updates
+page where somebody has gone to look.
+
 ## Applying: from the policy, or from here
 
 Per policy is where it happens now, and that stays: a set is installed into a
@@ -129,24 +168,51 @@ exactly the situation an automatic apply makes more likely and harder to spot.
 The 0.6.0 note said *keep the previous version on disk so there is a way back*,
 and that is still the prerequisite.
 
+**So the default is notify, for all three kinds** — and an operator who wants
+updates applied for them can say so. Yariv's shape, 2026-09-22: *"for those
+that take responsibility, maybe we can create a setting that will allow
+automatic update (after a warning)"*.
+
+**Off by default, one switch per kind**, because the three are not the same
+risk and an operator who wants fresh lists without the WAF rewriting its own
+rules should be able to say exactly that:
+
+| Switch | What it costs when it goes wrong |
+|---|---|
+| Apply IP lists automatically | Somebody else's list decides what this WAF refuses, the moment it is published |
+| Apply the country database automatically | A reassignment moves a client into a blocked country |
+| Apply rule sets automatically | A new pattern refuses traffic that was fine yesterday, on every site using the policy |
+
+**The warning is shown when the switch is turned on, not buried under it**, and
+says which of those it is. Turning it on is the operator taking the
+responsibility; the interface's part is making sure they know what they took.
+
+**Rule sets keep their prerequisite even so.** `install_set` overwrites each
+rule in place and only the enabled flag survives, so there is no previous
+version to go back to. Rollback is what turns an automatic apply from a gamble
+into a decision, and it is the next thing after this release. Until it exists
+the switch for rule sets should say so plainly rather than pretending the three
+carry the same risk.
+
 **Proposed sequence:**
 
-1. **0.13.1** — the section, upload, the country database, and the central
-   view of which policies are behind. Automatic apply for data (already true)
-   and not for signatures.
+1. **0.13.1** — the section, the notification, upload, the country database,
+   the central view, held-until-applied for lists, and the three switches,
+   all off.
 2. **Next** — keep the previous version of a set per policy, so an update can
    be reverted in one click and a diff can be shown before it is applied.
-3. **Then** — automatic apply for signatures, **per policy** rather than
-   appliance-wide, so the applications can track automatically while the public
-   sites do not, or the reverse. Paired with rollback, this is a defensible
-   default rather than a gamble.
-
-If it is wanted sooner than rollback, it should at least be per policy and
-off by default, and the switch should say plainly what it costs.
+3. **Then** — whether the rule-set switch should also be settable per policy,
+   so the applications can track automatically while the public sites do not.
 
 ## What 0.13.1 includes
 
 * Settings → **Updates**, replacing Rule Updates, with the three parts.
+* **A count in the menu** of updates fetched and not applied, quiet when the
+  channel cannot be reached.
+* **Held until applied**, for lists as well as sets: a fetch no longer changes
+  what is serving traffic.
+* **Three switches, off by default**, each with its warning at the moment it is
+  turned on, for an operator who wants updates applied without being asked.
 * **Upload** of a signed bundle — rule sets and IP lists — verified exactly as
   a download is.
 * **The country database**: what is in force, an update from the signed channel
@@ -156,7 +222,7 @@ off by default, and the switch should say plainly what it costs.
 
 ## What it does not include
 
-* Automatic apply of rule sets. See above.
+* Automatic apply as a *default*. The switches exist; all three start off.
 * Rollback. It is the next thing, and it is what makes the point above
   possible.
 * Any change to the publishing side: `github2repo.sh --rules` and `--lists`
