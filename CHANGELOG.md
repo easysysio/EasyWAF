@@ -6,13 +6,14 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
-## [Unreleased]
+## [0.13.1] — 2026-09-22
 
 ### Added
 - **Settings → Updates**: rule sets, published IP lists and the country database in one page, each saying what it holds, when it last arrived and what is waiting to be applied — replacing a panel named after one of the three, and showing the country database, which nothing in the interface reported before.
 - The country database now says what it is, when it was built and how long ago, what it covers, where it came from, and whether that path was signature-verified.
 - **Update now** for each kind, including rule sets, whose fetch existed with nothing calling it. It says what it found, and is refused — with the way in named — on an installation that has turned checking off.
 - **Upload**, for an appliance with no outbound access: a rule set or IP list bundle — the manifest, its signature and the files it names — is checked exactly as a download is, so a bundle whose signature does not verify or whose files do not match their hashes is refused and the mirror is left as it was. A country database can be uploaded too, and is marked as what it is: nobody signs those, so it is checked for being a database and recorded as unverified.
+- The country database an update replaced is kept, and can be put back from the page — the only way back there is, since rule sets are overwritten in place.
 - Every policy that is behind is listed in one place, with the same apply as its own page, and applying from there returns there.
 
 - A count in the Settings menu of what has arrived and not been applied — rule sets a policy holds at an older version than the mirror offers, and a list bundle fetched on an installation that applies lists by hand. A channel that cannot be reached is not counted: that is a different fact and it appears on the page.

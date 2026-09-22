@@ -1,7 +1,8 @@
 # Design note — updates: signatures, IP lists and the country database
 
-Status: planned for **0.13.1** — see [roadmap.md](roadmap.md). Yariv's shape,
-2026-09-22.
+Status: **shipped in 0.13.1**, 2026-09-22 — see *What was built* at the end,
+including the one part that needs the publishing side before it does anything.
+Yariv's shape, argued out over four turns the same day.
 
 Most of this is not new design. Three of its four parts were specified in
 [rule-repository.md](rule-repository.md) for 0.6.0 and never built:
@@ -315,3 +316,56 @@ carry the same risk.
   possible.
 * Any change to the publishing side: `github2repo.sh --rules` and `--lists`
   are unaffected, and an uploaded bundle is the same bundle they publish.
+
+## What was built (0.13.1)
+
+**The country database can account for itself.** An `.mmdb` carries its own
+metadata and nothing read it, so the one question anybody asks — how old is
+this — had no answer in the product. It now reports what it is, when it was
+built and how many days ago, what it covers, which of the four paths loaded it,
+and whether that path was verified. Where it came from is recorded beside the
+file rather than inferred, because a `.mmdb` cannot say whether anybody checked
+a signature over it. A database can be swapped in without a restart, which
+0.3.0 made possible and nothing had used.
+
+**One page, and the two stages named on it.** Settings → Updates replaced a
+panel named after one of the three kinds it governed. The channels and their
+switch moved with it, because a setting written from two forms is a setting one
+of them resets.
+
+**Update now for each kind**, including rule sets, whose fetch existed as a
+function nothing called. It says what it found, and is refused — pointing at
+upload — on an installation that has turned checking off.
+
+**Upload takes the same path as a download.** Both channels build their mirror
+through one function that takes a manifest, its signature and the files it
+names, however they arrived. A bundle missing its signature, carrying a changed
+file, or missing a file the manifest names is refused with the reason, and the
+mirror is left as it was. The country database is the exception it has to be:
+nobody signs those, so an uploaded one is checked for being a database and
+recorded as unverified.
+
+**The split holds.** Lists and the country database apply as they arrive; rule
+sets wait. Each has a switch, and with lists set to apply by hand a fetch waits
+beside the mirror — verified on the way in and again on the way out — while
+what is serving traffic stays put. With rule sets set to apply automatically,
+every policy holding an updated set is brought up to date on the next check and
+each is logged by name.
+
+**The count in the menu** is what has arrived and not been applied, held in
+memory because every page draws the navigation, and recounted whenever anything
+could have changed it. A channel that cannot be reached is not counted.
+
+### Still to do
+
+**The country database has no channel to fetch from.** The client side is
+built and refuses honestly — *"not published to a channel yet: upload one, or
+point geoip_db at a file"* — but publishing needs a DB-IP entry in the rules
+repository and a `--geo` mode in `github2repo.sh`. Until that exists, upload
+and `geoip_db` are the routes that work, and the switch for applying it
+automatically governs nothing.
+
+**Rollback for rule sets** remains the prerequisite for making automatic apply
+a defensible default rather than a decision an operator takes on. It is the
+next thing, and the mirror already keeps the copy an update replaced, which is
+the same idea one level up.
