@@ -140,7 +140,7 @@ is reported as such, not as the published list that happens to agree.
 ### Where they come from
 
 From the same signed channel as rule sets, on the same schedule, and only if
-**Settings → Rule Updates** allows checking the update channels. Nothing is
+**Settings → [Updates](updates.md)** allows checking the update channels. Nothing is
 loaded unless the manifest carries a valid signature from the key that ships
 with EasyWAF and each file matches the hash that manifest gives for it — on
 every load, not only on download. A list whose copy on disk has been altered is

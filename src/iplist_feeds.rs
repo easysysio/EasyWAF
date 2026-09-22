@@ -222,9 +222,70 @@ pub async fn sync(db: &SqlitePool) -> Result<usize, String> {
         files.insert(list.id.clone(), fetch(format!("{base}/{}", list.file)).await?);
     }
 
-    let written = install_bundle(&manifest, &signature, &files)?;
-    tracing::info!(lists = written, "Mirrored the IP list channel");
-    Ok(written)
+    // Applied as it arrives unless this installation says otherwise. A list's
+    // value is its freshness, so that is the default; an installation with
+    // change control that forbids it turns the switch off and applies by hand.
+    if crate::routes::updates::auto(db, crate::routes::updates::KEY_AUTO_LISTS).await {
+        let written = install_bundle(&manifest, &signature, &files)?;
+        tracing::info!(lists = written, "Mirrored the IP list channel");
+        return Ok(written);
+    }
+
+    let held = cache_dir().with_extension("held");
+    let _ = std::fs::remove_dir_all(&held);
+    std::fs::create_dir_all(held.join(FILES)).map_err(|e| format!("{}: {e}", held.display()))?;
+    for list in &offered {
+        if let Some(body) = files.get(&list.id) {
+            // Checked before it is written, even though it is not in force: a
+            // held bundle that cannot verify is not worth keeping.
+            if sha256_hex(body) != list.sha256 {
+                let _ = std::fs::remove_dir_all(&held);
+                return Err(format!("{} does not match the signed manifest", list.file));
+            }
+            std::fs::write(local_file(&held, &list.id), body)
+                .map_err(|e| format!("{}: {e}", list.id))?;
+        }
+    }
+    std::fs::write(held.join(MANIFEST), &manifest).map_err(|e| format!("{MANIFEST}: {e}"))?;
+    std::fs::write(held.join(SIGNATURE), signature.as_bytes())
+        .map_err(|e| format!("{SIGNATURE}: {e}"))?;
+
+    tracing::info!(lists = offered.len(),
+                   "Fetched the IP list channel and held it — this installation applies lists by hand");
+    Ok(offered.len())
+}
+
+/// A bundle that was fetched and not put in force, because this installation
+/// applies lists by hand.
+///
+/// It sits beside the mirror rather than in it: what is serving traffic must
+/// not change because something was fetched.
+pub fn held_bundle() -> Option<std::path::PathBuf> {
+    let held = cache_dir().with_extension("held");
+    held.join(MANIFEST).exists().then_some(held)
+}
+
+/// Put a held bundle in force.
+pub fn apply_held() -> Result<usize, String> {
+    let Some(held) = held_bundle() else {
+        return Err("nothing has been fetched that is waiting to be applied".to_string());
+    };
+    let manifest = std::fs::read(held.join(MANIFEST)).map_err(|e| format!("{MANIFEST}: {e}"))?;
+    let signature = std::fs::read_to_string(held.join(SIGNATURE))
+        .map_err(|e| format!("{SIGNATURE}: {e}"))?;
+
+    // Read back through the same door it came in by: verified again here, so
+    // anything that changed the held copy on disk is caught before it serves.
+    let mut files = HashMap::new();
+    for list in parse_manifest(&String::from_utf8_lossy(&manifest)) {
+        if let Ok(body) = std::fs::read(local_file(&held, &list.id)) {
+            files.insert(list.id.clone(), body);
+        }
+    }
+    let n = install_bundle(&manifest, &signature, &files)?;
+    let _ = std::fs::remove_dir_all(&held);
+    reload();
+    Ok(n)
 }
 
 /// Build the list mirror from a manifest, its signature and the files it

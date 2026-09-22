@@ -140,7 +140,7 @@ When you apply one:
 - Rules you cloned are untouched, and a rule dropped from the set is left rather
   than deleted.
 
-Under **Settings → Rule Updates** you can turn the check off — an appliance with
+Under **Settings → [Updates](updates.md)** you can turn the check off — an appliance with
 no outbound access should not keep trying — or point it at a different channel.
 Pointing it elsewhere relaxes nothing: the signature and hash checks are the same
 wherever the manifest came from, and the trusted key ships with EasyWAF.

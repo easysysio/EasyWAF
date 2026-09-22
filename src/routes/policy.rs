@@ -79,7 +79,12 @@ pub async fn post_apply_rule_update(
         form.get("back").map(String::as_str),
         &format!("/policy/{}/rules/sets", urlencoding::encode(&name)));
 
-    match crate::rules_update::apply(&state.db, policy_id, &set_id).await {
+    let outcome = crate::rules_update::apply(&state.db, policy_id, &set_id).await;
+    // The navigation's count is what somebody reads to know whether anything
+    // is still waiting, so it moves when this does.
+    crate::routes::updates::refresh_waiting(&state.db).await;
+
+    match outcome {
         Ok(msg) => flash_redirect(&back, "success", &msg),
         // Reported verbatim. A refusal here is a signature that did not verify
         // or content that did not match its hash, and paraphrasing that into
@@ -128,6 +133,8 @@ pub async fn post_remove_rule_set(
             "Removed {set_id} — {removed} rules deleted, {n} rules you cloned from it kept"
         ),
     };
+    // A set nobody holds is a set nothing is waiting for.
+    crate::routes::updates::refresh_waiting(&state.db).await;
     flash_redirect(&back, "success", &msg)
 }
 
@@ -806,6 +813,8 @@ pub async fn post_policy_setup(
             ids.len()
         )
     };
+    crate::routes::updates::refresh_waiting(&state.db).await;
+
     if failed.is_empty() {
         flash_redirect(&back, "success", &msg)
     } else {

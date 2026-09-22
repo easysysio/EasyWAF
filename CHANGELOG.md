@@ -15,6 +15,9 @@ Version bumps and tags are created only after explicit approval.
 - **Upload**, for an appliance with no outbound access: a rule set or IP list bundle — the manifest, its signature and the files it names — is checked exactly as a download is, so a bundle whose signature does not verify or whose files do not match their hashes is refused and the mirror is left as it was. A country database can be uploaded too, and is marked as what it is: nobody signs those, so it is checked for being a database and recorded as unverified.
 - Every policy that is behind is listed in one place, with the same apply as its own page, and applying from there returns there.
 
+- A count in the Settings menu of what has arrived and not been applied — rule sets a policy holds at an older version than the mirror offers, and a list bundle fetched on an installation that applies lists by hand. A channel that cannot be reached is not counted: that is a different fact and it appears on the page.
+- With IP lists set to apply by hand, a fetched bundle is held and what is serving traffic does not change until it is applied; with rule sets set to apply automatically, every policy holding an updated set is brought up to date on the next check, and each one is logged by name.
+
 ### Changed
 - The update channels and the switch that governs them moved from Settings → General to Settings → Updates, which now owns them; the three kinds each have their own "apply as it arrives" switch, on for lists and the country database and off for rule sets.
 

@@ -36,6 +36,10 @@ pub fn who_context(ctx: &mut tera::Context, session: &crate::auth::SessionData) 
     ctx.insert("username", &session.username);
     ctx.insert("role",     &session.role);
     ctx.insert("is_admin", &session.is_admin());
+    // What has arrived and not been applied, for the navigation. Read from
+    // memory, not counted here: every page renders the navigation, and this
+    // changes a few times a day.
+    ctx.insert("updates_waiting", &crate::routes::updates::waiting());
 }
 
 // ─── flash_redirect ──────────────────────────────────────

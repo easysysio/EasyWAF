@@ -156,7 +156,11 @@
                     </ul>
                 </li>
                 <li>
-                    <a href="#"><i class="fa fa-cog fa-fw"></i> Settings <span class="fa arrow"></span></a>
+                    <a href="#"><i class="fa fa-cog fa-fw"></i> Settings
+                        {% if updates_waiting | default(value=0) > 0 %}
+                        <span class="label label-warning">{{ updates_waiting }}</span>
+                        {% endif %}
+                        <span class="fa arrow"></span></a>
                     <ul class="nav nav-second-level">
                         {# Offered only to those who may use them. The route's own
                            extractor is what refuses; this stops the menu from
@@ -165,7 +169,10 @@
                            offering controls it should not. #}
                         {% if is_admin | default(value=false) %}
                         <li><a href="/settings"><i class="fa fa-sliders"></i> General</a></li>
-                        <li><a href="/updates"><i class="fa fa-download"></i> Updates</a></li>
+                        <li><a href="/updates"><i class="fa fa-download"></i> Updates
+                            {% if updates_waiting | default(value=0) > 0 %}
+                            <span class="label label-warning">{{ updates_waiting }}</span>
+                            {% endif %}</a></li>
                         {% endif %}
                         <li><a href="/account"><i class="fa fa-key"></i> Change Password</a></li>
                         {% if is_admin | default(value=false) %}

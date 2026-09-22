@@ -55,7 +55,7 @@ sit on a mounted volume to survive at all.
 | **TLS** | Version profile, cipher suites, the management certificate, the ACME contact address and directory |
 | **Proxy** | Trusted proxies — whose `X-Forwarded-For` is believed — and how much of each request body the rules inspect |
 | **Logging** | The syslog collector for flow logs |
-| **Rule Updates** | Whether to check the channel, and which channel |
+| **[Updates](updates.md)** | Rule sets, IP lists and the country database: the channels, what is in force, and what is waiting |
 | **Accounts** | Accounts and roles |
 
 Sites, policies, rules, exclusions and certificates have pages of their own.

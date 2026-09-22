@@ -25,6 +25,8 @@ use axum::{
 use axum_extra::extract::cookie::SignedCookieJar;
 use serde::Deserialize;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::OnceLock;
 use tera::Context;
 
 /// Settings keys owned by this page.
@@ -36,6 +38,39 @@ use tera::Context;
 pub const KEY_AUTO_LISTS: &str = "auto_apply_lists";
 pub const KEY_AUTO_GEO:   &str = "auto_apply_geo";
 pub const KEY_AUTO_RULES: &str = "auto_apply_rules";
+
+// ─── What is waiting for a person ────────────────────────
+
+/// How many updates have arrived and not been applied.
+///
+/// Held in memory rather than counted per page: every page in the interface
+/// renders the navigation, and a query on each of them to draw a badge would
+/// be a database read for something that changes a few times a day. It is
+/// recomputed when anything could have changed it — a check, a fetch, an
+/// upload, an apply — and at startup.
+static WAITING: OnceLock<AtomicI64> = OnceLock::new();
+
+fn waiting_cell() -> &'static AtomicI64 {
+    WAITING.get_or_init(|| AtomicI64::new(0))
+}
+
+/// The count the navigation draws.
+pub fn waiting() -> i64 {
+    waiting_cell().load(Ordering::Relaxed)
+}
+
+/// Count what is waiting, and remember it.
+///
+/// Rule sets a policy holds at an older version than the mirror offers, plus a
+/// list bundle fetched and held because this installation applies lists by
+/// hand. A channel that cannot be reached is not counted: that is a different
+/// fact, it belongs on the Updates page, and a badge that meant "something is
+/// wrong somewhere" would be ignored within a week.
+pub async fn refresh_waiting(db: &sqlx::SqlitePool) {
+    let behind = crate::rules_update::available(db).await.map(|v| v.len()).unwrap_or(0) as i64;
+    let held   = i64::from(crate::iplist_feeds::held_bundle().is_some());
+    waiting_cell().store(behind + held, Ordering::Relaxed);
+}
 
 /// The flash a write leaves behind.
 #[derive(Debug, Deserialize)]
@@ -65,30 +100,30 @@ pub async fn get_updates(
 
     let mut ctx = Context::new();
     crate::routes::who_context(&mut ctx, &session);
-    ctx.insert("title",  "Updates");
-    ctx.insert("url", "/updates");
-    ctx.insert("result", &q.result.unwrap_or_default());
-    ctx.insert("msg", &q.msg.unwrap_or_default());
+    ctx.insert("title", "Updates");
+    ctx.insert("url",   "/updates");
+    ctx.insert("result",&q.result.unwrap_or_default());
+    ctx.insert("msg",   &q.msg.unwrap_or_default());
 
     // ── Whether anything reaches out at all ──
-    ctx.insert("check_enabled", &crate::rules_update::enabled(&state.db).await);
-    ctx.insert("auto_lists", &auto(&state.db, KEY_AUTO_LISTS).await);
-    ctx.insert("auto_geo",   &auto(&state.db, KEY_AUTO_GEO).await);
-    ctx.insert("auto_rules", &auto(&state.db, KEY_AUTO_RULES).await);
+    ctx.insert("check_enabled",&crate::rules_update::enabled(&state.db).await);
+    ctx.insert("auto_lists",   &auto(&state.db, KEY_AUTO_LISTS).await);
+    ctx.insert("auto_geo",     &auto(&state.db, KEY_AUTO_GEO).await);
+    ctx.insert("auto_rules",   &auto(&state.db, KEY_AUTO_RULES).await);
 
     // ── Rule sets ──
     let rules_url = get_setting(&state.db, crate::rules_update::KEY_URL)
         .await
         .unwrap_or_default();
     let (checked, check_error) = crate::rules_update::status(&state.db).await;
-    ctx.insert("rules_url", &rules_url);
-    ctx.insert("rules_default", crate::rules_update::DEFAULT_URL);
-    ctx.insert("rules_checked", &checked.map(|t| crate::routes::settings::format_utc(&t)).unwrap_or_default());
-    ctx.insert("rules_error",   &check_error.unwrap_or_default());
-    ctx.insert("offered_sets",  &crate::rules_update::offered(&state.db).await);
+    ctx.insert("rules_url",    &rules_url);
+    ctx.insert("rules_default",crate::rules_update::DEFAULT_URL);
+    ctx.insert("rules_checked",&checked.map(|t| crate::routes::settings::format_utc(&t)).unwrap_or_default());
+    ctx.insert("rules_error",  &check_error.unwrap_or_default());
+    ctx.insert("offered_sets", &crate::rules_update::offered(&state.db).await);
     // What is waiting for somebody: a set is only reported for a policy that
     // holds it, since an update to a set nobody installed is not news.
-    ctx.insert("behind", &crate::rules_update::available(&state.db).await?);
+    ctx.insert("behind",       &crate::rules_update::available(&state.db).await?);
 
     // ── Published IP lists ──
     let lists_url = get_setting(&state.db, crate::iplist_feeds::KEY_URL)
@@ -97,11 +132,14 @@ pub async fn get_updates(
     let (fetched, fetch_error) = crate::iplist_feeds::status(&state.db).await;
     let (lists, lists_error) =
         crate::iplist_feeds::catalogue(&state.db, crate::iplist_feeds::Scope::Everywhere).await;
-    ctx.insert("lists_url", &lists_url);
-    ctx.insert("lists_default", crate::iplist_feeds::DEFAULT_URL);
-    ctx.insert("lists_fetched", &fetched.map(|t| crate::routes::settings::format_utc(&t)).unwrap_or_default());
-    ctx.insert("lists_error",   &fetch_error.or(lists_error).unwrap_or_default());
-    ctx.insert("lists", &lists);
+    ctx.insert("lists_url",    &lists_url);
+    ctx.insert("lists_default",crate::iplist_feeds::DEFAULT_URL);
+    ctx.insert("lists_fetched",&fetched.map(|t| crate::routes::settings::format_utc(&t)).unwrap_or_default());
+    ctx.insert("lists_error",  &fetch_error.or(lists_error).unwrap_or_default());
+    ctx.insert("lists",        &lists);
+    // A bundle fetched and waiting, on an installation that applies lists by
+    // hand. Nothing waits when the switch is on: a fetch goes into force.
+    ctx.insert("lists_held",   &crate::iplist_feeds::held_bundle().is_some());
     // How many policies each list is switched on for, so a list that is doing
     // nothing anywhere reads as what it is.
     let in_use: HashMap<String, i64> = sqlx::query!(
@@ -116,9 +154,10 @@ pub async fn get_updates(
     ctx.insert("lists_in_use", &in_use);
 
     // ── The country database ──
-    ctx.insert("geo", &crate::geo::status());
-    ctx.insert("geo_previous", &crate::geo::previous_path().exists());
+    ctx.insert("geo",         &crate::geo::status());
+    ctx.insert("geo_previous",&crate::geo::previous_path().exists());
 
+    refresh_waiting(&state.db).await;
     Ok((jar, Html(state.tera.render("updates.html", &ctx)?)).into_response())
 }
 
@@ -170,6 +209,31 @@ pub async fn post_updates_settings(
         "Saved"
     };
     flash_redirect("/updates", "success", msg)
+}
+
+// ─── post_apply_lists ────────────────────────────────────
+
+/// POST /updates/lists/apply — put a held list bundle in force.
+///
+/// Only reachable on an installation that applies lists by hand: with the
+/// switch on nothing is ever held, because a fetch goes straight into force.
+pub async fn post_apply_lists(
+    State(state): State<AppState>,
+    _jar: SignedCookieJar,
+    Admin(session): Admin,
+) -> Result<Response> {
+
+    let outcome = crate::iplist_feeds::apply_held();
+    refresh_waiting(&state.db).await;
+
+    match outcome {
+        Ok(n) => {
+            tracing::info!(lists = n, by = %session.username, "Held IP list bundle applied");
+            flash_redirect("/updates", "success",
+                           &format!("{n} published list(s) are now in force"))
+        }
+        Err(e) => flash_redirect("/updates", "failed", &format!("Refused: {e}")),
+    }
 }
 
 // ─── post_upload ─────────────────────────────────────────
@@ -259,6 +323,7 @@ pub async fn post_upload(
         Ok(msg) => {
             tracing::info!(kind = %kind, files = files.len(), by = %session.username,
                            "Bundle uploaded");
+            refresh_waiting(&state.db).await;
             // A list bundle changes what is in force, so it is reloaded here
             // rather than at the next check.
             if kind == "lists" {
@@ -336,7 +401,13 @@ pub async fn post_update_now(
             Err(e) => Err(e),
         },
         "lists" => match crate::iplist_feeds::check_now(&state.db).await {
-            Ok(n)  => Ok(format!("{n} published list(s) fetched and in force")),
+            // What happened to them depends on the switch, and saying "in
+            // force" when they are waiting would be the page telling somebody
+            // their lists are newer than they are.
+            Ok(n) if auto(&state.db, KEY_AUTO_LISTS).await =>
+                Ok(format!("{n} published list(s) fetched and in force")),
+            Ok(n) => Ok(format!(
+                "{n} published list(s) fetched and waiting — this installation applies lists by hand, so what is serving traffic has not changed")),
             Err(e) => Err(e),
         },
         "geo" => Err("The country database is not published to a channel yet — \
@@ -347,11 +418,48 @@ pub async fn post_update_now(
     match outcome {
         Ok(msg) => {
             tracing::info!(kind = %kind, by = %session.username, "Update channel checked on request");
+            refresh_waiting(&state.db).await;
             flash_redirect("/updates", "success", &msg)
         }
         // Reported verbatim: a refusal here is a signature that did not verify
         // or a hash that did not match, and "update failed" would hide the one
         // detail worth acting on.
         Err(e) => flash_redirect("/updates", "failed", &format!("Could not fetch: {e}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The split the whole page rests on: data applies itself, logic waits.
+    /// A default read the wrong way round would either leave lists stale or
+    /// rewrite a policy's rules without anybody asking.
+    #[tokio::test]
+    async fn the_defaults_are_the_split() {
+        let path = std::env::temp_dir()
+            .join(format!("easywaf-updates-{}.db", std::process::id()));
+        for sfx in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{sfx}", path.display()));
+        }
+        let db = crate::db::init(&format!("sqlite://{}", path.display())).await;
+
+        assert!(auto(&db, KEY_AUTO_LISTS).await, "lists must apply as they arrive");
+        assert!(auto(&db, KEY_AUTO_GEO).await,   "the country database must apply as it arrives");
+        assert!(!auto(&db, KEY_AUTO_RULES).await,
+                "rule sets must wait for an administrator until somebody says otherwise");
+
+        // And each is settable, including back again.
+        for (key, want) in [(KEY_AUTO_RULES, true), (KEY_AUTO_LISTS, false)] {
+            crate::routes::settings::set_setting(&db, key, if want { "1" } else { "0" })
+                .await
+                .expect("stored");
+            assert_eq!(auto(&db, key).await, want, "{key} did not take");
+        }
+
+        db.close().await;
+        for sfx in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{sfx}", path.display()));
+        }
     }
 }

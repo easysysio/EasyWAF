@@ -223,6 +223,19 @@
                 </form>
             </div>
             <div class="panel-body">
+                {% if lists_held %}
+                <div class="alert alert-warning admin-only" style="margin-bottom:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+                    <span>
+                        <i class="fa fa-clock-o"></i>
+                        <strong>A newer set of lists has been fetched and is waiting.</strong>
+                        This installation applies lists by hand, so what is serving traffic is
+                        still the version below.
+                    </span>
+                    <form method="post" action="/updates/lists/apply" style="margin:0 0 0 auto">
+                        <button type="submit" class="btn btn-primary btn-sm">Apply them</button>
+                    </form>
+                </div>
+                {% endif %}
                 {% if lists_error %}
                 <div class="alert alert-warning" style="margin-bottom:12px">
                     <i class="fa fa-exclamation-triangle"></i> {{ lists_error }}

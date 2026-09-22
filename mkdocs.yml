@@ -35,6 +35,7 @@ nav:
           - TLS and certificates: tls.md
           - Policies and rules: policies.md
           - IP lists: ip-lists.md
+          - Updates: updates.md
           - Traffic: traffic.md
           - Accounts and roles: accounts.md
           - Logging: logging.md

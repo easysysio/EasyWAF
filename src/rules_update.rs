@@ -312,6 +312,24 @@ pub fn spawn_check_task(db: SqlitePool) {
                 }
             }
 
+            // Rule sets wait for an administrator unless this installation has
+            // said otherwise, in the knowledge that a new pattern can refuse
+            // traffic that was fine yesterday and that there is no way back
+            // yet. Every application is logged by name: an update applied
+            // without being asked for must at least be findable afterwards.
+            if crate::routes::updates::auto(&db, crate::routes::updates::KEY_AUTO_RULES).await {
+                for u in available(&db).await.unwrap_or_default() {
+                    match apply(&db, u.policy_id, &u.set_id).await {
+                        Ok(msg) => tracing::info!(policy = %u.policy_name, set = %u.set_id,
+                                                  "Applied automatically: {msg}"),
+                        Err(e)  => tracing::warn!(policy = %u.policy_name, set = %u.set_id,
+                                                  "Automatic apply refused: {e}"),
+                    }
+                }
+            }
+
+            crate::routes::updates::refresh_waiting(&db).await;
+
             tokio::time::sleep(CHECK_INTERVAL).await;
         }
     });

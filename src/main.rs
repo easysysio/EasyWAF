@@ -193,6 +193,7 @@ async fn main() {
     // packaged sets become the initial contents of the one directory
     // everything reads, so a first run with no network still has rules.
     rules_update::seed_cache_from_bundle();
+    routes::updates::refresh_waiting(&db).await;
     rules_update::spawn_check_task(db.clone());
     iplist_feeds::spawn_task(db.clone());
 
@@ -300,6 +301,7 @@ async fn main() {
         .route("/updates",               get(routes::updates::get_updates))
         .route("/updates/settings",      post(routes::updates::post_updates_settings))
         .route("/updates/{kind}/fetch",  post(routes::updates::post_update_now))
+        .route("/updates/lists/apply",   post(routes::updates::post_apply_lists))
         // An uploaded bundle is the way in for an appliance with no outbound
         // access, and a country database is about eight megabytes — well past
         // the two the default body limit allows, which refuses it before any
