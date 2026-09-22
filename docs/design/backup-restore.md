@@ -129,6 +129,20 @@ export has to accommodate rather than one shaped around it. That is a smaller
 cost than it sounds — an IP list is a flat table of addresses with a note and a
 timestamp, which is the easiest kind of state to export.
 
+**Smart Protect lands after this release, by Yariv's decision of 2026-09-22 —
+so the format must be built to gain fields without being reworked.** A
+versioned document whose reader ignores keys it does not know, and whose writer
+never assumes the set of tables is closed. That is good practice anyway; here
+it is a requirement with a date on it, because the release that needs it is the
+next one. The same applies to everything after: rate limiting, learned URL
+sets, and whatever a node-local state column turns out to hold.
+
+What must *not* be inferred from this is that unknown keys are simply dropped
+on restore. A restore that silently discards settings it does not understand is
+worse than one that refuses: the appliance comes up looking right and enforcing
+less. An unknown key from a **newer** version is a refusal with the versions
+named; an unknown key from an older one is a default.
+
 **It displaces flow logs by one release**, which is the cheapest thing to
 displace — the logging work has a cross-repository dependency (see
 [logging.md](logging.md)) that can proceed in parallel regardless of which

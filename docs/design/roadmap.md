@@ -17,10 +17,12 @@ next minor, so a release's notes stay about its feature.
 | 0.12.0 | Published IP lists — Tor exits, bad reputation, compromised hosts — synced from a signed channel (see [ip-lists.md](ip-lists.md)) — **released 2026-09-16** |
 | 0.13.0 | Load balancing across upstreams, with health checks (see [load-balancing.md](load-balancing.md)) — **released 2026-09-21** |
 | 0.13.1 | Updates in one place: signatures, IP lists and the country database, with upload for an appliance off the grid (see [updates.md](updates.md)) — **released 2026-09-22** |
+| 0.13.2 | Rule set rollback: keep the version an update replaced, per policy, so it can be put back |
 | 0.14.0 | Backup, restore and configuration export (see [backup-restore.md](backup-restore.md)) |
-| 0.15.0 | Configuration sync between nodes — HA (see [ha-config-sync.md](ha-config-sync.md)) |
-| 0.16.0 | Per-site rate limiting (see [rate-limiting.md](rate-limiting.md)) |
-| 0.17.0 | Learning and hardening modes — URL allowlisting (see [url-learning.md](url-learning.md)) |
+| 0.15.0 | Smart Protect: an address refused repeatedly in a short window is blocked for a while (see [smart-protect.md](smart-protect.md)) |
+| 0.16.0 | Configuration sync between nodes — HA (see [ha-config-sync.md](ha-config-sync.md)) |
+| 0.17.0 | Per-site rate limiting (see [rate-limiting.md](rate-limiting.md)) |
+| 0.18.0 | Learning and hardening modes — URL allowlisting (see [url-learning.md](url-learning.md)) |
 
 ## Next patch
 
@@ -106,6 +108,31 @@ neither. It would work for `URL` and `ARGS` zone rules only, unless a bounded
 sample of complete requests is also retained for testing, which is a
 substantially larger feature. Recorded here mainly so nobody later assumes it
 is a small one.
+
+## Smart Protect, and why it is after export
+
+Yariv's placement, 2026-09-22, chosen over putting it before export.
+
+The argument for going first was the one that moved load balancing ahead of
+export: a model change belongs before the format that has to represent it, and
+Smart Protect adds per-policy settings and a notion of a block that expires.
+**The cost of the order chosen is therefore known in advance** — the export
+format ships in 0.14.0 and gains fields in 0.15.0 — so backup/export is to be
+built for that from the start: a versioned document whose reader ignores keys
+it does not know, rather than a fixed shape that has to be reworked. Written
+down here so it is a requirement rather than a surprise.
+
+Two things the order does get right. Smart Protect still lands **before HA**,
+whose note reserves a per-node column for state that must never sync — upstream
+health, rate-limit counters, learned URL sets — and a temporary block belongs
+in exactly that column. And it lands **before rate limiting**, which counts
+events per client in a sliding window as Smart Protect does; the counter is
+built once, for the concrete case, and the second feature uses it.
+
+**Rollback is 0.13.2, before all of it.** 0.13.1 shipped a switch that applies
+rule set updates to every policy without asking, and said plainly that there is
+no way back from one. Keeping the version an update replaced is what turns that
+switch from a gamble into a decision, and it is small enough to be a patch.
 
 ## Why this order
 
