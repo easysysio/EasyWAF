@@ -19,9 +19,66 @@ This is the missing one: what a single address has been doing lately.
 
 ## The rule
 
-**Three refusals within a minute, and that address is refused for ten.** Those
-three numbers are per policy, with those defaults, so the hosted applications
-can be stricter than the public websites — which is the reason policies exist.
+**Three refusals within a minute, and that address is refused for ten.**
+
+## Switched on per policy, configured once
+
+Yariv's shape, 2026-09-22: **a policy decides whether Smart Protect applies to
+it; the numbers are set once, under Settings.**
+
+* **Per policy**: a switch, like the policy's mode and its country rules. The
+  public websites can have it while an internal application does not, which is
+  the reason policies exist.
+* **Global**: how many refusals, in what window, and for how long the address
+  is then refused. These are tuning, not policy, and three numbers repeated on
+  every policy page is three numbers to keep in step.
+
+**Stored so a per-policy override is not a rework.** The numbers live as
+settings keys now. If it later turns out that the applications want a different
+window from the websites — which is exactly the argument that moved IP lists
+and country rules under a policy — that is nullable columns on `policies` with
+NULL meaning "use the global ones", and no change to how the counter works.
+Designing for that now costs nothing; discovering it later would cost a
+migration and a page.
+
+## Deciding the numbers from traffic that already happened
+
+Yariv, same conversation: *"maybe we can also scan the traffic and decide based
+on past traffic."* This is the most useful part of the feature and it is
+cheaper here than it would be anywhere else, because the data is already on
+disk and it is exactly the right data.
+
+`traffic_events` records, for every request: the client address, the timestamp,
+whether it was blocked, and — since 0.10.0 — what a watching policy *would*
+have done. That is the whole input. **Replaying it is the same simulation the
+feature performs live**, run over history instead of arrivals, and it answers
+the question nobody can answer by guessing:
+
+> With 3 refusals in 60 seconds and a 10 minute block, **last week would have
+> blocked 412 addresses**. Of those, **2 later made a request that was served**
+> — which is what a false positive looks like here.
+
+That second number is the one that matters. An address that was refused three
+times and never seen again was a scanner; an address that was blocked and then
+went on to use the site normally is a customer who tripped something.
+
+**It previews, it does not act.** Nothing is blocked by looking, and the page
+says what the simulation cannot know:
+
+* **It sees only what was recorded.** Traffic history is pruned on a retention
+  setting — fourteen days by default — so a preview over a longer window is
+  answering with less than it appears to.
+* **It cannot know what a blocked address would have done next**, only what it
+  did do when it was not blocked. A block that prevents an attack looks
+  identical to one that prevented nothing.
+* **It is per policy**, because a refusal belongs to the site's policy and the
+  numbers mean different things in front of a public website and an API.
+
+**What it is not: thresholds that tune themselves.** An appliance that quietly
+moves its own numbers is one whose behaviour cannot be explained after an
+incident, and one an attacker can walk upwards by keeping just under the line
+while it adapts. The simulation recommends; a person decides; the numbers are
+then what the page says they are.
 
 ## What counts as an offence
 
@@ -103,6 +160,9 @@ are in it.
 obvious second step and it is not free: it needs history that outlives the
 window, which is a different kind of state from a sliding count. Worth having
 once the simple version has been watched in production.
+
+**Thresholds that adapt on their own.** See above — the simulation is there to
+inform a decision, not to replace one.
 
 **Sharing offenders between installations.** A reputation feed built from what
 several EasyWAF installations have seen is a different product with different
