@@ -16,6 +16,7 @@ next minor, so a release's notes stay about its feature.
 | 0.11.0 | Engine: streaming bodies and cached rules (see [proxy-performance.md](proxy-performance.md)), plus the decoders CRS rules assume (see [request-transformations.md](request-transformations.md)) — **released 2026-09-16** |
 | 0.12.0 | Published IP lists — Tor exits, bad reputation, compromised hosts — synced from a signed channel (see [ip-lists.md](ip-lists.md)) — **released 2026-09-16** |
 | 0.13.0 | Load balancing across upstreams, with health checks (see [load-balancing.md](load-balancing.md)) — **released 2026-09-21** |
+| 0.13.1 | Updates in one place: signatures, IP lists and the country database, with upload for an appliance off the grid (see [updates.md](updates.md)) |
 | 0.14.0 | Backup, restore and configuration export (see [backup-restore.md](backup-restore.md)) |
 | 0.15.0 | Configuration sync between nodes — HA (see [ha-config-sync.md](ha-config-sync.md)) |
 | 0.16.0 | Per-site rate limiting (see [rate-limiting.md](rate-limiting.md)) |
