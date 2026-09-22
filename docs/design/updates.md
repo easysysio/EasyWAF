@@ -45,18 +45,24 @@ words:
 * **Country database** — what is in force (the bundled DB-IP Lite, a file from
   the channel, or one an administrator supplied) and its date.
 
-**Nothing is applied by itself, and that now includes lists.** Yariv's rule,
-2026-09-22: an update is fetched, a notification appears, and somebody applies
-it. Rule sets already work that way. Lists do not — today a switched-on list's
-ranges are replaced the moment a fresh copy is fetched — and under this rule
-they stop: a fetched list waits, like a set, until it is applied.
+**Data is applied as it arrives; logic waits for a person.** Yariv's rule,
+settled 2026-09-22 after a turn of arguing both ways, and it is the split the
+risk actually has:
 
-That is a real trade-off and it is the operator's to make. A list whose value
-is freshness goes stale until somebody clicks: Tor exits turn over in under an
-hour, and a list applied on Monday is describing Monday's network on Friday.
-What it buys is that no third party's mistake reaches traffic without a person
-in between — and the guards in `publish-lists.sh` exist because a source
-serving an error page or an empty file is a thing that happens.
+* **IP lists and the country database are applied as soon as they are
+  fetched.** Their value *is* freshness — Tor exits turn over in under an hour,
+  and a list applied on Monday describes Monday's network by Friday. A refresh
+  changes which addresses are on a list; it does not change any decision a
+  policy made about what to do with them.
+* **Rule sets wait for an administrator.** A new pattern can refuse traffic
+  that was fine yesterday, across every site using the policy, and 0.3.1
+  shipped two such rules. This is how it already works and it stays.
+
+What guards the automatic half is upstream: every file is checked against the
+SHA-256 in a manifest this installation's key signed, and `publish-lists.sh`
+refuses to publish a list with fewer entries than its floor, because a source
+serving an error page or an empty file is a thing that happens. A list nobody
+switched on still does nothing, whatever it contains.
 
 **Two stages, named.** They already exist and are already the right model; the
 interface does not say so.
@@ -72,14 +78,15 @@ interface does not say so.
    what they do about it, is theirs and is not touched by an update. The
    country database is one file for the host.
 
-**In force and available are different copies.** A fetch cannot overwrite what
-is serving traffic, or "apply" would mean nothing. The mirror keeps what is in
-force where it is now — `rules-cache/`, `lists-cache/` — and what has been
-fetched beside it; applying is a rename, which is what the fetch already does
-to stage a download. The copy that was in force is kept rather than deleted,
-which is where the rollback the 0.6.0 note asked for comes from for lists and
-for the country database, nearly free. Sets are the harder case and are dealt
-with below.
+**The copy that was in force is kept, not deleted.** The mirror already stages
+a download and renames it into place; keeping the one it replaced costs a
+directory and buys the way back the 0.6.0 note asked for — for lists and for
+the country database, nearly free. Sets are the harder case and are dealt with
+below.
+
+It is also what an operator who wants the automatic half switched off needs: a
+fetch that is held rather than applied has to sit somewhere that is not in
+force.
 
 ## Upload, for an appliance off the grid
 
@@ -122,7 +129,9 @@ operator wrote in a file.
 ## The notification
 
 **In the menu, because that is where somebody is when they are not looking for
-it.** Today `available()` computes exactly the right thing — a set is reported
+it.** It counts what is waiting for a person, which is rule sets by default —
+the two automatic kinds have nothing to wait for unless their switch is off.
+Today `available()` computes exactly the right thing — a set is reported
 only for a policy that actually holds it, because an update to a set nobody has
 installed is not news and reporting it trains people to ignore the notice — and
 it is shown on one page. It should carry a count in the navigation, covering
@@ -168,24 +177,25 @@ exactly the situation an automatic apply makes more likely and harder to spot.
 The 0.6.0 note said *keep the previous version on disk so there is a way back*,
 and that is still the prerequisite.
 
-**So the default is notify, for all three kinds** — and an operator who wants
-updates applied for them can say so. Yariv's shape, 2026-09-22: *"for those
-that take responsibility, maybe we can create a setting that will allow
-automatic update (after a warning)"*.
+**One switch per kind, defaulting to the split above**, because the three are
+not the same risk and an operator should be able to say which they want:
 
-**Off by default, one switch per kind**, because the three are not the same
-risk and an operator who wants fresh lists without the WAF rewriting its own
-rules should be able to say exactly that:
+| Switch | Default | What it costs when it goes wrong |
+|---|---|---|
+| Apply IP lists automatically | **on** | Somebody else's list decides what this WAF refuses, the moment it is published |
+| Apply the country database automatically | **on** | A reassignment moves a client into a blocked country |
+| Apply rule sets automatically | **off** | A new pattern refuses traffic that was fine yesterday, on every site using the policy |
 
-| Switch | What it costs when it goes wrong |
-|---|---|
-| Apply IP lists automatically | Somebody else's list decides what this WAF refuses, the moment it is published |
-| Apply the country database automatically | A reassignment moves a client into a blocked country |
-| Apply rule sets automatically | A new pattern refuses traffic that was fine yesterday, on every site using the policy |
+The first two are on because that is what they are for, and both can be turned
+off by an installation with change control that forbids it. The third is off
+for the reason this project has held since 0.6.0, and turning it on is the
+operator taking responsibility — Yariv's words, 2026-09-22: *"for those that
+take responsibility, maybe we can create a setting that will allow automatic
+update (after a warning)"*.
 
 **The warning is shown when the switch is turned on, not buried under it**, and
-says which of those it is. Turning it on is the operator taking the
-responsibility; the interface's part is making sure they know what they took.
+says what that switch costs. The interface's part is making sure somebody knows
+what they took on.
 
 **Rule sets keep their prerequisite even so.** `install_set` overwrites each
 rule in place and only the enabled flag survives, so there is no previous
@@ -209,10 +219,11 @@ carry the same risk.
 * Settings → **Updates**, replacing Rule Updates, with the three parts.
 * **A count in the menu** of updates fetched and not applied, quiet when the
   channel cannot be reached.
-* **Held until applied**, for lists as well as sets: a fetch no longer changes
-  what is serving traffic.
-* **Three switches, off by default**, each with its warning at the moment it is
-  turned on, for an operator who wants updates applied without being asked.
+* **Three switches** — lists and the country database on, rule sets off — each
+  with its warning at the moment it is turned on.
+* **The copy that was replaced is kept**, so an applied update can be undone
+  for lists and for the country database, and so a held fetch has somewhere to
+  wait when the automatic half is switched off.
 * **Upload** of a signed bundle — rule sets and IP lists — verified exactly as
   a download is.
 * **The country database**: what is in force, an update from the signed channel
@@ -222,7 +233,8 @@ carry the same risk.
 
 ## What it does not include
 
-* Automatic apply as a *default*. The switches exist; all three start off.
+* Automatic apply of rule sets as a default. The switch exists and starts off,
+  and until rollback exists it says why.
 * Rollback. It is the next thing, and it is what makes the point above
   possible.
 * Any change to the publishing side: `github2repo.sh --rules` and `--lists`
