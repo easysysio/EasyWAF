@@ -126,6 +126,52 @@ in `config.toml`, when set, stays the last word: it is a deliberate local
 choice, and a file uploaded through the GUI must not silently override what an
 operator wrote in a file.
 
+## Status: what each kind says about itself
+
+The page's first job is answering "what is in force here, and how old is it",
+for all three, without opening anything. Most of the facts already exist and
+are shown in three different places or not at all.
+
+**Rule sets** — per set, and per policy because a set is held by a policy:
+
+| Field | Where it comes from |
+|---|---|
+| Set, and what it covers | the signed manifest |
+| Version in the mirror, and when that manifest was fetched | the manifest; `rule_update_checked` |
+| Version each policy holds, and when it was installed | `policy_rule_sets.version`, `installed_at` |
+| Behind by | the two compared — which `available()` already does |
+| Rules in the set | counted from the file |
+
+**IP lists** — already the richest, and already correct; it moves rather than
+changes:
+
+| Field | Where it comes from |
+|---|---|
+| List, source, licence, attribution | the manifest |
+| Version, and entries the publisher counted | the manifest |
+| Ranges in force after merging, and lines that would not parse | the load |
+| Fetched at, and the error if the last fetch failed | `ip_list_fetched`, `ip_list_error` |
+| Which policies use it, and what they do about it | `ip_list_feeds` |
+
+**The country database** — nothing is shown today, and all of it is available:
+an `.mmdb` carries its own metadata, which
+[maxminddb](https://crates.io/crates/maxminddb) exposes as `database_type`,
+`build_epoch`, `description`, `ip_version` and `node_count`.
+
+| Field | Where it comes from |
+|---|---|
+| Which database — DB-IP Lite, GeoLite2, something else | `metadata.database_type` |
+| When it was built | `metadata.build_epoch`, which is the date that matters: a country database is only as good as its last build |
+| Where this one came from — compiled in, `geoip_db` in config.toml, fetched from the channel, or uploaded | EasyWAF's own record of which path loaded it |
+| Whether it was verified | signed, for the channel; not signed, for a file an operator supplied |
+| Addresses it covers | `metadata.ip_version`, `node_count` |
+
+**Age is the fact, so say it as one.** A build date is a date; "built 2026-08-30
+(23 days ago)" is the thing somebody is actually checking, and the same applies
+to a list fetched three weeks ago on an appliance whose channel has been
+unreachable since. Stale is not an error and must not be shouted at, but it
+should be legible without arithmetic.
+
 ## The notification
 
 **In the menu, because that is where somebody is when they are not looking for
