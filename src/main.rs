@@ -384,13 +384,69 @@ async fn main() {
     // with_connect_info, so the audit trail can say where a change came from.
     // The management interface is reached directly — there is no proxy in
     // front of it to forward an address — so the peer is the client.
-    if let Err(e) = server
-        .serve(app.into_make_service_with_connect_info::<SocketAddr>())
-        .await
-    {
-        tracing::error!("Management GUI server error: {}", e);
-        std::process::exit(1);
+    // The GUI server is the process's last word, so stopping is arranged around
+    // it: whichever finishes first ends the wait, and the database is closed on
+    // the way out.
+    let serving = server.serve(app.into_make_service_with_connect_info::<SocketAddr>());
+
+    tokio::select! {
+        result = serving => {
+            if let Err(e) = result {
+                tracing::error!("Management GUI server error: {}", e);
+                close_database(&db).await;
+                std::process::exit(1);
+            }
+        }
+        reason = stop_signal() => {
+            info!("Stopping on {reason}");
+        }
     }
+
+    close_database(&db).await;
+}
+
+// ─── Stopping ────────────────────────────────────────────
+
+/// Wait for the signal a service manager stops a process with.
+///
+/// SIGTERM is what `systemctl stop` and `systemctl restart` send, and Ctrl-C is
+/// what a person running it in a terminal sends. Neither was handled before
+/// 0.13.3: the process was killed where it stood.
+async fn stop_signal() -> &'static str {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        let mut term = match signal(SignalKind::terminate()) {
+            Ok(s)  => s,
+            Err(e) => {
+                tracing::warn!("Cannot listen for SIGTERM: {e}");
+                std::future::pending::<()>().await;
+                unreachable!()
+            }
+        };
+        tokio::select! {
+            _ = term.recv()             => "SIGTERM",
+            _ = tokio::signal::ctrl_c() => "Ctrl-C",
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+        "Ctrl-C"
+    }
+}
+
+/// Close the pool, which checkpoints the write-ahead log.
+///
+/// Until 0.13.3 nothing did this, so a stopped EasyWAF left recent writes in
+/// `easywaf.db-wal` and the `.db` file on its own was not the database. That is
+/// safe — SQLite recovers the log on the next open — but it makes the obvious
+/// backup, copying the one file, quietly incomplete. Stopping now leaves a file
+/// that stands on its own.
+async fn close_database(db: &SqlitePool) {
+    let _ = sqlx::raw_sql("PRAGMA wal_checkpoint(TRUNCATE)").execute(db).await;
+    db.close().await;
+    info!("Database closed");
 }
 
 // ─── spawn_https_redirect ────────────────────────────────

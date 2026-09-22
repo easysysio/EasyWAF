@@ -228,7 +228,7 @@ pub async fn post_settings_update(
         }
     };
 
-    if days < 0 || days > MAX_RETENTION_DAYS {
+    if !(0..=MAX_RETENTION_DAYS).contains(&days) {
         return flash_redirect(
             "/settings",
             "failed",

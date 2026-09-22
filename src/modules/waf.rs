@@ -71,10 +71,10 @@ impl WafModule {
     /// lock is held across an await point.
     fn compiled_pattern(&self, rule: &RuleRow) -> Option<Arc<Regex>> {
         // Fast path — already compiled, or already known to be invalid.
-        if let Ok(cache) = self.regex_cache.read() {
-            if let Some(entry) = cache.get(&rule.pattern) {
-                return entry.clone();
-            }
+        if let Ok(cache) = self.regex_cache.read()
+            && let Some(entry) = cache.get(&rule.pattern)
+        {
+            return entry.clone();
         }
 
         // Slow path — compile once and remember the outcome either way.

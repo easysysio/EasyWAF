@@ -66,18 +66,20 @@ Current as of **0.9.1**.
 - **No backup, restore or configuration export.** Everything is in one SQLite
   file with no way to export it, clone it to staging, or keep it under version
   control. Scheduled for **0.14.0**; until then,
-  [copy the file](configuration.md#backing-up) with the service stopped.
+  [copy the database](configuration.md#backing-up) — with `sqlite3 .backup`
+  while it runs, or `cp` with the service stopped.
 - **No high availability.** No configuration sync between nodes. Scheduled for
-  **0.15.0**.
+  **0.17.0**.
 - **No list of proxy, VPN or hosting addresses.** Every credible dataset is
   commercial, and the cloud providers' own address files may not be
   redistributed. The [published lists](ip-lists.md#published-lists) cover
   hijacked netblocks, compromised hosts and Tor exits only.
 - **No feed of your own.** A published list comes from the signed channel; there
   is no way yet to point EasyWAF at another list's URL.
-- **No rate limiting.** Scheduled for **0.16.0**.
+- **No rate limiting.** Scheduled for **0.18.0**. An address that attacks
+  repeatedly is a separate feature, Smart Protect, scheduled for **0.15.0**.
 - **No authentication in front of a site.** EasyWAF decides whether a request is
-  an attack, not who is making it. Proposed, not scheduled.
+  an attack, not who is making it. Scheduled for **0.16.0**.
 
 ## Decided, not missing
 

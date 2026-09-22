@@ -406,10 +406,10 @@ scheduled or decided — the roadmap lives in [docs/design/roadmap.md](docs/desi
   traces, SQL errors, directory listings, card numbers. This is the half of a WAF that CRS
   reserves its 950xxx band for. Not scheduled, and it has a real cost: responses stream
   today, and inspecting them means buffering.
-* **The GUI cannot tell you why a request was blocked.** Traffic Monitor records that a
-  request was blocked, not which rule did it or what the score was — diagnosing a false
-  positive means debug logging and reading the journal. Unscheduled but wanted; most of the
-  plumbing already exists and is inert.
+* **Traffic history holds no request detail beyond the verdict.** Traffic Monitor names
+  every rule that matched and the score they added — that arrived in 0.5.5 — but the row
+  carries method, host, path, country and verdict only, so the request itself cannot be
+  reconstructed from it.
 * **Traffic history holds no headers or bodies** — method, host, path, country and verdict
   only. So a new rule cannot be replayed against past traffic to see what it would have
   matched.
@@ -421,19 +421,22 @@ scheduled or decided — the roadmap lives in [docs/design/roadmap.md](docs/desi
 * **ACME is HTTP-01 only.** No wildcards — those need DNS-01, which needs credentials for a
   DNS provider's API. Upload a wildcard certificate instead. Validation always arrives on
   port 80, so the host must be reachable there from the internet.
-* **One account, and everyone who has it is an administrator.** No second user, no roles, no
-  read-only access. Scheduled for **0.8.0**.
+* **Accounts have two roles only** — administrator and viewer. There is no finer
+  permission than "may change things", so an operator who should only manage one site
+  can manage all of them.
 * **Sessions cannot be revoked.** They are stateless signed cookies, so changing a password
-  does not invalidate one already issued — it expires on its own within 8 hours. Scheduled
-  with roles in **0.8.0**, which needs the same refactor.
-* **No audit log.** Nothing records who changed what. Scheduled for **0.9.0** — deliberately
-  after roles, since a trail saying "admin did X" says little when every operator is `admin`.
+  does not invalidate one already issued — it expires on its own within 8 hours.
+* **The audit log is a file, not a page.** Every change is recorded with who made it, in
+  `/var/log/easywaf/audit-*.log`; nothing in the interface shows it, so reading it means
+  reaching the host.
 * **No backup, restore or configuration export.** Everything lives in one SQLite file with no
   way to export it, clone it to staging, or keep it under version control. Scheduled for
-  **0.14.0**; until then, copy the database file with the service stopped.
-* **No high availability.** No configuration sync between nodes. Scheduled for **0.15.0**.
-* **No rate limiting** (**0.16.0**). IP allow and block lists arrived in 0.10.0;
-  curated lists synced from a signed channel follow the engine release, in **0.12.0**.
+  **0.14.0**; until then, `sqlite3 easywaf.db ".backup ..."` while it runs, or copy the file
+  with the service stopped.
+* **No high availability.** No configuration sync between nodes. Scheduled for **0.17.0**.
+* **No rate limiting** (**0.18.0**), and nothing yet blocks an address for attacking
+  repeatedly — that is Smart Protect, scheduled for **0.15.0**. IP allow and block lists
+  arrived in 0.10.0; curated lists synced from a signed channel in 0.12.0.
 * **`http_port` and `acme_webroot` in `config.toml` are ignored.** They are placeholders from
   0.1.0; listening ports come from the sites you define.
 

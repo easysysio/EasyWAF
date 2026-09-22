@@ -155,7 +155,7 @@ pub async fn get_traffic(
     Query(filter): Query<TrafficFilter>,
 ) -> Result<Response> {
 
-    let hours  = filter.hours.unwrap_or(24).max(1).min(720);
+    let hours  = filter.hours.unwrap_or(24).clamp(1, 720);
     let cutoff = (Utc::now() - chrono::Duration::hours(hours))
         .format("%Y-%m-%d %H:%M:%S")
         .to_string();

@@ -681,10 +681,9 @@ pub async fn get_policy_edit(
     let back = format!("/policy/{}/edit", name);
     // Which tab the page opens on. Only the names it has, so a query cannot
     // ask for anything else.
-    let tab = match flash.tab.as_deref() {
-        Some(t @ ("rules" | "countries" | "iplists" | "exclusions")) => t,
-        _ => "policy",
-    };
+    let tab = flash.tab.as_deref()
+        .filter(|t| matches!(*t, "rules" | "countries" | "iplists" | "exclusions"))
+        .unwrap_or("policy");
 
     let mut ctx = Context::new();
     crate::routes::who_context(&mut ctx, &session);

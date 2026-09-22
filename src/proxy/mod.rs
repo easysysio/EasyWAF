@@ -783,26 +783,23 @@ async fn handle_request(
     // them: redirecting to a TLS port that is not bound would take the site
     // off the air instead of securing it. Done before any inspection, since
     // the request is not being served here either way.
-    if !state.is_tls && site.tls_redirect {
-        if let Some(tls_port) = site.tls_port {
-            let target = if tls_port == 443 {
-                format!("https://{}{}", host, req.uri().path_and_query().map(|p| p.as_str()).unwrap_or("/"))
-            } else {
-                format!(
-                    "https://{}:{}{}",
-                    host,
-                    tls_port,
-                    req.uri().path_and_query().map(|p| p.as_str()).unwrap_or("/")
-                )
-            };
-            return Response::builder()
-                .status(StatusCode::TEMPORARY_REDIRECT)
-                .header("location", target)
-                .body(Body::empty())
-                .unwrap_or_else(|_| {
-                    error_response(StatusCode::INTERNAL_SERVER_ERROR, "Redirect build error")
-                });
-        }
+    if !state.is_tls
+        && site.tls_redirect
+        && let Some(tls_port) = site.tls_port
+    {
+        let path = req.uri().path_and_query().map(|p| p.as_str()).unwrap_or("/");
+        let target = if tls_port == 443 {
+            format!("https://{host}{path}")
+        } else {
+            format!("https://{host}:{tls_port}{path}")
+        };
+        return Response::builder()
+            .status(StatusCode::TEMPORARY_REDIRECT)
+            .header("location", target)
+            .body(Body::empty())
+            .unwrap_or_else(|_| {
+                error_response(StatusCode::INTERNAL_SERVER_ERROR, "Redirect build error")
+            });
     }
 
     // ── 3. Decompose request ──────────────────────────────
@@ -1031,8 +1028,10 @@ async fn handle_request(
     }
 
     // ── 4b. Challenge verdict: show CAPTCHA unless already cleared ──
-    if let PipelineVerdict::Challenge { reason, findings, .. } = &verdict {
-        if !cleared {
+    if let PipelineVerdict::Challenge { reason, findings, .. } = &verdict
+        && !cleared
+    {
+        {
             let dest = match &query {
                 Some(q) => format!("{}?{}", path, q),
                 None    => path.clone(),
@@ -1680,10 +1679,10 @@ fn clearance_ok(state: &ProxyState, headers: &HeaderMap, client_ip: &str) -> boo
 fn cookie_value(headers: &HeaderMap, name: &str) -> Option<String> {
     let raw = headers.get("cookie")?.to_str().ok()?;
     for pair in raw.split(';') {
-        if let Some((k, v)) = pair.trim().split_once('=') {
-            if k == name {
-                return Some(v.to_string());
-            }
+        if let Some((k, v)) = pair.trim().split_once('=')
+            && k == name
+        {
+            return Some(v.to_string());
         }
     }
     None

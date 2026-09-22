@@ -127,10 +127,10 @@ fn flow_line(r: &TrafficRecord, site: &str) -> String {
 
     // Optional fields are omitted rather than emitted empty: the spec is
     // explicit that a missing `score` and `score=0` are different facts.
-    if let Some(c) = &r.country {
-        if !c.is_empty() {
-            out.push_str(&format!(" country={}", field(c)));
-        }
+    if let Some(c) = &r.country
+        && !c.is_empty()
+    {
+        out.push_str(&format!(" country={}", field(c)));
     }
     if let Some(s) = r.waf_score {
         out.push_str(&format!(" score={s}"));
@@ -145,10 +145,10 @@ fn flow_line(r: &TrafficRecord, site: &str) -> String {
             out.push_str(&format!(" rules={}", ids.join(",")));
         }
     }
-    if let Some(reason) = &r.block_reason {
-        if !reason.is_empty() {
-            out.push_str(&format!(" reason={}", field(&clip(reason, 256))));
-        }
+    if let Some(reason) = &r.block_reason
+        && !reason.is_empty()
+    {
+        out.push_str(&format!(" reason={}", field(&clip(reason, 256))));
     }
     out
 }

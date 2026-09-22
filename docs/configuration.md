@@ -73,13 +73,33 @@ Sites, policies, rules, exclusions and certificates have pages of their own.
 ## Backing up
 
 There is no export yet ([0.14.0](limitations.md#managing-it)). Everything is in
-the one SQLite file, so with the service stopped:
+the one SQLite file.
+
+**Without stopping anything**, which is the method to prefer:
+
+```bash
+sudo sqlite3 /opt/easywaf/easywaf.db ".backup '/somewhere/safe/easywaf-$(date +%F).db'"
+```
+
+`.backup` takes a consistent copy of a database that is being written to. A
+plain `cp` of a *running* EasyWAF does not: the database uses a write-ahead
+log, so recent writes live in `easywaf.db-wal` until they are checkpointed, and
+copying `easywaf.db` alone would leave them behind.
+
+**With the service stopped**, copying the one file is enough:
 
 ```bash
 sudo systemctl stop easywaf
 sudo cp /opt/easywaf/easywaf.db /somewhere/safe/easywaf-$(date +%F).db
 sudo systemctl start easywaf
 ```
+
+Stopping checkpoints the log and closes the database, so the file stands on its
+own — **since 0.13.3**. An EasyWAF older than that was killed where it stood
+and left writes in `easywaf.db-wal`, so a copy taken that way could be missing
+whatever happened since the last checkpoint. If you are copying from an older
+version, or copying a file you are not sure was cleanly stopped, take
+`easywaf.db-wal` and `easywaf.db-shm` alongside it.
 
 That file contains the private keys of every certificate stored in EasyWAF.
 Treat the copy accordingly.
