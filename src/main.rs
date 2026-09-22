@@ -302,6 +302,7 @@ async fn main() {
         .route("/updates/settings",      post(routes::updates::post_updates_settings))
         .route("/updates/{kind}/fetch",  post(routes::updates::post_update_now))
         .route("/updates/lists/apply",   post(routes::updates::post_apply_lists))
+        .route("/updates/geo/revert",    post(routes::updates::post_revert_geo))
         // An uploaded bundle is the way in for an appliance with no outbound
         // access, and a country database is about eight megabytes — well past
         // the two the default body limit allows, which refuses it before any

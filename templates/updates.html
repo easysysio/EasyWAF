@@ -335,15 +335,19 @@
                             <td>
                                 {% if geo.source == "bundled" %}
                                 Compiled into EasyWAF — DB-IP Lite, CC BY 4.0
-                                <span class="label label-success">signed</span>
                                 {% elif geo.source == "configured" %}
                                 <code>geoip_db</code> in config.toml
-                                <span class="label label-default">not signed</span>
                                 {% elif geo.source == "channel" %}
                                 The signed channel
-                                <span class="label label-success">signed</span>
                                 {% else %}
                                 Uploaded here
+                                {% endif %}
+                                {# One fact, decided in one place: whether the
+                                   path it came by was checked against a key
+                                   this installation holds. #}
+                                {% if geo.verified %}
+                                <span class="label label-success">signed</span>
+                                {% else %}
                                 <span class="label label-default">not signed</span>
                                 {% endif %}
                             </td>
@@ -359,10 +363,17 @@
                     Lookups never leave this host. A database named in
                     <code>config.toml</code> is always the one used — a deliberate local
                     choice is not overridden from a web page.
-                    {% if geo_previous %}
-                    <br>The database this one replaced is kept, so it can be put back.
-                    {% endif %}
                 </p>
+                {% if geo_previous %}
+                <form class="admin-only" method="post" action="/updates/geo/revert"
+                      style="margin-top:-6px"
+                      onsubmit="return confirm('Put back the country database this one replaced?');">
+                    <span class="text-muted" style="font-size:12px">
+                        The database this one replaced is kept.
+                    </span>
+                    <button type="submit" class="btn btn-default btn-xs">Put it back</button>
+                </form>
+                {% endif %}
                 {% else %}
                 <p class="text-danger">
                     No country database is loaded, so country rules match nothing.

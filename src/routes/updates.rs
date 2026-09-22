@@ -236,6 +236,33 @@ pub async fn post_apply_lists(
     }
 }
 
+// ─── post_revert_geo ─────────────────────────────────────
+
+/// POST /updates/geo/revert — put back the country database an update
+/// replaced.
+///
+/// The page says the copy is kept; this is what makes that a promise rather
+/// than a remark. It is the whole of "a way back" for the two kinds that apply
+/// themselves — rule sets are the harder case and still have none.
+pub async fn post_revert_geo(
+    State(state): State<AppState>,
+    _jar: SignedCookieJar,
+    Admin(session): Admin,
+) -> Result<Response> {
+
+    let _ = &state;
+    match crate::geo::revert() {
+        Ok(s) => {
+            tracing::info!(by = %session.username, "Country database reverted");
+            flash_redirect("/updates", "success", &format!(
+                "Put back the earlier country database — {}, built {}",
+                s.database_type,
+                s.built.unwrap_or_else(|| "on an unstated date".to_string())))
+        }
+        Err(e) => flash_redirect("/updates", "failed", &format!("Refused: {e}")),
+    }
+}
+
 // ─── post_upload ─────────────────────────────────────────
 
 /// POST /updates/{kind}/upload — a bundle carried in by hand.

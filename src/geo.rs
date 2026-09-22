@@ -88,6 +88,10 @@ impl Source {
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct Status {
     pub source:        Source,
+    /// Whether what is loaded was checked against a signature this
+    /// installation holds. Carried rather than re-derived on the page, so
+    /// there is one place that decides it.
+    pub verified:      bool,
     /// "DB-IP Lite", "GeoLite2-Country", or whatever the file calls itself.
     pub database_type: String,
     /// When the publisher built it, as a UTC date. A country database is only
@@ -136,6 +140,7 @@ pub fn status() -> Option<Status> {
 
     Some(Status {
         source,
+        verified:      source.verified(),
         database_type: m.database_type.clone(),
         built:         built.map(|t| t.format("%Y-%m-%d").to_string()),
         age_days:      built.map(|t| (chrono::Utc::now() - t).num_days()),
