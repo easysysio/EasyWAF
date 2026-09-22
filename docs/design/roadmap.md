@@ -20,9 +20,10 @@ next minor, so a release's notes stay about its feature.
 | 0.13.2 | Rule set rollback: keep the version an update replaced, per policy, so it can be put back |
 | 0.14.0 | Backup, restore and configuration export (see [backup-restore.md](backup-restore.md)) |
 | 0.15.0 | Smart Protect: an address refused repeatedly in a short window is blocked for a while (see [smart-protect.md](smart-protect.md)) |
-| 0.16.0 | Configuration sync between nodes — HA (see [ha-config-sync.md](ha-config-sync.md)) |
-| 0.17.0 | Per-site rate limiting (see [rate-limiting.md](rate-limiting.md)) |
-| 0.18.0 | Learning and hardening modes — URL allowlisting (see [url-learning.md](url-learning.md)) |
+| 0.16.0 | Authentication gateway: a sign-in in front of a site or a path, local accounts then LDAP (see [auth-gateway.md](auth-gateway.md)) |
+| 0.17.0 | Configuration sync between nodes — HA (see [ha-config-sync.md](ha-config-sync.md)) |
+| 0.18.0 | Per-site rate limiting (see [rate-limiting.md](rate-limiting.md)) |
+| 0.19.0 | Learning and hardening modes — URL allowlisting (see [url-learning.md](url-learning.md)) |
 
 ## Next patch
 
@@ -52,20 +53,21 @@ allowlisting that client outright (0.10.0) reachable in one click from the row
 that prompted them. Two of the four are done; the prediction held, which is why
 the remaining two are expected to reuse the same row.
 
-**Authentication gateway — a third vector (see
+**Authentication gateway — scheduled for 0.16.0 on 2026-09-22 (see
 [auth-gateway.md](auth-gateway.md)).** Proposed 2026-09-10. The rules ask what
 a request is and the challenge asks whether there is a person; this asks who
 they are, and puts a sign-in in front of a site — or in front of `/admin` on
 one — with local accounts or LDAP. It is the first thing in EasyWAF that needs
 an identity and a session rather than a verdict on a request.
 
-Not yet slotted. The argument for taking it soon is that it is a new
-capability rather than a refinement of an existing one, and it protects
-something on the author's own estate the week it ships. The argument for the
-engine release (0.11.0) first is that the missing decoders are a hole in what
-already ships: CRS rules assume transformations EasyWAF does not perform, so
-some rules do not match what they were written to match. A hole in shipped
-behaviour before a new capability is the usual order in this roadmap.
+**Slotted at 0.16.0 on 2026-09-22**, after six releases as a candidate. The
+argument that eventually carried it is the one recorded here from the start:
+it is a new capability rather than a refinement of an existing one, and it
+protects something on the author's own estate the week it ships. What kept it
+waiting was the usual order in this roadmap — a hole in shipped behaviour
+before a new capability — and 0.11.0's missing decoders were such a hole, since
+CRS rules assume transformations EasyWAF did not perform and so did not match
+what they were written to match. That hole is closed.
 
 **Reverse-proxy parity — WebSockets, HTTP/2, path routing, multiple
 upstreams.** Found on 2026-09-04 while checking whether ACME alone would let
@@ -108,6 +110,29 @@ neither. It would work for `URL` and `ARGS` zone rules only, unless a bounded
 sample of complete requests is also retained for testing, which is a
 substantially larger feature. Recorded here mainly so nobody later assumes it
 is a small one.
+
+## The authentication gateway, scheduled at last
+
+Proposed 2026-09-10 and left unscheduled for six releases; given 0.16.0 by
+Yariv on 2026-09-22.
+
+Its own note made the argument and it still holds: this is a **new capability
+rather than a refinement of an existing one**. The rules ask what a request is,
+the challenge asks whether there is a person, and nothing in the product asks
+who they are. Identity is not a property of a request — it is established once
+and carried — which is why it needs a session and the other two do not, and why
+it cannot be bolted onto either of them later.
+
+**Before HA, deliberately.** A signed-in session is per-node state of exactly
+the kind that note reserves a column for, alongside upstream health, Smart
+Protect's blocks and rate-limit counters. Designing the sync with sessions
+already in existence is cheaper than amending it for them afterwards — which is
+the same argument that put Smart Protect before HA, and it is now true of two
+features rather than one.
+
+**After export, which is a known cost** — the same one recorded below for Smart
+Protect. The export format gains fields for the gateway in 0.16.0; it is built
+in 0.14.0 to expect that.
 
 ## Smart Protect, and why it is after export
 

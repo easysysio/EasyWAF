@@ -1,6 +1,10 @@
 # Design note — authentication gateway
 
-Status: **proposed 2026-09-10**, not yet scheduled — see [roadmap.md](roadmap.md).
+Status: **scheduled for 0.16.0** — see [roadmap.md](roadmap.md). Proposed
+2026-09-10 and unscheduled for six releases; given a version by Yariv on
+2026-09-22, after Smart Protect and before HA, so that a signed-in session
+exists as per-node state before the sync that has to account for it is
+designed.
 
 First cut agreed the same day: **local accounts and LDAP**, turned on per site
 and scopeable to a path prefix. OIDC is a second release. SAML is argued
