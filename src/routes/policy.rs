@@ -93,6 +93,54 @@ pub async fn post_apply_rule_update(
     }
 }
 
+// ─── post_revert_rule_set ────────────────────────────────
+
+/// POST /policy/{name}/rules/revert/{set_id} — put back the version an update
+/// replaced.
+///
+/// The way back 0.13.1 said did not exist. It restores the rules as they were,
+/// removes what the newer version added, and puts the recorded version back —
+/// leaving alone the two things no version owns: whether a rule is switched on,
+/// and any rule cloned from the set.
+pub async fn post_revert_rule_set(
+    State(state): State<AppState>,
+    _jar: SignedCookieJar,
+    _: Admin,
+    Path((name, set_id)): Path<(String, String)>,
+    Form(form): Form<HashMap<String, String>>,
+) -> Result<Response> {
+
+    let back = crate::routes::safe_back(
+        form.get("back").map(String::as_str),
+        &format!("/policy/{}/rules/sets", urlencoding::encode(&name)));
+
+    let policy_id: Option<i64> =
+        sqlx::query_scalar!(r#"SELECT id as "id!" FROM policies WHERE name = ?"#, name)
+            .fetch_optional(&state.db)
+            .await?;
+    let Some(policy_id) = policy_id else {
+        return flash_redirect("/policy", "failed", "No such policy");
+    };
+
+    let outcome = crate::routes::rules::revert_set(&state.db, policy_id, &set_id).await;
+    crate::routes::updates::refresh_waiting(&state.db).await;
+
+    match outcome {
+        Ok((version, restored, removed)) => {
+            tracing::info!(policy = %name, set = %set_id, version,
+                           "Rule set put back to an earlier version");
+            let msg = match removed {
+                0 => format!(
+                    "{set_id} is back at v{version} in {name} — {restored} rule(s) as they were"),
+                n => format!(
+                    "{set_id} is back at v{version} in {name} — {restored} rule(s) as they were, and {n} the newer version had added are gone"),
+            };
+            flash_redirect(&back, "success", &msg)
+        }
+        Err(e) => flash_redirect(&back, "failed", &format!("Could not put it back: {e}")),
+    }
+}
+
 // ─── post_remove_rule_set ────────────────────────────────
 
 /// POST /policy/{name}/rules/remove/{set_id} — take a set out of a policy.
@@ -179,6 +227,10 @@ pub async fn get_rule_sets(
     ctx.insert("checked",       &checked.unwrap_or_default());
     ctx.insert("check_error",   &error.unwrap_or_default());
     ctx.insert("update_count",  &sets.iter().filter(|s| s.status == "update").count());
+    // What an update overwrote and could put back, per set. Empty for a set
+    // that has only ever been installed once, which has nothing behind it.
+    ctx.insert("previous",
+               &crate::routes::rules::previous_versions(&state.db, policy_id).await?);
     ctx.insert("channel",       &crate::rules_update::url(&state.db).await);
     ctx.insert("result",        &flash.result.unwrap_or_default());
     ctx.insert("msg",           &flash.msg.unwrap_or_default());

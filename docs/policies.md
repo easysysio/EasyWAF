@@ -137,6 +137,10 @@ When you apply one:
 - Rules already installed are overwritten in place, **keeping each rule's enabled
   state**. A rule you disabled because it blocked your traffic stays disabled
   through the update.
+- **The version it replaced is kept.** If the update refuses traffic it should
+  not, *put back vN* on the Rule Sets page restores those rules as they were and
+  deletes anything the newer version added. One step back, and your clones and
+  your switched-off rules are untouched.
 - Rules you cloned are untouched, and a rule dropped from the set is left rather
   than deleted.
 

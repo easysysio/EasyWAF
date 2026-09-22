@@ -468,6 +468,11 @@ pub async fn install_set(
     let file: RuleFile = toml::from_str(toml_text)
         .map_err(|e| AppError::Internal(format!("rule set could not be parsed: {e}")))?;
 
+    // Before a single row is overwritten. An update that turns out to refuse
+    // legitimate traffic can then be undone, which is what makes applying one
+    // a decision rather than a gamble.
+    snapshot_before_update(db, policy_id, set_id, version).await?;
+
     let mut touched = 0usize;
     for rule in &file.rules {
         let description = rule.description.clone().unwrap_or_default();
@@ -525,6 +530,225 @@ pub async fn install_set(
     .await?;
 
     Ok(touched)
+}
+
+// ─── Rollback ────────────────────────────────────────────
+
+/// One rule as it stood before an update, which is all a rollback needs.
+///
+/// `enabled` is deliberately absent: switching a rule off is the operator's
+/// decision and no update touches it, so no rollback restores it either.
+#[derive(Debug, Serialize, Deserialize)]
+struct PreviousRule {
+    external_id: i64,
+    name:        String,
+    description: String,
+    zone:        String,
+    pattern:     String,
+    score:       i64,
+    action:      String,
+}
+
+/// What a policy could put back, for the page to offer it.
+#[derive(Debug, Serialize)]
+pub struct Previous {
+    pub set_id:      String,
+    pub version:     i64,
+    pub replaced_by: i64,
+    pub taken_at:    String,
+    pub rules:       usize,
+}
+
+/// Keep the rules a set is about to overwrite, and the version they belonged
+/// to.
+///
+/// Only when the policy already holds the set: a first install replaces
+/// nothing, so there is nothing to go back to and an empty snapshot would be a
+/// button that undid an installation into an emptiness nobody asked for.
+async fn snapshot_before_update(
+    db:        &SqlitePool,
+    policy_id: i64,
+    set_id:    &str,
+    incoming:  i64,
+) -> Result<()> {
+    let held: Option<i64> = sqlx::query_scalar!(
+        "SELECT version FROM policy_rule_sets WHERE policy_id = ? AND set_id = ?",
+        policy_id, set_id
+    )
+    .fetch_optional(db)
+    .await?;
+    let Some(held) = held else { return Ok(()) };
+    if held == incoming {
+        // Re-applying the same version overwrites nothing worth keeping, and
+        // recording it would replace a real way back with a no-op.
+        return Ok(());
+    }
+
+    let rows = sqlx::query!(
+        r#"SELECT external_id as "external_id!", name as "name!",
+                  COALESCE(description, '') as "description!: String",
+                  zone as "zone!", pattern as "pattern!",
+                  score as "score!", action as "action!"
+           FROM waf_rules
+           WHERE policy_id = ? AND rule_set = ? AND external_id IS NOT NULL"#,
+        policy_id, set_id
+    )
+    .fetch_all(db)
+    .await?;
+
+    let previous: Vec<PreviousRule> = rows.into_iter().map(|r| PreviousRule {
+        external_id: r.external_id,
+        name:        r.name,
+        description: r.description,
+        zone:        r.zone,
+        pattern:     r.pattern,
+        score:       r.score,
+        action:      r.action,
+    }).collect();
+    if previous.is_empty() {
+        return Ok(());
+    }
+
+    let json = serde_json::to_string(&previous)
+        .map_err(|e| AppError::Internal(format!("could not record the previous rules: {e}")))?;
+
+    sqlx::query!(
+        "INSERT INTO policy_rule_set_previous
+           (policy_id, set_id, version, replaced_by, rules, taken_at)
+         VALUES (?, ?, ?, ?, ?, datetime('now'))
+         ON CONFLICT(policy_id, set_id) DO UPDATE SET
+             version = excluded.version, replaced_by = excluded.replaced_by,
+             rules = excluded.rules, taken_at = excluded.taken_at",
+        policy_id, set_id, held, incoming, json
+    )
+    .execute(db)
+    .await?;
+
+    Ok(())
+}
+
+/// What this policy could put back, if anything.
+pub async fn previous_versions(db: &SqlitePool, policy_id: i64) -> Result<Vec<Previous>> {
+    let rows = sqlx::query!(
+        r#"SELECT set_id as "set_id!", version as "version!",
+                  replaced_by as "replaced_by!", taken_at as "taken_at!",
+                  rules as "rules!"
+           FROM policy_rule_set_previous WHERE policy_id = ? ORDER BY set_id"#,
+        policy_id
+    )
+    .fetch_all(db)
+    .await?;
+
+    Ok(rows.into_iter().map(|r| Previous {
+        set_id:      r.set_id,
+        version:     r.version,
+        replaced_by: r.replaced_by,
+        taken_at:    r.taken_at,
+        rules:       serde_json::from_str::<Vec<PreviousRule>>(&r.rules)
+                         .map(|v| v.len())
+                         .unwrap_or(0),
+    }).collect())
+}
+
+/// Put back the version an update replaced.
+///
+/// Restores each rule as it was, deletes the ones the newer version added, and
+/// puts the set's recorded version back. Two things it deliberately does not
+/// touch: a rule's **enabled** state, which is the operator's and which no
+/// update changes either, and any rule **cloned** from the set, which is this
+/// installation's own and is not part of any version.
+///
+/// One step. The snapshot is consumed, because a way back that could be taken
+/// twice would take the second step into a version nobody recorded.
+pub async fn revert_set(
+    db:        &SqlitePool,
+    policy_id: i64,
+    set_id:    &str,
+) -> std::result::Result<(i64, usize, usize), String> {
+    let row = sqlx::query!(
+        r#"SELECT version as "version!", rules as "rules!"
+           FROM policy_rule_set_previous WHERE policy_id = ? AND set_id = ?"#,
+        policy_id, set_id
+    )
+    .fetch_optional(db)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let Some(row) = row else {
+        return Err(format!("nothing is recorded for {set_id} that could be put back"));
+    };
+    let previous: Vec<PreviousRule> = serde_json::from_str(&row.rules)
+        .map_err(|e| format!("the recorded rules could not be read: {e}"))?;
+
+    let mut restored = 0usize;
+    for r in &previous {
+        let done = sqlx::query!(
+            "UPDATE waf_rules
+             SET name = ?, description = ?, zone = ?, pattern = ?, score = ?, action = ?,
+                 imported_pattern = ?, imported_score = ?, imported_action = ?
+             WHERE policy_id = ? AND rule_set = ? AND external_id = ?",
+            r.name, r.description, r.zone, r.pattern, r.score, r.action,
+            r.pattern, r.score, r.action,
+            policy_id, set_id, r.external_id
+        )
+        .execute(db)
+        .await
+        .map_err(|e| e.to_string())?
+        .rows_affected();
+
+        // A rule the newer version deleted — which nothing does today, but a
+        // rollback that silently skipped it would be wrong the day something
+        // does.
+        if done == 0 {
+            sqlx::query!(
+                "INSERT INTO waf_rules
+                   (policy_id, name, description, zone, pattern, score, action,
+                    external_id, rule_set, imported_pattern, imported_score, imported_action)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                policy_id, r.name, r.description, r.zone, r.pattern, r.score, r.action,
+                r.external_id, set_id, r.pattern, r.score, r.action
+            )
+            .execute(db)
+            .await
+            .map_err(|e| e.to_string())?;
+        }
+        restored += 1;
+    }
+
+    // Whatever the newer version added and the old one never had.
+    let keep: Vec<String> = previous.iter().map(|r| r.external_id.to_string()).collect();
+    let keep = keep.join(",");
+    let removed = sqlx::query(
+        "DELETE FROM waf_rules
+         WHERE policy_id = ? AND rule_set = ? AND external_id IS NOT NULL
+           AND instr(',' || ? || ',', ',' || external_id || ',') = 0",
+    )
+    .bind(policy_id)
+    .bind(set_id)
+    .bind(&keep)
+    .execute(db)
+    .await
+    .map_err(|e| e.to_string())?
+    .rows_affected() as usize;
+
+    sqlx::query!(
+        "UPDATE policy_rule_sets SET version = ?, installed_at = datetime('now')
+         WHERE policy_id = ? AND set_id = ?",
+        row.version, policy_id, set_id
+    )
+    .execute(db)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    sqlx::query!(
+        "DELETE FROM policy_rule_set_previous WHERE policy_id = ? AND set_id = ?",
+        policy_id, set_id
+    )
+    .execute(db)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    Ok((row.version, restored, removed))
 }
 
 // ─── backfill_rule_sets ──────────────────────────────────
@@ -2293,3 +2517,179 @@ pub async fn post_custom_rule_create(
     Ok(Redirect::to("/rules").into_response())
 }
 
+
+// ─── Tests ───────────────────────────────────────────────
+
+#[cfg(test)]
+mod rollback_tests {
+    use super::*;
+
+    const V1: &str = r#"
+[set]
+id = "demo"
+name = "Demo"
+version = 1
+
+[[rules]]
+id = 990001
+name = "First"
+zone = "ARGS"
+pattern = "one"
+score = 5
+action = "score"
+
+[[rules]]
+id = 990002
+name = "Second"
+zone = "ARGS"
+pattern = "two"
+score = 5
+action = "score"
+"#;
+
+    /// v2 corrects a rule, adds one, and leaves the other alone — which is
+    /// what an update does.
+    const V2: &str = r#"
+[set]
+id = "demo"
+name = "Demo"
+version = 2
+
+[[rules]]
+id = 990001
+name = "First, corrected"
+zone = "ARGS"
+pattern = "one-but-wider"
+score = 9
+action = "block"
+
+[[rules]]
+id = 990002
+name = "Second"
+zone = "ARGS"
+pattern = "two"
+score = 5
+action = "score"
+
+[[rules]]
+id = 990003
+name = "Third, new in v2"
+zone = "ARGS"
+pattern = "three"
+score = 5
+action = "score"
+"#;
+
+    async fn fixture(name: &str) -> (SqlitePool, i64) {
+        let path = std::env::temp_dir()
+            .join(format!("easywaf-rollback-{}-{name}.db", std::process::id()));
+        for sfx in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{sfx}", path.display()));
+        }
+        let db = crate::db::init(&format!("sqlite://{}", path.display())).await;
+        sqlx::raw_sql("INSERT INTO policies (name) VALUES ('websites')")
+            .execute(&db)
+            .await
+            .expect("policy");
+        let id: i64 = sqlx::query_scalar("SELECT id FROM policies WHERE name = 'websites'")
+            .fetch_one(&db)
+            .await
+            .unwrap();
+        (db, id)
+    }
+
+    async fn rule(db: &SqlitePool, policy: i64, external: i64) -> Option<(String, i64, String)> {
+        sqlx::query_as::<_, (String, i64, String)>(
+            "SELECT pattern, score, action FROM waf_rules
+             WHERE policy_id = ? AND external_id = ?",
+        )
+        .bind(policy)
+        .bind(external)
+        .fetch_optional(db)
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn an_update_can_be_put_back() {
+        let (db, policy) = fixture("cycle").await;
+
+        install_set(&db, policy, "demo", 1, V1).await.expect("v1");
+        assert!(previous_versions(&db, policy).await.unwrap().is_empty(),
+                "a first install recorded something to go back to");
+
+        install_set(&db, policy, "demo", 2, V2).await.expect("v2");
+        assert_eq!(rule(&db, policy, 990001).await.unwrap().0, "one-but-wider");
+        assert!(rule(&db, policy, 990003).await.is_some(), "v2 did not add its rule");
+
+        let offered = previous_versions(&db, policy).await.unwrap();
+        assert_eq!(offered.len(), 1);
+        assert_eq!((offered[0].version, offered[0].replaced_by, offered[0].rules), (1, 2, 2));
+
+        let (back_to, restored, removed) = revert_set(&db, policy, "demo").await.expect("revert");
+        assert_eq!((back_to, restored, removed), (1, 2, 1),
+                   "should restore two rules and remove the one v2 added");
+
+        assert_eq!(rule(&db, policy, 990001).await.unwrap(),
+                   ("one".to_string(), 5, "score".to_string()));
+        assert!(rule(&db, policy, 990003).await.is_none(), "v2's rule survived the rollback");
+        let held: i64 = sqlx::query_scalar("SELECT version FROM policy_rule_sets WHERE policy_id = ?")
+            .bind(policy).fetch_one(&db).await.unwrap();
+        assert_eq!(held, 1, "the recorded version did not go back");
+
+        // One step only: the way back is consumed, not a history to walk.
+        assert!(previous_versions(&db, policy).await.unwrap().is_empty());
+        assert!(revert_set(&db, policy, "demo").await.is_err(),
+                "a second rollback went somewhere nobody recorded");
+
+        db.close().await;
+    }
+
+    #[tokio::test]
+    async fn a_rule_switched_off_stays_off_through_a_rollback() {
+        // An update never writes `enabled`, and neither does going back from
+        // one: whether a rule runs is the operator's decision, not a property
+        // of the version.
+        let (db, policy) = fixture("enabled").await;
+        install_set(&db, policy, "demo", 1, V1).await.expect("v1");
+        sqlx::raw_sql("UPDATE waf_rules SET enabled = 0 WHERE external_id = 990001")
+            .execute(&db).await.expect("switch off");
+
+        install_set(&db, policy, "demo", 2, V2).await.expect("v2");
+        let after_update: i64 = sqlx::query_scalar(
+            "SELECT enabled FROM waf_rules WHERE external_id = 990001")
+            .fetch_one(&db).await.unwrap();
+        assert_eq!(after_update, 0, "the update switched a rule back on");
+
+        revert_set(&db, policy, "demo").await.expect("revert");
+        let after_revert: i64 = sqlx::query_scalar(
+            "SELECT enabled FROM waf_rules WHERE external_id = 990001")
+            .fetch_one(&db).await.unwrap();
+        assert_eq!(after_revert, 0, "the rollback switched a rule back on");
+
+        db.close().await;
+    }
+
+    #[tokio::test]
+    async fn a_cloned_rule_is_not_part_of_any_version() {
+        // Clones are this installation's own — an update leaves them and so
+        // does a rollback, which is the whole point of cloning to tune.
+        let (db, policy) = fixture("clone").await;
+        install_set(&db, policy, "demo", 1, V1).await.expect("v1");
+        sqlx::raw_sql(
+            "INSERT INTO waf_rules (policy_id, name, zone, pattern, score, action)
+             SELECT id, 'My own', 'ARGS', 'mine', 3, 'score' FROM policies",
+        )
+        .execute(&db).await.expect("clone");
+
+        install_set(&db, policy, "demo", 2, V2).await.expect("v2");
+        revert_set(&db, policy, "demo").await.expect("revert");
+
+        let mine: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM waf_rules WHERE name = 'My own'")
+            .fetch_one(&db).await.unwrap();
+        assert_eq!(mine, 1, "a rollback deleted a rule the operator wrote");
+
+        db.close().await;
+    }
+}

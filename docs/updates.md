@@ -26,8 +26,14 @@ protecting your sites.
 
 Each has a switch, so an installation with change control can hold the first
 two, and one that wants rule sets applied for it can say so. **Turning the rule
-set switch on applies updates to every policy holding the set, without asking,
-and there is no way back yet** — the page says so where the switch is.
+set switch on applies updates to every policy holding the set, without asking.**
+
+**There is a way back.** The version a policy held is kept when an update
+overwrites it, and *put back vN* on that policy's **Rule Sets** page restores
+those rules exactly, removes what the newer version added, and puts the
+recorded version back. One step — what the last update replaced, not a history
+— and it leaves alone the two things no version owns: whether a rule is
+switched on, and any rule you cloned from the set.
 
 When lists are set to apply by hand, a fetched bundle is **held**: what is
 serving traffic does not change until you press *Apply them*.

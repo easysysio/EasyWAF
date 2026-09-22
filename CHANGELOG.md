@@ -6,6 +6,11 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
+## [Unreleased]
+
+### Added
+- The version of a rule set that an update replaced is kept, per policy, and *put back vN* on the policy's Rule Sets page restores those rules exactly and deletes anything the newer version added. One step back — what the last update replaced — leaving alone the two things no version owns: whether a rule is switched on, and any rule cloned from the set.
+
 ## [0.13.1] — 2026-09-22
 
 ### Added

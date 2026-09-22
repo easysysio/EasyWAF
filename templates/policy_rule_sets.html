@@ -157,6 +157,20 @@
                                         <i class="fa fa-trash"></i> Remove
                                     </button>
                                 </form>
+                                {% for p in previous %}{% if p.set_id == s.id %}
+                                {# The way back from the update that is in force
+                                   now. One step: what it replaced, not a
+                                   history to walk. #}
+                                <form class="admin-only" method="post"
+                                      action="/policy/{{ policy_name }}/rules/revert/{{ s.id }}"
+                                      onsubmit="return confirm('Put {{ s.id }} back to v{{ p.version }}?\n\nIts {{ p.rules }} rules return to what they were before v{{ p.replaced_by }} was applied, and anything v{{ p.replaced_by }} added is deleted.\n\nRules you switched off stay off, and clones are untouched.');"
+                                      style="display:block; margin-top:4px">
+                                    <button type="submit" class="btn btn-link btn-xs" style="padding:0"
+                                            title="Applied {{ p.taken_at }} UTC, replacing v{{ p.version }}">
+                                        <i class="fa fa-undo"></i> put back v{{ p.version }}
+                                    </button>
+                                </form>
+                                {% endif %}{% endfor %}
 
                                 {% else %}
                                 <span class="text-muted" title="Installed, but the channel no longer publishes it">

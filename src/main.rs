@@ -274,6 +274,8 @@ async fn main() {
         .route("/policy/{name}/delete",  post(routes::policy::post_policy_delete))
         .route("/policy/{name}/rules/update/{set_id}",
                post(routes::policy::post_apply_rule_update))
+        .route("/policy/{name}/rules/revert/{set_id}",
+               post(routes::policy::post_revert_rule_set))
         .route("/policy/{name}/rules",                get(routes::rules::get_rules))
         .route("/policy/{name}/rules/new",            get(routes::rules::get_rule_new))
         .route("/policy/{name}/rules/create",         post(routes::rules::post_rule_create))
