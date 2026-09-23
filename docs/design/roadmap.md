@@ -18,6 +18,7 @@ next minor, so a release's notes stay about its feature.
 | 0.13.0 | Load balancing across upstreams, with health checks (see [load-balancing.md](load-balancing.md)) — **released 2026-09-21** |
 | 0.13.1 | Updates in one place: signatures, IP lists and the country database, with upload for an appliance off the grid (see [updates.md](updates.md)) — **released 2026-09-22** |
 | 0.13.2 | Rule set rollback: keep the version an update replaced, per policy, so it can be put back — **released 2026-09-22** |
+| 0.13.3 | Hardening before 1.0: stopping leaves a database that stands on its own, and the country database gets the signed channel 0.13.1 left it without (see [updates.md](updates.md)) — **released 2026-09-23** |
 | 0.14.0 | Backup, restore and configuration export (see [backup-restore.md](backup-restore.md)) |
 | 0.15.0 | Smart Protect: an address refused repeatedly in a short window is blocked for a while (see [smart-protect.md](smart-protect.md)) |
 | 0.16.0 | Authentication gateway: a sign-in in front of a site or a path, local accounts then LDAP (see [auth-gateway.md](auth-gateway.md)) |

@@ -6,7 +6,7 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
-## [0.13.3] — unreleased
+## [0.13.3] — 2026-09-23
 
 ### Added
 - The country database is fetched from its own signed channel, the last of the three to get one: the manifest is verified against the key this installation pins, the database checked against the hash that manifest gives, and it takes effect on the next request rather than at the next restart. *Update now* stops saying there is nothing to fetch, because now there is.

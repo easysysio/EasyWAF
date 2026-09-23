@@ -35,14 +35,15 @@ recorded version back. One step — what the last update replaced, not a history
 — and it leaves alone the two things no version owns: whether a rule is
 switched on, and any rule you cloned from the set.
 
-When lists are set to apply by hand, a fetched bundle is **held**: what is
-serving traffic does not change until you press *Apply them*.
+When lists or the country database are set to apply by hand, what was fetched
+is **held**: it sits beside what is in force, the page names it and says when
+it was built, and nothing changes until you press *Apply*.
 
 ## The count in the menu
 
 **Settings** carries a count of what has arrived and not been applied — rule
 sets a policy holds at an older version than the mirror offers, and a held list
-bundle. A channel that cannot be reached is *not* counted: that is a different
+bundle or country database. A channel that cannot be reached is *not* counted: that is a different
 fact, it appears on this page, and a badge that meant "something is wrong
 somewhere" would be ignored within a week.
 
@@ -66,15 +67,36 @@ does not verify is refused with the mirror left as it was.
 - **Rule sets** — `sets.toml`, `sets.toml.asc`, and the set files.
 - **IP lists** — `lists.toml`, `lists.toml.asc`, and the list files.
 
-**The country database is the exception.** DB-IP and MaxMind do not sign
-theirs, so an uploaded `.mmdb` is checked for being a database and nothing
-more, and the page records it as *not signed* rather than showing it beside the
-verified kinds.
+**An uploaded country database is the exception.** DB-IP and MaxMind do not
+sign theirs, so an `.mmdb` you upload is checked for being a database and
+nothing more, and the page records it as *not signed* rather than showing it
+beside the verified kinds.
 
-Licensing differs by source, and the two must not be blurred: **DB-IP Lite is
-CC BY 4.0** and may be redistributed, which is why one ships with EasyWAF;
-**MaxMind GeoLite2 must not be redistributed**, so it can only ever be a file
-you fetch yourself and upload, or point `geoip_db` at.
+**Fetched from the channel it is signed**, because EasySYS signs the manifest
+that carries its hash — the same key, the same check as the other two. The page
+says which of the two paths a database came by, and it is worth reading before
+concluding that the country database cannot be verified: it can, when it
+arrives this way.
+
+Licensing is why there are two paths at all, and the difference must not be
+blurred: **DB-IP Lite is CC BY 4.0** and may be redistributed, which is why one
+ships with EasyWAF and why the channel can carry a fresher one; **MaxMind
+GeoLite2 must not be redistributed**, so it can only ever be a file you fetch
+yourself and upload, or point `geoip_db` at.
+
+## The country database's channel
+
+DB-IP builds monthly, and the copy compiled into EasyWAF is only as fresh as
+the release that carried it. An installation with outbound access takes a
+current one from
+[`repo.easysys.io/easywaf/geo`](https://repo.easysys.io/easywaf/geo) at its
+first check and monthly after that, verified against the key EasyWAF ships
+with, and it takes effect on the next request rather than at the next restart.
+
+An installation never follows that channel backwards: what counts as newer is
+measured against the version the channel last gave, so a channel that has been
+rolled back offers nothing. A database you uploaded, or one `geoip_db` names,
+is left alone — neither is the channel's to replace.
 
 ## What is in force
 

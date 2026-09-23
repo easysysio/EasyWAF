@@ -28,7 +28,11 @@ first start.
 
 `geoip_db` optionally points at a MaxMind-format `.mmdb` to use instead of the
 bundled DB-IP Lite country database — a fresher DB-IP file, or MaxMind GeoLite2.
-Leave it empty for the bundled one.
+Setting it is the last word: a database fetched from the channel or uploaded
+through the interface never overrides a file you named here. Leave it empty
+and EasyWAF uses the bundled database until it takes a fresher one from the
+[country database channel](updates.md), which is the ordinary way to stay
+current.
 
 !!! note "`http_port` and `acme_webroot` are ignored"
     They are placeholders from 0.1.0, left so an old file still parses. The ports
