@@ -450,36 +450,21 @@ pub async fn post_policy_create(
         .map(|s| s.split(',').filter_map(|p| p.trim().parse::<i64>().ok()).collect())
         .unwrap_or_default();
 
-    let added = crate::routes::rules::add_rules_by_external_ids(&state, policy_id, &ids).await?;
-
-    // Sets chosen on the form, installed through the same verified path the
-    // Rule Sets page uses — signature before anything is read, hash before
-    // anything is written. Nothing is trusted more for arriving during
-    // creation.
+    // Through the same function the other two picker pages use. Sets go in by
+    // the verified path the Rule Sets page uses — signature before anything is
+    // read, hash before anything is written — and nothing is trusted more for
+    // arriving during creation. Nothing can be switched off on a policy that
+    // did not exist a moment ago, so that half is empty here.
     //
     // A set that fails is reported and the policy still exists. Discarding a
     // policy because one set could not be fetched would throw away the part
     // that succeeded, and the fix is to press Install again rather than to
     // fill the form in twice.
-    let mut installed = 0usize;
-    let mut failed: Vec<String> = Vec::new();
-    let chosen: Vec<String> = raw
-        .get("set_ids")
-        .map(|v| {
-            v.split(',')
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(str::to_string)
-                .collect()
-        })
-        .unwrap_or_default();
-
-    for set_id in chosen {
-        match crate::rules_update::apply(&state.db, policy_id, &set_id).await {
-            Ok(_)  => installed += 1,
-            Err(e) => failed.push(format!("{set_id} ({e})")),
-        }
-    }
+    let applied = crate::routes::rules::apply_selection(
+        &state, policy_id, &ids, &HashSet::new(),
+        raw.get("set_ids").map(String::as_str).unwrap_or(""),
+    ).await?;
+    let (installed, failed) = (applied.installed, &applied.failed);
 
     // Said in one line each, appended to whichever sentence the rules produce.
     let mut tail = String::new();
@@ -500,7 +485,7 @@ pub async fn post_policy_create(
     flash_redirect(
         "/policy",
         "success",
-        &format!("{}{tail}", match (installed, added.total()) {
+        &format!("{}{tail}", match (installed, applied.total()) {
             // Nothing chosen is a legitimate thing to do and a bad thing to do
             // by accident, so it says what the policy is rather than reporting
             // a count of zero and leaving the reader to work it out.
@@ -814,44 +799,16 @@ pub async fn post_policy_setup(
     let ids = list("ids");
     let off = list("off_ids");
 
-    let added = crate::routes::rules::add_rules_by_external_ids(&state, policy_id, &ids).await?;
-
-    // Unticking a rule the policy holds switches it off rather than deleting
-    // it: that is what survives the next update of its set, which would insert
-    // a deleted rule again and start matching on it with nobody told.
-    let switched_off =
-        crate::routes::rules::switch_off_by_external_ids(&state.db, policy_id, &off).await?;
-
-    let mut installed = 0usize;
-    let mut failed: Vec<String> = Vec::new();
-    for set_id in raw.get("set_ids").map(String::as_str).unwrap_or("")
-        .split(',').map(str::trim).filter(|s| !s.is_empty())
-    {
-        match crate::rules_update::apply(&state.db, policy_id, set_id).await {
-            Ok(_)  => installed += 1,
-            Err(e) => failed.push(format!("{set_id} ({e})")),
-        }
-    }
-
-    // Each thing that happened, named, because a page that reports only what it
-    // added leaves somebody who unticked a rule wondering whether it took.
-    let mut did: Vec<String> = Vec::new();
-    if installed > 0 {
-        did.push(format!("{installed} rule set(s) installed"));
-    }
-    if added.inserted > 0 {
-        did.push(format!("{} rule(s) added", added.inserted));
-    }
-    if added.switched_on > 0 {
-        did.push(format!("{} rule(s) switched back on", added.switched_on));
-    }
-    if switched_off > 0 {
-        did.push(format!("{switched_off} rule(s) switched off"));
-    }
+    let applied = crate::routes::rules::apply_selection(
+        &state, policy_id, &ids, &off,
+        raw.get("set_ids").map(String::as_str).unwrap_or(""),
+    ).await?;
+    let failed = &applied.failed;
 
     // "Nothing happened" has more than one cause and they are not the same
     // thing to read: nothing was ticked, everything ticked was already here, or
     // a set was chosen and refused.
+    let did = applied.summary();
     let msg = if !did.is_empty() {
         format!("{} in {name}", did.join(", "))
     } else if !failed.is_empty() {

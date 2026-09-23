@@ -1521,13 +1521,6 @@ pub struct Added {
     pub switched_on: usize,
 }
 
-impl Added {
-    /// Rules that now apply and did not before.
-    pub fn total(&self) -> usize {
-        self.inserted + self.switched_on
-    }
-}
-
 /// Switch off the rules identified by `ids` (external_ids) in this policy.
 ///
 /// Off rather than deleted, deliberately. `install_set` updates a rule it
@@ -1579,6 +1572,11 @@ pub async fn get_rules_catalog(
     let total_available: usize = catalog.iter().map(|c| c.total).sum();
     let total_added:     usize = catalog.iter().map(|c| c.added_count).sum();
 
+    // The picker says when the channel was last read and why it could not be,
+    // so a set missing from the list reads as a channel that was unreachable
+    // rather than a set that does not exist.
+    let (checked, check_error) = crate::rules_update::status(&state.db).await;
+
     let mut ctx = Context::new();
     crate::routes::who_context(&mut ctx, &session);
     ctx.insert("title",           "Rule Library");
@@ -1587,24 +1585,116 @@ pub async fn get_rules_catalog(
     ctx.insert("catalog",         &catalog);
     ctx.insert("total_available", &total_available);
     ctx.insert("total_added",     &total_added);
+    ctx.insert("checked",         &checked.unwrap_or_default());
+    ctx.insert("check_error",     &check_error.unwrap_or_default());
 
     Ok((jar, Html(state.tera.render("rule_catalog.html", &ctx)?)).into_response())
 }
 
+// ─── apply_selection ─────────────────────────────────────
+
+/// What applying a rule-picker selection did, so each page can word its own
+/// message without deciding what happened.
+#[derive(Debug, Default)]
+pub struct Applied {
+    pub installed:    usize,
+    pub added:        usize,
+    pub switched_on:  usize,
+    pub switched_off: usize,
+    /// Sets that could not be installed, each with the reason.
+    pub failed:       Vec<String>,
+}
+
+impl Applied {
+    /// Rules that now apply and did not before — inserted, or found present
+    /// and switched back on. One number, because to somebody reading the
+    /// message the two are the same event.
+    pub fn total(&self) -> usize {
+        self.added + self.switched_on
+    }
+
+    /// Each thing that happened, named. A page that reports only what it added
+    /// leaves somebody who unticked a rule wondering whether it took.
+    pub fn summary(&self) -> Vec<String> {
+        let mut did = Vec::new();
+        if self.installed > 0 {
+            did.push(format!("{} rule set(s) installed", self.installed));
+        }
+        if self.added > 0 {
+            did.push(format!("{} rule(s) added", self.added));
+        }
+        if self.switched_on > 0 {
+            did.push(format!("{} rule(s) switched back on", self.switched_on));
+        }
+        if self.switched_off > 0 {
+            did.push(format!("{} rule(s) switched off", self.switched_off));
+        }
+        did
+    }
+}
+
+/// Apply a rule-picker selection to a policy.
+///
+/// **One implementation for every page that carries the picker.** There were
+/// two, and they disagreed about both halves of the job, which is the kind of
+/// difference nobody sees until a policy is quietly protecting nothing:
+///
+/// * Unticking a rule **switches it off** rather than deleting it. A deleted
+///   rule is inserted again by the next update of its set and starts matching
+///   with nobody told; a rule switched off stays off through the update, which
+///   is what unticking it was meant to mean.
+/// * A set chosen here is **installed through the verified path**, so the
+///   policy records which version of it it holds. Adding a set's rules without
+///   recording the set left the Rule Sets page reporting a version for rules
+///   that were not there, and left rollback and automatic updates working from
+///   holdings that had no rules behind them.
+///
+/// Sets are installed before rules are switched off, so a set that carries a
+/// rule the same submission unticked ends with that rule off rather than on.
+pub async fn apply_selection(
+    state:     &AppState,
+    policy_id: i64,
+    ids:       &HashSet<i64>,
+    off:       &HashSet<i64>,
+    set_ids:   &str,
+) -> Result<Applied> {
+    let mut out = Applied::default();
+
+    for set_id in set_ids.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+        match crate::rules_update::apply(&state.db, policy_id, set_id).await {
+            Ok(_)  => out.installed += 1,
+            Err(e) => out.failed.push(format!("{set_id} ({e})")),
+        }
+    }
+
+    let added = add_rules_by_external_ids(state, policy_id, ids).await?;
+    out.added       = added.inserted;
+    out.switched_on = added.switched_on;
+    out.switched_off = switch_off_by_external_ids(&state.db, policy_id, off).await?;
+
+    Ok(out)
+}
+
 // ─── post_rules_catalog ──────────────────────────────────
 
-/// Form submitted by the catalog: a comma-separated list of the
-/// external_ids that are currently checked.
+/// What the picker submits: the ticked rules, the sets ticked whole, and the
+/// rules present in the policy that were unticked.
 #[derive(Deserialize)]
 pub struct CatalogForm {
     #[serde(default)]
     pub ids: String,
+    #[serde(default)]
+    pub set_ids: String,
+    #[serde(default)]
+    pub off_ids: String,
 }
 
 /// Sync the policy's rules to the catalog selection.
-/// Checked rules not yet present are inserted; catalog rules that are
-/// present but no longer checked are removed. Manually-created rules
-/// (no external_id) are never touched.
+///
+/// The Rule Library is one of three pages carrying the same picker, and it now
+/// does what the other two do — see [`apply_selection`], which owns the rules
+/// about what unticking means and what installing a set records. This page is
+/// only the part that differs: where it came from and where it goes back to.
 pub async fn post_rules_catalog(
     State(state): State<AppState>,
     _jar: SignedCookieJar,
@@ -1613,7 +1703,7 @@ pub async fn post_rules_catalog(
     Form(form): Form<CatalogForm>,
 ) -> Result<Response> {
 
-    let redirect = format!("/policy/{}/rules", policy_name);
+    let back = format!("/policy/{policy_name}/rules");
 
     let policy_id: i64 = sqlx::query_scalar!(
         "SELECT id as \"id!\" FROM policies WHERE name = ?",
@@ -1623,83 +1713,50 @@ pub async fn post_rules_catalog(
     .await?
     .ok_or_else(|| AppError::NotFound(format!("Policy '{}' not found", policy_name)))?;
 
-    // Parse the checked external_ids.
-    let checked: HashSet<i64> = form.ids
-        .split(',')
-        .filter_map(|s| s.trim().parse::<i64>().ok())
-        .collect();
+    let list = |field: &str| -> HashSet<i64> {
+        field.split(',').filter_map(|p| p.trim().parse::<i64>().ok()).collect()
+    };
+    let ids = list(&form.ids);
+    let off = list(&form.off_ids);
 
-    // All rule definitions available on disk, keyed by external_id.
-    let defs = read_rule_defs();
-    let catalog_ids: HashSet<i64> = defs.keys().copied().collect();
-
-    // external_ids already present in this policy.
-    let db_rows = sqlx::query_scalar!(
-        "SELECT external_id as \"external_id!\" FROM waf_rules
-         WHERE policy_id = ? AND external_id IS NOT NULL",
-        policy_id
-    )
-    .fetch_all(&state.db)
-    .await?;
-    let db_ids: HashSet<i64> = db_rows.into_iter().collect();
-
-    // ── Additions: checked rules not yet in the policy ────
-    let mut added = 0usize;
-    for id in &checked {
-        if db_ids.contains(id) {
-            continue;
-        }
-        if let Some(def) = defs.get(id) {
-            let (def, set_id) = (&def.0, def.1.clone());
-            let desc = def.description.as_deref().unwrap_or("");
-            sqlx::query!(
-                "INSERT INTO waf_rules
-                 (policy_id, name, description, zone, pattern, score, action, external_id,
-                  rule_set, imported_pattern, imported_score, imported_action)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                policy_id,
-                def.name,
-                desc,
-                def.zone,
-                def.pattern,
-                def.score,
-                def.action,
-                def.id,
-                set_id,
-                // What the rule looked like on import — see migration 008.
-                def.pattern,
-                def.score,
-                def.action,
-            )
-            .execute(&state.db)
-            .await?;
-            added += 1;
-        }
-    }
-
-    // ── Removals: catalog rules present but no longer checked ──
-    let mut removed = 0usize;
-    for id in &db_ids {
-        if catalog_ids.contains(id) && !checked.contains(id) {
-            let rid = *id;
-            sqlx::query!(
-                "DELETE FROM waf_rules WHERE policy_id = ? AND external_id = ?",
-                policy_id, rid
-            )
-            .execute(&state.db)
-            .await?;
-            removed += 1;
-        }
-    }
+    let applied = apply_selection(&state, policy_id, &ids, &off, &form.set_ids).await?;
 
     tracing::info!(
         policy = %policy_name,
-        added,
-        removed,
-        "Catalog selection synced"
+        sets = applied.installed,
+        added = applied.added,
+        switched_on = applied.switched_on,
+        switched_off = applied.switched_off,
+        "Rule Library selection applied"
     );
 
-    Ok(Redirect::to(&redirect).into_response())
+    // "Nothing happened" has more than one cause, and they do not read the
+    // same: nothing was ticked, everything ticked was already here, or a set
+    // was chosen and refused.
+    let did = applied.summary();
+    let msg = if !did.is_empty() {
+        format!("{} in {policy_name}", did.join(", "))
+    } else if !applied.failed.is_empty() {
+        format!("Nothing was changed in {policy_name}")
+    } else if ids.is_empty() && off.is_empty() {
+        "Nothing selected, so nothing was changed".to_string()
+    } else {
+        format!(
+            "Nothing new — {} rule(s) selected, and {policy_name} already holds every one",
+            ids.len()
+        )
+    };
+    crate::routes::updates::refresh_waiting(&state.db).await;
+
+    if applied.failed.is_empty() {
+        crate::routes::flash_redirect(&back, "success", &msg)
+    } else {
+        crate::routes::flash_redirect(&back, "failed", &format!(
+            "{msg}. These rule sets could not be installed: {}. A set comes from the \
+             signed channel — check Settings → Updates, or tick individual rules, \
+             which are read from this installation's own copy.",
+            applied.failed.join("; ")))
+    }
 }
 
 // ─── Global Rule Editor ──────────────────────────────────
@@ -2642,6 +2699,53 @@ action = "score"
         assert!(revert_set(&db, policy, "demo").await.is_err(),
                 "a second rollback went somewhere nobody recorded");
 
+        db.close().await;
+    }
+
+    /// The state the Rule Library could leave a policy in before 0.13.4: the
+    /// set recorded as held, and not one rule of it present. Migration 034
+    /// forgets the holding — and must not touch a set whose rules are merely
+    /// switched off, which is a decision somebody made and not the same thing
+    /// at all.
+    #[tokio::test]
+    async fn a_set_with_no_rules_left_is_not_reported_as_held() {
+        let (db, policy) = fixture("empty-holding").await;
+        install_set(&db, policy, "demo", 1, V1).await.expect("v1");
+
+        let held = |db: SqlitePool| async move {
+            let n: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM policy_rule_sets WHERE set_id = 'demo'")
+                .fetch_one(&db).await.unwrap();
+            (n, db)
+        };
+        let (n, db) = held(db).await;
+        assert_eq!(n, 1, "install did not record the set");
+
+        // What the old Rule Library did: delete the rules, leave the holding.
+        sqlx::query("DELETE FROM waf_rules WHERE policy_id = ?")
+            .bind(policy).execute(&db).await.unwrap();
+        let path: String = sqlx::query_scalar("SELECT file FROM pragma_database_list WHERE name = 'main'")
+            .fetch_one(&db).await.unwrap();
+        db.close().await;
+
+        // Starting up is what repairs it.
+        let db = crate::db::init(&format!("sqlite://{path}")).await;
+        let (n, db) = held(db).await;
+        assert_eq!(n, 0,
+            "a policy still reports holding a set it has not one rule of, so its \
+             Rule Sets page says a version is up to date for rules that are gone");
+
+        // And the case that must survive: the rules are there, switched off.
+        install_set(&db, policy, "demo", 1, V1).await.expect("reinstall");
+        sqlx::query("UPDATE waf_rules SET enabled = 0 WHERE policy_id = ?")
+            .bind(policy).execute(&db).await.unwrap();
+        db.close().await;
+
+        let db = crate::db::init(&format!("sqlite://{path}")).await;
+        let (n, db) = held(db).await;
+        assert_eq!(n, 1,
+            "switching every rule of a set off gave up the set, but off is a \
+             decision that survives updates and the policy does hold it");
         db.close().await;
     }
 

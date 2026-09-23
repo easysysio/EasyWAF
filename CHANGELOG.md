@@ -6,6 +6,18 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
+## [0.13.4] — unreleased
+
+### Fixed
+- **A policy could report holding rule sets it had not one rule of.** The Rule Library page applied a selection by inserting the ticked rules and deleting the unticked ones, and never recorded which sets were installed — so a policy's Rule Sets page could say a set was *up to date at v2* while the policy inspected none of those requests, the update check compared a version nobody was running, and rollback offered to put back a version that was not there. Starting up now forgets a holding with no rules behind it. A set whose rules are merely switched off is untouched: off is a decision, and it survives.
+- **Unticking a rule in the Rule Library deleted it** instead of switching it off, so the next update of its set inserted it again and it started matching with nobody told. It now switches off, as the other two pages that carry the same picker already did.
+- Ticking a set's heading in the Rule Library installs it *as a set* — recorded, verified, and offered an update when the channel publishes a newer version — rather than copying its rules in loose.
+
+### Changed
+- The Rule Library is now the same picker as the policy's own pages rather than a second implementation of it, so it gains what that one learned: the set headings that follow their rules, **Basic sets**, and a message naming everything that happened rather than only what was added.
+
+---
+
 ## [0.13.3] — 2026-09-23
 
 ### Added

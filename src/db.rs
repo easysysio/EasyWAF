@@ -82,9 +82,23 @@ pub async fn init(database_url: &str) -> SqlitePool {
     run_migration_031(&pool).await;
     run_migration_032(&pool).await;
     run_migration_033(&pool).await;
+    run_migration_034(&pool).await;
 
     info!("Database ready: {}", database_url);
     pool
+}
+
+// ─── run_migration_034 ───────────────────────────────────
+
+/// Forget a rule set a policy holds no rules of — the state the Rule Library
+/// could leave a policy in before 0.13.4. Runs every start; on a database that
+/// was never in that state it matches nothing.
+async fn run_migration_034(pool: &SqlitePool) {
+    let sql = include_str!("../migrations/034_drop_empty_set_holdings.sql");
+    sqlx::raw_sql(sql)
+        .execute(pool)
+        .await
+        .unwrap_or_else(|e| panic!("Migration 034 failed: {}", e));
 }
 
 // ─── run_migration_033 ───────────────────────────────────
