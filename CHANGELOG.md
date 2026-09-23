@@ -6,6 +6,17 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
+## [0.13.3] — unreleased
+
+### Fixed
+- Stopping EasyWAF now leaves a database that stands on its own. The process handled no signals, so `systemctl stop`, `systemctl restart` and Ctrl-C all killed it where it stood and SQLite's write-ahead log was never checkpointed — while the documented backup is to stop the service and copy `easywaf.db`. A backup taken that way could be almost empty, with the data sitting in the `-wal` file beside it. SIGTERM and Ctrl-C are now caught, the log checkpointed and the pool closed before exit.
+
+### Changed
+- The backup instructions lead with `sqlite3 easywaf.db ".backup"`, which is safe while EasyWAF is running, and say which versions a plain `cp` with the service stopped is safe for.
+- README and the limitations page no longer claim less than the product does: roles arrived in 0.8.0, the audit log in 0.9.0, and Traffic Monitor has named the rule that blocked a request since 0.5.5.
+
+---
+
 ## [0.13.2] — 2026-09-22
 
 ### Added

@@ -358,12 +358,28 @@ could have changed it. A channel that cannot be reached is not counted.
 
 ### Still to do
 
-**The country database has no channel to fetch from.** The client side is
-built and refuses honestly — *"not published to a channel yet: upload one, or
-point geoip_db at a file"* — but publishing needs a DB-IP entry in the rules
-repository and a `--geo` mode in `github2repo.sh`. Until that exists, upload
-and `geoip_db` are the routes that work, and the switch for applying it
-automatically governs nothing.
+**The country database's channel is now published, and nothing fetches it
+yet.** The publishing half was built after 0.13.2: `geo/sources.toml` and
+`publish-geo.sh` in the rules repository, and a `--geo` mode in
+`github2repo.sh`, putting a signed `geo.toml` + `geo/dbip-country-lite.mmdb`
+at `https://repo.easysys.io/easywaf/geo` on the same key as everything else.
+It refuses rather than mirrors a file that is not a country database, is older
+than the one already published, or changed without its version moving — the
+last two mattering more here than for lists, because a country database that
+goes backwards reads to an installation as an update.
+
+What is left is the client half: a fetch in `geo.rs` alongside
+`rules_update` and `iplist_feeds`, verifying the manifest exactly as they do,
+and *Update now* stopping saying *"not published to a channel yet: upload one,
+or point geoip_db at a file"*. Until then, upload and `geoip_db` are still the
+routes that work and the switch for applying it automatically governs nothing —
+the difference is that there is now something for the fetch to fetch.
+
+A second thing the channel exposes: **the database compiled into the binary is
+built once, when the release is.** The copy in 0.13.x was built 2026-07-01,
+which was fresh at 0.11.0 and is a quarter old now. That is an argument for the
+client half rather than against the bundled copy — a fresh install should work
+offline, and then take a current database at its first check.
 
 **Rollback for rule sets — done in 0.13.2.** The version a policy held is kept
 when an update overwrites it, and can be put back from the policy's Rule Sets
