@@ -8,6 +8,11 @@ Version bumps and tags are created only after explicit approval.
 
 ## [0.13.3] — unreleased
 
+### Added
+- The country database is fetched from its own signed channel, the last of the three to get one: the manifest is verified against the key this installation pins, the database checked against the hash that manifest gives, and it takes effect on the next request rather than at the next restart. *Update now* stops saying there is nothing to fetch, because now there is.
+- The country database channel can be pointed elsewhere, beside the other two, and lowers no bar when it is: same signature, same hashes.
+- With *applied as it arrives* turned off for the country database, a fetch waits instead — named on the page with what it is and when it was built, counted in the Settings badge, and put in force by one button. What is answering lookups does not change until then.
+
 ### Fixed
 - Stopping EasyWAF now leaves a database that stands on its own. The process handled no signals, so `systemctl stop`, `systemctl restart` and Ctrl-C all killed it where it stood and SQLite's write-ahead log was never checkpointed — while the documented backup is to stop the service and copy `easywaf.db`. A backup taken that way could be almost empty, with the data sitting in the `-wal` file beside it. SIGTERM and Ctrl-C are now caught, the log checkpointed and the pool closed before exit.
 

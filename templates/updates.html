@@ -62,11 +62,18 @@
                                value="{{ lists_url }}" spellcheck="false"
                                style="font-family: monospace; font-size: 12px"
                                placeholder="{{ lists_default }}">
+                    </div>
+                    <div class="form-group">
+                        <label>Country database channel</label>
+                        <input type="text" class="form-control" name="geo_url"
+                               value="{{ geo_url }}" spellcheck="false"
+                               style="font-family: monospace; font-size: 12px"
+                               placeholder="{{ geo_default }}">
                         <p class="help-block">
-                            Empty means the default. <strong>Pointing either elsewhere lowers
-                            no bar</strong>: the manifest must still carry a valid signature
-                            from the key EasyWAF ships with, and every file must match the
-                            hash that manifest gives for it.
+                            Empty means the default. <strong>Pointing any of them elsewhere
+                            lowers no bar</strong>: the manifest must still carry a valid
+                            signature from the key EasyWAF ships with, and every file must
+                            match the hash that manifest gives for it.
                         </p>
                     </div>
 
@@ -305,6 +312,9 @@
         <div class="panel panel-default">
             <div class="panel-heading" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
                 <strong><i class="fa fa-flag"></i> Country database</strong>
+                <span class="text-muted" style="font-size:12px">
+                    {% if geo_fetched %}fetched {{ geo_fetched }} UTC{% else %}never fetched{% endif %}
+                </span>
                 <form class="admin-only" method="post" action="/updates/geo/fetch" style="margin:0 0 0 auto">
                     <button type="submit" class="btn btn-default btn-sm">
                         <i class="fa fa-refresh"></i> Update now
@@ -312,6 +322,25 @@
                 </form>
             </div>
             <div class="panel-body">
+                {% if geo_held %}
+                <div class="alert alert-warning admin-only" style="margin-bottom:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+                    <span>
+                        <i class="fa fa-clock-o"></i>
+                        <strong>A newer country database has been fetched and is waiting</strong> —
+                        {{ geo_held.database_type }}, built {{ geo_held.built }}.
+                        This installation applies it by hand, so lookups still use the one below.
+                    </span>
+                    <form method="post" action="/updates/geo/apply" style="margin:0 0 0 auto">
+                        <button type="submit" class="btn btn-primary btn-sm">Apply it</button>
+                    </form>
+                </div>
+                {% endif %}
+                {% if geo_error %}
+                <div class="alert alert-warning" style="margin-bottom:12px">
+                    <i class="fa fa-exclamation-triangle"></i> {{ geo_error }}
+                </div>
+                {% endif %}
+
                 {% if geo %}
                 <table class="table table-condensed" style="font-size:13px;max-width:640px">
                     <tbody>

@@ -368,12 +368,21 @@ than the one already published, or changed without its version moving — the
 last two mattering more here than for lists, because a country database that
 goes backwards reads to an installation as an update.
 
-What is left is the client half: a fetch in `geo.rs` alongside
-`rules_update` and `iplist_feeds`, verifying the manifest exactly as they do,
-and *Update now* stopping saying *"not published to a channel yet: upload one,
-or point geoip_db at a file"*. Until then, upload and `geoip_db` are still the
-routes that work and the switch for applying it automatically governs nothing —
-the difference is that there is now something for the fetch to fetch.
+The client half followed in the same release: `geo_update.rs`, the same shape
+as `rules_update` and `iplist_feeds`, because an installation that trusts one
+channel should not have to learn a second set of rules for another. The switch
+for applying it automatically now governs something, and with it off a fetch
+waits on disk beside the database and is counted in the badge like a held list
+bundle.
+
+One thing it does differently, and deliberately. "Newer" is measured against
+the version this channel last gave, recorded in settings — not against the
+database in force. The database in force may be one somebody uploaded or the
+one `geoip_db` names, and neither is this channel's to compare itself with;
+measuring against them would re-download eight megabytes every six hours on an
+installation that had chosen its own. It also means a channel that has been
+rolled back offers an older version, which is *not* newer, so an installation
+never follows a channel backwards.
 
 A second thing the channel exposes: **the database compiled into the binary is
 built once, when the release is.** The copy in 0.13.x was built 2026-07-01,

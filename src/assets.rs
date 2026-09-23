@@ -750,7 +750,9 @@ mod tests {
                        ("rules_url", ""), ("rules_default", "https://repo.example/rules"),
                        ("rules_checked", "2026-09-22 07:00"), ("rules_error", ""),
                        ("lists_url", ""), ("lists_default", "https://repo.example/lists"),
-                       ("lists_fetched", "2026-09-22 07:00"), ("lists_error", "")] {
+                       ("lists_fetched", "2026-09-22 07:00"), ("lists_error", ""),
+                       ("geo_url", ""), ("geo_default", "https://repo.example/geo"),
+                       ("geo_fetched", "2026-09-22 07:00"), ("geo_error", "")] {
             ctx.insert(k, v);
         }
         for (k, v) in [("check_enabled", true), ("auto_lists", true),
@@ -774,6 +776,9 @@ mod tests {
             "source": "bundled", "database_type": "DBIP-Country-Lite",
             "built": "2026-07-01", "age_days": 83, "ip_version": 6, "nodes": 1119298 }));
         ctx.insert("geo_previous", &false);
+        // Nothing held: the switch above is on, so a fetch goes straight into
+        // force and there is never anything waiting.
+        ctx.insert("geo_held", &serde_json::Value::Null);
 
         let html = tera.render("updates.html", &ctx)
             .unwrap_or_else(|e| panic!("updates.html failed to render: {e:#?}"));
@@ -797,6 +802,9 @@ mod tests {
             ("/updates/rules/fetch", "rule sets cannot be fetched by hand"),
             ("/updates/lists/fetch", "IP lists cannot be fetched by hand"),
             ("/updates/geo/fetch",   "the country database cannot be fetched by hand"),
+            // Tera escapes the slashes in a URL, so the field is what is
+            // asserted on rather than the placeholder inside it.
+            ("name=\"geo_url\"",  "the country database channel cannot be pointed elsewhere"),
             ("Apply to websites",  "a policy behind cannot be brought up to date here"),
         ] {
             assert!(html.contains(what), "{why}");
@@ -818,6 +826,84 @@ mod tests {
             assert!(html.contains(what), "{why}");
         }
     }
+
+    /// An installation that applies the country database by hand must be able
+    /// to see what is waiting and put it in force — and must not be told that
+    /// what is waiting is what its lookups are using.
+    #[test]
+    fn a_held_country_database_says_so_and_can_be_applied() {
+        let tera = tera().expect("templates should build");
+        let mut ctx = tera::Context::new();
+        for (k, v) in [("username", "t"), ("title", "Updates"), ("url", "/updates"),
+                       ("result", ""), ("msg", ""),
+                       ("rules_url", ""), ("rules_default", "https://repo.example/rules"),
+                       ("rules_checked", ""), ("rules_error", ""),
+                       ("lists_url", ""), ("lists_default", "https://repo.example/lists"),
+                       ("lists_fetched", ""), ("lists_error", ""),
+                       ("geo_url", ""), ("geo_default", "https://repo.example/geo"),
+                       ("geo_fetched", "2026-09-23 07:00"), ("geo_error", "")] {
+            ctx.insert(k, v);
+        }
+        for (k, v) in [("check_enabled", true), ("auto_lists", true),
+                       ("auto_geo", false), ("auto_rules", false)] {
+            ctx.insert(k, &v);
+        }
+        // In force: the one that was there before. Offered: the one fetched
+        // and waiting. The page must not confuse them.
+        ctx.insert("geo", &serde_json::json!({
+            "source": "channel", "database_type": "DBIP-Country-Lite",
+            "built": "2026-07-01", "age_days": 84, "ip_version": 6, "nodes": 1119298 }));
+        ctx.insert("geo_previous", &true);
+        ctx.insert("geo_held", &serde_json::json!({
+            "id": "dbip-country-lite", "name": "DB-IP Lite country", "description": "",
+            "licence": "CC BY 4.0", "attribution": "DB-IP", "version": "20260901",
+            "database_type": "DBIP-Country-Lite", "built": "2026-09-01",
+            "ip_version": 6, "nodes": 1355429, "bytes": 8182135 }));
+
+        let html = tera.render("updates.html", &ctx)
+            .unwrap_or_else(|e| panic!("updates.html failed to render: {e:#?}"));
+
+        assert!(html.contains("/updates/geo/apply"),
+                "a held country database cannot be applied from the page");
+        assert!(html.contains("2026-09-01"),
+                "the page does not say when the waiting database was built");
+        assert!(html.contains("2026-07-01"),
+                "the page no longer says what is actually answering lookups");
+        assert!(html.contains("fetched and is waiting"),
+                "the page does not say that something is waiting");
+    }
+
+    /// With nothing held there is nothing to apply, and offering the button
+    /// anyway would be a page inviting somebody to press a refusal.
+    #[test]
+    fn nothing_held_offers_nothing_to_apply() {
+        let tera = tera().expect("templates should build");
+        let mut ctx = tera::Context::new();
+        for (k, v) in [("username", "t"), ("title", "Updates"), ("url", "/updates"),
+                       ("result", ""), ("msg", ""),
+                       ("rules_url", ""), ("rules_default", ""), ("rules_checked", ""),
+                       ("rules_error", ""), ("lists_url", ""), ("lists_default", ""),
+                       ("lists_fetched", ""), ("lists_error", ""),
+                       ("geo_url", ""), ("geo_default", ""), ("geo_fetched", ""),
+                       ("geo_error", "")] {
+            ctx.insert(k, v);
+        }
+        for (k, v) in [("check_enabled", true), ("auto_lists", true),
+                       ("auto_geo", true), ("auto_rules", false)] {
+            ctx.insert(k, &v);
+        }
+        ctx.insert("geo", &serde_json::json!({
+            "source": "bundled", "database_type": "DBIP-Country-Lite",
+            "built": "2026-07-01", "age_days": 84, "ip_version": 6, "nodes": 1119298 }));
+        ctx.insert("geo_previous", &false);
+        ctx.insert("geo_held", &serde_json::Value::Null);
+
+        let html = tera.render("updates.html", &ctx)
+            .unwrap_or_else(|e| panic!("updates.html failed to render: {e:#?}"));
+        assert!(!html.contains("/updates/geo/apply"),
+                "the page offers an apply button with nothing to apply");
+    }
+
 
     #[test]
     fn the_exclusions_page_is_reachable_from_the_menu() {

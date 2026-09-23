@@ -19,6 +19,7 @@ mod db;
 mod error;
 mod forwarded;
 mod geo;
+mod geo_update;
 mod iplist;
 mod iplist_feeds;
 mod modules;
@@ -196,6 +197,7 @@ async fn main() {
     routes::updates::refresh_waiting(&db).await;
     rules_update::spawn_check_task(db.clone());
     iplist_feeds::spawn_task(db.clone());
+    geo_update::spawn_task(db.clone());
 
     // ── Build management GUI ──────────────────────────────
     let tera = assets::tera()
@@ -304,6 +306,7 @@ async fn main() {
         .route("/updates/settings",      post(routes::updates::post_updates_settings))
         .route("/updates/{kind}/fetch",  post(routes::updates::post_update_now))
         .route("/updates/lists/apply",   post(routes::updates::post_apply_lists))
+        .route("/updates/geo/apply",     post(routes::updates::post_apply_geo))
         .route("/updates/geo/revert",    post(routes::updates::post_revert_geo))
         // An uploaded bundle is the way in for an appliance with no outbound
         // access, and a country database is about eight megabytes — well past

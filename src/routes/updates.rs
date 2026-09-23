@@ -62,14 +62,16 @@ pub fn waiting() -> i64 {
 /// Count what is waiting, and remember it.
 ///
 /// Rule sets a policy holds at an older version than the mirror offers, plus a
-/// list bundle fetched and held because this installation applies lists by
-/// hand. A channel that cannot be reached is not counted: that is a different
-/// fact, it belongs on the Updates page, and a badge that meant "something is
-/// wrong somewhere" would be ignored within a week.
+/// list bundle or a country database fetched and held because this
+/// installation applies that kind by hand. A channel that cannot be reached is
+/// not counted: that is a different fact, it belongs on the Updates page, and
+/// a badge that meant "something is wrong somewhere" would be ignored within a
+/// week.
 pub async fn refresh_waiting(db: &sqlx::SqlitePool) {
     let behind = crate::rules_update::available(db).await.map(|v| v.len()).unwrap_or(0) as i64;
-    let held   = i64::from(crate::iplist_feeds::held_bundle().is_some());
-    waiting_cell().store(behind + held, Ordering::Relaxed);
+    let lists  = i64::from(crate::iplist_feeds::held_bundle().is_some());
+    let geo    = i64::from(crate::geo_update::held().is_some());
+    waiting_cell().store(behind + lists + geo, Ordering::Relaxed);
 }
 
 /// The flash a write leaves behind.
@@ -156,6 +158,17 @@ pub async fn get_updates(
     // ── The country database ──
     ctx.insert("geo",         &crate::geo::status());
     ctx.insert("geo_previous",&crate::geo::previous_path().exists());
+    // What the channel offers, which is not always what is loaded: with the
+    // switch off a fetch waits here until somebody applies it.
+    let (geo_fetched, geo_error) = crate::geo_update::status(&state.db).await;
+    let geo_url = get_setting(&state.db, crate::geo_update::KEY_URL)
+        .await
+        .unwrap_or_default();
+    ctx.insert("geo_url",     &geo_url);
+    ctx.insert("geo_default", crate::geo_update::DEFAULT_URL);
+    ctx.insert("geo_fetched", &geo_fetched.map(|t| crate::routes::settings::format_utc(&t)).unwrap_or_default());
+    ctx.insert("geo_error",   &geo_error);
+    ctx.insert("geo_held",    &crate::geo_update::held());
 
     refresh_waiting(&state.db).await;
     Ok((jar, Html(state.tera.render("updates.html", &ctx)?)).into_response())
@@ -184,8 +197,13 @@ pub async fn post_updates_settings(
         Ok(c)  => c,
         Err(e) => return flash_redirect("/updates", "failed", &e),
     };
+    let geo = match crate::routes::settings::channel_url(field("geo_url"), "Country database channel") {
+        Ok(c)  => c,
+        Err(e) => return flash_redirect("/updates", "failed", &e),
+    };
     set_setting(&state.db, crate::rules_update::KEY_URL, &rules).await?;
     set_setting(&state.db, crate::iplist_feeds::KEY_URL, &lists).await?;
+    set_setting(&state.db, crate::geo_update::KEY_URL,   &geo).await?;
 
     // Unticked checkboxes send nothing at all, so absence is the answer.
     let on = |k: &str| if form.contains_key(k) { "1" } else { "0" };
@@ -231,6 +249,34 @@ pub async fn post_apply_lists(
             tracing::info!(lists = n, by = %session.username, "Held IP list bundle applied");
             flash_redirect("/updates", "success",
                            &format!("{n} published list(s) are now in force"))
+        }
+        Err(e) => flash_redirect("/updates", "failed", &format!("Refused: {e}")),
+    }
+}
+
+// ─── post_apply_geo ──────────────────────────────────────
+
+/// POST /updates/geo/apply — put a held country database in force.
+///
+/// Only reachable on an installation that applies the country database by
+/// hand: with the switch on nothing is ever held, because a fetch goes
+/// straight into force.
+pub async fn post_apply_geo(
+    State(state): State<AppState>,
+    _jar: SignedCookieJar,
+    Admin(session): Admin,
+) -> Result<Response> {
+
+    let outcome = crate::geo_update::apply_held();
+    refresh_waiting(&state.db).await;
+
+    match outcome {
+        Ok(s) => {
+            tracing::info!(by = %session.username, "Held country database applied");
+            flash_redirect("/updates", "success", &format!(
+                "{} is in force — built {}",
+                s.database_type,
+                s.built.unwrap_or_else(|| "on an unstated date".to_string())))
         }
         Err(e) => flash_redirect("/updates", "failed", &format!("Refused: {e}")),
     }
@@ -437,8 +483,18 @@ pub async fn post_update_now(
                 "{n} published list(s) fetched and waiting — this installation applies lists by hand, so what is serving traffic has not changed")),
             Err(e) => Err(e),
         },
-        "geo" => Err("The country database is not published to a channel yet — \
-                      upload one, or point geoip_db at a file".to_string()),
+        "geo" => match crate::geo_update::check_now(&state.db).await {
+            Ok(crate::geo_update::Fetched::UpToDate) =>
+                Ok("The country database channel has nothing newer than what was last taken from it".to_string()),
+            Ok(crate::geo_update::Fetched::Applied(s)) => Ok(format!(
+                "{} is in force — built {}, verified against the signed manifest",
+                s.database_type,
+                s.built.clone().unwrap_or_else(|| "on an unstated date".to_string()))),
+            Ok(crate::geo_update::Fetched::Held(d)) => Ok(format!(
+                "{} built {} fetched and waiting — this installation applies the country database by hand, so lookups have not changed",
+                d.database_type, d.built)),
+            Err(e) => Err(e),
+        },
         other => Err(format!("\"{other}\" is not something that can be fetched")),
     };
 
