@@ -827,6 +827,42 @@ mod tests {
         }
     }
 
+    /// The rule that hides what a viewer cannot use, both ways round. It is
+    /// one line in the layout and everything else depends on it, so a
+    /// refactor that renames the class or drops the guard has to fail here
+    /// rather than on somebody's screen.
+    #[test]
+    fn a_viewer_is_not_offered_what_a_viewer_cannot_do() {
+        let tera = tera().expect("templates should build");
+
+        let render = |is_admin: Option<bool>| {
+            let mut ctx = tera::Context::new();
+            for (k, v) in [("username", "t"), ("title", "Sites"), ("url", "/sites"),
+                           ("result", ""), ("msg", "")] {
+                ctx.insert(k, v);
+            }
+            if let Some(a) = is_admin {
+                ctx.insert("is_admin", &a);
+            }
+            ctx.insert("sites",    &Vec::<serde_json::Value>::new());
+            ctx.insert("policies", &Vec::<serde_json::Value>::new());
+            ctx.insert("certs",    &Vec::<serde_json::Value>::new());
+            tera.render("sites.html", &ctx)
+                .unwrap_or_else(|e| panic!("sites.html failed to render: {e:#?}"))
+        };
+
+        let hide = ".admin-only { display: none !important; }";
+        assert!(render(Some(false)).contains(hide),
+                "a viewer is shown controls that will refuse them");
+        assert!(!render(Some(true)).contains(hide),
+                "an administrator is shown nothing to act with");
+
+        // The page that forgets to pass it renders as a viewer, because that
+        // is the direction which fails safely.
+        assert!(render(None).contains(hide),
+                "a page that omits is_admin renders as an administrator");
+    }
+
     /// An installation that applies the country database by hand must be able
     /// to see what is waiting and put it in force — and must not be told that
     /// what is waiting is what its lookups are using.

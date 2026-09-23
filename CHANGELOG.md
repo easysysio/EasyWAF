@@ -13,6 +13,8 @@ Version bumps and tags are created only after explicit approval.
 - **Unticking a rule in the Rule Library deleted it** instead of switching it off, so the next update of its set inserted it again and it started matching with nobody told. It now switches off, as the other two pages that carry the same picker already did.
 - Ticking a set's heading in the Rule Library installs it *as a set* — recorded, verified, and offered an update when the channel publishes a newer version — rather than copying its rules in loose.
 
+- **Four pages offered a viewer a form they could not submit.** Creating a site, a policy, a policy rule or a custom rule each rendered for a viewer and refused on click; they now need an administrator to open, as requesting a certificate already did. Nothing linked to them from a viewer's screen, which is why it went unnoticed.
+
 ### Changed
 - The Rule Library is now the same picker as the policy's own pages rather than a second implementation of it, so it gains what that one learned: the set headings that follow their rules, **Basic sets**, and a message naming everything that happened rather than only what was added.
 

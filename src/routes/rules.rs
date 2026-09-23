@@ -146,7 +146,7 @@ pub async fn get_rules(
 pub async fn get_rule_new(
     State(state): State<AppState>,
     jar: SignedCookieJar,
-    Viewer(session): Viewer,
+    Admin(session): Admin,
     Path(policy_name): Path<String>,
 ) -> Result<Response> {
 
@@ -2510,7 +2510,7 @@ pub struct CustomRuleForm {
 pub async fn get_custom_rule_new(
     State(state): State<AppState>,
     jar: SignedCookieJar,
-    Viewer(session): Viewer,
+    Admin(session): Admin,
 ) -> Result<Response> {
 
     // Policy names for the dropdown.

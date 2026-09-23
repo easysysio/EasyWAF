@@ -273,7 +273,7 @@ pub async fn get_policies(
 pub async fn get_policy_new(
     State(state): State<AppState>,
     jar: SignedCookieJar,
-    Viewer(session): Viewer,
+    Admin(session): Admin,
 ) -> Result<Response> {
 
     // Load the full rule catalog with nothing pre-checked (new policy).

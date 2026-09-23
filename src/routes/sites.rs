@@ -150,7 +150,7 @@ pub async fn get_sites(
 pub async fn get_site_new(
     State(state): State<AppState>,
     jar: SignedCookieJar,
-    Viewer(session): Viewer,
+    Admin(session): Admin,
 ) -> Result<Response> {
 
     let policies = fetch_policies(&state).await?;
