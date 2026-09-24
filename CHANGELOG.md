@@ -16,6 +16,7 @@ Version bumps and tags are created only after explicit approval.
 - **Four pages offered a viewer a form they could not submit.** Creating a site, a policy, a policy rule or a custom rule each rendered for a viewer and refused on click; they now need an administrator to open, as requesting a certificate already did. Nothing linked to them from a viewer's screen, which is why it went unnoticed.
 
 ### Changed
+- **The sites list says what a site is getting rather than that a policy exists.** *Protected* meant only that a policy was attached — so a policy switched off, a policy set to detection only, and a policy with no rules switched on all read as protection while a SQL injection went straight through. Each now says which it is, and *Protected* carries the number of rules standing behind the claim.
 - The Rule Library is now the same picker as the policy's own pages rather than a second implementation of it, so it gains what that one learned: the set headings that follow their rules, **Basic sets**, and a message naming everything that happened rather than only what was added.
 
 ---

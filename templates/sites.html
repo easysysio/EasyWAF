@@ -52,8 +52,36 @@
                         <td><span class="label label-default">:{{ site.listen_port }}</span></td>
                         <td>{{ site.target }}</td>
                         <td>
+                            {# "Protected" used to mean only that a policy was
+                               attached, which is not the same fact and was the
+                               more reassuring of the two. A policy set to Off
+                               inspects nothing, one set to DetectionOnly never
+                               refuses anything, and one with no enabled rules
+                               has nothing to refuse with — three states that
+                               all read as protection and are not. #}
                             {% if site.waf_policy_id %}
-                                <span class="label label-info"><i class="fa fa-shield"></i> Protected</span>
+                                {% if site.policy_mode == "Off" %}
+                                <span class="label label-warning"
+                                      title="The policy is switched off: its rules, country rules and IP lists are all skipped, so requests to this site are proxied without inspection.">
+                                    <i class="fa fa-exclamation-triangle"></i> Policy off
+                                </span>
+                                {% elif site.policy_rules == 0 %}
+                                <span class="label label-warning"
+                                      title="The policy has no rules switched on, so no WAF rule can match a request to this site. Country rules and IP lists still apply if the policy has any.">
+                                    <i class="fa fa-exclamation-triangle"></i> No rules
+                                </span>
+                                {% elif site.policy_mode == "DetectionOnly" %}
+                                <span class="label label-warning"
+                                      title="Detection only: {{ site.policy_rules }} rule(s) run and what they match is recorded in Traffic Monitor, but nothing is ever refused.">
+                                    <i class="fa fa-eye"></i> Detection only
+                                </span>
+                                {% else %}
+                                <span class="label label-info"
+                                      title="{{ site.policy_rules }} rule(s) run and a request over the policy's threshold is refused.">
+                                    <i class="fa fa-shield"></i> Protected
+                                    <span class="badge" style="background:rgba(0,0,0,.25);margin-left:2px">{{ site.policy_rules }}</span>
+                                </span>
+                                {% endif %}
                             {% else %}
                                 {# "None" in grey read as a neutral absence. It is not:
                                    with no policy the WAF and country rules both return

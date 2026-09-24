@@ -62,6 +62,13 @@ pub struct Site {
     pub tls_redirect:   bool,
     pub enabled:        bool,
     pub waf_policy_id:  Option<i64>,
+    /// The policy's engine mode — "Off", "DetectionOnly" or "On" — and how
+    /// many enabled rules it has. Both are needed to say what this site is
+    /// actually getting: a policy is attached, is not the same fact as
+    /// anything being inspected, and the list page said the first while
+    /// meaning the second.
+    pub policy_mode:    Option<String>,
+    pub policy_rules:   i64,
     pub hsts:           bool,
     pub x_frame:        bool,
     pub x_frame_value:  String,
@@ -627,7 +634,15 @@ async fn fetch_sites(state: &AppState) -> Result<Vec<Site>> {
                 x_frame_value  as \"x_frame_value!\",
                 x_content_type as \"x_content_type!: bool\",
                 xss_protection as \"xss_protection!: bool\",
-                affinity       as \"affinity!: bool\"
+                affinity       as \"affinity!: bool\",
+                (SELECT rule_engine FROM policies WHERE id = sites.waf_policy_id)
+                    as \"policy_mode\",
+                -- Enabled rules only. A rule switched off is one the operator
+                -- decided against, and counting it would put the number back
+                -- to meaning \"a policy exists\".
+                (SELECT COUNT(*) FROM waf_rules
+                  WHERE policy_id = sites.waf_policy_id AND enabled = 1)
+                    as \"policy_rules!: i64\"
          FROM sites ORDER BY name"
     )
     .fetch_all(&state.db)
@@ -680,6 +695,8 @@ async fn fetch_sites(state: &AppState) -> Result<Vec<Site>> {
         tls_redirect:   r.tls_redirect,
         enabled:        r.enabled,
         waf_policy_id:  r.waf_policy_id,
+        policy_mode:    r.policy_mode,
+        policy_rules:   r.policy_rules,
         hsts:           r.hsts,
         x_frame:        r.x_frame,
         x_frame_value:  r.x_frame_value,
@@ -924,6 +941,10 @@ async fn fetch_site(state: &AppState, name: &str) -> Result<Site> {
         tls_redirect:   r.tls_redirect,
         enabled:        r.enabled,
         waf_policy_id:  r.waf_policy_id,
+        // The edit form shows neither: it is the page that changes a
+        // site, not the one reporting what the site is getting.
+        policy_mode:    None,
+        policy_rules:   0,
         hsts:           r.hsts,
         x_frame:        r.x_frame,
         x_frame_value:  r.x_frame_value,

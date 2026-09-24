@@ -827,6 +827,57 @@ mod tests {
         }
     }
 
+    /// The sites list must say what a site is actually getting, not that a
+    /// policy exists. Four states read as protection and only one of them is.
+    #[test]
+    fn the_sites_list_does_not_call_an_idle_policy_protection() {
+        let tera = tera().expect("templates should build");
+
+        let render = |policy: Option<i64>, mode: &str, rules: i64| {
+            let mut ctx = tera::Context::new();
+            for (k, v) in [("username", "t"), ("title", "Sites"), ("url", "/sites"),
+                           ("result", ""), ("msg", "")] {
+                ctx.insert(k, v);
+            }
+            ctx.insert("is_admin", &true);
+            ctx.insert("policies", &Vec::<serde_json::Value>::new());
+            ctx.insert("certs",    &Vec::<serde_json::Value>::new());
+            ctx.insert("sites", &vec![serde_json::json!({
+                "id": 1, "name": "demo", "server_name": "demo.test", "aliases": "",
+                "target": "http://10.0.0.8", "upstreams": [], "affinity": false,
+                "listen_port": 80, "tls_port": null, "cert_id": null,
+                "tls_redirect": false, "enabled": true,
+                "waf_policy_id": policy, "policy_mode": mode, "policy_rules": rules,
+                "hsts": false, "x_frame": false, "x_frame_value": "SAMEORIGIN",
+                "x_content_type": false, "xss_protection": false })]);
+            tera.render("sites.html", &ctx)
+                .unwrap_or_else(|e| panic!("sites.html failed to render: {e:#?}"))
+        };
+
+        // Enforcing, with rules: the one case that is protection, and it says
+        // how many rules stand behind the claim.
+        let good = render(Some(1), "On", 74);
+        assert!(good.contains("Protected"), "an enforcing policy with rules is not reported");
+        assert!(good.contains("74"), "the claim does not say how many rules back it");
+
+        // A policy switched off inspects nothing at all.
+        let off = render(Some(1), "Off", 74);
+        assert!(off.contains("Policy off"), "a policy switched off reads as protection");
+        assert!(!off.contains("Protected"), "a policy switched off is still called protected");
+
+        // Nothing to refuse with.
+        let empty = render(Some(1), "On", 0);
+        assert!(empty.contains("No rules"), "a policy with no rules reads as protection");
+
+        // Inspected and recorded, never refused.
+        let watching = render(Some(1), "DetectionOnly", 12);
+        assert!(watching.contains("Detection only"),
+                "detection only reads as though something is being refused");
+
+        // And no policy at all, which was already right.
+        assert!(render(None, "", 0).contains("Not inspected"));
+    }
+
     /// The rule that hides what a viewer cannot use, both ways round. It is
     /// one line in the layout and everything else depends on it, so a
     /// refactor that renames the class or drops the guard has to fail here
