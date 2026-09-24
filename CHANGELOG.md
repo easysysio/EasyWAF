@@ -6,7 +6,7 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
-## [0.13.4] — unreleased
+## [0.13.4] — 2026-09-24
 
 ### Fixed
 - **A policy could report holding rule sets it had not one rule of.** The Rule Library page applied a selection by inserting the ticked rules and deleting the unticked ones, and never recorded which sets were installed — so a policy's Rule Sets page could say a set was *up to date at v2* while the policy inspected none of those requests, the update check compared a version nobody was running, and rollback offered to put back a version that was not there. Starting up now forgets a holding with no rules behind it. A set whose rules are merely switched off is untouched: off is a decision, and it survives.
