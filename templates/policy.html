@@ -39,7 +39,7 @@
 <p class="help-block">
     <i class="fa fa-info-circle"></i>
     Rule update check: {{ rule_check_error }}.
-    {% if rule_check_fetched %}Last successful check {{ rule_check_fetched }}.{% endif %}
+    {% if rule_check_fetched %}Last successful check {{ rule_check_fetched | utc }}.{% endif %}
     This is not an error to act on if the appliance has no outbound access —
     turn the check off under Settings if it never will.
 </p>

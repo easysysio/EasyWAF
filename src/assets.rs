@@ -70,8 +70,77 @@ pub fn tera() -> Result<tera::Tera, tera::Error> {
     // version(), so an instance without it renders nothing at all — and the
     // failure is at render time, on a page, not at startup.
     tera.register_function("version", app_version);
+    tera.register_filter("utc", UtcTime);
 
     Ok(tera)
+}
+
+// ─── Times ───────────────────────────────────────────────
+
+/// `{{ when | utc }}` — a UTC timestamp as a `<time>` element, which the
+/// layout's script rewrites into the viewer's own time zone.
+///
+/// Everything EasyWAF stores is UTC, and the pages used to print it as it was
+/// stored, some labelled UTC and some not. Somebody reading 09:00 at 12:51 on
+/// their own clock has every reason to think the appliance's time is wrong;
+/// it is not, and the page should not make them work out an offset to see so.
+///
+/// Converted in the browser rather than on the server because the browser is
+/// the one thing that knows the viewer's zone — the appliance's own zone is
+/// often UTC on a server, and would be the wrong answer for an administrator
+/// in another country anyway. What is sent stays correct without the script:
+/// the text is the UTC value, labelled UTC, and the tooltip keeps it
+/// afterwards, so a time on a page can still be matched to a line in a log.
+struct UtcTime;
+
+impl tera::Filter for UtcTime {
+    fn filter(
+        &self,
+        value: &tera::Value,
+        _args: &std::collections::HashMap<String, tera::Value>,
+    ) -> tera::Result<tera::Value> {
+        Ok(tera::Value::String(time_element(value.as_str().unwrap_or_default())))
+    }
+
+    /// The element is built from parsed digits, and anything that did not
+    /// parse is escaped before it is returned — so the output is safe to
+    /// insert without escaping it a second time, which would print the tags.
+    fn is_safe(&self) -> bool {
+        true
+    }
+}
+
+/// Build the element. Accepts what EasyWAF writes: SQLite's
+/// `YYYY-MM-DD HH:MM:SS`, the hour keys `YYYY-MM-DD HH:MM`, and RFC 3339.
+/// Seconds are shown only when the value had them, so an hour stays an hour.
+pub(crate) fn time_element(raw: &str) -> String {
+    use chrono::{DateTime, NaiveDateTime};
+
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return String::new();
+    }
+    let parsed = DateTime::parse_from_rfc3339(raw)
+        .map(|t| (t.naive_utc(), true))
+        .ok()
+        .or_else(|| NaiveDateTime::parse_from_str(raw, "%Y-%m-%d %H:%M:%S").ok().map(|t| (t, true)))
+        .or_else(|| NaiveDateTime::parse_from_str(raw, "%Y-%m-%d %H:%M").ok().map(|t| (t, false)));
+
+    let Some((t, seconds)) = parsed else {
+        // Not a time this knows. Shown as it was, escaped, rather than dropped:
+        // a value nobody can read is better than one that silently vanished.
+        return tera::escape_html(raw);
+    };
+    let shown = if seconds {
+        t.format("%Y-%m-%d %H:%M:%S").to_string()
+    } else {
+        t.format("%Y-%m-%d %H:%M").to_string()
+    };
+    format!(
+        r#"<time class="ts" datetime="{}Z"{} title="{shown} UTC">{shown} UTC</time>"#,
+        t.format("%Y-%m-%dT%H:%M:%S"),
+        if seconds { r#" data-s="1""# } else { "" },
+    )
 }
 
 /// Tera function returning the crate version, usable as `{{ version() }}` in
@@ -825,6 +894,46 @@ mod tests {
         ] {
             assert!(html.contains(what), "{why}");
         }
+    }
+
+    /// Every stored form of a time becomes an element the browser can convert,
+    /// and still reads correctly — in UTC, saying so — if it never does.
+    #[test]
+    fn a_time_is_sent_as_utc_for_the_browser_to_localise() {
+        // SQLite's own format, which is most of what EasyWAF stores.
+        let e = time_element("2026-09-25 09:51:07");
+        assert!(e.contains(r#"datetime="2026-09-25T09:51:07Z""#), "{e}");
+        assert!(e.contains("data-s"), "seconds were dropped: {e}");
+        assert!(e.contains(">2026-09-25 09:51:07 UTC</time>"),
+                "without the script the text must be the UTC value, labelled: {e}");
+        assert!(e.contains(r#"title="2026-09-25 09:51:07 UTC""#),
+                "the UTC value is not kept for matching against a log: {e}");
+
+        // An hour key, from the dashboard and Traffic Monitor, stays an hour.
+        let h = time_element("2026-09-25 09:00");
+        assert!(h.contains(r#"datetime="2026-09-25T09:00:00Z""#), "{h}");
+        assert!(!h.contains("data-s"), "an hour grew seconds: {h}");
+
+        // RFC 3339 with an offset is normalised to UTC before it is sent.
+        let r = time_element("2026-09-25T12:51:00+03:00");
+        assert!(r.contains(r#"datetime="2026-09-25T09:51:00Z""#), "{r}");
+
+        // Nothing to show, and something that is not a time.
+        assert_eq!(time_element(""), "");
+        assert_eq!(time_element("<soon>"), "&lt;soon&gt;",
+                   "an unparsed value must be escaped, since the filter is marked safe");
+    }
+
+    /// Marked safe, the filter's output must reach the page as markup — and
+    /// escaping it anyway would print the tags on every page with a time.
+    #[test]
+    fn the_utc_filter_is_not_escaped_twice() {
+        let mut tera = tera().expect("templates should build");
+        tera.add_raw_template("t", "{{ when | utc }}").unwrap();
+        let mut ctx = tera::Context::new();
+        ctx.insert("when", "2026-09-25 09:51:07");
+        let out = tera.render("t", &ctx).unwrap();
+        assert!(out.starts_with("<time "), "the element was escaped: {out}");
     }
 
     /// The sites list must say what a site is actually getting, not that a

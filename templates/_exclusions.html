@@ -92,7 +92,7 @@
                                 {% else %}
                                     <small class="text-muted"><em>no reason recorded</em></small>
                                 {% endif %}
-                                <br><small class="text-muted">added {{ e.created_at }}</small>
+                                <br><small class="text-muted">added {{ e.created_at | utc }}</small>
                             </td>
                             <td class="text-right" style="white-space:nowrap">
                                 <form class="admin-only" method="post"

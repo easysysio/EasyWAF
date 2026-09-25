@@ -160,7 +160,7 @@
                             {% endif %}
                             <td>{{ e.reason | default(value="—") }}</td>
                             <td>{{ e.added_by | default(value="—") }}</td>
-                            <td style="white-space:nowrap"><small class="text-muted">{{ e.created_at }}</small></td>
+                            <td style="white-space:nowrap"><small class="text-muted">{{ e.created_at | utc }}</small></td>
                             <td class="text-right" style="white-space:nowrap">
                                 <form class="admin-only" method="post"
                                       action="/iplists/{{ e.id }}/remove"
@@ -250,7 +250,7 @@
                         <small class="text-muted">— for
                         {% if everywhere %}<strong>every policy</strong>{% else %}<code>{{ sel_policy }}</code>{% endif %}</small></span>
                     <span class="text-muted" style="font-size:12px">
-                        {% if feeds_fetched %}updated {{ feeds_fetched }} UTC{% else %}not fetched yet{% endif %}
+                        {% if feeds_fetched %}updated {{ feeds_fetched | utc }}{% else %}not fetched yet{% endif %}
                     </span>
                     <form class="admin-only" method="post" action="/iplists/update" style="margin:0;margin-left:auto">
                         <input type="hidden" name="policy" value="{{ sel_policy }}">

@@ -125,7 +125,7 @@
             <div class="panel-heading" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
                 <strong><i class="fa fa-shield"></i> Rule sets</strong>
                 <span class="text-muted" style="font-size:12px">
-                    {% if rules_checked %}channel read {{ rules_checked }} UTC{% else %}never read{% endif %}
+                    {% if rules_checked %}channel read {{ rules_checked | utc }}{% else %}never read{% endif %}
                 </span>
                 <form class="admin-only" method="post" action="/updates/rules/fetch" style="margin:0 0 0 auto">
                     <button type="submit" class="btn btn-default btn-sm">
@@ -138,7 +138,7 @@
                 <div class="alert alert-warning" style="margin-bottom:12px">
                     <i class="fa fa-exclamation-triangle"></i>
                     The last read failed: {{ rules_error }}.
-                    {% if rules_checked %}The mirror below is from {{ rules_checked }} UTC.{% endif %}
+                    {% if rules_checked %}The mirror below is from {{ rules_checked | utc }}.{% endif %}
                 </div>
                 {% endif %}
 
@@ -223,7 +223,7 @@
             <div class="panel-heading" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
                 <strong><i class="fa fa-hand-stop-o"></i> IP lists</strong>
                 <span class="text-muted" style="font-size:12px">
-                    {% if lists_fetched %}fetched {{ lists_fetched }} UTC{% else %}never fetched{% endif %}
+                    {% if lists_fetched %}fetched {{ lists_fetched | utc }}{% else %}never fetched{% endif %}
                 </span>
                 <form class="admin-only" method="post" action="/updates/lists/fetch" style="margin:0 0 0 auto">
                     <button type="submit" class="btn btn-default btn-sm">
@@ -313,7 +313,7 @@
             <div class="panel-heading" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
                 <strong><i class="fa fa-flag"></i> Country database</strong>
                 <span class="text-muted" style="font-size:12px">
-                    {% if geo_fetched %}fetched {{ geo_fetched }} UTC{% else %}never fetched{% endif %}
+                    {% if geo_fetched %}fetched {{ geo_fetched | utc }}{% else %}never fetched{% endif %}
                 </span>
                 <form class="admin-only" method="post" action="/updates/geo/fetch" style="margin:0 0 0 auto">
                     <button type="submit" class="btn btn-default btn-sm">

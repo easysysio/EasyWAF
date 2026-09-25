@@ -214,7 +214,7 @@
                 <div class="panel-heading" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
                     <strong><i class="fa fa-globe"></i> Published Lists</strong>
                     <span class="text-muted" style="font-size:12px">
-                        {% if lists_fetched %}channel updated {{ lists_fetched }} UTC{% else %}channel not fetched yet{% endif %}
+                        {% if lists_fetched %}channel updated {{ lists_fetched | utc }}{% else %}channel not fetched yet{% endif %}
                     </span>
                 </div>
                 <div class="panel-body">

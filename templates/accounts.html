@@ -63,7 +63,7 @@
                             <td>
                                 <strong>{{ a.username }}</strong>
                                 {% if a.is_self %}<span class="label label-info">you</span>{% endif %}
-                                <br><small class="text-muted">created {{ a.created_at }}</small>
+                                <br><small class="text-muted">created {{ a.created_at | utc }}</small>
                             </td>
                             <td>
                                 <form method="post" action="/accounts/{{ a.id }}/role"

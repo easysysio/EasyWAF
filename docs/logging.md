@@ -8,6 +8,10 @@ EasyWAF writes three separate things, and keeps them separate on purpose.
 | **Audit log** — every change made through the interface | `/var/log/easywaf/audit.log` | Always on |
 | **Operational logging** — what the service itself is doing | stdout, so the journal | `journalctl -u easywaf` |
 
+**All three are in UTC; the interface is not.** Every page shows times in your
+browser's time zone, and each time's tooltip gives it in UTC — which is the
+value to search a log or a syslog collector for.
+
 ## Flow logs
 
 One line per proxied request, sent to a syslog collector over UDP: the site, the

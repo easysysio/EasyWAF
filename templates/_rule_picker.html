@@ -64,7 +64,7 @@
                 <strong>The rule channel could not be reached:</strong> {{ check_error }}
                 <br><small>
                     {% if checked %}
-                    This list is what was last downloaded, on {{ checked }} UTC — sets
+                    This list is what was last downloaded, on {{ checked | utc }} — sets
                     published since then are not in it.
                     {% else %}
                     Nothing has been downloaded yet, so this list is the basic sets

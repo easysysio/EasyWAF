@@ -22,7 +22,7 @@
    and simply has very little traffic in it. #}
 <div class="alert alert-info" style="padding:8px 12px">
     <i class="fa fa-clock-o"></i>
-    Showing only the hour beginning <strong>{{ sel_hour }} UTC</strong>.
+    Showing only the hour beginning <strong>{{ sel_hour | utc }}</strong>.
     <a href="/traffic?site={{ sel_site }}&blocked={{ sel_blocked }}&hours={{ sel_hours }}"
        class="alert-link" style="margin-left:8px">Show the whole window</a>
 </div>
@@ -147,7 +147,7 @@
                 <tr {% if e.blocked %}class="danger"
                     {% elif e.detection == "would_block" or e.detection == "would_challenge" %}class="warning"
                     {% endif %}>
-                    <td style="white-space:nowrap">{{ e.timestamp }}</td>
+                    <td style="white-space:nowrap">{{ e.timestamp | utc }}</td>
                     <td>{{ e.site_name }}</td>
                     <td style="white-space:nowrap">
                         <code>{{ e.client_ip }}</code>

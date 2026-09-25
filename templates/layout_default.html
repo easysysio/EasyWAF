@@ -232,6 +232,41 @@
 <!-- Custom sidebar init -->
 <script src="/static/js/easywaf.js?v=3"></script>
 
+<script>
+// Times in the viewer's own zone. The server sends UTC — as <time class="ts">
+// from the `utc` filter — because UTC is what it stores and the one zone that
+// means the same thing in a log file. The browser is the only party that knows
+// where the viewer is, so the conversion happens here. The UTC value stays in
+// each element's tooltip; with scripts off, the text itself is UTC and says so.
+var EasyWAFTime = (function () {
+    function p(n) { return (n < 10 ? '0' : '') + n; }
+
+    // "2026-09-25 12:51", plus ":07" when the value carried seconds.
+    function local(d, seconds) {
+        var s = d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate())
+              + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+        return seconds ? s + ':' + p(d.getSeconds()) : s;
+    }
+
+    // The zone as an offset — "UTC+3", "UTC-4:30", or plain "UTC" — for a page
+    // that names it once rather than on every value.
+    function zone() {
+        var off = -new Date().getTimezoneOffset();
+        if (off === 0) return 'UTC';
+        var a = Math.abs(off);
+        return 'UTC' + (off > 0 ? '+' : '-') + Math.floor(a / 60) + (a % 60 ? ':' + p(a % 60) : '');
+    }
+
+    document.querySelectorAll('time.ts[datetime]').forEach(function (t) {
+        var d = new Date(t.getAttribute('datetime'));
+        if (!isNaN(d.getTime())) t.textContent = local(d, t.hasAttribute('data-s'));
+    });
+    document.querySelectorAll('.tz-name').forEach(function (e) { e.textContent = zone(); });
+
+    return { local: local, zone: zone };
+})();
+</script>
+
 {% block scripts %}{% endblock %}
 </body>
 </html>

@@ -45,7 +45,7 @@
                     <i class="fa fa-exclamation-triangle"></i>
                     <strong>The channel could not be reached:</strong> {{ check_error }}
                     {% if checked %}
-                    <br><small>Showing the last manifest fetched, from {{ checked }} UTC.
+                    <br><small>Showing the last manifest fetched, from {{ checked | utc }}.
                         Sets published since then are not listed.</small>
                     {% else %}
                     <br><small>Nothing has been fetched yet, so no sets can be listed.
@@ -196,7 +196,7 @@
                 {% elif not check_error %}
                 <p class="text-muted">
                     The channel offers no sets, and this policy holds none.
-                    {% if checked %}Last checked {{ checked }} UTC.{% endif %}
+                    {% if checked %}Last checked {{ checked | utc }}.{% endif %}
                 </p>
                 {% endif %}
 

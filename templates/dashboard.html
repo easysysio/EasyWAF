@@ -160,7 +160,7 @@
         <div class="panel panel-default">
             <div class="panel-heading">
                 <strong><i class="fa fa-area-chart"></i> Requests per Hour</strong>
-                <small class="text-muted">last 24 hours, UTC</small>
+                <small class="text-muted">last 24 hours, <span class="tz-name">UTC</span></small>
             </div>
             <div class="panel-body" style="padding:12px 16px">
                 <canvas id="hourlyChart" height="110"></canvas>
@@ -288,7 +288,15 @@ let verdictChart = null;
     hourlyChart = new Chart(document.getElementById('hourlyChart'), {
         type: 'bar',
         data: {
-            labels: raw.map(function (b) { return b.hour; }),
+            // Each bar is labelled in the viewer's zone, from the full UTC
+            // key rather than the "HH:00" beside it: an offset can move a bar
+            // across midnight, and a zone like UTC+5:30 does not land on the
+            // hour at all. The click below still sends the UTC key, which is
+            // what Traffic Monitor filters on.
+            labels: raw.map(function (b) {
+                var d = new Date(b.key.replace(' ', 'T') + ':00Z');
+                return isNaN(d.getTime()) ? b.hour : EasyWAFTime.local(d, false).slice(11);
+            }),
             datasets: [
                 { label: 'Passed',     data: raw.map(function (b) { return b.passed; }),     backgroundColor: PASSED  },
                 { label: 'Challenged', data: raw.map(function (b) { return b.challenged; }), backgroundColor: CHALLEN },

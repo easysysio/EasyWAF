@@ -127,7 +127,7 @@
                     <tr><th>Last attempt</th>
                         <td>
                             {% if acme_last_attempt %}
-                                {{ acme_last_attempt }}
+                                {{ acme_last_attempt | utc }}
                                 {% if acme_last_error %}
                                     <span class="label label-danger">failed</span>
                                 {% else %}
@@ -140,7 +140,7 @@
                     <tr><th>Next attempt</th>
                         <td>
                             {% if acme_next_attempt %}
-                                not before {{ acme_next_attempt }}
+                                not before {{ acme_next_attempt | utc }}
                             {% else %}
                                 when fewer than 30 days remain
                             {% endif %}
