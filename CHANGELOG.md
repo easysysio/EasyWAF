@@ -6,7 +6,7 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
-## [0.13.5] — unreleased
+## [0.13.5] — 2026-09-25
 
 ### Fixed
 - **Times are shown in your own time zone.** The interface printed times as it stores them, in UTC — some labelled, most not — so at 12:51 in Israel the dashboard's latest hour read 09:00, and a Traffic Monitor row, an account's creation, an exclusion or a certificate attempt each read three hours behind the clock beside it. Every page now shows times in the browser's time zone, the dashboard names that zone, and each time keeps its UTC value in a tooltip for matching against logs, which stay in UTC. With scripts off the page shows UTC and says so.
