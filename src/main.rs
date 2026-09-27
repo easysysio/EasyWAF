@@ -111,7 +111,13 @@ async fn main() {
         .expect("install rustls crypto provider");
 
     let cfg = config::load("config.toml");
+
+    // A restore staged by the previous run is swapped in before anything opens
+    // the database — or, if the last start swapped one in and never came up,
+    // undone. See backup.rs for why the order of that matters.
+    backup::apply_staged_restore().await;
     let db  = db::init(&config::database_url()).await;
+    backup::finish_restore(&db).await;
 
     // Country lookups are done per request, so the database is opened once here.
     geo::init(cfg.proxy.geoip_db.as_deref().unwrap_or(""));
@@ -309,6 +315,15 @@ async fn main() {
         .route("/backup/schedule",       post(routes::backup::post_schedule))
         .route("/backup/take",           post(routes::backup::post_take))
         .route("/backup/stored/{name}",  post(routes::backup::post_stored))
+        .route("/backup/restore/apply",  post(routes::backup::post_restore_apply))
+        .route("/backup/restore/discard",post(routes::backup::post_restore_discard))
+        .route("/backup/before-restore", post(routes::backup::post_before_restore))
+        // No size limit, deliberately: an administrator is restoring their own
+        // database, which is as large as it is. It streams to disk rather than
+        // memory, so the disk is the limit, and only an administrator reaches it.
+        .route("/backup/restore/upload",
+               post(routes::backup::post_restore_upload)
+                   .layer(axum::extract::DefaultBodyLimit::disable()))
         .route("/updates",               get(routes::updates::get_updates))
         .route("/updates/settings",      post(routes::updates::post_updates_settings))
         .route("/updates/{kind}/fetch",  post(routes::updates::post_update_now))
@@ -409,6 +424,14 @@ async fn main() {
         }
         reason = stop_signal() => {
             info!("Stopping on {reason}");
+        }
+        // A restore has been staged. Closed cleanly like any stop, then exited
+        // with a code systemd's Restart=on-failure answers, so the next start
+        // is the one that swaps it in.
+        () = backup::restart_requested() => {
+            info!("Stopping to apply a restore — the service manager starts EasyWAF again");
+            close_database(&db).await;
+            std::process::exit(backup::RESTART_CODE);
         }
     }
 

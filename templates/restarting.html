@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+{# Shown once, as EasyWAF stops itself to apply a restore. It stands alone
+   rather than extending the layout: the layout draws a menu from the signed-in
+   session, and that session is about to belong to a database that is being
+   replaced — a restored snapshot brings its own session key and accounts. #}
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EasyWAF — restoring</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif; margin: 0;
+         display: flex; min-height: 100vh; align-items: center; justify-content: center;
+         background: Canvas; color: CanvasText; }
+  main { max-width: 34rem; padding: 1.5rem; line-height: 1.5; }
+  h1 { font-size: 1.3rem; margin: 0 0 .75rem; }
+  .muted { opacity: .7; font-size: .9rem; }
+  #state { font-weight: 600; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Restoring the snapshot</h1>
+  <p>EasyWAF is stopping to swap the snapshot in, and starts again by itself.
+     The database it replaces is kept, and if the snapshot does not start, it is
+     put back automatically.</p>
+  <p><span id="state">Waiting for EasyWAF to come back…</span></p>
+  <p class="muted">You will sign in with the accounts <strong>in the snapshot</strong> —
+     it carries its own, and its own session key, so the session you have now ends.
+     Sites are not served during the restart, which normally takes a few seconds.</p>
+  <p class="muted">If nothing happens for a minute, EasyWAF is not running under a
+     service manager that restarts it. Start it again yourself; the snapshot is
+     applied as it starts.</p>
+</main>
+<script>
+// Polled until the service answers, then off to the Backup page — which sends
+// anyone without a session in the restored database to sign in first.
+(function () {
+  var state = document.getElementById('state'), seenDown = false, tries = 0;
+  function poll() {
+    tries++;
+    fetch('/login', { cache: 'no-store' }).then(function (r) {
+      if (seenDown && r.ok) { state.textContent = 'Back — opening the Backup page…';
+                              window.location = '/backup'; return; }
+      setTimeout(poll, 1500);
+    }).catch(function () {
+      seenDown = true;
+      state.textContent = 'Restarting… (' + tries + ')';
+      setTimeout(poll, 1500);
+    });
+  }
+  setTimeout(poll, 1000);
+})();
+</script>
+</body>
+</html>

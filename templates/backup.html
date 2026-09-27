@@ -54,6 +54,84 @@
             </div>
         </div>
 
+        <!-- ── Restore ─────────────────────────────────── -->
+        <div class="panel panel-default">
+            <div class="panel-heading">
+                <strong><i class="fa fa-history"></i> Restore a snapshot</strong>
+            </div>
+            <div class="panel-body">
+                {% if restore_outcome == "failed" %}
+                <div class="alert alert-danger">
+                    <i class="fa fa-exclamation-triangle"></i>
+                    <strong>The last restore did not happen.</strong> {{ restore_message }}
+                    <small class="text-muted">({{ restore_at | utc }})</small>
+                </div>
+                {% elif restore_outcome == "ok" %}
+                <div class="alert alert-success">
+                    <i class="fa fa-check"></i> {{ restore_message }}
+                    <small class="text-muted">({{ restore_at | utc }})</small>
+                </div>
+                {% endif %}
+
+                {% if held %}
+                <div class="alert alert-warning">
+                    <p style="margin-top:0"><strong>Held, not restored.</strong> This is what the uploaded
+                       file ({{ held_size }}) holds. Restoring it <strong>replaces everything on this
+                       appliance</strong> with it — sites, policies, rules, certificates, accounts,
+                       settings and traffic history.</p>
+                    <table class="table table-condensed" style="font-size:13px;max-width:520px;background:transparent">
+                        <tr><td style="width:200px">Last run by</td>
+                            <td>{% if held.written_by %}EasyWAF {{ held.written_by }}{% else %}EasyWAF older than 0.14.0 — its schema is brought up to date as it starts{% endif %}</td></tr>
+                        <tr><td>Sites</td><td>{{ held.sites }}</td></tr>
+                        <tr><td>Policies</td><td>{{ held.policies }}, with {{ held.rules }} rules between them</td></tr>
+                        <tr><td>Certificates</td><td>{{ held.certs }}</td></tr>
+                        <tr><td>Accounts</td><td>{{ held.accounts }}{% if held.accounts == 0 %} — <strong>none</strong>: first-run setup will ask for one{% endif %}</td></tr>
+                        <tr><td>Traffic history</td><td>{{ held.traffic }} request(s){% if held.newest_traffic %}, the newest {{ held.newest_traffic | utc }}{% endif %}</td></tr>
+                    </table>
+                    <p>EasyWAF stops, swaps it in and starts again — a few seconds without serving
+                       sites. You then sign in with <strong>the snapshot's</strong> accounts. The
+                       database it replaces is kept, and if the snapshot will not start, that one is
+                       put back by itself.</p>
+                    <div style="display:flex;gap:8px">
+                        <form method="post" action="/backup/restore/apply"
+                              onsubmit="return confirm('Replace everything on this appliance with this snapshot?\n\nEasyWAF restarts, and you sign in with the snapshot\'s accounts.');">
+                            <button type="submit" class="btn btn-danger">
+                                <i class="fa fa-history"></i> Restore it
+                            </button>
+                        </form>
+                        <form method="post" action="/backup/restore/discard">
+                            <button type="submit" class="btn btn-default">Discard</button>
+                        </form>
+                    </div>
+                </div>
+                {% elif held_error %}
+                <div class="alert alert-danger"><i class="fa fa-exclamation-triangle"></i> {{ held_error }}</div>
+                {% endif %}
+
+                <form method="post" enctype="multipart/form-data" action="/backup/restore/upload"
+                      style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+                    <input type="file" name="file" accept=".db,application/vnd.sqlite3" required style="max-width:340px">
+                    <button type="submit" class="btn btn-default btn-sm">
+                        <i class="fa fa-upload"></i> Upload and check
+                    </button>
+                    <span class="text-muted" style="font-size:12px">
+                        Checked first — that it is an EasyWAF database, undamaged, and not from a
+                        newer version than this one — and held for you to look at. Nothing is replaced
+                        until you say so.
+                    </span>
+                </form>
+
+                {% if before_size %}
+                <form method="post" action="/backup/before-restore" style="margin-top:12px">
+                    <span class="text-muted" style="font-size:12px">
+                        The database the last restore replaced is kept ({{ before_size }}).
+                    </span>
+                    <button type="submit" class="btn btn-link btn-xs"><i class="fa fa-download"></i> Download it</button>
+                </form>
+                {% endif %}
+            </div>
+        </div>
+
         <!-- ── Scheduled snapshots ─────────────────────── -->
         <div class="panel panel-default">
             <div class="panel-heading" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">

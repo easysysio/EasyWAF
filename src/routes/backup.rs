@@ -63,6 +63,29 @@ pub async fn get_backup(
     ctx.insert("backup_last",   &last.unwrap_or_default());
     ctx.insert("backup_error",  &error.unwrap_or_default());
 
+    // ── Restore ──
+    // A held upload is inspected again on every view rather than remembered:
+    // it is cheap, and what the page describes is then what is on disk now.
+    let candidate = crate::backup::candidate_path();
+    let (held, held_error) = if candidate.exists() {
+        match crate::backup::inspect(&candidate).await {
+            Ok(c)  => (Some(c), None),
+            Err(e) => (None, Some(e)),
+        }
+    } else {
+        (None, None)
+    };
+    ctx.insert("held",        &held);
+    ctx.insert("held_error",  &held_error.unwrap_or_default());
+    ctx.insert("held_size",   &human_size(std::fs::metadata(&candidate).map(|m| m.len()).unwrap_or(0)));
+    for key in ["restore_outcome", "restore_message", "restore_at"] {
+        let v = crate::routes::settings::get_setting(&state.db, key).await.unwrap_or_default();
+        ctx.insert(key, &v);
+    }
+    let before = crate::backup::before_path();
+    ctx.insert("before_size", &before.exists().then(||
+        human_size(std::fs::metadata(&before).map(|m| m.len()).unwrap_or(0))));
+
     Ok((jar, Html(state.tera.render("backup.html", &ctx)?)).into_response())
 }
 
@@ -194,6 +217,145 @@ pub async fn post_stored(
         [
             (header::CONTENT_TYPE, "application/vnd.sqlite3".to_string()),
             (header::CONTENT_DISPOSITION, format!("attachment; filename=\"{name}\"")),
+            (header::CONTENT_LENGTH, size.to_string()),
+            (header::CACHE_CONTROL, "no-store".to_string()),
+        ],
+        Body::from_stream(tokio_util::io::ReaderStream::new(file)),
+    )
+        .into_response())
+}
+
+// ─── Restore ─────────────────────────────────────────────
+
+/// POST /backup/restore/upload — receive a snapshot, check it, and hold it
+/// for an administrator to look at. Nothing is replaced here.
+///
+/// Held rather than applied, because the likeliest mistake is the wrong file:
+/// last month's, staging's, another appliance's. The page shows what the file
+/// holds before a second button does anything about it.
+pub async fn post_restore_upload(
+    State(_state): State<AppState>,
+    _jar: SignedCookieJar,
+    Admin(session): Admin,
+    mut parts: axum::extract::Multipart,
+) -> Result<Response> {
+    use tokio::io::AsyncWriteExt;
+
+    let candidate = crate::backup::candidate_path();
+    if let Some(dir) = candidate.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::remove_file(&candidate);
+
+    // Streamed to disk a chunk at a time: a database with months of traffic
+    // history in it does not belong in memory.
+    let mut got = false;
+    while let Ok(Some(mut field)) = parts.next_field().await {
+        if field.file_name().is_none() {
+            continue;
+        }
+        let mut out = match tokio::fs::File::create(&candidate).await {
+            Ok(f)  => f,
+            Err(e) => return flash_redirect("/backup", "failed",
+                          &format!("The upload could not be written: {e}")),
+        };
+        loop {
+            match field.chunk().await {
+                Ok(Some(bytes)) => {
+                    if let Err(e) = out.write_all(&bytes).await {
+                        let _ = std::fs::remove_file(&candidate);
+                        return flash_redirect("/backup", "failed",
+                            &format!("The upload could not be written: {e}"));
+                    }
+                }
+                Ok(None) => break,
+                Err(e) => {
+                    let _ = std::fs::remove_file(&candidate);
+                    return flash_redirect("/backup", "failed",
+                        &format!("The upload did not arrive whole: {e}"));
+                }
+            }
+        }
+        let _ = out.flush().await;
+        got = true;
+        break;
+    }
+    if !got {
+        return flash_redirect("/backup", "failed", "No file was uploaded");
+    }
+
+    match crate::backup::inspect(&candidate).await {
+        Ok(c) => {
+            tracing::info!(by = %session.username, sites = c.sites, policies = c.policies,
+                           written_by = ?c.written_by, "Snapshot uploaded and held for restore");
+            flash_redirect("/backup", "success",
+                "Checked and held. Nothing has been replaced — look at what it holds below, then restore it or discard it")
+        }
+        Err(e) => {
+            let _ = std::fs::remove_file(&candidate);
+            flash_redirect("/backup", "failed", &format!("Not restorable: {e}"))
+        }
+    }
+}
+
+/// POST /backup/restore/apply — stage the held snapshot and restart into it.
+pub async fn post_restore_apply(
+    State(state): State<AppState>,
+    _jar: SignedCookieJar,
+    Admin(session): Admin,
+) -> Result<Response> {
+    let candidate = crate::backup::candidate_path();
+    // Checked again: the page that showed it may be an hour old, and the file
+    // is what is about to become the database.
+    if let Err(e) = crate::backup::inspect(&candidate).await {
+        let _ = std::fs::remove_file(&candidate);
+        return flash_redirect("/backup", "failed", &format!("Not restorable: {e}"));
+    }
+    if let Err(e) = crate::backup::stage(&candidate) {
+        return flash_redirect("/backup", "failed", &e);
+    }
+    tracing::warn!(by = %session.username, "Restore staged — restarting to apply it");
+
+    // Answered first, then stopped: the page below has to reach the browser
+    // before the process that serves it goes away.
+    tokio::spawn(async {
+        tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+        crate::backup::request_restart();
+    });
+
+    Ok(Html(state.tera.render("restarting.html", &Context::new())?).into_response())
+}
+
+/// POST /backup/restore/discard — drop a held upload.
+pub async fn post_restore_discard(
+    State(_state): State<AppState>,
+    _jar: SignedCookieJar,
+    Admin(_session): Admin,
+) -> Result<Response> {
+    let _ = std::fs::remove_file(crate::backup::candidate_path());
+    flash_redirect("/backup", "success", "Discarded. Nothing was restored")
+}
+
+/// POST /backup/before-restore — download the database the last restore
+/// replaced. The way back, as a file: restoring it is an upload like any other.
+pub async fn post_before_restore(
+    State(_state): State<AppState>,
+    _jar: SignedCookieJar,
+    Admin(session): Admin,
+) -> Result<Response> {
+    let path = crate::backup::before_path();
+    let file = match tokio::fs::File::open(&path).await {
+        Ok(f)  => f,
+        Err(_) => return flash_redirect("/backup", "failed",
+                      "No database from before a restore is kept"),
+    };
+    let size = file.metadata().await.map(|m| m.len()).unwrap_or(0);
+    tracing::info!(by = %session.username, "Pre-restore database downloaded");
+    Ok((
+        [
+            (header::CONTENT_TYPE, "application/vnd.sqlite3".to_string()),
+            (header::CONTENT_DISPOSITION,
+             "attachment; filename=\"easywaf-before-restore.db\"".to_string()),
             (header::CONTENT_LENGTH, size.to_string()),
             (header::CACHE_CONTROL, "no-store".to_string()),
         ],
