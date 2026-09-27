@@ -26,6 +26,8 @@ Version bumps and tags are created only after explicit approval.
 ### Security
 - **rustls 0.23.45** (from 0.23.40), for RUSTSEC-2026-0285: earlier releases accepted TLS 1.3 handshake messages across encryption-level boundaries. One copy of rustls serves the management interface, every site's HTTPS, the upstream client and ACME, so all of them take the fix; the minimum is raised in `Cargo.toml` as well, so nothing can resolve back below it.
 
+- `.gitignore` covers what a run from the source checkout writes beside the database: the database a restore replaced and the one it is swapping in — both whole copies, with every private key and password hash — as well as `backups/` and the country database in `geo/`.
+
 ### Changed
 - The README and the limitations page no longer list backup and export as missing, and the README no longer lists load balancing, which arrived in 0.13.0.
 
