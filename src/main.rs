@@ -199,6 +199,7 @@ async fn main() {
     rules_update::spawn_check_task(db.clone());
     iplist_feeds::spawn_task(db.clone());
     geo_update::spawn_task(db.clone());
+    backup::spawn_schedule(db.clone());
 
     // ── Build management GUI ──────────────────────────────
     let tera = assets::tera()
@@ -305,6 +306,9 @@ async fn main() {
         .route("/rules/{id}/delete",     post(routes::rules::post_rule_delete_global))
         .route("/backup",                get(routes::backup::get_backup))
         .route("/backup/snapshot",       post(routes::backup::post_snapshot))
+        .route("/backup/schedule",       post(routes::backup::post_schedule))
+        .route("/backup/take",           post(routes::backup::post_take))
+        .route("/backup/stored/{name}",  post(routes::backup::post_stored))
         .route("/updates",               get(routes::updates::get_updates))
         .route("/updates/settings",      post(routes::updates::post_updates_settings))
         .route("/updates/{kind}/fetch",  post(routes::updates::post_update_now))

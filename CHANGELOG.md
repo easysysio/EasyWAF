@@ -10,6 +10,7 @@ Version bumps and tags are created only after explicit approval.
 
 ### Added
 - **Settings → Backup**, for administrators only. **Download a snapshot**: the whole database, taken while EasyWAF runs and consistent without stopping it — including writes not yet folded into the main file, which a copy of the file would miss. The page says plainly that a snapshot is a secret: it holds every private key, every password hash and the key that signs sessions. It is sent uncacheable, written readable by its owner only, and not kept on the appliance after the download.
+- **Scheduled snapshots**, off until an administrator switches them on: one a day, the newest few kept (seven unless you say otherwise), in `backups/` beside the database, readable by EasyWAF's own account only. Checked hourly against the newest snapshot rather than timed from the last start, so an appliance that restarts every day still takes one, and a restart never takes a second. **Take one now** proves it works without waiting a day; each kept snapshot can be downloaded; lowering the number kept prunes at once; and a failure — usually a full disk — is shown on the page. They guard against a bad change or a damaged database, and the page says plainly that they do not guard against losing the host unless that directory is copied off it.
 - Every start records which version the database was last run by, so a snapshot says where it came from and a restore can refuse one from a newer EasyWAF.
 
 ---

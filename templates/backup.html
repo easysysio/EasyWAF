@@ -54,6 +54,81 @@
             </div>
         </div>
 
+        <!-- ── Scheduled snapshots ─────────────────────── -->
+        <div class="panel panel-default">
+            <div class="panel-heading" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+                <strong><i class="fa fa-clock-o"></i> Scheduled snapshots</strong>
+                <span class="text-muted" style="font-size:12px">
+                    {% if scheduled %}daily, newest {{ keep }} kept{% else %}off{% endif %}
+                    {% if backup_last %} · last taken {{ backup_last | utc }}{% endif %}
+                </span>
+                <form method="post" action="/backup/take" style="margin:0 0 0 auto">
+                    <button type="submit" class="btn btn-default btn-sm">
+                        <i class="fa fa-camera"></i> Take one now
+                    </button>
+                </form>
+            </div>
+            <div class="panel-body">
+                {% if backup_error %}
+                <div class="alert alert-danger" style="margin-bottom:12px">
+                    <i class="fa fa-exclamation-triangle"></i>
+                    <strong>The last scheduled snapshot failed:</strong> {{ backup_error }}
+                </div>
+                {% endif %}
+
+                <form method="post" action="/backup/schedule" class="form-inline" style="margin-bottom:12px">
+                    <div class="checkbox" style="margin-right:16px">
+                        <label>
+                            <input type="checkbox" name="scheduled" value="1" {% if scheduled %}checked{% endif %}>
+                            <strong>Take a snapshot every day</strong>
+                        </label>
+                    </div>
+                    <div class="form-group" style="margin-right:12px">
+                        <label for="keep" style="font-weight:normal">and keep the newest</label>
+                        <input type="number" class="form-control input-sm" id="keep" name="keep"
+                               value="{{ keep }}" min="1" max="365" style="width:80px">
+                    </div>
+                    <button type="submit" class="btn btn-primary btn-sm">
+                        <i class="fa fa-check"></i> Save
+                    </button>
+                </form>
+
+                <p class="help-block">
+                    Kept in <code>{{ backup_dir }}</code>, readable by EasyWAF's own account
+                    only. <strong>They protect against a bad change or a damaged database, not
+                    against losing the host</strong> — for that, have your own backup copy that
+                    directory somewhere else. Each one is a consistent file, so anything that
+                    copies files can take it.
+                </p>
+
+                {% if stored %}
+                <table class="table table-condensed" style="font-size:13px;max-width:640px;margin-bottom:0">
+                    <thead><tr><th>Taken</th><th>Size</th><th></th></tr></thead>
+                    <tbody>
+                    {% for s in stored %}
+                        <tr>
+                            <td>{{ s.taken | utc }}</td>
+                            <td>{{ s.size }}</td>
+                            <td style="text-align:right">
+                                <form method="post" action="/backup/stored/{{ s.name }}" style="margin:0">
+                                    <button type="submit" class="btn btn-link btn-xs" style="padding:0">
+                                        <i class="fa fa-download"></i> Download
+                                    </button>
+                                </form>
+                            </td>
+                        </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+                <p class="text-muted" style="font-size:12px;margin-top:6px">
+                    {{ stored | length }} snapshot(s), {{ stored_total }} together.
+                </p>
+                {% else %}
+                <p class="text-muted" style="margin-bottom:0">No snapshots are kept on the appliance yet.</p>
+                {% endif %}
+            </div>
+        </div>
+
     </div>
 </div>
 {% endblock %}
