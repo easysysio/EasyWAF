@@ -6,7 +6,7 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
-## [0.14.1] — unreleased
+## [0.14.1] — 2026-09-27
 
 ### Security
 - **Changes to the management interface can only come from the interface itself.** The session cookie's `SameSite=Lax` kept it off requests from other sites, but a sibling subdomain is the same site — so with the interface at waf.example.com, a script on app.example.com, perhaps an application EasyWAF proxies, could have sent a restore or an import with an administrator's session. A change the browser says came from another page is now refused; pages can still be linked to from anywhere.
