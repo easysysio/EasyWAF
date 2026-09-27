@@ -19,6 +19,9 @@ Version bumps and tags are created only after explicit approval.
 - An EC key that spells its curve out rather than naming it is refused with a message saying so and how to make one that works, instead of "failed to parse private key as RSA, ECDSA, or EdDSA" for a key that is ECDSA. The `openssl` on a Mac makes keys this way by default.
 - The documentation said a site with an HTTPS port and no certificate did not bind the port; it did, once saved while EasyWAF ran.
 
+### Changed
+- Five signatures with no innocent reading — `UNION SELECT`, `WAITFOR DELAY`, `INTO OUTFILE`/`DUMPFILE`, `LOAD_FILE` and double-encoded `%252e%252e` — now block on their own at the default threshold, where before each needed a second rule to match beside it. `UNION SELECT` no longer matches words that contain it, as in "reunion selection". These arrive through the rule channel as SQL injection v3 and Local file inclusion v4, and take effect when an administrator applies the update.
+
 ---
 
 ## [0.14.0] — 2026-09-27
