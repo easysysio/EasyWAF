@@ -494,3 +494,123 @@ mod cookie_tests {
         assert_eq!(removal_cookie().name(), SESSION_COOKIE);
     }
 }
+
+// ─── Cross-origin requests ───────────────────────────────
+
+/// Refuse a state-changing request that a browser says came from another
+/// origin.
+///
+/// The session cookie is `SameSite=Lax`, which keeps it off requests from
+/// another *site* — but a site is the registrable domain, so a page on a
+/// sibling subdomain is the same site. With the interface at waf.example.com,
+/// a script on app.example.com — perhaps an application EasyWAF itself
+/// proxies — could send the administrator's cookie with a POST to
+/// /backup/import/apply. 0.14.0 made the interface's most destructive
+/// actions reachable that way.
+///
+/// So the browser is asked where the request came from, in the two ways
+/// browsers say it. `Sec-Fetch-Site` first: the browser sets it and a page's
+/// script cannot, and only "same-origin" and "none" (typed or bookmarked) are
+/// the interface talking to itself. Failing that, `Origin` must name the host
+/// the request arrived at. A request with neither is not from a browser, which
+/// cannot be steered by a page anyway; the session cookie it must carry is the
+/// whole check for it, as before.
+///
+/// This is the approach Go adopted in 1.25 for the same problem, and it needs
+/// no token in any form.
+pub async fn same_origin_only(
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use axum::http::{header, Method, StatusCode};
+    use axum::response::IntoResponse;
+
+    if matches!(*req.method(), Method::GET | Method::HEAD | Method::OPTIONS) {
+        return next.run(req).await;
+    }
+    let headers = req.headers();
+    let text = |h: &str| headers.get(h).and_then(|v| v.to_str().ok()).map(str::trim);
+
+    let verdict = match text("sec-fetch-site") {
+        Some(site) => match site {
+            "same-origin" | "none" => Ok(()),
+            other => Err(format!("the browser says it came from {other} content")),
+        },
+        None => match text(header::ORIGIN.as_str()) {
+            None => Ok(()),
+            Some(origin) => {
+                let host = text(header::HOST.as_str()).unwrap_or("");
+                let from = origin.split_once("://").map(|(_, rest)| rest).unwrap_or(origin);
+                if !host.is_empty() && from.eq_ignore_ascii_case(host) {
+                    Ok(())
+                } else {
+                    Err(format!("it came from {origin}"))
+                }
+            }
+        },
+    };
+
+    match verdict {
+        Ok(()) => next.run(req).await,
+        Err(why) => {
+            tracing::warn!(path = %req.uri().path(), "Refused a cross-origin request: {why}");
+            (
+                StatusCode::FORBIDDEN,
+                "Refused: this request came from another page, not from EasyWAF's own. \
+                 Changes can only be made from the management interface itself.",
+            )
+                .into_response()
+        }
+    }
+}
+
+#[cfg(test)]
+mod same_origin_tests {
+    use axum::{body::Body, http::{Request, StatusCode}, routing::post, Router};
+    use tower::ServiceExt;
+
+    async fn status(headers: &[(&str, &str)], method: &str) -> StatusCode {
+        let app = Router::new()
+            .route("/backup/import/apply", post(|| async { "applied" }).get(|| async { "page" }))
+            .layer(axum::middleware::from_fn(super::same_origin_only));
+        let mut req = Request::builder().method(method).uri("/backup/import/apply")
+            .header("host", "waf.example.com:8443");
+        for (k, v) in headers {
+            req = req.header(*k, *v);
+        }
+        app.oneshot(req.body(Body::empty()).unwrap()).await.unwrap().status()
+    }
+
+    #[tokio::test]
+    async fn the_interface_talking_to_itself_is_allowed() {
+        assert_eq!(status(&[("sec-fetch-site", "same-origin")], "POST").await, StatusCode::OK);
+        // Typed or bookmarked.
+        assert_eq!(status(&[("sec-fetch-site", "none")], "POST").await, StatusCode::OK);
+        // An older browser that sends only Origin, naming this host.
+        assert_eq!(status(&[("origin", "https://waf.example.com:8443")], "POST").await, StatusCode::OK);
+        // Not a browser at all: nothing to steer it, and it needs the cookie.
+        assert_eq!(status(&[], "POST").await, StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn another_page_cannot_change_anything() {
+        // The case SameSite=Lax lets through: a sibling subdomain.
+        assert_eq!(status(&[("sec-fetch-site", "same-site")], "POST").await, StatusCode::FORBIDDEN,
+                   "a sibling subdomain could drive the interface");
+        assert_eq!(status(&[("sec-fetch-site", "cross-site")], "POST").await, StatusCode::FORBIDDEN);
+        assert_eq!(status(&[("origin", "https://app.example.com")], "POST").await, StatusCode::FORBIDDEN,
+                   "an older browser's cross-origin POST was accepted");
+        assert_eq!(status(&[("origin", "null")], "POST").await, StatusCode::FORBIDDEN,
+                   "a sandboxed frame's POST was accepted");
+        // The header a browser sets wins over an Origin a request might carry.
+        assert_eq!(status(&[("sec-fetch-site", "same-site"), ("origin", "https://waf.example.com:8443")], "POST").await,
+                   StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn reading_a_page_is_never_refused() {
+        // A link from anywhere to a page of the interface is how people get
+        // there; only changes are guarded.
+        assert_eq!(status(&[("sec-fetch-site", "cross-site")], "GET").await, StatusCode::OK);
+    }
+}

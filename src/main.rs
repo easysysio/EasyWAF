@@ -43,6 +43,8 @@ use axum::{
     Router,
 };
 use axum_server::tls_rustls::RustlsConfig;
+use axum::http::{header, HeaderValue};
+use tower_http::set_header::SetResponseHeaderLayer;
 use std::net::SocketAddr;
 use axum_extra::extract::cookie::Key;
 use modules::{geoip::GeoIpModule, traffic::TrafficLogger, waf::WafModule, Pipeline};
@@ -352,6 +354,22 @@ async fn main() {
         // so the browser always revalidates — a stale cached stylesheet after
         // an upgrade looks like a broken GUI.
         .route("/static/{*path}", get(assets::serve_static))
+        // Inside the audit layer, so a refused cross-origin request is still
+        // in the trail — an attempt is exactly what an audit should show.
+        .layer(axum::middleware::from_fn(auth::same_origin_only))
+        // The interface is never framed by another page: framing is how a
+        // click meant for something harmless lands on Restore or Import. Not a
+        // script policy — the pages load their libraries from CDNs — just
+        // who may frame them, which is nobody. And its URLs, which carry the
+        // messages a change leaves behind, are not sent to those CDNs.
+        .layer(SetResponseHeaderLayer::if_not_present(
+            header::X_FRAME_OPTIONS, HeaderValue::from_static("DENY")))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            header::CONTENT_SECURITY_POLICY, HeaderValue::from_static("frame-ancestors 'none'")))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff")))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            header::REFERRER_POLICY, HeaderValue::from_static("same-origin")))
         // Last, so it wraps every route above it: the audit trail is a
         // property of the router, not something each handler remembers.
         .layer(axum::middleware::from_fn_with_state(

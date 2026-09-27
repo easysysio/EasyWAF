@@ -84,6 +84,25 @@ Expected on a new installation: the generated `easywaf` certificate is
 self-signed. [Replace it](tls.md#the-management-certificate) with your own under
 **Settings → TLS**.
 
+## A certificate is refused: "spells its curve out"
+
+The key gives its elliptic curve by spelling out the curve's parameters rather
+than by name. TLS clients, browsers included, accept only named curves, so the
+certificate could never be served. OpenSSL and LibreSSL — the `openssl` on a
+Mac — write keys this way unless told not to. Make a new key with
+`-pkeyopt ec_param_enc:named_curve` and issue the certificate again from it; the
+certificate carries the same spelled-out curve, so converting only the key
+leaves the two not matching.
+
+## A change is refused: "this request came from another page"
+
+EasyWAF refuses a change that the browser says came from a page other than the
+management interface itself — which is how a script on another site, or on a
+sibling subdomain of the interface's own, could otherwise act with your
+session. Make the change from the interface. If it happens there, something in
+between — an extension, or a proxy rewriting requests — is presenting it as
+coming from elsewhere.
+
 ## Locked out of the interface
 
 There is no password recovery — no mailer, and no second account to reset from.

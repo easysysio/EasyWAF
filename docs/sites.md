@@ -128,9 +128,11 @@ One or more HTTP ports, and optionally one or more HTTPS ports, comma separated.
   a restart.
 - Ports are shared: several sites can listen on 443, each presenting its own
   certificate, chosen by SNI during the handshake.
-- A site given an HTTPS port but no certificate **does not bind that port at
-  all**. A port that is not listening is far easier to diagnose than one that
-  fails every handshake.
+- **An HTTPS port needs a certificate**, and a site is not saved with one and
+  not the other. A site can still end up that way — a certificate requested
+  from Let's Encrypt as the site was created, and refused — and then HTTPS
+  visitors are turned away, its redirect to HTTPS is held back so plain HTTP
+  keeps working, and the sites list says *HTTPS — no certificate*.
 - Removing a port from a site does not close the listener — other sites may be
   using it. It stops answering for that site immediately; the listener goes at
   the next restart.

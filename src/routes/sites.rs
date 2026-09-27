@@ -241,6 +241,11 @@ pub async fn post_site_create(
     };
     let (listen_port, tls_port) = (ports.listen, ports.tls);
     let (extra_http, extra_https) = (ports.extra_http, ports.extra_https);
+    if let Some(e) = https_without_certificate(
+        &state.db, tls_port, &extra_https, cert_id, form.acme.is_some()).await
+    {
+        return flash_redirect("/sites", "failed", &e);
+    }
 
     // Checked here for the same reason the ports are: a rejected backend
     // should leave no half-made site behind.
@@ -464,6 +469,9 @@ pub async fn post_site_update(
     };
     let (listen_port, tls_port) = (ports.listen, ports.tls);
     let (extra_http, extra_https) = (ports.extra_http, ports.extra_https);
+    if let Some(e) = https_without_certificate(&state.db, tls_port, &extra_https, cert_id, false).await {
+        return flash_redirect(&format!("/sites/{name}/edit"), "failed", &e);
+    }
 
     // The field holds the whole pool and arrives filled in with what it is
     // now, so saving it means "the pool is what this says" — the way the
@@ -1107,6 +1115,48 @@ struct SitePorts {
 }
 
 /// Read both port fields, or return the message to show.
+/// Refuse HTTPS with nothing to serve it with.
+///
+/// An HTTPS port with no certificate refuses every client, and until 0.14.1 a
+/// site could be saved that way and listed as active — and with "redirect to
+/// HTTPS" on, plain HTTP sent every visitor there, so the site was entirely
+/// unreachable. The import already refused the combination; the form now does
+/// too. `acme_now` is the create form asking Let's Encrypt in the same step,
+/// which is the one case where the certificate legitimately arrives after the
+/// site. (If that request fails, the proxy still does not redirect to a port
+/// that cannot answer.)
+async fn https_without_certificate(
+    db: &SqlitePool,
+    tls_port: Option<i64>,
+    extra_https: &[i64],
+    cert_id: Option<i64>,
+    acme_now: bool,
+) -> Option<String> {
+    if tls_port.is_none() && extra_https.is_empty() {
+        return None;
+    }
+    if acme_now {
+        return None;
+    }
+    let usable = match cert_id {
+        Some(id) => sqlx::query_scalar!(
+            r#"SELECT COUNT(*) as "n!: i64" FROM certs
+               WHERE id = ? AND trim(COALESCE(cert_pem, '')) <> '' AND trim(COALESCE(key_pem, '')) <> ''"#,
+            id
+        )
+        .fetch_one(db)
+        .await
+        .unwrap_or(0) > 0,
+        None => false,
+    };
+    (!usable).then(|| {
+        "An HTTPS port needs a certificate to serve it with. Choose one, request one \
+         from Let's Encrypt, or leave the HTTPS port empty — without one, every \
+         HTTPS visitor is refused, and \"redirect to HTTPS\" would send everybody there"
+            .to_string()
+    })
+}
+
 fn validated_ports(
     form: &SiteForm,
     cfg: &crate::config::Config,

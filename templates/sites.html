@@ -49,7 +49,22 @@
                             </small>
                             {% endif %}
                         </td>
-                        <td><span class="label label-default">:{{ site.listen_port }}</span></td>
+                        <td><span class="label label-default">:{{ site.listen_port }}</span>
+                            {% if site.tls_port %}
+                            {% if site.cert_id %}
+                            <span class="label label-default">:{{ site.tls_port }} HTTPS</span>
+                            {% else %}
+                            {# Reachable when a certificate requested from Let's
+                               Encrypt as the site was created was refused: HTTPS is
+                               refused to everybody, and the redirect to it is held
+                               back so plain HTTP keeps working. #}
+                            <span class="label label-warning"
+                                  title="This site has an HTTPS port but no certificate: every HTTPS visitor is refused. Plain HTTP is still served, and is not redirected until a certificate is attached.">
+                                <i class="fa fa-exclamation-triangle"></i> :{{ site.tls_port }} HTTPS — no certificate
+                            </span>
+                            {% endif %}
+                            {% endif %}
+                        </td>
                         <td>{{ site.target }}</td>
                         <td>
                             {# "Protected" used to mean only that a policy was

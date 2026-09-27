@@ -6,6 +6,21 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
+## [0.14.1] — unreleased
+
+### Security
+- **Changes to the management interface can only come from the interface itself.** The session cookie's `SameSite=Lax` kept it off requests from other sites, but a sibling subdomain is the same site — so with the interface at waf.example.com, a script on app.example.com, perhaps an application EasyWAF proxies, could have sent a restore or an import with an administrator's session. A change the browser says came from another page is now refused; pages can still be linked to from anywhere.
+- The management interface can no longer be framed by another page, and does not send its URLs to the libraries it loads.
+
+### Fixed
+- **A site could be saved with an HTTPS port and no certificate, and then nobody could reach it.** Its HTTPS port refused every handshake, and with "redirect to HTTPS" on, plain HTTP sent every visitor there — while the sites list said the site was active and protected. The form now refuses the combination, as the import already did; a site that still ends up that way, after a certificate request that failed, keeps serving plain HTTP rather than redirecting to a port that cannot answer, and the sites list says *HTTPS — no certificate*.
+- A site's security headers — HSTS, X-Frame-Options, X-Content-Type-Options, X-XSS-Protection — are sent on every response for that site, including EasyWAF's own block page, challenge page and gateway errors, not only on what the upstream returns. A visitor whose first response was one of those never received the HSTS the site's settings promised.
+- HSTS is sent only over HTTPS, as RFC 6797 requires.
+- An EC key that spells its curve out rather than naming it is refused with a message saying so and how to make one that works, instead of "failed to parse private key as RSA, ECDSA, or EdDSA" for a key that is ECDSA. The `openssl` on a Mac makes keys this way by default.
+- The documentation said a site with an HTTPS port and no certificate did not bind the port; it did, once saved while EasyWAF ran.
+
+---
+
 ## [0.14.0] — 2026-09-27
 
 ### Added

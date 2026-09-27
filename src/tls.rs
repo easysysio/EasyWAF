@@ -341,8 +341,53 @@ pub async fn reload(db: &SqlitePool) -> Result<usize> {
 /// Parse a PEM certificate chain and private key into a rustls key.
 fn certified_key(cert_pem: &str, key_pem: &str) -> std::result::Result<CertifiedKey, String> {
     let (chain, key) = parse_pem(cert_pem, key_pem)?;
-    let signing_key = any_supported_type(&key).map_err(|e| format!("unsupported key type: {e}"))?;
+    let signing_key = any_supported_type(&key).map_err(|e| {
+        if ec_curve_spelled_out(&key) {
+            "this EC key spells its curve out in full instead of naming it. TLS \
+             clients, browsers included, accept only named curves such as P-256, and \
+             so does EasyWAF. OpenSSL and LibreSSL write keys this way unless told not \
+             to: generate a new key with -pkeyopt ec_param_enc:named_curve and issue \
+             the certificate again from it — the certificate carries the same spelled-out \
+             curve, so converting the key alone would leave the two not matching."
+                .to_string()
+        } else {
+            format!("unsupported key type: {e}")
+        }
+    })?;
     Ok(CertifiedKey::new(chain, signing_key))
+}
+
+/// Whether an EC private key gives its curve as explicit parameters rather
+/// than a curve name.
+///
+/// Worth recognising because the refusal it causes reads "failed to parse
+/// private key as RSA, ECDSA, or EdDSA" — for a key that *is* ECDSA, which
+/// sends people looking in the wrong place. The curve sits in one of two
+/// spots depending on how the key is wrapped; a name is an OID (tag 0x06), and
+/// spelled out it is a SEQUENCE (tag 0x30).
+fn ec_curve_spelled_out(key: &PrivateKeyDer<'_>) -> bool {
+    // After id-ecPublicKey in a PKCS#8 AlgorithmIdentifier.
+    const EC_PUBLIC_KEY: &[u8] = &[0x06, 0x07, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x02, 0x01];
+    let der = key.secret_der();
+    match key {
+        PrivateKeyDer::Pkcs8(_) => der
+            .windows(EC_PUBLIC_KEY.len())
+            .position(|w| w == EC_PUBLIC_KEY)
+            .and_then(|i| der.get(i + EC_PUBLIC_KEY.len()))
+            == Some(&0x30),
+        // SEC1 ("EC PRIVATE KEY"): the [0] parameters after the private key.
+        PrivateKeyDer::Sec1(_) => {
+            let Some(i) = der.iter().position(|b| *b == 0xA0) else { return false };
+            let skip = match der.get(i + 1) {
+                Some(0x81) => 3,
+                Some(0x82) => 4,
+                Some(_)    => 2,
+                None       => return false,
+            };
+            der.get(i + skip) == Some(&0x30)
+        }
+        _ => false,
+    }
 }
 
 /// Check that a stored certificate and key can actually serve TLS.
@@ -535,5 +580,31 @@ mod tests {
     fn malformed_pem_is_an_error() {
         assert!(certified_key("not a certificate", "not a key").is_err());
         assert!(certified_key("", "").is_err());
+    }
+}
+
+#[cfg(test)]
+mod curve_tests {
+    // Throwaway keys made for these tests with LibreSSL, which spells the
+    // curve out unless told ec_param_enc:named_curve — exactly how an operator
+    // on a Mac produces the key this message is for.
+    const EXPLICIT_CERT: &str = include_str!("../tests/fixtures/ec-explicit.crt");
+    const EXPLICIT_PKCS8: &str = include_str!("../tests/fixtures/ec-explicit.key");
+    const EXPLICIT_SEC1: &str = include_str!("../tests/fixtures/ec-explicit-sec1.key");
+    const NAMED_CERT: &str = include_str!("../tests/fixtures/ec-named.crt");
+    const NAMED_KEY: &str = include_str!("../tests/fixtures/ec-named.key");
+
+    #[test]
+    fn a_spelled_out_curve_is_named_as_the_problem() {
+        for (what, key) in [("PKCS#8", EXPLICIT_PKCS8), ("SEC1", EXPLICIT_SEC1)] {
+            let e = super::validate_pem(EXPLICIT_CERT, key).unwrap_err();
+            assert!(e.contains("spells its curve out") && e.contains("named_curve"),
+                    "{what}: the refusal does not say what is wrong with the key: {e}");
+        }
+    }
+
+    #[test]
+    fn a_named_curve_is_still_accepted() {
+        super::validate_pem(NAMED_CERT, NAMED_KEY).expect("an ordinary P-256 key was refused");
     }
 }

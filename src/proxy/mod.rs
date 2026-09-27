@@ -191,6 +191,10 @@ struct SiteRow {
     /// almost every site, and then the choice below is that one.
     upstreams:      Vec<crate::upstream::Upstream>,
     tls_port:       Option<i64>,
+    /// Whether the site has a certificate it can complete a handshake with.
+    /// An HTTPS port without one refuses every client, so it is never a
+    /// place to redirect anybody to.
+    has_cert:       bool,
     tls_redirect:   bool,
     hsts:           bool,
     x_frame:        bool,
@@ -778,622 +782,643 @@ async fn handle_request(
         }
     };
 
-    // ── 2b. Redirect to HTTPS when the site asks for it ───
-    // Only from a plain listener, and only when there is somewhere to send
-    // them: redirecting to a TLS port that is not bound would take the site
-    // off the air instead of securing it. Done before any inspection, since
-    // the request is not being served here either way.
-    if !state.is_tls
-        && site.tls_redirect
-        && let Some(tls_port) = site.tls_port
-    {
-        let path = req.uri().path_and_query().map(|p| p.as_str()).unwrap_or("/");
-        let target = if tls_port == 443 {
-            format!("https://{host}{path}")
-        } else {
-            format!("https://{host}:{tls_port}{path}")
-        };
-        return Response::builder()
-            .status(StatusCode::TEMPORARY_REDIRECT)
-            .header("location", target)
-            .body(Body::empty())
-            .unwrap_or_else(|_| {
-                error_response(StatusCode::INTERNAL_SERVER_ERROR, "Redirect build error")
-            });
-    }
+    // What this site asked to be sent with every response, taken now: the
+    // block below consumes the request and may move the row.
+    let security = SecurityHeaders::of(&site, state.is_tls);
 
-    // ── 3. Decompose request ──────────────────────────────
-    // Taken before the request is torn apart: the handle that lets this
-    // connection be upgraded lives in its extensions and goes with them.
-    let mut req = req;
-    let on_upgrade = req.extensions_mut().remove::<hyper::upgrade::OnUpgrade>();
+    // Everything from here is this site's response, whichever path produces
+    // it — the upstream's, a block, a challenge, a gateway error. The site's
+    // security headers were added only to the upstream's until 0.14.1, so a
+    // visitor whose first response was one of EasyWAF's own pages never
+    // received the HSTS the site's settings said every response carried.
+    let mut response = async {
 
-    let (parts, body) = req.into_parts();
-    let method    = parts.method.clone();
-    let path      = parts.uri.path().to_string();
-    let query     = parts.uri.query().map(str::to_string);
-    let headers   = parts.headers.clone();
-    // The connection's peer unless it came from a configured proxy, in which
-    // case the client address that proxy reported. Resolved here, once, so
-    // everything downstream — country rules, CAPTCHA clearance, the traffic
-    // log — agrees on who the client is.
-    let client_ip = crate::forwarded::client_ip(peer.ip(), &headers);
-    // Resolved once and reused: the traffic log records it, and the country
-    // rules in the pipeline read it from the same lookup.
-    let country   = crate::geo::country_of(client_ip);
-
-    // ── 3c. IP lists ──────────────────────────────────────
-    //
-    // Before the body is buffered, so a refused address does not cost 32 MB of
-    // reads first.
-    //
-    // Before the pipeline, and that is the whole design rather than an
-    // optimisation. An allowed address has to skip GeoIP, the WAF and the
-    // challenge alike, and making that a verdict every module must remember to
-    // honour would be one forgotten check away from being false. Never
-    // entering the pipeline is true regardless of which modules exist now or
-    // are added later.
-    //
-    // A blocked address is refused here for a second reason: a site with no
-    // policy runs no pipeline at all, and "refuse this client" has to work
-    // there too.
-    //
-    // A published list that blocks is refused here too, and the row names the
-    // list: a refusal nobody can explain is the one people switch the whole
-    // feature off over.
-    //
-    // The lists are the site's policy's, and follow its mode: Off ignores them
-    // with the rest of the policy, DetectionOnly records what they would have
-    // done, and anything else enforces them. A site with no policy has none.
-    let listed = match (site.policy_id, site.rule_engine.as_deref()) {
-        (Some(policy), Some(mode)) if mode != "Off" => {
-            crate::iplist::check(&state.db, policy, client_ip).await
-        }
-        _ => None,
-    };
-    let detection_only = site.rule_engine.as_deref() == Some("DetectionOnly");
-    let site_id = site.id;
-
-    let refusal = match list_verdict(&listed) {
-        Some((why, crate::modules::Detection::WouldBlock)) if !detection_only => Some(why),
-        _ => None,
-    };
-
-    if let Some(reason) = refusal {
-        let elapsed    = started_at.elapsed().as_millis() as i64;
-        let db         = state.db.clone();
-        let logger     = state.logger.clone();
-        let method_str = method.to_string();
-        let host_l     = host.clone();
-        let path_l     = path.clone();
-        let query_l    = query.clone();
-        let ip_l       = client_ip.to_string();
-        let country_l  = country.clone();
-        let reason_log = reason.clone();
-
-        tokio::spawn(async move {
-            log_event(db, logger, TrafficRecord {
-                upstream:     None,
-                site_id,
-                client_ip:    ip_l,
-                method:       method_str,
-                host:         host_l,
-                path:         path_l,
-                query:        query_l,
-                status_code:  403,
-                response_ms:  elapsed,
-                blocked:      true,
-                block_reason: Some(reason_log),
-                // No rule fired and no score accumulated: the address was
-                // refused for being itself. Recording a score of zero would
-                // read as a WAF decision that never happened.
-                waf_score:     None,
-                matched_rules: None,
-                country:       country_l,
-                detection:     None,
-            }).await;
-        });
-
-        return error_response(StatusCode::FORBIDDEN, &reason);
-    }
-
-    // ── 3d. Read as much of the body as the rules inspect ──
-    //
-    // Until 0.11.0 every body was read whole, up to 32 MB, before anything was
-    // forwarded, and anything larger was refused. The cost below the cap was
-    // worse than the cap: the rules decode a body several ways, so a 30 MB
-    // upload took EasyWAF from 78 MB to 480 MB, and a few concurrent ones were a
-    // way to exhaust memory.
-    //
-    // Now only the first `inspection_limit()` bytes are read before the verdict.
-    // Attacks sit at the start of a body — the tail of a video does not contain
-    // SQL injection. The rest streams to the upstream as it arrives, so an
-    // upload of any size costs about the limit rather than its own size.
-    //
-    // The trade-off is stated in Settings, where the limit is set: bytes past it
-    // are forwarded uninspected, so a payload padded past it is not seen.
-    let inspect_limit = inspection_limit();
-    let prefix = match read_prefix(Box::pin(body.into_data_stream()), inspect_limit).await {
-        Ok(p)  => p,
-        Err(_) => return error_response(StatusCode::BAD_REQUEST, "Failed to read request body"),
-    };
-    let inspected = if prefix.head.len() > inspect_limit {
-        prefix.head.slice(..inspect_limit)
-    } else {
-        prefix.head.clone()
-    };
-
-    // ── 3b. CAPTCHA verify submissions — handled before the WAF ──
-    // Always a tiny form this server rendered, so it is answered only when it
-    // arrived whole. A verification submission larger than the inspection limit
-    // is not one this server sent.
-    if method == Method::POST && path == VERIFY_PATH {
-        if !prefix.complete {
-            return error_response(StatusCode::PAYLOAD_TOO_LARGE, "Verification submission too large");
-        }
-        return handle_verify(&state, &client_ip.to_string(), &prefix.head);
-    }
-
-    // Does the visitor already hold a valid challenge clearance cookie?
-    let cleared = clearance_ok(&state, &headers, &client_ip.to_string());
-
-    // ── 4. Build RequestContext and run pipeline ──────────
-    let ctx = RequestContext {
-        site_id:    site.id,
-        site_name:  site.name.clone(),
-        client_ip,
-        method:     method.clone(),
-        host:       host.clone(),
-        path:       path.clone(),
-        query:      query.clone(),
-        headers:    headers.clone(),
-        body:       inspected,
-        started_at,
-    };
-
-    // An allowed address skips the pipeline rather than being waved through
-    // it. Substituting a clean verdict rather than returning early keeps every
-    // path below unchanged — the WebSocket upgrade, the ordinary response, and
-    // the traffic row that all three of them write.
-    let verdict = if listed == Some(crate::iplist::Listed::Allowed) {
-        PipelineVerdict::Allow {
-            alerts:   Vec::new(),
-            findings: crate::modules::Findings::default(),
-        }
-    } else {
-        state.pipeline.run(&ctx).await
-    };
-
-    // A published list whose response is a challenge. Applied to what the
-    // pipeline decided rather than before it, so a request the rules would
-    // block is still blocked and one they would challenge is challenged once.
-    //
-    // Not for a visitor who has already answered a challenge: they have shown
-    // what the list was asking, and turning their request into a challenge
-    // they skip would also drop what a DetectionOnly policy found on it.
-    let verdict = match (verdict, &listed) {
-        (PipelineVerdict::Allow { alerts, findings }, Some(crate::iplist::Listed::Published(hit)))
-            if hit.response == crate::iplist::Response::Challenge && !cleared && !detection_only =>
+        // ── 2b. Redirect to HTTPS when the site asks for it ───
+        // Only from a plain listener, and only when there is somewhere to send
+        // them: redirecting to a TLS port that is not bound would take the site
+        // off the air instead of securing it. Done before any inspection, since
+        // the request is not being served here either way.
+        //
+        // "Somewhere" includes a certificate. An HTTPS port with none refuses
+        // every handshake, and a redirect to it made the whole site unreachable
+        // while its page said it was active. The form no longer saves a site that
+        // way, but one can still arrive there — a certificate requested from
+        // Let's Encrypt while creating the site, and refused — and serving plain
+        // HTTP is never worse than sending visitors to a port that cannot answer.
+        if !state.is_tls
+            && site.tls_redirect
+            && site.has_cert
+            && let Some(tls_port) = site.tls_port
         {
-            PipelineVerdict::Challenge {
-                reason: format!("Client address is on the published list \"{}\"", hit.name),
-                alerts,
-                findings,
-            }
-        }
-        (verdict, _) => verdict,
-    };
-
-    // In DetectionOnly a list refuses and challenges nobody. It records what it
-    // would have done, beside whatever the rules found, the way the rules
-    // record theirs — so a policy can be trialled with its lists as well.
-    let verdict = match (verdict, list_verdict(&listed).filter(|_| detection_only)) {
-        (PipelineVerdict::Allow { mut alerts, mut findings }, Some((why, would))) => {
-            findings.detection = Some(stronger(findings.detection, would));
-            alerts.push(crate::modules::Alert { module: "iplist", reason: why });
-            PipelineVerdict::Allow { alerts, findings }
-        }
-        (verdict, _) => verdict,
-    };
-
-    if let PipelineVerdict::Block { reason, status, findings, .. } = verdict {
-        // Log the blocked request asynchronously so we don't delay the response.
-        let elapsed    = started_at.elapsed().as_millis() as i64;
-        let db         = state.db.clone();
-            let logger     = state.logger.clone();
-        let method_str = method.to_string();
-        let reason_log = reason.clone();
-        tokio::spawn(async move {
-            log_event(db, logger, TrafficRecord {
-                upstream:     None,
-                site_id:      site.id,
-                client_ip:    client_ip.to_string(),
-                method:       method_str,
-                host:         host.clone(),
-                path:         path.clone(),
-                query:        query.clone(),
-                status_code:  status.as_u16() as i64,
-                response_ms:  elapsed,
-                blocked:      true,
-                block_reason: Some(reason_log),
-                waf_score:    Some(findings.score),
-                matched_rules: findings.hits_json(),
-                country:      country.clone(),
-                // The request was refused; `blocked` says so. `detection` is
-                // for what would have happened and did not.
-                detection:    None,
-            }).await;
-        });
-        return error_response(status, &reason);
-    }
-
-    // ── 4b. Challenge verdict: show CAPTCHA unless already cleared ──
-    if let PipelineVerdict::Challenge { reason, findings, .. } = &verdict
-        && !cleared
-    {
-        {
-            let dest = match &query {
-                Some(q) => format!("{}?{}", path, q),
-                None    => path.clone(),
+            let path = req.uri().path_and_query().map(|p| p.as_str()).unwrap_or("/");
+            let target = if tls_port == 443 {
+                format!("https://{host}{path}")
+            } else {
+                format!("https://{host}:{tls_port}{path}")
             };
-            let (id, data_uri) = state.challenges.issue(&dest, &client_ip.to_string());
+            return Response::builder()
+                .status(StatusCode::TEMPORARY_REDIRECT)
+                .header("location", target)
+                .body(Body::empty())
+                .unwrap_or_else(|_| {
+                    error_response(StatusCode::INTERNAL_SERVER_ERROR, "Redirect build error")
+                });
+        }
 
-            // Log the challenge asynchronously.
+        // ── 3. Decompose request ──────────────────────────────
+        // Taken before the request is torn apart: the handle that lets this
+        // connection be upgraded lives in its extensions and goes with them.
+        let mut req = req;
+        let on_upgrade = req.extensions_mut().remove::<hyper::upgrade::OnUpgrade>();
+
+        let (parts, body) = req.into_parts();
+        let method    = parts.method.clone();
+        let path      = parts.uri.path().to_string();
+        let query     = parts.uri.query().map(str::to_string);
+        let headers   = parts.headers.clone();
+        // The connection's peer unless it came from a configured proxy, in which
+        // case the client address that proxy reported. Resolved here, once, so
+        // everything downstream — country rules, CAPTCHA clearance, the traffic
+        // log — agrees on who the client is.
+        let client_ip = crate::forwarded::client_ip(peer.ip(), &headers);
+        // Resolved once and reused: the traffic log records it, and the country
+        // rules in the pipeline read it from the same lookup.
+        let country   = crate::geo::country_of(client_ip);
+
+        // ── 3c. IP lists ──────────────────────────────────────
+        //
+        // Before the body is buffered, so a refused address does not cost 32 MB of
+        // reads first.
+        //
+        // Before the pipeline, and that is the whole design rather than an
+        // optimisation. An allowed address has to skip GeoIP, the WAF and the
+        // challenge alike, and making that a verdict every module must remember to
+        // honour would be one forgotten check away from being false. Never
+        // entering the pipeline is true regardless of which modules exist now or
+        // are added later.
+        //
+        // A blocked address is refused here for a second reason: a site with no
+        // policy runs no pipeline at all, and "refuse this client" has to work
+        // there too.
+        //
+        // A published list that blocks is refused here too, and the row names the
+        // list: a refusal nobody can explain is the one people switch the whole
+        // feature off over.
+        //
+        // The lists are the site's policy's, and follow its mode: Off ignores them
+        // with the rest of the policy, DetectionOnly records what they would have
+        // done, and anything else enforces them. A site with no policy has none.
+        let listed = match (site.policy_id, site.rule_engine.as_deref()) {
+            (Some(policy), Some(mode)) if mode != "Off" => {
+                crate::iplist::check(&state.db, policy, client_ip).await
+            }
+            _ => None,
+        };
+        let detection_only = site.rule_engine.as_deref() == Some("DetectionOnly");
+        let site_id = site.id;
+
+        let refusal = match list_verdict(&listed) {
+            Some((why, crate::modules::Detection::WouldBlock)) if !detection_only => Some(why),
+            _ => None,
+        };
+
+        if let Some(reason) = refusal {
             let elapsed    = started_at.elapsed().as_millis() as i64;
             let db         = state.db.clone();
             let logger     = state.logger.clone();
             let method_str = method.to_string();
-            let reason_log = format!("challenge: {}", reason);
-            // Copied out before the spawn: the verdict is borrowed here, and a
-            // challenged request is worth attributing for the same reason a
-            // blocked one is.
-            let score      = findings.score;
-            let hits       = findings.hits_json();
             let host_l     = host.clone();
             let path_l     = path.clone();
+            let query_l    = query.clone();
             let ip_l       = client_ip.to_string();
+            let country_l  = country.clone();
+            let reason_log = reason.clone();
+
             tokio::spawn(async move {
                 log_event(db, logger, TrafficRecord {
                     upstream:     None,
-                    site_id:      site.id,
+                    site_id,
                     client_ip:    ip_l,
                     method:       method_str,
                     host:         host_l,
                     path:         path_l,
-                    query:        query.clone(),
-                    status_code:  200,
+                    query:        query_l,
+                    status_code:  403,
                     response_ms:  elapsed,
-                    blocked:      false,
+                    blocked:      true,
                     block_reason: Some(reason_log),
-                    waf_score:    Some(score),
-                    matched_rules: hits,
-                    country:      country.clone(),
-                    detection:    None,   // it was challenged, not merely detected
+                    // No rule fired and no score accumulated: the address was
+                    // refused for being itself. Recording a score of zero would
+                    // read as a WAF decision that never happened.
+                    waf_score:     None,
+                    matched_rules: None,
+                    country:       country_l,
+                    detection:     None,
                 }).await;
             });
 
-            return challenge_response(&id, &data_uri, false);
+            return error_response(StatusCode::FORBIDDEN, &reason);
         }
-        // Cleared visitor — fall through and forward normally.
-    }
 
-    // What the WAF found on a request it is about to allow.
-    //
-    // Until 0.6.11 this was dropped: every allowed request logged a clean
-    // record, whether nothing had matched or a DetectionOnly policy had just
-    // decided it would have blocked. That made DetectionOnly report nothing,
-    // and hid every near-miss in enforcing mode too.
-    //
-    // Computed once here because three paths below forward a request —
-    // WebSocket upgrade, cleared challenge, and the ordinary response.
-    let detected: Option<(i64, Option<String>, String, String)> = match &verdict {
-        PipelineVerdict::Allow { findings, alerts } => findings.detection.map(|d| {
-            let why = alerts
-                .iter()
-                .map(|a| a.reason.as_str())
-                .collect::<Vec<_>>()
-                .join("; ");
-            (findings.score, findings.hits_json(), d.as_str().to_string(), why)
-        }),
-        // A cleared challenge falls through to here. It was challenged, and
-        // the visitor answered; that is not a detection to report again.
-        _ => None,
-    };
+        // ── 3d. Read as much of the body as the rules inspect ──
+        //
+        // Until 0.11.0 every body was read whole, up to 32 MB, before anything was
+        // forwarded, and anything larger was refused. The cost below the cap was
+        // worse than the cap: the rules decode a body several ways, so a 30 MB
+        // upload took EasyWAF from 78 MB to 480 MB, and a few concurrent ones were a
+        // way to exhaust memory.
+        //
+        // Now only the first `inspection_limit()` bytes are read before the verdict.
+        // Attacks sit at the start of a body — the tail of a video does not contain
+        // SQL injection. The rest streams to the upstream as it arrives, so an
+        // upload of any size costs about the limit rather than its own size.
+        //
+        // The trade-off is stated in Settings, where the limit is set: bytes past it
+        // are forwarded uninspected, so a payload padded past it is not seen.
+        let inspect_limit = inspection_limit();
+        let prefix = match read_prefix(Box::pin(body.into_data_stream()), inspect_limit).await {
+            Ok(p)  => p,
+            Err(_) => return error_response(StatusCode::BAD_REQUEST, "Failed to read request body"),
+        };
+        let inspected = if prefix.head.len() > inspect_limit {
+            prefix.head.slice(..inspect_limit)
+        } else {
+            prefix.head.clone()
+        };
 
-    // ── 5. Forward to upstream ────────────────────────────
-    // Kept because `query` is consumed below and the flow line still needs it:
-    // a query string is where most of what a WAF matches actually lives.
-    let qs = query.clone();
-
-    let path_and_query = match &query {
-        Some(q) => format!("{}?{}", path, q),
-        None    => path.clone(),
-    };
-    // Which backend serves this request. With one upstream it is that one,
-    // every time, as it was before a site could have more.
-    //
-    // With affinity on, the cookie the client sends back decides — as long as
-    // the backend it names is still in this site's pool and still answering.
-    let pinned = if site.affinity {
-        cookie_value(&headers, crate::upstream::AFFINITY_COOKIE)
-            .and_then(|v| crate::upstream::read_pin(&state.secret, &v))
-    } else {
-        None
-    };
-    let Some(chosen) = crate::upstream::choose_pinned(site.id, &site.upstreams, pinned) else {
-        // A site with no upstream at all: nothing to forward to, and saying so
-        // beats a generic gateway error nobody can act on.
-        tracing::warn!(site = %site.name, "no upstream is configured for this site");
-        return error_response(StatusCode::BAD_GATEWAY, "No upstream is configured for this site");
-    };
-    let mut chosen_id  = chosen.upstream.id;
-    let mut chosen_url = chosen.upstream.url.clone();
-    let all_out        = chosen.all_out;
-    // A cookie is set when the site pins and this request did not arrive with
-    // the right one — first request, or a re-pin because the old backend has
-    // gone. Sending it every time would be a header on every response for
-    // nothing.
-    let repin = site.affinity && pinned != Some(chosen_id);
-    let upstream_url   = format!(
-        "{}{}",
-        chosen_url.trim_end_matches('/'),
-        path_and_query
-    );
-
-    // An accepted upgrade leaves HTTP behind, so it cannot go through reqwest,
-    // which has no way to take over a connection after the response. It happens
-    // here rather than earlier so the handshake is inspected like any other
-    // request — it is a normal GET with headers, and the pipeline has already
-    // had its say by this point.
-    if is_upgrade(&headers)
-        && let Some(on_upgrade) = on_upgrade
-    {
-        tracing::debug!(host = %host, path = %path, "proxying a protocol upgrade");
-        let resp = match proxy_upgrade(&upstream_url, &method, &headers, on_upgrade).await {
-            Ok(resp) => resp,
-            Err(e) => {
-                tracing::warn!(upstream = %upstream_url, "upgrade failed: {}", e);
-                error_response(StatusCode::BAD_GATEWAY, "Upgrade failed")
+        // ── 3b. CAPTCHA verify submissions — handled before the WAF ──
+        // Always a tiny form this server rendered, so it is answered only when it
+        // arrived whole. A verification submission larger than the inspection limit
+        // is not one this server sent.
+        if method == Method::POST && path == VERIFY_PATH {
+            if !prefix.complete {
+                return error_response(StatusCode::PAYLOAD_TOO_LARGE, "Verification submission too large");
             }
-        };
-
-        // Logged like any other request. The tunnel that follows cannot be,
-        // but the handshake is the only record that the connection happened at
-        // all — without it a WebSocket application is invisible in Traffic
-        // Monitor, which is worse than useless when someone is trying to work
-        // out whether their traffic is reaching the site.
-        let db         = state.db.clone();
-            let logger     = state.logger.clone();
-        let method_str = method.to_string();
-        let status     = resp.status().as_u16() as i64;
-        let elapsed    = started_at.elapsed().as_millis() as i64;
-        let (h, pth, c) = (host.clone(), path.clone(), country.clone());
-        let site_id    = site.id;
-        let ip         = client_ip.to_string();
-        let found      = detected.clone();
-        let up_l       = chosen_url.clone();
-        tokio::spawn(async move {
-            let (score, hits, detection, why) = split_detection(found);
-            log_event(db, logger, TrafficRecord {
-                upstream:     Some(up_l.clone()),
-                site_id,
-                client_ip:    ip,
-                method:       method_str,
-                host:         h,
-                path:         pth,
-                query:        query.clone(),
-                status_code:  status,
-                response_ms:  elapsed,
-                blocked:      false,
-                block_reason: why,
-                waf_score:    score,
-                matched_rules: hits,
-                country:      c,
-                detection,
-            }).await;
-        });
-
-        return resp;
-    }
-
-    // Strip hop-by-hop headers before forwarding.
-    let mut fwd_headers = headers.clone();
-    for h in HOP_HEADERS {
-        fwd_headers.remove(*h);
-    }
-
-    apply_forwarded_headers(
-        &mut fwd_headers,
-        peer.ip(),
-        client_ip,
-        headers.get(axum::http::header::HOST),
-        state.is_tls,
-    );
-
-    // A body that ended within the limit is sent as it is, exactly as before.
-    // Otherwise the inspected start goes first and the rest follows as it
-    // arrives from the client — with the client's own Content-Length, which is
-    // forwarded unchanged and still matches, since not one byte is altered.
-    // A body that ended within the inspected prefix is held whole, so it can be
-    // sent again to a second backend. One that is still arriving cannot: it is
-    // a stream, the first attempt consumes it, and there is nothing left to
-    // replay. So a large upload gets one attempt and an honest 502, rather than
-    // a retry that would send half a body.
-    let replayable = prefix.complete;
-    let head       = prefix.head.clone();
-    let mut streamed = if prefix.complete {
-        None
-    } else {
-        let first = futures::stream::once(std::future::ready(
-            Ok::<bytes::Bytes, axum::Error>(prefix.head),
-        ));
-        Some(reqwest::Body::wrap_stream(futures::StreamExt::chain(first, prefix.rest)))
-    };
-
-    // At most three backends: a pool large enough for a fourth attempt is a
-    // pool where the client has waited long enough to be told.
-    const ATTEMPTS: usize = 3;
-    let mut tried: Vec<i64> = Vec::new();
-    let mut url = upstream_url.clone();
-
-    let upstream_result = loop {
-        let body = match streamed.take() {
-            Some(b) => b,
-            None    => reqwest::Body::from(head.clone()),
-        };
-        let result = state
-            .client
-            .request(to_reqwest_method(&method), &url)
-            .headers(to_reqwest_headers(&fwd_headers))
-            .body(body)
-            .send()
-            .await;
-
-        let Err(ref e) = result else {
-            break result;
-        };
-
-        // Could not be reached: that is the backend's fault, whatever the
-        // application would have said.
-        crate::upstream::failed(chosen_id);
-        tried.push(chosen_id);
-        if !replayable || tried.len() >= ATTEMPTS {
-            break result;
+            return handle_verify(&state, &client_ip.to_string(), &prefix.head);
         }
-        let Some(next) = crate::upstream::choose_except(site.id, &site.upstreams, &tried) else {
-            break result;
-        };
-        tracing::warn!(upstream = %url, error = %e, next = %next.upstream.url,
-                       "upstream unreachable, trying another backend");
-        chosen_id  = next.upstream.id;
-        chosen_url = next.upstream.url.clone();
-        url = format!("{}{}", chosen_url.trim_end_matches('/'), path_and_query);
-    };
 
-    match upstream_result {
-        // ── Upstream unreachable ──────────────────────────
-        Err(e) => {
-            tracing::warn!(upstream = %upstream_url, error = %e, "upstream unreachable");
+        // Does the visitor already hold a valid challenge clearance cookie?
+        let cleared = clearance_ok(&state, &headers, &client_ip.to_string());
+
+        // ── 4. Build RequestContext and run pipeline ──────────
+        let ctx = RequestContext {
+            site_id:    site.id,
+            site_name:  site.name.clone(),
+            client_ip,
+            method:     method.clone(),
+            host:       host.clone(),
+            path:       path.clone(),
+            query:      query.clone(),
+            headers:    headers.clone(),
+            body:       inspected,
+            started_at,
+        };
+
+        // An allowed address skips the pipeline rather than being waved through
+        // it. Substituting a clean verdict rather than returning early keeps every
+        // path below unchanged — the WebSocket upgrade, the ordinary response, and
+        // the traffic row that all three of them write.
+        let verdict = if listed == Some(crate::iplist::Listed::Allowed) {
+            PipelineVerdict::Allow {
+                alerts:   Vec::new(),
+                findings: crate::modules::Findings::default(),
+            }
+        } else {
+            state.pipeline.run(&ctx).await
+        };
+
+        // A published list whose response is a challenge. Applied to what the
+        // pipeline decided rather than before it, so a request the rules would
+        // block is still blocked and one they would challenge is challenged once.
+        //
+        // Not for a visitor who has already answered a challenge: they have shown
+        // what the list was asking, and turning their request into a challenge
+        // they skip would also drop what a DetectionOnly policy found on it.
+        let verdict = match (verdict, &listed) {
+            (PipelineVerdict::Allow { alerts, findings }, Some(crate::iplist::Listed::Published(hit)))
+                if hit.response == crate::iplist::Response::Challenge && !cleared && !detection_only =>
+            {
+                PipelineVerdict::Challenge {
+                    reason: format!("Client address is on the published list \"{}\"", hit.name),
+                    alerts,
+                    findings,
+                }
+            }
+            (verdict, _) => verdict,
+        };
+
+        // In DetectionOnly a list refuses and challenges nobody. It records what it
+        // would have done, beside whatever the rules found, the way the rules
+        // record theirs — so a policy can be trialled with its lists as well.
+        let verdict = match (verdict, list_verdict(&listed).filter(|_| detection_only)) {
+            (PipelineVerdict::Allow { mut alerts, mut findings }, Some((why, would))) => {
+                findings.detection = Some(stronger(findings.detection, would));
+                alerts.push(crate::modules::Alert { module: "iplist", reason: why });
+                PipelineVerdict::Allow { alerts, findings }
+            }
+            (verdict, _) => verdict,
+        };
+
+        if let PipelineVerdict::Block { reason, status, findings, .. } = verdict {
+            // Log the blocked request asynchronously so we don't delay the response.
             let elapsed    = started_at.elapsed().as_millis() as i64;
             let db         = state.db.clone();
-            let logger     = state.logger.clone();
+                let logger     = state.logger.clone();
             let method_str = method.to_string();
+            let reason_log = reason.clone();
+            tokio::spawn(async move {
+                log_event(db, logger, TrafficRecord {
+                    upstream:     None,
+                    site_id:      site.id,
+                    client_ip:    client_ip.to_string(),
+                    method:       method_str,
+                    host:         host.clone(),
+                    path:         path.clone(),
+                    query:        query.clone(),
+                    status_code:  status.as_u16() as i64,
+                    response_ms:  elapsed,
+                    blocked:      true,
+                    block_reason: Some(reason_log),
+                    waf_score:    Some(findings.score),
+                    matched_rules: findings.hits_json(),
+                    country:      country.clone(),
+                    // The request was refused; `blocked` says so. `detection` is
+                    // for what would have happened and did not.
+                    detection:    None,
+                }).await;
+            });
+            return error_response(status, &reason);
+        }
+
+        // ── 4b. Challenge verdict: show CAPTCHA unless already cleared ──
+        if let PipelineVerdict::Challenge { reason, findings, .. } = &verdict
+            && !cleared
+        {
+            {
+                let dest = match &query {
+                    Some(q) => format!("{}?{}", path, q),
+                    None    => path.clone(),
+                };
+                let (id, data_uri) = state.challenges.issue(&dest, &client_ip.to_string());
+
+                // Log the challenge asynchronously.
+                let elapsed    = started_at.elapsed().as_millis() as i64;
+                let db         = state.db.clone();
+                let logger     = state.logger.clone();
+                let method_str = method.to_string();
+                let reason_log = format!("challenge: {}", reason);
+                // Copied out before the spawn: the verdict is borrowed here, and a
+                // challenged request is worth attributing for the same reason a
+                // blocked one is.
+                let score      = findings.score;
+                let hits       = findings.hits_json();
+                let host_l     = host.clone();
+                let path_l     = path.clone();
+                let ip_l       = client_ip.to_string();
+                tokio::spawn(async move {
+                    log_event(db, logger, TrafficRecord {
+                        upstream:     None,
+                        site_id:      site.id,
+                        client_ip:    ip_l,
+                        method:       method_str,
+                        host:         host_l,
+                        path:         path_l,
+                        query:        query.clone(),
+                        status_code:  200,
+                        response_ms:  elapsed,
+                        blocked:      false,
+                        block_reason: Some(reason_log),
+                        waf_score:    Some(score),
+                        matched_rules: hits,
+                        country:      country.clone(),
+                        detection:    None,   // it was challenged, not merely detected
+                    }).await;
+                });
+
+                return challenge_response(&id, &data_uri, false);
+            }
+            // Cleared visitor — fall through and forward normally.
+        }
+
+        // What the WAF found on a request it is about to allow.
+        //
+        // Until 0.6.11 this was dropped: every allowed request logged a clean
+        // record, whether nothing had matched or a DetectionOnly policy had just
+        // decided it would have blocked. That made DetectionOnly report nothing,
+        // and hid every near-miss in enforcing mode too.
+        //
+        // Computed once here because three paths below forward a request —
+        // WebSocket upgrade, cleared challenge, and the ordinary response.
+        let detected: Option<(i64, Option<String>, String, String)> = match &verdict {
+            PipelineVerdict::Allow { findings, alerts } => findings.detection.map(|d| {
+                let why = alerts
+                    .iter()
+                    .map(|a| a.reason.as_str())
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                (findings.score, findings.hits_json(), d.as_str().to_string(), why)
+            }),
+            // A cleared challenge falls through to here. It was challenged, and
+            // the visitor answered; that is not a detection to report again.
+            _ => None,
+        };
+
+        // ── 5. Forward to upstream ────────────────────────────
+        // Kept because `query` is consumed below and the flow line still needs it:
+        // a query string is where most of what a WAF matches actually lives.
+        let qs = query.clone();
+
+        let path_and_query = match &query {
+            Some(q) => format!("{}?{}", path, q),
+            None    => path.clone(),
+        };
+        // Which backend serves this request. With one upstream it is that one,
+        // every time, as it was before a site could have more.
+        //
+        // With affinity on, the cookie the client sends back decides — as long as
+        // the backend it names is still in this site's pool and still answering.
+        let pinned = if site.affinity {
+            cookie_value(&headers, crate::upstream::AFFINITY_COOKIE)
+                .and_then(|v| crate::upstream::read_pin(&state.secret, &v))
+        } else {
+            None
+        };
+        let Some(chosen) = crate::upstream::choose_pinned(site.id, &site.upstreams, pinned) else {
+            // A site with no upstream at all: nothing to forward to, and saying so
+            // beats a generic gateway error nobody can act on.
+            tracing::warn!(site = %site.name, "no upstream is configured for this site");
+            return error_response(StatusCode::BAD_GATEWAY, "No upstream is configured for this site");
+        };
+        let mut chosen_id  = chosen.upstream.id;
+        let mut chosen_url = chosen.upstream.url.clone();
+        let all_out        = chosen.all_out;
+        // A cookie is set when the site pins and this request did not arrive with
+        // the right one — first request, or a re-pin because the old backend has
+        // gone. Sending it every time would be a header on every response for
+        // nothing.
+        let repin = site.affinity && pinned != Some(chosen_id);
+        let upstream_url   = format!(
+            "{}{}",
+            chosen_url.trim_end_matches('/'),
+            path_and_query
+        );
+
+        // An accepted upgrade leaves HTTP behind, so it cannot go through reqwest,
+        // which has no way to take over a connection after the response. It happens
+        // here rather than earlier so the handshake is inspected like any other
+        // request — it is a normal GET with headers, and the pipeline has already
+        // had its say by this point.
+        if is_upgrade(&headers)
+            && let Some(on_upgrade) = on_upgrade
+        {
+            tracing::debug!(host = %host, path = %path, "proxying a protocol upgrade");
+            let resp = match proxy_upgrade(&upstream_url, &method, &headers, on_upgrade).await {
+                Ok(resp) => resp,
+                Err(e) => {
+                    tracing::warn!(upstream = %upstream_url, "upgrade failed: {}", e);
+                    error_response(StatusCode::BAD_GATEWAY, "Upgrade failed")
+                }
+            };
+
+            // Logged like any other request. The tunnel that follows cannot be,
+            // but the handshake is the only record that the connection happened at
+            // all — without it a WebSocket application is invisible in Traffic
+            // Monitor, which is worse than useless when someone is trying to work
+            // out whether their traffic is reaching the site.
+            let db         = state.db.clone();
+                let logger     = state.logger.clone();
+            let method_str = method.to_string();
+            let status     = resp.status().as_u16() as i64;
+            let elapsed    = started_at.elapsed().as_millis() as i64;
+            let (h, pth, c) = (host.clone(), path.clone(), country.clone());
+            let site_id    = site.id;
+            let ip         = client_ip.to_string();
             let found      = detected.clone();
             let up_l       = chosen_url.clone();
             tokio::spawn(async move {
                 let (score, hits, detection, why) = split_detection(found);
                 log_event(db, logger, TrafficRecord {
                     upstream:     Some(up_l.clone()),
-                    site_id:      site.id,
-                    client_ip:    client_ip.to_string(),
+                    site_id,
+                    client_ip:    ip,
                     method:       method_str,
-                    host,
-                    path,
-                    query:        qs.clone(),
-                    status_code:  502,
+                    host:         h,
+                    path:         pth,
+                    query:        query.clone(),
+                    status_code:  status,
                     response_ms:  elapsed,
                     blocked:      false,
                     block_reason: why,
                     waf_score:    score,
                     matched_rules: hits,
-                    country:      country.clone(),
+                    country:      c,
                     detection,
                 }).await;
             });
-            // Two different problems with two different next steps, so they
-            // are not given the same sentence: one backend is unreachable, or
-            // every backend of this site is.
-            if all_out || tried.len() > 1 {
-                error_response(StatusCode::BAD_GATEWAY,
-                               "All upstreams for this site are down")
-            } else {
-                error_response(StatusCode::BAD_GATEWAY, "Upstream unreachable")
-            }
+
+            return resp;
         }
 
-        // ── Upstream responded — stream back to client ────
-        Ok(upstream_resp) => {
-            let status       = upstream_resp.status();
-            // A 5xx is the backend saying it cannot answer, and counts against
-            // it. A 404 is the application answering, and does not: taking a
-            // working backend out of rotation because somebody asked for a
-            // missing page would be a worse fault than the one being guarded
-            // against.
-            if status.is_server_error() {
-                crate::upstream::failed(chosen_id);
-            } else {
-                crate::upstream::succeeded(chosen_id);
+        // Strip hop-by-hop headers before forwarding.
+        let mut fwd_headers = headers.clone();
+        for h in HOP_HEADERS {
+            fwd_headers.remove(*h);
+        }
+
+        apply_forwarded_headers(
+            &mut fwd_headers,
+            peer.ip(),
+            client_ip,
+            headers.get(axum::http::header::HOST),
+            state.is_tls,
+        );
+
+        // A body that ended within the limit is sent as it is, exactly as before.
+        // Otherwise the inspected start goes first and the rest follows as it
+        // arrives from the client — with the client's own Content-Length, which is
+        // forwarded unchanged and still matches, since not one byte is altered.
+        // A body that ended within the inspected prefix is held whole, so it can be
+        // sent again to a second backend. One that is still arriving cannot: it is
+        // a stream, the first attempt consumes it, and there is nothing left to
+        // replay. So a large upload gets one attempt and an honest 502, rather than
+        // a retry that would send half a body.
+        let replayable = prefix.complete;
+        let head       = prefix.head.clone();
+        let mut streamed = if prefix.complete {
+            None
+        } else {
+            let first = futures::stream::once(std::future::ready(
+                Ok::<bytes::Bytes, axum::Error>(prefix.head),
+            ));
+            Some(reqwest::Body::wrap_stream(futures::StreamExt::chain(first, prefix.rest)))
+        };
+
+        // At most three backends: a pool large enough for a fourth attempt is a
+        // pool where the client has waited long enough to be told.
+        const ATTEMPTS: usize = 3;
+        let mut tried: Vec<i64> = Vec::new();
+        let mut url = upstream_url.clone();
+
+        let upstream_result = loop {
+            let body = match streamed.take() {
+                Some(b) => b,
+                None    => reqwest::Body::from(head.clone()),
+            };
+            let result = state
+                .client
+                .request(to_reqwest_method(&method), &url)
+                .headers(to_reqwest_headers(&fwd_headers))
+                .body(body)
+                .send()
+                .await;
+
+            let Err(ref e) = result else {
+                break result;
+            };
+
+            // Could not be reached: that is the backend's fault, whatever the
+            // application would have said.
+            crate::upstream::failed(chosen_id);
+            tried.push(chosen_id);
+            if !replayable || tried.len() >= ATTEMPTS {
+                break result;
             }
-            let resp_headers = upstream_resp.headers().clone();
-            let elapsed      = started_at.elapsed().as_millis() as i64;
+            let Some(next) = crate::upstream::choose_except(site.id, &site.upstreams, &tried) else {
+                break result;
+            };
+            tracing::warn!(upstream = %url, error = %e, next = %next.upstream.url,
+                           "upstream unreachable, trying another backend");
+            chosen_id  = next.upstream.id;
+            chosen_url = next.upstream.url.clone();
+            url = format!("{}{}", chosen_url.trim_end_matches('/'), path_and_query);
+        };
 
-            // Stream the response body back without buffering it.
-            let body_stream = upstream_resp.bytes_stream();
-            let body        = Body::from_stream(body_stream);
-
-            // Copy upstream response headers (minus hop-by-hop).
-            //
-            // `append`, not `insert`. A HeaderMap yields one pair per value, so
-            // inserting in a loop keeps only the last of any repeated header —
-            // and the header applications repeat most is Set-Cookie. A login
-            // that sets a session cookie and a passphrase cookie together would
-            // arrive with one of them, and the browser would come back
-            // unauthenticated to the login page with nothing logged anywhere.
-            let mut resp = Response::builder().status(status);
-            if let Some(headers_mut) = resp.headers_mut() {
-                copy_response_headers(headers_mut, &resp_headers);
-                // Inject any security headers configured for this site.
-                inject_security_headers(headers_mut, &site);
-
-                // Pin the client to the backend that served it. A session
-                // cookie: affinity that outlives the browser session would
-                // hold a client to a backend long after anything it was
-                // keeping in memory had gone. HttpOnly because no page has
-                // any business reading it, and Secure over TLS so it is not
-                // sent back in clear.
-                if repin
-                    && let Ok(v) = axum::http::HeaderValue::from_str(&format!(
-                        "{}={}; Path=/; HttpOnly; SameSite=Lax{}",
-                        crate::upstream::AFFINITY_COOKIE,
-                        crate::upstream::make_pin(&state.secret, chosen_id),
-                        if state.is_tls { "; Secure" } else { "" }))
-                {
-                    headers_mut.append(axum::http::header::SET_COOKIE, v);
+        match upstream_result {
+            // ── Upstream unreachable ──────────────────────────
+            Err(e) => {
+                tracing::warn!(upstream = %upstream_url, error = %e, "upstream unreachable");
+                let elapsed    = started_at.elapsed().as_millis() as i64;
+                let db         = state.db.clone();
+                let logger     = state.logger.clone();
+                let method_str = method.to_string();
+                let found      = detected.clone();
+                let up_l       = chosen_url.clone();
+                tokio::spawn(async move {
+                    let (score, hits, detection, why) = split_detection(found);
+                    log_event(db, logger, TrafficRecord {
+                        upstream:     Some(up_l.clone()),
+                        site_id:      site.id,
+                        client_ip:    client_ip.to_string(),
+                        method:       method_str,
+                        host,
+                        path,
+                        query:        qs.clone(),
+                        status_code:  502,
+                        response_ms:  elapsed,
+                        blocked:      false,
+                        block_reason: why,
+                        waf_score:    score,
+                        matched_rules: hits,
+                        country:      country.clone(),
+                        detection,
+                    }).await;
+                });
+                // Two different problems with two different next steps, so they
+                // are not given the same sentence: one backend is unreachable, or
+                // every backend of this site is.
+                if all_out || tried.len() > 1 {
+                    error_response(StatusCode::BAD_GATEWAY,
+                                   "All upstreams for this site are down")
+                } else {
+                    error_response(StatusCode::BAD_GATEWAY, "Upstream unreachable")
                 }
             }
 
-            // Log the completed request asynchronously.
-            let db         = state.db.clone();
-            let logger     = state.logger.clone();
-            let method_str = method.to_string();
-            let found      = detected.clone();
-            let up_l       = chosen_url.clone();
-            tokio::spawn(async move {
-                let (score, hits, detection, why) = split_detection(found);
-                log_event(db, logger, TrafficRecord {
-                    upstream:     Some(up_l.clone()),
-                    site_id:      site.id,
-                    client_ip:    client_ip.to_string(),
-                    method:       method_str,
-                    host,
-                    path,
-                    query:        qs.clone(),
-                    status_code:  status.as_u16() as i64,
-                    response_ms:  elapsed,
-                    blocked:      false,
-                    block_reason: why,
-                    waf_score:    score,
-                    matched_rules: hits,
-                    country:      country.clone(),
-                    detection,
-                }).await;
-            });
+            // ── Upstream responded — stream back to client ────
+            Ok(upstream_resp) => {
+                let status       = upstream_resp.status();
+                // A 5xx is the backend saying it cannot answer, and counts against
+                // it. A 404 is the application answering, and does not: taking a
+                // working backend out of rotation because somebody asked for a
+                // missing page would be a worse fault than the one being guarded
+                // against.
+                if status.is_server_error() {
+                    crate::upstream::failed(chosen_id);
+                } else {
+                    crate::upstream::succeeded(chosen_id);
+                }
+                let resp_headers = upstream_resp.headers().clone();
+                let elapsed      = started_at.elapsed().as_millis() as i64;
 
-            resp.body(body).unwrap_or_else(|_| {
-                error_response(StatusCode::INTERNAL_SERVER_ERROR, "Response build error")
-            })
+                // Stream the response body back without buffering it.
+                let body_stream = upstream_resp.bytes_stream();
+                let body        = Body::from_stream(body_stream);
+
+                // Copy upstream response headers (minus hop-by-hop).
+                //
+                // `append`, not `insert`. A HeaderMap yields one pair per value, so
+                // inserting in a loop keeps only the last of any repeated header —
+                // and the header applications repeat most is Set-Cookie. A login
+                // that sets a session cookie and a passphrase cookie together would
+                // arrive with one of them, and the browser would come back
+                // unauthenticated to the login page with nothing logged anywhere.
+                let mut resp = Response::builder().status(status);
+                if let Some(headers_mut) = resp.headers_mut() {
+                    copy_response_headers(headers_mut, &resp_headers);
+
+                    // Pin the client to the backend that served it. A session
+                    // cookie: affinity that outlives the browser session would
+                    // hold a client to a backend long after anything it was
+                    // keeping in memory had gone. HttpOnly because no page has
+                    // any business reading it, and Secure over TLS so it is not
+                    // sent back in clear.
+                    if repin
+                        && let Ok(v) = axum::http::HeaderValue::from_str(&format!(
+                            "{}={}; Path=/; HttpOnly; SameSite=Lax{}",
+                            crate::upstream::AFFINITY_COOKIE,
+                            crate::upstream::make_pin(&state.secret, chosen_id),
+                            if state.is_tls { "; Secure" } else { "" }))
+                    {
+                        headers_mut.append(axum::http::header::SET_COOKIE, v);
+                    }
+                }
+
+                // Log the completed request asynchronously.
+                let db         = state.db.clone();
+                let logger     = state.logger.clone();
+                let method_str = method.to_string();
+                let found      = detected.clone();
+                let up_l       = chosen_url.clone();
+                tokio::spawn(async move {
+                    let (score, hits, detection, why) = split_detection(found);
+                    log_event(db, logger, TrafficRecord {
+                        upstream:     Some(up_l.clone()),
+                        site_id:      site.id,
+                        client_ip:    client_ip.to_string(),
+                        method:       method_str,
+                        host,
+                        path,
+                        query:        qs.clone(),
+                        status_code:  status.as_u16() as i64,
+                        response_ms:  elapsed,
+                        blocked:      false,
+                        block_reason: why,
+                        waf_score:    score,
+                        matched_rules: hits,
+                        country:      country.clone(),
+                        detection,
+                    }).await;
+                });
+
+                resp.body(body).unwrap_or_else(|_| {
+                    error_response(StatusCode::INTERNAL_SERVER_ERROR, "Response build error")
+                })
+            }
         }
     }
+    .await;
+    security.apply(response.headers_mut());
+    response
 }
 
 // ─── IP list verdicts ────────────────────────────────────
@@ -1455,6 +1480,10 @@ async fn lookup_site(db: &SqlitePool, host: &str) -> Option<SiteRow> {
                    FROM upstreams
                   WHERE site_id = sites.id AND enabled = 1) as \"pool?: String\",
                 tls_port,
+                EXISTS (SELECT 1 FROM certs c WHERE c.id = sites.cert_id
+                          AND trim(COALESCE(c.cert_pem, '')) <> ''
+                          AND trim(COALESCE(c.key_pem, '')) <> '')
+                               as \"has_cert!: bool\",
                 tls_redirect   as \"tls_redirect!: bool\",
                 hsts           as \"hsts!: bool\",
                 x_frame        as \"x_frame!: bool\",
@@ -1482,6 +1511,7 @@ async fn lookup_site(db: &SqlitePool, host: &str) -> Option<SiteRow> {
         name:           r.name,
         upstreams:      crate::upstream::parse_pool(r.pool.as_deref().unwrap_or("")),
         tls_port:       r.tls_port,
+        has_cert:       r.has_cert,
         tls_redirect:   r.tls_redirect,
         hsts:           r.hsts,
         x_frame:        r.x_frame,
@@ -1573,42 +1603,63 @@ fn escape_html(s: &str) -> String {
         .replace('\'', "&#39;")
 }
 
-// ─── inject_security_headers ─────────────────────────────
+// ─── Security headers ────────────────────────────────────
 
-/// Append configured security response headers to the outgoing response.
-/// Only headers that are enabled (set to true in the site row) are added.
-fn inject_security_headers(headers: &mut HeaderMap, site: &SiteRow) {
-    if site.hsts {
-        headers.insert(
-            HeaderName::from_static("strict-transport-security"),
-            HeaderValue::from_static("max-age=31536000; includeSubDomains"),
-        );
-    }
-    if site.x_frame {
-        // The configured value wins over anything the application sent, so
-        // what the setting says is what is served. DENY forbids framing by
-        // *anything*, self included, which quietly breaks applications that
-        // frame their own pages — Nextcloud is one, and reports the header as
-        // misconfigured when it sees it.
-        let v = match site.x_frame_value.trim().to_uppercase().as_str() {
-            "DENY" => "DENY",
-            _      => "SAMEORIGIN",
-        };
-        if let Ok(hv) = HeaderValue::from_str(v) {
-            headers.insert(HeaderName::from_static("x-frame-options"), hv);
+/// The response headers a site has switched on, taken from its row before the
+/// request is handled, so they can be applied to whatever the handling
+/// produces.
+struct SecurityHeaders {
+    hsts:           bool,
+    x_frame:        Option<&'static str>,
+    x_content_type: bool,
+    xss_protection: bool,
+}
+
+impl SecurityHeaders {
+    fn of(site: &SiteRow, tls: bool) -> Self {
+        SecurityHeaders {
+            // Over HTTPS only. RFC 6797 says a server must not send HSTS over
+            // plain HTTP — a browser ignores it there, and an attacker in the
+            // middle could otherwise strip or forge it.
+            hsts: site.hsts && tls,
+            // The configured value wins over anything the application sent,
+            // so what the setting says is what is served. DENY forbids
+            // framing by *anything*, self included, which quietly breaks
+            // applications that frame their own pages — Nextcloud is one, and
+            // reports the header as misconfigured when it sees it.
+            x_frame: site.x_frame.then(|| {
+                match site.x_frame_value.trim().to_uppercase().as_str() {
+                    "DENY" => "DENY",
+                    _      => "SAMEORIGIN",
+                }
+            }),
+            x_content_type: site.x_content_type,
+            xss_protection: site.xss_protection,
         }
     }
-    if site.x_content_type {
-        headers.insert(
-            HeaderName::from_static("x-content-type-options"),
-            HeaderValue::from_static("nosniff"),
-        );
-    }
-    if site.xss_protection {
-        headers.insert(
-            HeaderName::from_static("x-xss-protection"),
-            HeaderValue::from_static("1; mode=block"),
-        );
+
+    fn apply(&self, headers: &mut HeaderMap) {
+        if self.hsts {
+            headers.insert(
+                HeaderName::from_static("strict-transport-security"),
+                HeaderValue::from_static("max-age=31536000; includeSubDomains"),
+            );
+        }
+        if let Some(v) = self.x_frame {
+            headers.insert(HeaderName::from_static("x-frame-options"), HeaderValue::from_static(v));
+        }
+        if self.x_content_type {
+            headers.insert(
+                HeaderName::from_static("x-content-type-options"),
+                HeaderValue::from_static("nosniff"),
+            );
+        }
+        if self.xss_protection {
+            headers.insert(
+                HeaderName::from_static("x-xss-protection"),
+                HeaderValue::from_static("1; mode=block"),
+            );
+        }
     }
 }
 
