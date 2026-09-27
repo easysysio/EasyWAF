@@ -84,6 +84,10 @@ pub async fn init(database_url: &str) -> SqlitePool {
     run_migration_033(&pool).await;
     run_migration_034(&pool).await;
 
+    // After the migrations, so the version recorded is the one whose schema
+    // this now is. A snapshot carries it, and a restore reads it.
+    crate::backup::stamp(&pool).await;
+
     info!("Database ready: {}", database_url);
     pool
 }

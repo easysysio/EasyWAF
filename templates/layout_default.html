@@ -173,6 +173,7 @@
                             {% if updates_waiting | default(value=0) > 0 %}
                             <span class="label label-warning">{{ updates_waiting }}</span>
                             {% endif %}</a></li>
+                        <li><a href="/backup"><i class="fa fa-hdd-o"></i> Backup</a></li>
                         {% endif %}
                         <li><a href="/account"><i class="fa fa-key"></i> Change Password</a></li>
                         {% if is_admin | default(value=false) %}

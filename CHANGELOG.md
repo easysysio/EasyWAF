@@ -6,6 +6,14 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
+## [0.14.0] — unreleased
+
+### Added
+- **Settings → Backup**, for administrators only. **Download a snapshot**: the whole database, taken while EasyWAF runs and consistent without stopping it — including writes not yet folded into the main file, which a copy of the file would miss. The page says plainly that a snapshot is a secret: it holds every private key, every password hash and the key that signs sessions. It is sent uncacheable, written readable by its owner only, and not kept on the appliance after the download.
+- Every start records which version the database was last run by, so a snapshot says where it came from and a restore can refuse one from a newer EasyWAF.
+
+---
+
 ## [0.13.5] — 2026-09-25
 
 ### Fixed

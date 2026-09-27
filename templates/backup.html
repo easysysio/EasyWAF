@@ -1,0 +1,59 @@
+{% extends "layout_default.html" %}
+
+{% block content %}
+{% if result == "failed" %}
+<div class="alert alert-danger">
+    <i class="fa fa-exclamation-triangle"></i> {{ msg }}
+</div>
+{% endif %}
+{% if result == "success" %}
+<div class="alert alert-success">
+    <i class="fa fa-check"></i> {{ msg }}
+</div>
+{% endif %}
+
+<div class="row">
+    <div class="col-lg-11">
+
+        <div class="alert alert-info">
+            <i class="fa fa-hdd-o fa-fw"></i>
+            <strong>Two different files for two different jobs.</strong>
+            A <em>snapshot</em> is the whole database, exactly, for when the host is
+            gone. An <em>export</em> is a readable description of the configuration,
+            for cloning an installation, reviewing a change or keeping it in version
+            control. A snapshot is the one to trust for recovery: an export leaves out
+            what it does not describe, and that is gone at restore.
+        </div>
+
+        <!-- ── Snapshot ────────────────────────────────── -->
+        <div class="panel panel-default">
+            <div class="panel-heading">
+                <strong><i class="fa fa-database"></i> Snapshot</strong>
+                <span class="text-muted" style="font-size:12px">the database is {{ db_size }} on disk</span>
+            </div>
+            <div class="panel-body">
+                <div class="alert alert-warning" style="margin-bottom:12px">
+                    <i class="fa fa-lock"></i>
+                    <strong>A snapshot is a secret.</strong> It holds the private key of
+                    every certificate this appliance serves, every account's password
+                    hash, and the key that signs sessions. Keep it where you would keep
+                    those — not in a ticket, not in a shared folder, not in git.
+                </div>
+                <p>
+                    Taken while EasyWAF runs, without stopping it: SQLite copies the
+                    database through its own consistent view, including writes not yet
+                    folded into the main file. Traffic history is included — it is part
+                    of the database — so a snapshot is roughly the size above, or less.
+                </p>
+                <form method="post" action="/backup/snapshot"
+                      onsubmit="return confirm('Download a snapshot?\n\nIt contains every private key, every password hash and the session signing key. Store it as a secret.');">
+                    <button type="submit" class="btn btn-primary">
+                        <i class="fa fa-download"></i> Download a snapshot
+                    </button>
+                </form>
+            </div>
+        </div>
+
+    </div>
+</div>
+{% endblock %}

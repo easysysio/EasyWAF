@@ -1,7 +1,31 @@
 # Design note — backup, restore, and configuration export
 
-Status: planned for **0.14.0** — see [roadmap.md](roadmap.md), after rule
-updates (0.6.0), flow logs (0.9.0) and load balancing (0.13.0).
+Status: **building in 0.14.0** — see [roadmap.md](roadmap.md).
+
+## Decided, 2026-09-27
+
+Yariv's decisions, recorded before the code so the code can be checked
+against them:
+
+* **All of it in 0.14.0** — snapshot download and restore, a readable
+  export, *and* importing that export. Not split across two releases.
+* **Import replaces.** An imported file makes this instance match it — "make
+  this instance match that file" rather than "add these to what is here" —
+  and a preview lists every creation, change and removal before anything is
+  written. Merge is not offered; a restore that silently did the other would
+  lose data, which is the note's own warning below.
+* **Scheduled snapshots exist and are off by default.** Daily, a number kept,
+  in a directory beside the database. Switched on by an administrator.
+
+Built in five phases, each tested before the next: snapshot download,
+scheduled snapshots, snapshot restore, readable export, import with preview.
+
+**One correction to what follows.** This note says the cookie `secret` lives in
+`config.toml` and so travels in neither artefact. That stopped being true: the
+signing key is generated on first run and stored **in the database**. So a
+snapshot *does* carry it — restoring one brings back the old key, and anyone
+signed in on the new host is signed out once. The restore says so. A readable
+export does not carry it, and must not: it is a credential, not configuration.
 
 ## The problem
 
@@ -66,11 +90,11 @@ This must be decided before the format is, not after:
   the GUI should say that plainly rather than presenting it as "download a
   backup".
 
-`config.toml`'s `secret` is *not* in the database, so it is in neither artefact.
-That is correct — it is host configuration, not appliance configuration — but a
-restore onto a host with a different `secret` invalidates every existing
-session. Worth stating in the restore output rather than leaving someone to
-discover it as a mysterious mass logout.
+~~`config.toml`'s `secret` is *not* in the database, so it is in neither
+artefact.~~ Superseded — see *Decided, 2026-09-27* above: the cookie key is in
+the database, so a snapshot carries it and a readable export does not. Either
+way a restore can sign people out, and that belongs in the restore's own
+output rather than being discovered as a mysterious mass logout.
 
 ## Snapshots must not be a file copy
 

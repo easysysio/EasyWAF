@@ -5,6 +5,7 @@
 
 pub mod account;
 pub mod accounts;
+pub mod backup;
 pub mod certs;
 pub mod dashboard;
 pub mod exclusions;

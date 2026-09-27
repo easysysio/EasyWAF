@@ -11,6 +11,7 @@
 mod assets;
 mod acme;
 mod audit;
+mod backup;
 mod auth;
 mod cert;
 mod challenge;
@@ -302,6 +303,8 @@ async fn main() {
                post(routes::rules::post_share_custom_rules))
         .route("/rules/{id}/toggle",     post(routes::rules::post_rule_toggle_global))
         .route("/rules/{id}/delete",     post(routes::rules::post_rule_delete_global))
+        .route("/backup",                get(routes::backup::get_backup))
+        .route("/backup/snapshot",       post(routes::backup::post_snapshot))
         .route("/updates",               get(routes::updates::get_updates))
         .route("/updates/settings",      post(routes::updates::post_updates_settings))
         .route("/updates/{kind}/fetch",  post(routes::updates::post_update_now))
