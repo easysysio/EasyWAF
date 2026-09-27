@@ -1,6 +1,6 @@
 # Design note — backup, restore, and configuration export
 
-Status: **building in 0.14.0** — see [roadmap.md](roadmap.md).
+Status: **built for 0.14.0** — see [roadmap.md](roadmap.md).
 
 ## Decided, 2026-09-27
 
@@ -19,6 +19,44 @@ against them:
 
 Built in five phases, each tested before the next: snapshot download,
 scheduled snapshots, snapshot restore, readable export, import with preview.
+
+## How it was built
+
+Recorded because three of these were choices, and the alternatives were real.
+
+**An import is applied to a copy and swapped in by a restart** — the second of
+the two options this note allows below ("one transaction, or a staged database
+swapped in at the end"). The live database is snapshotted, the import applied
+to the copy through the ordinary code paths — rule sets still arrive through
+the signature-verified installer — and the copy is staged exactly as a snapshot
+restore is. That buys three things this note asks for without writing them
+twice: a failure half-way changes nothing; a result that will not start is put
+back by the next start; and the restart re-binds every listener and reloads
+every cache, which is the step the note warns is easiest to miss when done one
+subsystem at a time. The cost is a few seconds without serving sites per import,
+and the preview says so.
+
+**A restore undoes itself.** The swap is ordered so that a power cut between
+any two steps loses nothing: the current database is copied whole to
+`<db>.before-restore`, a marker is written, the snapshot is renamed over the
+database, and the marker is cleared only once the migrations have run. A start
+that finds the marker with nothing staged knows the restored database never
+came up, and puts the kept one back.
+
+**Every settings key is classified.** `EXPORTED_SETTINGS` or `LOCAL_SETTINGS`
+in `export.rs`, and a test that scans every `KEY_` constant fails, with
+instructions, for a key in neither. This is how the note's requirement that the
+format gain fields without being reworked is met for settings in particular: a
+setting added by Smart Protect has to be decided on before the build is green.
+
+Two exceptions to replace, both deliberate: accounts are merged — added and
+updated, never deleted, and never the account running the import — and this
+host's own management certificate is neither exported nor removed.
+
+Unknown keys are refused, in both directions of the note's rule: one from a
+newer EasyWAF is refused with the versions named and an instruction to
+upgrade; one from the same or an older version is a misspelling, and is named
+rather than dropped.
 
 **One correction to what follows.** This note says the cookie `secret` lives in
 `config.toml` and so travels in neither artefact. That stopped being true: the

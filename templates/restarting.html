@@ -21,13 +21,18 @@
 </head>
 <body>
 <main>
-  <h1>Restoring the snapshot</h1>
-  <p>EasyWAF is stopping to swap the snapshot in, and starts again by itself.
-     The database it replaces is kept, and if the snapshot does not start, it is
-     put back automatically.</p>
+  <h1>{{ heading | default(value="Restoring the snapshot") }}</h1>
+  <p>EasyWAF is stopping to swap {{ what | default(value="the snapshot") }} in, and starts again by itself.
+     The database it replaces is kept, and if the result does not start, that one
+     is put back automatically.</p>
   <p><span id="state">Waiting for EasyWAF to come back…</span></p>
+  {% if import %}
+  <p class="muted">Your session carries on: an import keeps this installation's accounts and
+     session key, and never disables or demotes the account that ran it.
+  {% else %}
   <p class="muted">You will sign in with the accounts <strong>in the snapshot</strong> —
      it carries its own, and its own session key, so the session you have now ends.
+  {% endif %}
      Sites are not served during the restart, which normally takes a few seconds.</p>
   <p class="muted">If nothing happens for a minute, EasyWAF is not running under a
      service manager that restarts it. Start it again yourself; the snapshot is

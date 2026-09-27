@@ -87,6 +87,20 @@ pub async fn get_backup(
     ctx.insert("before_size", &before.exists().then(||
         human_size(std::fs::metadata(&before).map(|m| m.len()).unwrap_or(0))));
 
+    // ── Import: a held file, and what applying it would do ──
+    // Planned again on every view, like the held snapshot, so the preview is of
+    // this installation as it is now rather than when the file arrived.
+    let candidate = import_candidate();
+    if let Ok(text) = std::fs::read_to_string(&candidate) {
+        match crate::import::parse(&text) {
+            Ok(doc) => {
+                let plan = crate::import::plan(&state.db, &doc, &gui_ports(&state), &session.username).await;
+                ctx.insert("import_plan", &plan);
+            }
+            Err(e) => ctx.insert("import_error", &e),
+        }
+    }
+
     Ok((jar, Html(state.tera.render("backup.html", &ctx)?)).into_response())
 }
 
@@ -409,6 +423,137 @@ pub async fn post_export(
         text,
     )
         .into_response())
+}
+
+// ─── Import ──────────────────────────────────────────────
+
+/// A configuration file uploaded and held for its preview.
+fn import_candidate() -> std::path::PathBuf {
+    crate::backup::dir().join(".import-candidate.toml")
+}
+
+fn gui_ports(state: &AppState) -> Vec<u16> {
+    vec![state.config.proxy.gui_port, state.config.proxy.gui_tls_port]
+}
+
+/// POST /backup/import/upload — receive a configuration file and hold it. The
+/// page then shows everything applying it would create, change and remove.
+pub async fn post_import_upload(
+    State(_state): State<AppState>,
+    _jar: SignedCookieJar,
+    Admin(session): Admin,
+    mut parts: axum::extract::Multipart,
+) -> Result<Response> {
+    let mut text = None;
+    while let Ok(Some(field)) = parts.next_field().await {
+        if field.file_name().is_none() { continue; }
+        match field.bytes().await {
+            Ok(b) => { text = Some(b); break; }
+            Err(e) => return flash_redirect("/backup", "failed",
+                         &format!("The upload did not arrive whole: {e}")),
+        }
+    }
+    let Some(bytes) = text else {
+        return flash_redirect("/backup", "failed", "No file was uploaded");
+    };
+    let Ok(text) = String::from_utf8(bytes.to_vec()) else {
+        return flash_redirect("/backup", "failed", "Not importable: it is not a text file");
+    };
+    // Parsed now, so a file that is not an export is refused at the door
+    // rather than held and refused on every view of the page.
+    if let Err(e) = crate::import::parse(&text) {
+        return flash_redirect("/backup", "failed", &format!("Not importable: {e}"));
+    }
+    let candidate = import_candidate();
+    if let Some(dir) = candidate.parent() { let _ = std::fs::create_dir_all(dir); }
+    if let Err(e) = std::fs::write(&candidate, &text) {
+        return flash_redirect("/backup", "failed", &format!("The file could not be held: {e}"));
+    }
+    tracing::info!(by = %session.username, "Configuration file uploaded and held for import");
+    flash_redirect("/backup", "success",
+        "Read and held. Nothing has been changed — the preview below lists everything importing it would do")
+}
+
+/// POST /backup/import/apply — make this installation match the held file.
+pub async fn post_import_apply(
+    State(state): State<AppState>,
+    _jar: SignedCookieJar,
+    Admin(session): Admin,
+) -> Result<Response> {
+    let candidate = import_candidate();
+    let Ok(text) = std::fs::read_to_string(&candidate) else {
+        return flash_redirect("/backup", "failed", "There is no configuration file waiting to be imported");
+    };
+    let doc = match crate::import::parse(&text) {
+        Ok(d)  => d,
+        Err(e) => return flash_redirect("/backup", "failed", &format!("Not importable: {e}")),
+    };
+    // Planned again: the preview may be an hour old, and the installation may
+    // have changed since. What is refused now is what counts.
+    let plan = crate::import::plan(&state.db, &doc, &gui_ports(&state), &session.username).await;
+    if !plan.blockers.is_empty() {
+        return flash_redirect("/backup", "failed",
+            &format!("Not imported: {}", plan.blockers.join("; ")));
+    }
+
+    // Onto a copy. The live database is not touched until the copy is whole,
+    // checked and swapped in by the restart.
+    let work = crate::backup::dir().join(".import-work.db");
+    for sfx in ["", "-wal", "-shm"] {
+        let _ = std::fs::remove_file(format!("{}{sfx}", work.display()));
+    }
+    if let Err(e) = crate::backup::take(&state.db, &work).await {
+        return flash_redirect("/backup", "failed", &format!("Not imported: {e}"));
+    }
+    let outcome = async {
+        let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}", work.display()))
+            .await.map_err(|e| format!("the working copy would not open: {e}"))?;
+        let applied = crate::import::apply(&pool, &doc, &session.username).await;
+        let _ = sqlx::raw_sql("PRAGMA wal_checkpoint(TRUNCATE)").execute(&pool).await;
+        pool.close().await;
+        applied
+    }.await;
+    for sfx in ["-wal", "-shm"] {
+        let _ = std::fs::remove_file(format!("{}{sfx}", work.display()));
+    }
+    if let Err(e) = outcome {
+        let _ = std::fs::remove_file(&work);
+        return flash_redirect("/backup", "failed",
+            &format!("Not imported, and nothing was changed: {e}"));
+    }
+
+    let success = format!(
+        "Imported the configuration exported by EasyWAF {} on {} — {} change(s).",
+        doc.easywaf.version, doc.easywaf.exported, plan.changes);
+    if let Err(e) = crate::backup::set_reason("The import", &success)
+        .and_then(|_| crate::backup::stage(&work))
+    {
+        let _ = std::fs::remove_file(&work);
+        return flash_redirect("/backup", "failed", &format!("Not imported: {e}"));
+    }
+    let _ = std::fs::remove_file(&candidate);
+    tracing::warn!(by = %session.username, changes = plan.changes,
+                   "Configuration import staged — restarting to apply it");
+
+    tokio::spawn(async {
+        tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+        crate::backup::request_restart();
+    });
+    let mut ctx = Context::new();
+    ctx.insert("heading", "Applying the import");
+    ctx.insert("what", "the imported configuration");
+    ctx.insert("import", &true);
+    Ok(Html(state.tera.render("restarting.html", &ctx)?).into_response())
+}
+
+/// POST /backup/import/discard — drop a held configuration file.
+pub async fn post_import_discard(
+    State(_state): State<AppState>,
+    _jar: SignedCookieJar,
+    Admin(_session): Admin,
+) -> Result<Response> {
+    let _ = std::fs::remove_file(import_candidate());
+    flash_redirect("/backup", "success", "Discarded. Nothing was imported")
 }
 
 /// "8.2 MB", for a page saying roughly how large something is.

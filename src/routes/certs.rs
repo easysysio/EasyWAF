@@ -305,7 +305,7 @@ async fn fetch_certs(state: &AppState) -> Result<Vec<Cert>> {
 
 /// What the upload form stores: domain and validity, read from the certificate
 /// itself so the list does not depend on what the operator typed.
-fn parse_cert_pem(pem: &str) -> (Option<String>, Option<String>, Option<String>) {
+pub(crate) fn parse_cert_pem(pem: &str) -> (Option<String>, Option<String>, Option<String>) {
     match inspect("", pem, false) {
         Ok(d) => (d.subject.common_name, Some(d.not_before), Some(d.not_after)),
         Err(_) => (None, None, None),

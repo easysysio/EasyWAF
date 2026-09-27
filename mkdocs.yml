@@ -36,6 +36,7 @@ nav:
           - Policies and rules: policies.md
           - IP lists: ip-lists.md
           - Updates: updates.md
+          - Backup and restore: backup.md
           - Traffic: traffic.md
           - Accounts and roles: accounts.md
           - Logging: logging.md

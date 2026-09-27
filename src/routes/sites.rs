@@ -1380,7 +1380,7 @@ async fn site_names(db: &SqlitePool, site_id: i64, server_name: &str) -> Vec<Str
 ///
 /// A trailing dot (the DNS root, valid in a Host header) is dropped too so
 /// `example.com.` and `example.com` are stored the same way.
-fn normalize_server_name(raw: &str) -> String {
+pub(crate) fn normalize_server_name(raw: &str) -> String {
     let mut host = raw.trim().to_lowercase();
 
     // Drop a scheme prefix: "http://example.com" → "example.com".

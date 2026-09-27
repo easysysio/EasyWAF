@@ -37,8 +37,8 @@ Working today: reverse proxying, the rule engine, country rules, the CAPTCHA cha
 traffic logging and retention, HTTPS for both the management GUI and proxied sites, and the
 management GUI itself.
 
-The largest gaps are **backup/export** (there is none) and **load balancing** (one upstream
-per site). Read
+Backup, restore and a readable configuration export arrived in 0.14.0, and load balancing
+in 0.13.0. Read
 [What EasyWAF does not do](#what-easywaf-does-not-do) before deploying — it is short, and it
 is the honest half of this page.
 
@@ -429,10 +429,6 @@ scheduled or decided — the roadmap lives in [docs/design/roadmap.md](docs/desi
 * **The audit log is a file, not a page.** Every change is recorded with who made it, in
   `/var/log/easywaf/audit-*.log`; nothing in the interface shows it, so reading it means
   reaching the host.
-* **No backup, restore or configuration export.** Everything lives in one SQLite file with no
-  way to export it, clone it to staging, or keep it under version control. Scheduled for
-  **0.14.0**; until then, `sqlite3 easywaf.db ".backup ..."` while it runs, or copy the file
-  with the service stopped.
 * **No high availability.** No configuration sync between nodes. Scheduled for **0.17.0**.
 * **No rate limiting** (**0.18.0**), and nothing yet blocks an address for attacking
   repeatedly — that is Smart Protect, scheduled for **0.15.0**. IP allow and block lists

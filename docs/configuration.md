@@ -76,8 +76,9 @@ Sites, policies, rules, exclusions and certificates have pages of their own.
 
 ## Backing up
 
-There is no export yet ([0.14.0](limitations.md#managing-it)). Everything is in
-the one SQLite file.
+**Settings → Backup** takes snapshots, keeps them on a schedule, restores
+them, and exports and imports the configuration — see
+[Backup and restore](backup.md). The command line works too.
 
 **Without stopping anything**, which is the method to prefer:
 

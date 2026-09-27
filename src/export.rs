@@ -675,7 +675,7 @@ pub fn to_toml(doc: &Document) -> Result<String, String> {
 // ─── Tests ───────────────────────────────────────────────
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     /// Every settings key the code defines is decided one way or the other.
@@ -738,7 +738,7 @@ mod tests {
                         (1, 'SQLi two', 'ARGS', 'select', 5, 'score', 0, 942002, 'owasp-sqli');
             -- A rule written here, and a catalogue rule taken on its own.
             INSERT INTO waf_rules (policy_id, name, description, zone, pattern, score, action, enabled)
-                 VALUES (1, 'Block the old admin', 'written here', 'URI', '^/old-admin', 10, 'block', 1);
+                 VALUES (1, 'Block the old admin', 'written here', 'URL', '^/old-admin', 10, 'block', 1);
             INSERT INTO waf_rules (policy_id, name, zone, pattern, score, action, enabled, external_id, rule_set)
                  VALUES (1, 'XSS script tag', 'ARGS', '<script', 5, 'score', 1, 941001, 'owasp-xss');
             -- An exclusion of the set's rule, by number, and one of the rule written here.

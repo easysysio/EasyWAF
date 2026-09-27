@@ -1257,6 +1257,16 @@ fn category_title(file_stem: &str) -> (String, String) {
 
 /// Read all rule definitions from the rules/ directory into a flat map
 /// keyed by external_id. Used by the catalog POST handler for additions.
+/// Which set each catalogue rule belongs to, by its number — the one thing
+/// the import needs from the catalogue, without handing out how rule files
+/// are read.
+pub(crate) fn catalogue_sets() -> HashMap<i64, String> {
+    read_rule_defs()
+        .into_iter()
+        .filter_map(|(id, (_, set))| set.map(|s| (id, s)))
+        .collect()
+}
+
 fn read_rule_defs() -> HashMap<i64, (RuleFileDef, Option<String>)> {
     let mut map = HashMap::new();
     let dir = crate::rules_update::rules_source();

@@ -97,6 +97,106 @@
             </div>
         </div>
 
+        <!-- ── Import ──────────────────────────────────── -->
+        <div class="panel panel-default">
+            <div class="panel-heading">
+                <strong><i class="fa fa-upload"></i> Import a configuration</strong>
+            </div>
+            <div class="panel-body">
+                <p>
+                    <strong>An import makes this installation match the file.</strong> What the file
+                    has is created or changed; what only this installation has is removed. Two
+                    exceptions: accounts are only ever added or updated, never deleted — and never
+                    the account running the import — and this appliance's own management
+                    certificate stays. Traffic history is untouched.
+                </p>
+
+                {% if import_error %}
+                <div class="alert alert-danger"><i class="fa fa-exclamation-triangle"></i> {{ import_error }}</div>
+                {% endif %}
+
+                {% if import_plan %}
+                <div class="panel panel-{% if import_plan.blockers %}danger{% else %}warning{% endif %}" style="margin-bottom:12px">
+                    <div class="panel-heading">
+                        <strong>Preview — nothing has been changed yet.</strong>
+                        Exported by EasyWAF {{ import_plan.version }} at {{ import_plan.exported }}{% if import_plan.contains %},
+                        containing {{ import_plan.contains | join(sep=" and ") }}{% endif %}.
+                    </div>
+                    <div class="panel-body">
+                        {% if import_plan.blockers %}
+                        <p class="text-danger" style="margin-top:0"><strong><i class="fa fa-ban"></i>
+                            It cannot be imported as it is:</strong></p>
+                        <ul class="text-danger">
+                            {% for b in import_plan.blockers %}<li>{{ b }}</li>{% endfor %}
+                        </ul>
+                        {% endif %}
+                        {% if import_plan.warnings %}
+                        <p style="margin-top:0"><strong><i class="fa fa-info-circle"></i> Worth knowing:</strong></p>
+                        <ul>
+                            {% for w in import_plan.warnings %}<li>{{ w }}</li>{% endfor %}
+                        </ul>
+                        {% endif %}
+
+                        {% if import_plan.changes == 0 and not import_plan.blockers %}
+                        <p><i class="fa fa-check"></i> This installation already matches the file. Importing it would change nothing.</p>
+                        {% endif %}
+
+                        {% for g in import_plan.groups %}
+                        <h5 style="margin-top:14px"><strong>{{ g.title }}</strong></h5>
+                        <table class="table table-condensed" style="font-size:13px;margin-bottom:6px">
+                            {% for i in g.items %}
+                            <tr>
+                                <td style="width:90px;white-space:nowrap">
+                                    {% if i.action == "create" %}<span class="label label-success">add</span>
+                                    {% elif i.action == "change" %}<span class="label label-warning">change</span>
+                                    {% elif i.action == "remove" %}<span class="label label-danger">remove</span>
+                                    {% else %}<span class="label label-default">keep</span>{% endif %}
+                                </td>
+                                <td style="width:220px"><strong>{{ i.name }}</strong></td>
+                                <td>{% for d in i.details %}{{ d }}{% if not loop.last %}<br>{% endif %}{% endfor %}</td>
+                            </tr>
+                            {% endfor %}
+                        </table>
+                        {% endfor %}
+
+                        <div style="display:flex;gap:8px;margin-top:12px;align-items:center;flex-wrap:wrap">
+                            {% if not import_plan.blockers and import_plan.changes > 0 %}
+                            <form method="post" action="/backup/import/apply"
+                                  onsubmit="return confirm('Import it?\n\nThis installation will match the file: {{ import_plan.changes }} change(s), removals included. EasyWAF restarts to apply it — a few seconds without serving sites.');">
+                                <button type="submit" class="btn btn-danger">
+                                    <i class="fa fa-upload"></i> Import it — {{ import_plan.changes }} change(s)
+                                </button>
+                            </form>
+                            {% endif %}
+                            <form method="post" action="/backup/import/discard">
+                                <button type="submit" class="btn btn-default">Discard</button>
+                            </form>
+                            {% if not import_plan.blockers and import_plan.changes > 0 %}
+                            <span class="text-muted" style="font-size:12px">
+                                Applied to a copy of the database, which is swapped in by a restart — a few
+                                seconds without serving sites. If the result will not start, the current one
+                                is put back.
+                            </span>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+                {% endif %}
+
+                <form method="post" enctype="multipart/form-data" action="/backup/import/upload"
+                      style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+                    <input type="file" name="file" accept=".toml,application/toml,text/plain" required style="max-width:340px">
+                    <button type="submit" class="btn btn-default btn-sm">
+                        <i class="fa fa-search"></i> Upload and preview
+                    </button>
+                    <span class="text-muted" style="font-size:12px">
+                        Read strictly — a key it does not know is refused by name, not ignored — and
+                        held for you to look at. Nothing changes until you import it.
+                    </span>
+                </form>
+            </div>
+        </div>
+
         <!-- ── Restore ─────────────────────────────────── -->
         <div class="panel panel-default">
             <div class="panel-heading">

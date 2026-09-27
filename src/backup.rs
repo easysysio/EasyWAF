@@ -333,6 +333,16 @@ pub fn staged_path() -> PathBuf { sibling(".restore") }
 /// database's previous copy: the way back from the restore just made.
 pub fn before_path() -> PathBuf { sibling(".before-restore") }
 fn marker_path()  -> PathBuf { sibling(".restore-pending") }
+/// What is being swapped in, when it is not a snapshot: the name of the thing
+/// on the first line ("The import"), and on the rest the sentence to show
+/// when it has worked. Written by whoever stages the database.
+fn reason_path()  -> PathBuf { sibling(".restore-reason") }
+
+/// Say what a staged database is, for the messages after the restart.
+pub fn set_reason(subject: &str, success: &str) -> Result<(), String> {
+    std::fs::write(reason_path(), format!("{subject}\n{success}"))
+        .map_err(|e| format!("the import could not be staged: {e}"))
+}
 fn outcome_path() -> PathBuf { sibling(".restore-outcome") }
 /// An upload checked and held for an administrator to look at before it is
 /// staged. A dot-name in the backups directory, so nothing lists or prunes it.
@@ -356,7 +366,7 @@ pub struct Contents {
 }
 
 /// Parse "0.14.0" for comparison. Anything else is not a version.
-fn version(v: &str) -> Option<(u32, u32, u32)> {
+pub(crate) fn version(v: &str) -> Option<(u32, u32, u32)> {
     let mut it = v.trim().split('.').map(|p| p.parse::<u32>().ok());
     let t = (it.next()??, it.next()??, it.next()??);
     it.next().is_none().then_some(t)
@@ -483,9 +493,13 @@ async fn apply_staged_restore_at(db: &Path) {
             let _ = std::fs::remove_file(&shm);
             match std::fs::rename(&before, db) {
                 Ok(()) => {
-                    tracing::error!("The restored database did not start. The database it replaced has been put back");
-                    let _ = std::fs::write(&outcome,
-                        "failed\nThe restored snapshot did not start — it would not open, or this version could not bring its schema up to date. The database it replaced has been put back, unchanged.");
+                    let subject = std::fs::read_to_string(with(".restore-reason")).ok()
+                        .and_then(|t| t.lines().next().map(str::to_string))
+                        .unwrap_or_else(|| "The restored snapshot".to_string());
+                    let _ = std::fs::remove_file(with(".restore-reason"));
+                    tracing::error!("{subject} did not start. The database it replaced has been put back");
+                    let _ = std::fs::write(&outcome, format!(
+                        "failed\n{subject} did not start — it would not open, or this version could not bring its schema up to date. The database it replaced has been put back, unchanged."));
                 }
                 Err(e) => tracing::error!("The restored database did not start, and the one it replaced could not be put back: {e}"),
             }
@@ -569,9 +583,16 @@ pub async fn finish_restore(db: &SqlitePool) {
             .and_then(|t| t.lines().nth(1).map(str::trim).map(str::to_string))
             .filter(|v| !v.is_empty());
         let _ = std::fs::remove_file(&marker);
-        let _ = std::fs::write(outcome_path(), format!(
-            "ok\nRestored from a snapshot{}. The database it replaced is kept beside it and can be downloaded below.",
-            from.map(|v| format!(" last run by EasyWAF {v}")).unwrap_or_default()));
+        let reason = std::fs::read_to_string(reason_path()).ok();
+        let _ = std::fs::remove_file(reason_path());
+        let message = match reason.as_deref().and_then(|t| t.split_once('\n')) {
+            Some((_, success)) => format!("{} The database it replaced is kept and can be downloaded below.",
+                                          success.trim()),
+            None => format!(
+                "Restored from a snapshot{}. The database it replaced is kept beside it and can be downloaded below.",
+                from.map(|v| format!(" last run by EasyWAF {v}")).unwrap_or_default()),
+        };
+        let _ = std::fs::write(outcome_path(), format!("ok\n{message}"));
         tracing::info!("Restore complete");
     }
     // Recorded into the (possibly new) database for the page, then removed:

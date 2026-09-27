@@ -3,7 +3,7 @@
 Called out so nothing here is a surprise in production. Split by whether it is
 scheduled or decided.
 
-Current as of **0.9.1**.
+Current as of **0.14.0**.
 
 ## As a reverse proxy
 
@@ -63,11 +63,6 @@ Current as of **0.9.1**.
   credentials for a DNS provider's API. Upload a wildcard certificate instead.
   Validation always arrives on port 80, so the host must be reachable there from
   the internet.
-- **No backup, restore or configuration export.** Everything is in one SQLite
-  file with no way to export it, clone it to staging, or keep it under version
-  control. Scheduled for **0.14.0**; until then,
-  [copy the database](configuration.md#backing-up) — with `sqlite3 .backup`
-  while it runs, or `cp` with the service stopped.
 - **No high availability.** No configuration sync between nodes. Scheduled for
   **0.17.0**.
 - **No list of proxy, VPN or hosting addresses.** Every credible dataset is

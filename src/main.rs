@@ -22,6 +22,7 @@ mod export;
 mod forwarded;
 mod geo;
 mod geo_update;
+mod import;
 mod iplist;
 mod iplist_feeds;
 mod modules;
@@ -320,6 +321,11 @@ async fn main() {
         .route("/backup/restore/discard",post(routes::backup::post_restore_discard))
         .route("/backup/before-restore", post(routes::backup::post_before_restore))
         .route("/backup/export",         post(routes::backup::post_export))
+        .route("/backup/import/apply",   post(routes::backup::post_import_apply))
+        .route("/backup/import/discard", post(routes::backup::post_import_discard))
+        .route("/backup/import/upload",
+               post(routes::backup::post_import_upload)
+                   .layer(axum::extract::DefaultBodyLimit::max(16 * 1024 * 1024)))
         // No size limit, deliberately: an administrator is restoring their own
         // database, which is as large as it is. It streams to disk rather than
         // memory, so the disk is the limit, and only an administrator reaches it.
