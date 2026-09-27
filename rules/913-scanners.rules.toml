@@ -4,7 +4,7 @@
 [set]
 id      = "owasp-scanners"
 name    = "Scanner and automated tool detection"
-version = 2
+version = 4
 
 [[rules]]
 id          = 913001
@@ -142,20 +142,25 @@ zone        = "URL"
 # /index.php/settings/admin — scored 4 every time an administrator opened it.
 # A scanner probes these at the root; an application nests them.
 #
-# The file names stay unanchored: /.env under any path is worth scoring
-# wherever it appears, because nothing legitimately serves it.
+# The file names that remain are ones nothing serves under any path.
+#
+# .env came out. 930-lfi already matches it, so a request for one scored 4 here
+# and 7 there — 11 against a default block threshold of 10, from two rules
+# reading the same six characters. A git host serving a repository that
+# contains a .env was refused outright, and the second rule is the one that
+# should own it: config files are what it is for.
 #
 # .git moved to 913016, which blocks outright rather than scoring. It was
 # matched here as well until then, and one request attributed to two rules for
 # the same reason is harder to read than either alone.
-pattern     = '(?i)(^/(admin|wp-admin|phpmyadmin|manager|console|actuator)(/|\?|$)|/(\.env|phpinfo\.php|server-status|web\.config))'
+pattern     = '(?i)(^/(admin|wp-admin|phpmyadmin|manager|console|actuator)(/|\?|$)|/(phpinfo\.php|server-status|web\.config))'
 score       = 4
 action      = "score"
 
 [[rules]]
 id          = 913016
-name        = "Exposure: .git directory"
-description = "A served .git directory hands over the entire source history, and often credentials with it"
+name        = "Exposure: version control directory"
+description = "A served .git, .svn, .hg or .bzr hands over the entire source history, and often credentials with it"
 zone        = "URL"
 # Blocked outright rather than scored. Every other rule in this set describes
 # something suspicious; this one describes something that is never correct. No
@@ -163,10 +168,41 @@ zone        = "URL"
 # weigh against — and the cost of getting it wrong is the whole repository,
 # including whatever was committed to it before someone thought better of it.
 #
-# Matches the directory, not the name: /.git, /.git/config, /any/path/.git/HEAD.
-# .gitignore and .gitattributes are deliberately not matched — they leak far
-# less and are occasionally served on purpose, and a blocking rule has to be
-# certain.
-pattern     = '(?i)/\.git(/|\?|$)'
+# Subversion, Mercurial and Bazaar are the same mistake with different
+# spelling. .svn/wc.db and .hg/store hold the working copy exactly as .git does,
+# and all four are scanned for constantly — a deploy that copied a checkout
+# rather than exporting it leaks whichever one it used.
+#
+# Matches the directory, not the name: /.git, /.svn/entries, /any/path/.hg/store.
+# .gitignore and .gitattributes are deliberately not matched here — they leak
+# far less and are occasionally served on purpose, and a blocking rule has to be
+# certain. 913017 scores those instead.
+pattern     = '(?i)/\.(git|svn|hg|bzr)(/|\?|$)'
 score       = 10
 action      = "block"
+
+[[rules]]
+id          = 913017
+name        = "Exposure: repository metadata"
+description = ".github, .gitignore, .gitattributes and .gitmodules — what a repository says about itself"
+zone        = "URL"
+# Scored, not blocked — deliberately unlike 913016 beside it.
+#
+# .git hands over the whole history and is never correct to serve, which is why
+# that one blocks. These are the repository describing itself: CI workflows
+# naming the secrets used and the hosts deployed to, .gitignore listing the
+# paths that exist but were kept out, .gitmodules naming internal git servers.
+# That is a map of where to look next rather than the thing itself, and a map
+# is worth a score rather than a refusal.
+#
+# 913016 deliberately excludes .gitignore and .gitattributes because it blocks
+# and a blocking rule has to be certain. This is where they belong instead.
+#
+# Four, not five, and that is not arbitrary: a git host serves every one of
+# these as an ordinary page — /owner/repo/src/branch/main/.github/ is what
+# reading a repository looks like — and a rule that reaches a challenge
+# threshold on its own would challenge someone browsing their own code. It
+# scores enough to matter next to other probing and never enough to act alone.
+pattern     = '(?i)/\.git(hub|ignore|attributes|modules)(/|\?|$)'
+score       = 4
+action      = "score"

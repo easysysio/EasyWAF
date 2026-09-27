@@ -21,6 +21,7 @@ Version bumps and tags are created only after explicit approval.
 
 ### Changed
 - Five signatures with no innocent reading — `UNION SELECT`, `WAITFOR DELAY`, `INTO OUTFILE`/`DUMPFILE`, `LOAD_FILE` and double-encoded `%252e%252e` — now block on their own at the default threshold, where before each needed a second rule to match beside it. `UNION SELECT` no longer matches words that contain it, as in "reunion selection". These arrive through the rule channel as SQL injection v3 and Local file inclusion v4, and take effect when an administrator applies the update.
+- The rule sets bundled for a first start without network are refreshed to the published channel — scanners v4, local file inclusion v4, remote file inclusion v2, SQL injection v3 — so a new installation no longer starts on the ones from 2026-09-07 and waits for its first update to catch up.
 
 ---
 

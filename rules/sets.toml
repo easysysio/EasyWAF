@@ -6,9 +6,9 @@ id          = "owasp-scanners"
 name        = "Scanner and automated tool detection"
 description = "Identifies well-known attack and reconnaissance tools by their signatures."
 band        = 913
-version     = 2
+version     = 4
 file        = "sets/913-scanners.rules.toml"
-sha256  = "0a426c9f476c50a6767d51b4f4c1388bf7aa58a2e1427d382fbd2ef006c86182"
+sha256  = "4d3305c1b5a7e0a05ae54bd97ad2cbe654e7fe09be41a9f2dc6d7ee3bce78e21"
 tier        = "basic"
 
 [[sets]]
@@ -26,9 +26,9 @@ id          = "owasp-lfi"
 name        = "Local file inclusion"
 description = "Local file inclusion and path traversal."
 band        = 930
-version     = 2
+version     = 4
 file        = "sets/930-lfi.rules.toml"
-sha256  = "49bc6a22a54b9a43575583703dbe3894df16ee3da449c0b34ae58c55f50000f0"
+sha256  = "e5ef15581a9267ea71c46324e5188fc70a4cd7d13a125857ab71ca5e1282d04c"
 tier        = "basic"
 
 [[sets]]
@@ -36,9 +36,9 @@ id          = "owasp-rfi"
 name        = "Remote file inclusion"
 description = "Remote file inclusion."
 band        = 931
-version     = 1
+version     = 2
 file        = "sets/931-rfi.rules.toml"
-sha256  = "dd73946f42bcdd4a8e2075b3092d1575dc07f8080a172eb2e18b2dad619338d7"
+sha256  = "0c3bef1d39f23eefcd96b9ff23ad5a5076413fd9d7be51875b71eef76d8fe412"
 tier        = "basic"
 
 [[sets]]
@@ -76,8 +76,8 @@ id          = "owasp-sqli"
 name        = "SQL injection"
 description = "SQL injection."
 band        = 942
-version     = 2
+version     = 3
 file        = "sets/942-sqli.rules.toml"
-sha256  = "aec172405b39cde7697359304e933e60ecc6361ae1297ec7522a79d47c6b370a"
+sha256  = "9804098e437a948681ce41c25f695f3714dfe55e1e14df273bf1a0f36b849804"
 tier        = "basic"
 

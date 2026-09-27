@@ -5,15 +5,15 @@
 [set]
 id      = "owasp-sqli"
 name    = "SQL injection"
-version = 2
+version = 3
 
 [[rules]]
 id          = 942001
 name        = "SQLi: UNION SELECT"
 description = "Union-based SQL injection — attempts to append a second SELECT"
 zone        = "ANY"
-pattern     = '(?i)union[\s/\*]{0,30}(all[\s/\*]{0,10})?select'
-score       = 8
+pattern     = '(?i)(?:^|[^a-z])union[\s/\*]{0,30}(?:all[\s/\*]{0,10})?select(?:[^a-z]|$)'
+score       = 10
 action      = "score"
 
 [[rules]]
@@ -117,7 +117,7 @@ name        = "SQLi: WAITFOR DELAY (MSSQL)"
 description = "Microsoft SQL Server time-based blind injection"
 zone        = "ANY"
 pattern     = '(?i)waitfor\s+delay\s+'
-score       = 8
+score       = 10
 action      = "score"
 
 [[rules]]
@@ -144,7 +144,7 @@ name        = "SQLi: INTO OUTFILE / DUMPFILE"
 description = "Attempt to write query output to the filesystem"
 zone        = "ANY"
 pattern     = '(?i)into\s+(outfile|dumpfile)\s+'
-score       = 9
+score       = 10
 action      = "score"
 
 [[rules]]
@@ -153,7 +153,7 @@ name        = "SQLi: LOAD_FILE"
 description = "Attempt to read a file from the server via SQL"
 zone        = "ANY"
 pattern     = '(?i)load_file\s*\('
-score       = 9
+score       = 10
 action      = "score"
 
 [[rules]]

@@ -4,14 +4,26 @@
 [set]
 id      = "owasp-rfi"
 name    = "Remote file inclusion"
-version = 1
+version = 2
 
 [[rules]]
 id          = 931001
 name        = "RFI: HTTP URL in parameter"
-description = "http:// URL passed as a parameter value, classic RFI"
-zone        = "ARGS"
-pattern     = '(?i)https?://[a-z0-9\-\.]+\.[a-z]{2,}/'
+description = "A remote script URL passed where a local path is expected"
+zone        = "ANY"
+# Narrowed to URLs that point at something includable.
+#
+# Any http(s) URL in a parameter used to score 6, and a URL in a parameter is
+# ordinary on the modern web: an OAuth redirect_uri, an OIDC issuer, a webhook
+# callback, an image proxy. Every sign-in through an identity provider scored 6
+# — enough to cross a challenge threshold on its own, so a CAPTCHA on every
+# login, for a vulnerability class the application may not even have.
+#
+# Real remote file inclusion fetches a script: ?page=http://host/shell.txt or
+# ?file=http://host/c99.php. Requiring that shape keeps the payloads and drops
+# the callbacks. A URL with no script extension is no longer scored at all —
+# weak evidence that fires constantly is worse than no evidence.
+pattern     = '(?i)https?://[a-z0-9\-\.]+(:\d+)?/[^\s"\x27&]*\.(php[0-9]?|phtml|phar|inc|txt|asp|aspx|jsp|jspx|cgi|pl|py|rb|sh)(\?|&|$)'
 score       = 6
 action      = "score"
 

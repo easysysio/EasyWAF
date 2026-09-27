@@ -1234,9 +1234,18 @@ mod tests {
         for probe in [
             "/admin", "/admin/", "/admin?x=1", "/wp-admin/install.php",
             "/phpmyadmin/", "/manager/html", "/actuator/env",
-            "/.env", "/phpinfo.php", "/server-status", "/web.config",
+            "/phpinfo.php", "/server-status", "/web.config",
         ] {
             assert!(re.is_match(probe), "missed {probe:?}");
+        }
+
+        // .env left this rule for 930011, which blocks it. Matched in both, a
+        // request for one scored 4 here and 7 there: 11 from two rules reading
+        // the same six characters.
+        assert!(!re.is_match("/.env"), "913015 should no longer match .env");
+        let env = Regex::new(&pattern("930-lfi.rules.toml", 930011)).unwrap();
+        for probe in ["/.env", "/laravel/.env", "/.env.production", "/wp-config.php"] {
+            assert!(env.is_match(probe), "930011 missed {probe:?}");
         }
 
         // .git left this rule for 913016, which blocks rather than scores. One
@@ -1265,6 +1274,31 @@ mod tests {
         // Still catches comments used to truncate a query.
         assert!(re.is_match("' OR 1=1 --"));
         assert!(re.is_match("UNION/**/SELECT"));
+    }
+
+    #[test]
+    fn union_select_is_matched_as_words_not_inside_them() {
+        // 942001 blocks on its own since owasp-sqli v3, so the English it used
+        // to match inside other words would now be refused.
+        let re = Regex::new(&pattern("942-sqli.rules.toml", 942001)).unwrap();
+        for attack in [
+            "1 UNION SELECT 1",
+            "1UNION SELECT 1",
+            "x)UNION/**/SELECT 1",
+            "' union all select null--",
+            "-1 UnIoN/**/AlL/**/SeLeCt 1,2",
+            "')union select(1)",
+        ] {
+            assert!(re.is_match(attack), "942001 missed {attack:?}");
+        }
+        for prose in [
+            "the union selected a new chair",
+            "reunion selection",
+            "Union Selectmen",
+            "communion selections",
+        ] {
+            assert!(!re.is_match(prose), "942001 false positive on {prose:?}");
+        }
     }
 
     // ── Exclusions ───────────────────────────────────────
