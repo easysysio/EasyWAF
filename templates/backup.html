@@ -54,6 +54,49 @@
             </div>
         </div>
 
+        <!-- ── Export ──────────────────────────────────── -->
+        <div class="panel panel-default">
+            <div class="panel-heading">
+                <strong><i class="fa fa-file-text-o"></i> Export the configuration</strong>
+            </div>
+            <div class="panel-body">
+                <p>
+                    A readable TOML file: policies with the rule sets they hold and the rules
+                    they switched off, rules written here, exclusions, sites and their upstreams,
+                    certificates, IP entries, published-list choices, country rules and settings.
+                    Objects are named, never numbered, so it can be imported into another
+                    installation, compared with an earlier export, or kept in version control.
+                    Traffic history, the session key and the ACME account are never in it.
+                </p>
+                <form method="post" action="/backup/export" id="exportForm">
+                    <div class="checkbox">
+                        <label>
+                            <input type="checkbox" name="private_keys" value="1" id="exportKeys">
+                            Include <strong>private keys</strong>
+                        </label>
+                        <span class="text-danger" style="font-size:12px">
+                            — anybody holding the file can then impersonate every site it names.
+                            Without them, a certificate travels as its public half and is re-uploaded
+                            or re-issued where the file is imported.
+                        </span>
+                    </div>
+                    <div class="checkbox">
+                        <label>
+                            <input type="checkbox" name="accounts" value="1" id="exportAccounts">
+                            Include <strong>accounts</strong> and their password hashes
+                        </label>
+                        <span class="text-muted" style="font-size:12px">
+                            — off by default: cloning an installation should not silently clone who
+                            may sign in to it.
+                        </span>
+                    </div>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="fa fa-download"></i> Export
+                    </button>
+                </form>
+            </div>
+        </div>
+
         <!-- ── Restore ─────────────────────────────────── -->
         <div class="panel panel-default">
             <div class="panel-heading">
@@ -209,4 +252,20 @@
 
     </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.getElementById('exportForm').addEventListener('submit', function (e) {
+    var keys = document.getElementById('exportKeys').checked;
+    var accounts = document.getElementById('exportAccounts').checked;
+    if (!keys && !accounts) return;
+    var what = [keys ? 'every PRIVATE KEY' : null, accounts ? 'every account and password hash' : null]
+        .filter(Boolean).join(' and ');
+    if (!confirm('This export will contain ' + what + '.\n\nKeep it where you would keep those: '
+               + 'not in git, not in a ticket, not unencrypted in email. Export it?')) {
+        e.preventDefault();
+    }
+});
+</script>
 {% endblock %}

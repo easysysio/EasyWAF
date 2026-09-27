@@ -78,7 +78,8 @@ pub async fn get_backup(
     ctx.insert("held",        &held);
     ctx.insert("held_error",  &held_error.unwrap_or_default());
     ctx.insert("held_size",   &human_size(std::fs::metadata(&candidate).map(|m| m.len()).unwrap_or(0)));
-    for key in ["restore_outcome", "restore_message", "restore_at"] {
+    for key in [crate::backup::KEY_RESTORE_OUTCOME, crate::backup::KEY_RESTORE_MESSAGE,
+                crate::backup::KEY_RESTORE_AT] {
         let v = crate::routes::settings::get_setting(&state.db, key).await.unwrap_or_default();
         ctx.insert(key, &v);
     }
@@ -360,6 +361,52 @@ pub async fn post_before_restore(
             (header::CACHE_CONTROL, "no-store".to_string()),
         ],
         Body::from_stream(tokio_util::io::ReaderStream::new(file)),
+    )
+        .into_response())
+}
+
+// ─── post_export ─────────────────────────────────────────
+
+/// POST /backup/export — the configuration as a TOML file.
+///
+/// Private keys and accounts each need their own box ticked. The file says
+/// what it carries in its header; this also logs it, since a file with keys in
+/// it having been produced is exactly what an audit should be able to find.
+pub async fn post_export(
+    State(state): State<AppState>,
+    _jar: SignedCookieJar,
+    Admin(session): Admin,
+    Form(form): Form<HashMap<String, String>>,
+) -> Result<Response> {
+    let opts = crate::export::Options {
+        private_keys: form.contains_key("private_keys"),
+        accounts:     form.contains_key("accounts"),
+    };
+    let doc = match crate::export::build(&state.db, opts).await {
+        Ok(d)  => d,
+        Err(e) => return flash_redirect("/backup", "failed",
+                      &format!("The configuration could not be read: {e}")),
+    };
+    let text = match crate::export::to_toml(&doc) {
+        Ok(t)  => t,
+        Err(e) => return flash_redirect("/backup", "failed", &e),
+    };
+
+    if opts.private_keys || opts.accounts {
+        tracing::warn!(by = %session.username, private_keys = opts.private_keys,
+                       accounts = opts.accounts, "Configuration exported WITH secrets");
+    } else {
+        tracing::info!(by = %session.username, "Configuration exported");
+    }
+
+    let name = format!("easywaf-config-{}.toml", chrono::Utc::now().format("%Y%m%d-%H%M%S"));
+    Ok((
+        [
+            (header::CONTENT_TYPE, "application/toml; charset=utf-8".to_string()),
+            (header::CONTENT_DISPOSITION, format!("attachment; filename=\"{name}\"")),
+            (header::CACHE_CONTROL, "no-store".to_string()),
+        ],
+        text,
     )
         .into_response())
 }

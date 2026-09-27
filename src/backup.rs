@@ -293,6 +293,12 @@ async fn put(db: &SqlitePool, key: &str, value: &str) {
 // design note warns about: a restore that half-works looks like success on a
 // security appliance, and this one either works or undoes itself.
 
+/// What the last restore did, for the page: "ok" or "failed", a sentence, and
+/// when. Written by the start that applied or undid it.
+pub const KEY_RESTORE_OUTCOME: &str = "restore_outcome";
+pub const KEY_RESTORE_MESSAGE: &str = "restore_message";
+pub const KEY_RESTORE_AT:      &str = "restore_at";
+
 /// Exit code for "stopped to apply a restore". Not zero, so systemd's
 /// Restart=on-failure brings the service back; not the 1 a real failure exits
 /// with, so the journal says which it was.
@@ -572,9 +578,9 @@ pub async fn finish_restore(db: &SqlitePool) {
     // the file is how one start tells the next what happened.
     if let Ok(text) = std::fs::read_to_string(outcome_path()) {
         let (status, msg) = text.split_once('\n').unwrap_or((text.as_str(), ""));
-        put(db, "restore_outcome", status.trim()).await;
-        put(db, "restore_message", msg.trim()).await;
-        put(db, "restore_at", &chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string()).await;
+        put(db, KEY_RESTORE_OUTCOME, status.trim()).await;
+        put(db, KEY_RESTORE_MESSAGE, msg.trim()).await;
+        put(db, KEY_RESTORE_AT, &chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string()).await;
         let _ = std::fs::remove_file(outcome_path());
     }
 }

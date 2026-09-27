@@ -18,6 +18,7 @@ mod challenge;
 mod config;
 mod db;
 mod error;
+mod export;
 mod forwarded;
 mod geo;
 mod geo_update;
@@ -318,6 +319,7 @@ async fn main() {
         .route("/backup/restore/apply",  post(routes::backup::post_restore_apply))
         .route("/backup/restore/discard",post(routes::backup::post_restore_discard))
         .route("/backup/before-restore", post(routes::backup::post_before_restore))
+        .route("/backup/export",         post(routes::backup::post_export))
         // No size limit, deliberately: an administrator is restoring their own
         // database, which is as large as it is. It streams to disk rather than
         // memory, so the disk is the limit, and only an administrator reaches it.
