@@ -20,7 +20,10 @@ axum = { version = "0.8.4", features = ["macros", "json", "tokio", "multipart"] 
 # already in the tree via reqwest and sqlx, so the provider is chosen
 # explicitly at startup instead.
 axum-server = { version = "0.8", features = ["tls-rustls-no-provider"] }
-rustls      = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+# 0.23.45 at least: earlier 0.23 releases accepted TLS 1.3 handshake messages
+# across encryption-level boundaries (RUSTSEC-2026-0285). One copy serves the
+# management GUI, every site's HTTPS, the upstream client and ACME.
+rustls      = { version = "0.23.45", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 
 # Self-signed certificate generation for the management interface's first run
 rcgen = "0.13"

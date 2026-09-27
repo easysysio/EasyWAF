@@ -134,11 +134,18 @@ pub fn previous_path() -> std::path::PathBuf {
 /// What the loaded database says about itself, for the Updates page.
 pub fn status() -> Option<Status> {
     let reader = cell().read().ok()?.clone()?;
+    let source = source_cell().read().map(|s| *s).unwrap_or(Source::Bundled);
+    Some(describe(&reader, source))
+}
+
+/// What a database says about itself, given where it came from. Separate from
+/// `status` so a particular database can be asked directly, rather than only
+/// whichever one happens to be loaded — which depends on what is on disk.
+fn describe(reader: &Reader<Vec<u8>>, source: Source) -> Status {
     let m = reader.metadata();
     let built = chrono::DateTime::from_timestamp(m.build_epoch as i64, 0);
-    let source = source_cell().read().map(|s| *s).unwrap_or(Source::Bundled);
 
-    Some(Status {
+    Status {
         source,
         verified:      source.verified(),
         database_type: m.database_type.clone(),
@@ -146,7 +153,7 @@ pub fn status() -> Option<Status> {
         age_days:      built.map(|t| (chrono::Utc::now() - t).num_days()),
         ip_version:    m.ip_version,
         nodes:         m.node_count,
-    })
+    }
 }
 
 // ─── init ────────────────────────────────────────────────
@@ -331,9 +338,13 @@ mod status_tests {
     fn the_bundled_database_says_what_it_is_and_when_it_was_built() {
         // Everything the Updates page shows about the country database comes
         // from the file itself, and none of it was read before 0.13.1.
-        init("");
-        let s = status().expect("a database is loaded");
-        assert_eq!(s.source, Source::Bundled);
+        //
+        // Asked of the bundled database directly. Loading "whatever init
+        // picks" made this depend on the working directory: once EasyWAF had
+        // run from the checkout and fetched a database from the channel into
+        // geo/, init preferred that one and the test failed on a fact about
+        // the machine rather than the code.
+        let s = describe(&embedded().expect("the bundled database opens"), Source::Bundled);
         assert!(s.source.verified(), "the bundled database ships with the binary");
         assert!(s.database_type.to_lowercase().contains("country"),
                 "not a country database: {}", s.database_type);

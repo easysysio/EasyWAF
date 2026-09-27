@@ -23,6 +23,9 @@ Version bumps and tags are created only after explicit approval.
 - Every settings key is classified as travelling or staying local, and a test fails for one that is neither — so a setting added later cannot leak into exports, or silently drop out of them, without somebody deciding.
 - Every start records which version the database was last run by, so a snapshot says where it came from and a restore can refuse one from a newer EasyWAF.
 
+### Security
+- **rustls 0.23.45** (from 0.23.40), for RUSTSEC-2026-0285: earlier releases accepted TLS 1.3 handshake messages across encryption-level boundaries. One copy of rustls serves the management interface, every site's HTTPS, the upstream client and ACME, so all of them take the fix; the minimum is raised in `Cargo.toml` as well, so nothing can resolve back below it.
+
 ### Changed
 - The README and the limitations page no longer list backup and export as missing, and the README no longer lists load balancing, which arrived in 0.13.0.
 
