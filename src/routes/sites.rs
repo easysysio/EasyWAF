@@ -1106,7 +1106,7 @@ fn split_ports(raw: &str) -> (Option<i64>, Vec<i64>, Vec<String>) {
     (first, it.collect(), bad)
 }
 
-/// Validate the two extra-port fields, or return the message to show.
+/// A site's ports as the form gave them, once validated.
 struct SitePorts {
     listen:      i64,
     tls:         Option<i64>,
@@ -1114,7 +1114,6 @@ struct SitePorts {
     extra_https: Vec<i64>,
 }
 
-/// Read both port fields, or return the message to show.
 /// Refuse HTTPS with nothing to serve it with.
 ///
 /// An HTTPS port with no certificate refuses every client, and until 0.14.1 a
@@ -1157,6 +1156,7 @@ async fn https_without_certificate(
     })
 }
 
+/// Read both port fields, or return the message to show.
 fn validated_ports(
     form: &SiteForm,
     cfg: &crate::config::Config,

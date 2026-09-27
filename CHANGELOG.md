@@ -6,6 +6,13 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
+## [Unreleased]
+
+### Fixed
+- The message 0.14.1 gives for an EC key that spells its curve out now shows for every such key. About one `EC PRIVATE KEY` in ten still got "failed to parse private key as RSA, ECDSA, or EdDSA", because the check searched for a byte that the random private key could also contain.
+
+---
+
 ## [0.14.1] — 2026-09-27
 
 ### Security

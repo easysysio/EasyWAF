@@ -365,29 +365,60 @@ fn certified_key(cert_pem: &str, key_pem: &str) -> std::result::Result<Certified
 /// sends people looking in the wrong place. The curve sits in one of two
 /// spots depending on how the key is wrapped; a name is an OID (tag 0x06), and
 /// spelled out it is a SEQUENCE (tag 0x30).
+///
+/// Found by walking the structure field by field. In 0.14.1 the SEC1 case
+/// searched for the first 0xA0 byte instead, and the private key before it is
+/// random bytes: about one key in ten has an 0xA0 among them, and got the old
+/// message.
 fn ec_curve_spelled_out(key: &PrivateKeyDer<'_>) -> bool {
-    // After id-ecPublicKey in a PKCS#8 AlgorithmIdentifier.
-    const EC_PUBLIC_KEY: &[u8] = &[0x06, 0x07, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x02, 0x01];
+    const EC_PUBLIC_KEY: &[u8] = &[0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x02, 0x01];
     let der = key.secret_der();
-    match key {
-        PrivateKeyDer::Pkcs8(_) => der
-            .windows(EC_PUBLIC_KEY.len())
-            .position(|w| w == EC_PUBLIC_KEY)
-            .and_then(|i| der.get(i + EC_PUBLIC_KEY.len()))
-            == Some(&0x30),
-        // SEC1 ("EC PRIVATE KEY"): the [0] parameters after the private key.
-        PrivateKeyDer::Sec1(_) => {
-            let Some(i) = der.iter().position(|b| *b == 0xA0) else { return false };
-            let skip = match der.get(i + 1) {
-                Some(0x81) => 3,
-                Some(0x82) => 4,
-                Some(_)    => 2,
-                None       => return false,
-            };
-            der.get(i + skip) == Some(&0x30)
+    let curve_tag = || -> Option<u8> {
+        let (_, mut at, _) = der_element(der, 0, 0x30)?;
+        match key {
+            // PrivateKeyInfo: version, then AlgorithmIdentifier { id-ecPublicKey, curve }.
+            PrivateKeyDer::Pkcs8(_) => {
+                (_, _, at) = der_element(der, at, 0x02)?;
+                let (_, alg, _) = der_element(der, at, 0x30)?;
+                let (_, oid, after) = der_element(der, alg, 0x06)?;
+                if der.get(oid..after)? != EC_PUBLIC_KEY {
+                    return None;
+                }
+                der.get(after).copied()
+            }
+            // ECPrivateKey: version, the private key, then [0] { curve }.
+            PrivateKeyDer::Sec1(_) => {
+                (_, _, at) = der_element(der, at, 0x02)?;
+                (_, _, at) = der_element(der, at, 0x04)?;
+                let (_, params, _) = der_element(der, at, 0xA0)?;
+                der.get(params).copied()
+            }
+            _ => None,
         }
-        _ => false,
+    };
+    curve_tag() == Some(0x30)
+}
+
+/// One DER element at `at`, if its tag is `tag`: (tag, where its content
+/// starts, where the next element starts).
+fn der_element(der: &[u8], at: usize, tag: u8) -> Option<(u8, usize, usize)> {
+    if *der.get(at)? != tag {
+        return None;
     }
+    let first = *der.get(at + 1)? as usize;
+    let (len, start) = if first < 0x80 {
+        (first, at + 2)
+    } else {
+        // Long form: the low bits say how many length bytes follow. A key is
+        // never large enough to need more than two.
+        let n = first & 0x7F;
+        if n == 0 || n > 2 {
+            return None;
+        }
+        let len = der.get(at + 2..at + 2 + n)?.iter().fold(0, |acc, b| acc << 8 | *b as usize);
+        (len, at + 2 + n)
+    };
+    (start + len <= der.len()).then_some((tag, start, start + len))
 }
 
 /// Check that a stored certificate and key can actually serve TLS.
@@ -593,11 +624,19 @@ mod curve_tests {
     const EXPLICIT_SEC1: &str = include_str!("../tests/fixtures/ec-explicit-sec1.key");
     const NAMED_CERT: &str = include_str!("../tests/fixtures/ec-named.crt");
     const NAMED_KEY: &str = include_str!("../tests/fixtures/ec-named.key");
+    // A SEC1 key whose private key bytes include 0xA0, the tag the curve
+    // parameters start with — the case a byte search mistook for them.
+    const A0_CERT: &str = include_str!("../tests/fixtures/ec-explicit-sec1-a0.crt");
+    const A0_KEY: &str = include_str!("../tests/fixtures/ec-explicit-sec1-a0.key");
 
     #[test]
     fn a_spelled_out_curve_is_named_as_the_problem() {
-        for (what, key) in [("PKCS#8", EXPLICIT_PKCS8), ("SEC1", EXPLICIT_SEC1)] {
-            let e = super::validate_pem(EXPLICIT_CERT, key).unwrap_err();
+        for (what, cert, key) in [
+            ("PKCS#8", EXPLICIT_CERT, EXPLICIT_PKCS8),
+            ("SEC1", EXPLICIT_CERT, EXPLICIT_SEC1),
+            ("SEC1 with 0xA0 in the private key", A0_CERT, A0_KEY),
+        ] {
+            let e = super::validate_pem(cert, key).unwrap_err();
             assert!(e.contains("spells its curve out") && e.contains("named_curve"),
                     "{what}: the refusal does not say what is wrong with the key: {e}");
         }
