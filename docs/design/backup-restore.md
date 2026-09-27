@@ -1,6 +1,6 @@
 # Design note — backup, restore, and configuration export
 
-Status: **built for 0.14.0** — see [roadmap.md](roadmap.md).
+Status: **released in 0.14.0** (2026-09-27) — see [roadmap.md](roadmap.md).
 
 ## Decided, 2026-09-27
 
