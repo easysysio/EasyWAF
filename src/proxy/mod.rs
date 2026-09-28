@@ -20,7 +20,7 @@ use crate::challenge::{
     self, ChallengeStore, CLEARANCE_COOKIE, VERIFY_PATH,
 };
 use crate::modules::{
-    traffic::{log_event, TrafficRecord},
+    traffic::{TrafficRecord, TrafficWriter},
     Pipeline, PipelineVerdict, RequestContext,
 };
 use axum::{
@@ -177,9 +177,9 @@ pub struct ProxyState {
     /// and needs to know which it is on to avoid redirecting an HTTPS request
     /// to itself forever.
     pub is_tls:     bool,
-    /// Flow lines to the collector. Cloned per request into the spawned
-    /// logging task, never awaited on the request path.
-    pub logger:     crate::logging::Logger,
+    /// Where each request's traffic row is queued. Never awaited on the
+    /// request path.
+    pub traffic:    TrafficWriter,
 }
 
 // ─── SiteRow ─────────────────────────────────────────────
@@ -702,15 +702,85 @@ fn split_detection(
     }
 }
 
+// ─── Traffic rows ────────────────────────────────────────
+
+/// What every traffic row for one request shares.
+///
+/// Until 0.14.2 each of the six ways a request can end built its row by hand,
+/// cloning these fields into a task of its own — about 150 lines that had to
+/// agree, and one field added to the row meant six edits.
+struct Visit {
+    site_id:    i64,
+    site_name:  String,
+    client_ip:  String,
+    method:     String,
+    host:       String,
+    path:       String,
+    query:      Option<String>,
+    country:    Option<String>,
+    started_at: Instant,
+}
+
+/// How a request ended, which is the rest of its row. `Default` is an allowed
+/// request that matched nothing and reached no backend; each path sets what
+/// differs.
+#[derive(Default)]
+struct Outcome {
+    status:    i64,
+    blocked:   bool,
+    reason:    Option<String>,
+    score:     Option<i64>,
+    hits:      Option<String>,
+    detection: Option<String>,
+    upstream:  Option<String>,
+}
+
+impl Outcome {
+    /// A request let through to a backend, with whatever the WAF found on it.
+    fn forwarded(
+        found: &Option<(i64, Option<String>, String, String)>,
+        status: i64,
+        upstream: &str,
+    ) -> Self {
+        let (score, hits, detection, reason) = split_detection(found.clone());
+        Outcome { status, reason, score, hits, detection, upstream: Some(upstream.to_string()), ..Outcome::default() }
+    }
+}
+
+impl Visit {
+    /// Queue this request's row. Timed now, so call it once the outcome is
+    /// known — before the body streams, which is how it has always been timed.
+    fn record(&self, traffic: &TrafficWriter, o: Outcome) {
+        traffic.record(TrafficRecord {
+            site_id:       self.site_id,
+            site_name:     self.site_name.clone(),
+            client_ip:     self.client_ip.clone(),
+            method:        self.method.clone(),
+            host:          self.host.clone(),
+            path:          self.path.clone(),
+            query:         self.query.clone(),
+            status_code:   o.status,
+            response_ms:   self.started_at.elapsed().as_millis() as i64,
+            blocked:       o.blocked,
+            block_reason:  o.reason,
+            waf_score:     o.score,
+            matched_rules: o.hits,
+            country:       self.country.clone(),
+            detection:     o.detection,
+            upstream:      o.upstream,
+        });
+    }
+}
+
 /// Main proxy handler — called for every incoming request on every port.
 /// Flow:
 ///   1. Extract and validate the Host: header.
-///   2. Look up the matching enabled site in the database.
+///   2. Look up the matching enabled site in the site table.
 ///   3. Buffer the request body (needed by WAF modules).
 ///   4. Run the module pipeline — block if any module returns Block.
 ///   5. Forward the request to the upstream via reqwest.
 ///   6. Inject security headers and stream the response back.
-///   7. Log the completed request asynchronously.
+///   7. Queue its traffic row, which the writer task records.
 async fn handle_request(
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     State(state): State<ProxyState>,
@@ -847,6 +917,21 @@ async fn handle_request(
         // rules in the pipeline read it from the same lookup.
         let country   = crate::geo::country_of(client_ip);
 
+        // What every traffic row for this request shares, taken once. Whichever
+        // way the request ends — refused by a list, blocked, challenged, or
+        // forwarded — its row is this plus how it ended.
+        let visit = Visit {
+            site_id:    site.id,
+            site_name:  site.name.clone(),
+            client_ip:  client_ip.to_string(),
+            method:     method.to_string(),
+            host:       host.clone(),
+            path:       path.clone(),
+            query:      query.clone(),
+            country:    country.clone(),
+            started_at,
+        };
+
         // ── 3c. IP lists ──────────────────────────────────────
         //
         // Before the body is buffered, so a refused address does not cost 32 MB of
@@ -877,7 +962,6 @@ async fn handle_request(
             _ => None,
         };
         let detection_only = site.rule_engine.as_deref() == Some("DetectionOnly");
-        let site_id = site.id;
 
         let refusal = match list_verdict(&listed) {
             Some((why, crate::modules::Detection::WouldBlock)) if !detection_only => Some(why),
@@ -885,43 +969,15 @@ async fn handle_request(
         };
 
         if let Some(reason) = refusal {
-            let elapsed    = started_at.elapsed().as_millis() as i64;
-            let db         = state.db.clone();
-            let logger     = state.logger.clone();
-            let method_str = method.to_string();
-            let host_l     = host.clone();
-            let path_l     = path.clone();
-            let query_l    = query.clone();
-            let ip_l       = client_ip.to_string();
-            let country_l  = country.clone();
-            let reason_log = reason.clone();
-
-            let site_name = site.name.clone();
-
-            tokio::spawn(async move {
-                log_event(db, logger, TrafficRecord {
-                    site_name,
-                    upstream:     None,
-                    site_id,
-                    client_ip:    ip_l,
-                    method:       method_str,
-                    host:         host_l,
-                    path:         path_l,
-                    query:        query_l,
-                    status_code:  403,
-                    response_ms:  elapsed,
-                    blocked:      true,
-                    block_reason: Some(reason_log),
-                    // No rule fired and no score accumulated: the address was
-                    // refused for being itself. Recording a score of zero would
-                    // read as a WAF decision that never happened.
-                    waf_score:     None,
-                    matched_rules: None,
-                    country:       country_l,
-                    detection:     None,
-                }).await;
+            // No rule fired and no score accumulated: the address was refused
+            // for being itself. Recording a score of zero would read as a WAF
+            // decision that never happened.
+            visit.record(&state.traffic, Outcome {
+                status:  403,
+                blocked: true,
+                reason:  Some(reason.clone()),
+                ..Outcome::default()
             });
-
             return error_response(StatusCode::FORBIDDEN, &reason);
         }
 
@@ -1025,34 +1081,15 @@ async fn handle_request(
         };
 
         if let PipelineVerdict::Block { reason, status, findings, .. } = verdict {
-            // Log the blocked request asynchronously so we don't delay the response.
-            let elapsed    = started_at.elapsed().as_millis() as i64;
-            let db         = state.db.clone();
-                let logger     = state.logger.clone();
-            let method_str = method.to_string();
-            let reason_log = reason.clone();
-            let site_name = site.name.clone();
-            tokio::spawn(async move {
-                log_event(db, logger, TrafficRecord {
-                    site_name,
-                    upstream:     None,
-                    site_id:      site.id,
-                    client_ip:    client_ip.to_string(),
-                    method:       method_str,
-                    host:         host.clone(),
-                    path:         path.clone(),
-                    query:        query.clone(),
-                    status_code:  status.as_u16() as i64,
-                    response_ms:  elapsed,
-                    blocked:      true,
-                    block_reason: Some(reason_log),
-                    waf_score:    Some(findings.score),
-                    matched_rules: findings.hits_json(),
-                    country:      country.clone(),
-                    // The request was refused; `blocked` says so. `detection` is
-                    // for what would have happened and did not.
-                    detection:    None,
-                }).await;
+            // The request was refused; `blocked` says so. `detection` is for
+            // what would have happened and did not.
+            visit.record(&state.traffic, Outcome {
+                status:  status.as_u16() as i64,
+                blocked: true,
+                reason:  Some(reason.clone()),
+                score:   Some(findings.score),
+                hits:    findings.hits_json(),
+                ..Outcome::default()
             });
             return error_response(status, &reason);
         }
@@ -1061,53 +1098,25 @@ async fn handle_request(
         if let PipelineVerdict::Challenge { reason, findings, .. } = &verdict
             && !cleared
         {
-            {
-                let dest = match &query {
-                    Some(q) => format!("{}?{}", path, q),
-                    None    => path.clone(),
-                };
-                let (id, data_uri) = state.challenges.issue(&dest, &client_ip.to_string());
+            let dest = match &query {
+                Some(q) => format!("{}?{}", path, q),
+                None    => path.clone(),
+            };
+            let (id, data_uri) = state.challenges.issue(&dest, &client_ip.to_string());
 
-                // Log the challenge asynchronously.
-                let elapsed    = started_at.elapsed().as_millis() as i64;
-                let db         = state.db.clone();
-                let logger     = state.logger.clone();
-                let method_str = method.to_string();
-                let reason_log = format!("challenge: {}", reason);
-                // Copied out before the spawn: the verdict is borrowed here, and a
-                // challenged request is worth attributing for the same reason a
-                // blocked one is.
-                let score      = findings.score;
-                let hits       = findings.hits_json();
-                let host_l     = host.clone();
-                let path_l     = path.clone();
-                let ip_l       = client_ip.to_string();
-                let site_name = site.name.clone();
-                tokio::spawn(async move {
-                    log_event(db, logger, TrafficRecord {
-                        site_name,
-                        upstream:     None,
-                        site_id:      site.id,
-                        client_ip:    ip_l,
-                        method:       method_str,
-                        host:         host_l,
-                        path:         path_l,
-                        query:        query.clone(),
-                        status_code:  200,
-                        response_ms:  elapsed,
-                        blocked:      false,
-                        block_reason: Some(reason_log),
-                        waf_score:    Some(score),
-                        matched_rules: hits,
-                        country:      country.clone(),
-                        detection:    None,   // it was challenged, not merely detected
-                    }).await;
-                });
-
-                return challenge_response(&id, &data_uri, false);
-            }
-            // Cleared visitor — fall through and forward normally.
+            // Attributed like a block: a challenged request is worth knowing
+            // the rules of for the same reason. Not a detection — it was
+            // challenged, not merely detected.
+            visit.record(&state.traffic, Outcome {
+                status: 200,
+                reason: Some(format!("challenge: {}", reason)),
+                score:  Some(findings.score),
+                hits:   findings.hits_json(),
+                ..Outcome::default()
+            });
+            return challenge_response(&id, &data_uri, false);
         }
+        // A cleared visitor falls through and is forwarded normally.
 
         // What the WAF found on a request it is about to allow.
         //
@@ -1133,10 +1142,6 @@ async fn handle_request(
         };
 
         // ── 5. Forward to upstream ────────────────────────────
-        // Kept because `query` is consumed below and the flow line still needs it:
-        // a query string is where most of what a WAF matches actually lives.
-        let qs = query.clone();
-
         let path_and_query = match &query {
             Some(q) => format!("{}?{}", path, q),
             None    => path.clone(),
@@ -1194,39 +1199,8 @@ async fn handle_request(
             // all — without it a WebSocket application is invisible in Traffic
             // Monitor, which is worse than useless when someone is trying to work
             // out whether their traffic is reaching the site.
-            let db         = state.db.clone();
-                let logger     = state.logger.clone();
-            let method_str = method.to_string();
-            let status     = resp.status().as_u16() as i64;
-            let elapsed    = started_at.elapsed().as_millis() as i64;
-            let (h, pth, c) = (host.clone(), path.clone(), country.clone());
-            let site_id    = site.id;
-            let ip         = client_ip.to_string();
-            let found      = detected.clone();
-            let up_l       = chosen_url.clone();
-            let site_name = site.name.clone();
-            tokio::spawn(async move {
-                let (score, hits, detection, why) = split_detection(found);
-                log_event(db, logger, TrafficRecord {
-                    site_name,
-                    upstream:     Some(up_l.clone()),
-                    site_id,
-                    client_ip:    ip,
-                    method:       method_str,
-                    host:         h,
-                    path:         pth,
-                    query:        query.clone(),
-                    status_code:  status,
-                    response_ms:  elapsed,
-                    blocked:      false,
-                    block_reason: why,
-                    waf_score:    score,
-                    matched_rules: hits,
-                    country:      c,
-                    detection,
-                }).await;
-            });
-
+            visit.record(&state.traffic,
+                         Outcome::forwarded(&detected, resp.status().as_u16() as i64, &chosen_url));
             return resp;
         }
 
@@ -1308,35 +1282,7 @@ async fn handle_request(
             // ── Upstream unreachable ──────────────────────────
             Err(e) => {
                 tracing::warn!(upstream = %upstream_url, error = %e, "upstream unreachable");
-                let elapsed    = started_at.elapsed().as_millis() as i64;
-                let db         = state.db.clone();
-                let logger     = state.logger.clone();
-                let method_str = method.to_string();
-                let found      = detected.clone();
-                let up_l       = chosen_url.clone();
-                let site_name = site.name.clone();
-                tokio::spawn(async move {
-                    let (score, hits, detection, why) = split_detection(found);
-                    log_event(db, logger, TrafficRecord {
-                        site_name,
-                        upstream:     Some(up_l.clone()),
-                        site_id:      site.id,
-                        client_ip:    client_ip.to_string(),
-                        method:       method_str,
-                        host,
-                        path,
-                        query:        qs.clone(),
-                        status_code:  502,
-                        response_ms:  elapsed,
-                        blocked:      false,
-                        block_reason: why,
-                        waf_score:    score,
-                        matched_rules: hits,
-                        country:      country.clone(),
-                        detection,
-                    }).await;
-                });
-                // Two different problems with two different next steps, so they
+                visit.record(&state.traffic, Outcome::forwarded(&detected, 502, &chosen_url));                // Two different problems with two different next steps, so they
                 // are not given the same sentence: one backend is unreachable, or
                 // every backend of this site is.
                 if all_out || tried.len() > 1 {
@@ -1361,7 +1307,6 @@ async fn handle_request(
                     crate::upstream::succeeded(chosen_id);
                 }
                 let resp_headers = upstream_resp.headers().clone();
-                let elapsed      = started_at.elapsed().as_millis() as i64;
 
                 // Stream the response body back without buffering it.
                 let body_stream = upstream_resp.bytes_stream();
@@ -1396,35 +1341,8 @@ async fn handle_request(
                     }
                 }
 
-                // Log the completed request asynchronously.
-                let db         = state.db.clone();
-                let logger     = state.logger.clone();
-                let method_str = method.to_string();
-                let found      = detected.clone();
-                let up_l       = chosen_url.clone();
-                let site_name = site.name.clone();
-                tokio::spawn(async move {
-                    let (score, hits, detection, why) = split_detection(found);
-                    log_event(db, logger, TrafficRecord {
-                        site_name,
-                        upstream:     Some(up_l.clone()),
-                        site_id:      site.id,
-                        client_ip:    client_ip.to_string(),
-                        method:       method_str,
-                        host,
-                        path,
-                        query:        qs.clone(),
-                        status_code:  status.as_u16() as i64,
-                        response_ms:  elapsed,
-                        blocked:      false,
-                        block_reason: why,
-                        waf_score:    score,
-                        matched_rules: hits,
-                        country:      country.clone(),
-                        detection,
-                    }).await;
-                });
-
+                visit.record(&state.traffic,
+                             Outcome::forwarded(&detected, status.as_u16() as i64, &chosen_url));
                 resp.body(body).unwrap_or_else(|_| {
                     error_response(StatusCode::INTERNAL_SERVER_ERROR, "Response build error")
                 })

@@ -144,7 +144,7 @@ async fn main() {
     // ── Build module pipeline ─────────────────────────────
     // Modules run in order for every proxied request.
     // TrafficLogger always returns Pass; the proxy handler
-    // writes the actual DB row via log_event().
+    // queues each request's row with TrafficWriter::record.
     let mut pipeline = Pipeline::new();
     pipeline.add(TrafficLogger::new(db.clone()));
     // Country rules run before the pattern rules: if a whole country is denied
@@ -191,7 +191,7 @@ async fn main() {
         secret:     secret.clone(),
         challenges: challenge::ChallengeStore::new(),
         is_tls:     false,
-        logger:     logger.clone(),
+        traffic:    modules::traffic::TrafficWriter::start(db.clone(), logger.clone()),
     };
     tokio::spawn(async move {
         proxy::start(proxy_state, port_rx).await;

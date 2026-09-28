@@ -44,6 +44,9 @@ does not quietly become permanent.
 - The policy may be `Off`. In `DetectionOnly`, matches **are** recorded, marked
   `WOULD BLOCK` and `WOULD CHALLENGE`.
 - Retention may be pruning faster than you expect. Check **Settings → General**.
+- Under a flood, rows can be dropped rather than slow the proxy down. The journal
+  says so every five minutes while it happens: *Traffic rows were dropped:
+  requests arrived faster than they could be recorded*.
 
 ## Let's Encrypt fails
 

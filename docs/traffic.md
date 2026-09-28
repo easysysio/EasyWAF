@@ -23,6 +23,13 @@ Every proxied request, with:
 Filter by site, verdict and time window. The per-hour chart narrows to the same
 filter, so a bar and the rows under it can never disagree.
 
+Rows are written in batches, a moment after each response, so a request that
+has just been answered can take a fraction of a second to appear. A request is
+never held up to record it: if requests arrive faster than rows can be written
+for long enough to fill the queue — tens of thousands a second, which is an
+attack rather than traffic — the rows that do not fit are dropped, and the
+journal says how many (see [Troubleshooting](troubleshooting.md#nothing-appears-in-traffic-monitor)).
+
 ### Verdicts
 
 | Verdict | Meaning |
