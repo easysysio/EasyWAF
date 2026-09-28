@@ -23,6 +23,7 @@ next minor, so a release's notes stay about its feature.
 | 0.13.5 | Times in the viewer's own time zone, with UTC kept in each tooltip for matching against logs — **released 2026-09-25** |
 | 0.14.0 | Backup, restore and configuration export: snapshots on demand and on a schedule, restore that undoes itself, and a readable export that imports with a preview (see [backup-restore.md](backup-restore.md)) — **released 2026-09-27** |
 | 0.14.1 | What the 0.14.0 review found: a site with an HTTPS port and no certificate, changes sent to the interface from a sibling subdomain, and site headers missing from EasyWAF's own pages; and the unambiguous signatures block on their own — **released 2026-09-27** |
+| 0.14.2 | Simpler and faster: sites held in memory and traffic recorded by one batched writer — five times the throughput at under half the CPU — and the *Import OWASP rules* button removed, which could mark a rule update applied that was not — **released 2026-09-28** |
 | 0.15.0 | Smart Protect: an address refused repeatedly in a short window is blocked for a while (see [smart-protect.md](smart-protect.md)) |
 | 0.16.0 | Authentication gateway: a sign-in in front of a site or a path, local accounts then LDAP (see [auth-gateway.md](auth-gateway.md)) |
 | 0.17.0 | Configuration sync between nodes — HA (see [ha-config-sync.md](ha-config-sync.md)) |

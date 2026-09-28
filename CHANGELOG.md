@@ -6,12 +6,12 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
-## [Unreleased]
+## [0.14.2] — 2026-09-28
 
 ### Changed
-- **The proxy holds every site in memory instead of looking each request's site up in the database.** On the same machine, blocked requests went from about 7,400 a second to 13,400 sustained, and about half the CPU each. A saved change to a site, its backends, its aliases or its certificate reaches the proxy within a second, as rule changes already did.
+- **The proxy holds every site in memory instead of looking each request's site up in the database.** That query was about half of what a request cost. A saved change to a site, its backends, its aliases or its certificate reaches the proxy within a second, as rule changes already did.
 - A traffic row no longer reads the site's name back from the database after it is written, and the syslog line is built only when syslog is on.
-- **Traffic rows are written by one task, in batches, from a bounded queue.** Every request used to start its own insert, and several at once fought over SQLite's single write lock: with a backlog, rows went in at about 2,850 a second and the backlog grew without limit. Now 100,000 blocked requests at 38,000 a second — 68,000 over kept-alive connections — are all in Traffic Monitor by the time the last one is answered, at under 100 µs of CPU each including the write. A flood that fills the queue drops rows rather than slowing the proxy, and the journal reports how many, as syslog lines already did.
+- **Traffic rows are written by one task, in batches, from a bounded queue.** Every request used to start its own insert, and several at once fought over SQLite's single write lock: with a backlog, rows went in at about 2,850 a second and the backlog grew without limit. With both changes, 100,000 blocked requests are served at 38,000 a second — 68,000 over kept-alive connections — against 7,400 on 0.14.1, all in Traffic Monitor by the time the last one is answered, at under 100 µs of CPU each including the write where 0.14.1 took about 225. A flood that fills the queue drops rows rather than slowing the proxy, and the journal reports how many, as syslog lines already did.
 - A status the background tasks keep — when a channel was last fetched, the last scheduled snapshot, the outcome of a restore — is reported in the journal if it cannot be saved, instead of being dropped without a word.
 
 ### Removed
