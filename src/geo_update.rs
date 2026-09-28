@@ -96,7 +96,7 @@ pub fn parse_manifest(text: &str) -> Vec<Offered> {
         else {
             continue;
         };
-        if !is_slug(&id) {
+        if !crate::channel::is_slug(&id) {
             continue;
         }
         out.push(Offered {
@@ -116,32 +116,6 @@ pub fn parse_manifest(text: &str) -> Vec<Offered> {
         });
     }
     out
-}
-
-fn is_slug(s: &str) -> bool {
-    !s.is_empty()
-        && s.len() <= 64
-        && s.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
-}
-
-/// Whether a manifest's file path may be appended to the channel URL.
-///
-/// The manifest is signed, so this is not the line of defence — but a signed
-/// manifest naming `../../something` is still not something to follow.
-fn safe_relative(path: &str) -> bool {
-    !path.is_empty()
-        && !path.starts_with('/')
-        && !path.split('/').any(|part| part.is_empty() || part == "." || part == "..")
-        && path.bytes().all(|b| b.is_ascii_alphanumeric() || b"-_./".contains(&b))
-}
-
-fn sha256_hex(data: &[u8]) -> String {
-    use sha2::{Digest, Sha256};
-    Sha256::digest(data).iter().map(|b| format!("{b:02x}")).collect()
-}
-
-fn short(digest: &str) -> &str {
-    &digest[..12.min(digest.len())]
 }
 
 // ─── Held, for an installation that applies by hand ──────
@@ -191,12 +165,12 @@ fn local_name(id: &str) -> String {
 }
 
 fn check_hash(body: &[u8], offered: &Offered) -> Result<(), String> {
-    let digest = sha256_hex(body);
+    let digest = crate::channel::sha256_hex(body);
     if digest != offered.sha256 {
         return Err(format!(
             "the database does not match the signed manifest ({} rather than {})",
-            short(&digest),
-            short(&offered.sha256)
+            crate::channel::short(&digest),
+            crate::channel::short(&offered.sha256)
         ));
     }
     Ok(())
@@ -252,7 +226,7 @@ pub async fn sync(db: &SqlitePool) -> Result<Fetched, String> {
     let Some(offered) = parse_manifest(&text).into_iter().next() else {
         return Err("the channel's manifest offers no country database".to_string());
     };
-    if !safe_relative(&offered.file) {
+    if !crate::channel::safe_relative(&offered.file) {
         return Err(format!("{}: refusing the file path {:?}", offered.id, offered.file));
     }
 
@@ -262,7 +236,7 @@ pub async fn sync(db: &SqlitePool) -> Result<Fetched, String> {
     // with. A version that is not newer is left alone — including one that is
     // older, which would mean the channel had been rolled back, and an
     // installation must not follow a channel backwards.
-    let previous = get(db, KEY_VERSION).await.unwrap_or_default();
+    let previous = crate::settings::get(db, KEY_VERSION).await.unwrap_or_default();
     if !previous.trim().is_empty() && offered.version.as_str() <= previous.trim() {
         return Ok(Fetched::UpToDate);
     }
@@ -270,11 +244,11 @@ pub async fn sync(db: &SqlitePool) -> Result<Fetched, String> {
     let body = fetch(format!("{base}/{}", offered.file)).await?;
     check_hash(&body, &offered)?;
 
-    set(db, KEY_FETCHED, &chrono::Utc::now().to_rfc3339()).await;
+    crate::settings::record(db, KEY_FETCHED, &chrono::Utc::now().to_rfc3339()).await;
 
     if crate::routes::updates::auto(db, crate::routes::updates::KEY_AUTO_GEO).await {
         let status = crate::geo::install(&body, crate::geo::Source::Channel)?;
-        set(db, KEY_VERSION, &offered.version).await;
+        crate::settings::record(db, KEY_VERSION, &offered.version).await;
         tracing::info!(version = %offered.version, database = %offered.database_type,
                        "Country database updated from the channel");
         return Ok(Fetched::Applied(Box::new(status)));
@@ -292,7 +266,7 @@ pub async fn sync(db: &SqlitePool) -> Result<Fetched, String> {
     // Recorded as taken even though it is not in force. It is on disk and the
     // page offers it; fetching it again every six hours would be eight
     // megabytes an installation already has.
-    set(db, KEY_VERSION, &offered.version).await;
+    crate::settings::record(db, KEY_VERSION, &offered.version).await;
     tracing::info!(version = %offered.version,
                    "Fetched the country database and held it — this installation applies it by hand");
     Ok(Fetched::Held(Box::new(offered)))
@@ -302,8 +276,8 @@ pub async fn sync(db: &SqlitePool) -> Result<Fetched, String> {
 pub async fn check_now(db: &SqlitePool) -> Result<Fetched, String> {
     let outcome = sync(db).await;
     match &outcome {
-        Ok(_)  => set(db, KEY_ERROR, "").await,
-        Err(e) => set(db, KEY_ERROR, e).await,
+        Ok(_)  => crate::settings::record(db, KEY_ERROR, "").await,
+        Err(e) => crate::settings::record(db, KEY_ERROR, e).await,
     }
     outcome
 }
@@ -328,33 +302,10 @@ pub fn spawn_task(db: SqlitePool) {
 
 // ─── Settings ────────────────────────────────────────────
 
-/// Read and write straight through, as `rules_update` does. A settings write
-/// that fails must not turn a successful fetch into a failed one: the database
-/// is already in force by then, and the only thing lost is the note saying so.
-async fn get(db: &SqlitePool, key: &str) -> Option<String> {
-    sqlx::query_scalar!("SELECT value FROM settings WHERE key = ?", key)
-        .fetch_optional(db)
-        .await
-        .ok()
-        .flatten()
-}
-
-async fn set(db: &SqlitePool, key: &str, value: &str) {
-    let _ = sqlx::query!(
-        "INSERT INTO settings (key, value, updated_at)
-         VALUES (?, ?, datetime('now'))
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value,
-                                        updated_at = excluded.updated_at",
-        key, value
-    )
-    .execute(db)
-    .await;
-}
-
 // ─── What the page reads ─────────────────────────────────
 
 pub async fn url(db: &SqlitePool) -> String {
-    match get(db, KEY_URL).await {
+    match crate::settings::get(db, KEY_URL).await {
         Some(v) if !v.trim().is_empty() => v.trim().to_string(),
         _ => DEFAULT_URL.to_string(),
     }
@@ -362,8 +313,8 @@ pub async fn url(db: &SqlitePool) -> String {
 
 /// When the channel was last reached, and why it was not.
 pub async fn status(db: &SqlitePool) -> (Option<String>, Option<String>) {
-    let fetched = get(db, KEY_FETCHED).await.filter(|v| !v.trim().is_empty());
-    let error   = get(db, KEY_ERROR).await.filter(|v| !v.trim().is_empty());
+    let fetched = crate::settings::get(db, KEY_FETCHED).await.filter(|v| !v.trim().is_empty());
+    let error   = crate::settings::get(db, KEY_ERROR).await.filter(|v| !v.trim().is_empty());
     (fetched, error)
 }
 
@@ -430,10 +381,10 @@ sha256        = "881E0B274FC0CC801FA7C33687A69810BE605F80593769287CDE10BDB9EE8BD
 
     #[test]
     fn refuses_a_file_path_that_climbs() {
-        assert!(safe_relative("geo/dbip-country-lite.mmdb"));
-        assert!(!safe_relative("../../etc/passwd"));
-        assert!(!safe_relative("/etc/passwd"));
-        assert!(!safe_relative(""));
+        assert!(crate::channel::safe_relative("geo/dbip-country-lite.mmdb"));
+        assert!(!crate::channel::safe_relative("../../etc/passwd"));
+        assert!(!crate::channel::safe_relative("/etc/passwd"));
+        assert!(!crate::channel::safe_relative(""));
     }
 
     #[test]

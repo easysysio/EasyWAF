@@ -128,7 +128,7 @@ pub async fn get_settings(
     // is pre-filled with every supported suite rather than left blank: an
     // operator restricting ciphers needs the exact spellings to edit down
     // from, and there is nowhere else to discover them.
-    let tls_ciphers = match get_setting(&state.db, KEY_TLS_CIPHERS).await {
+    let tls_ciphers = match crate::settings::get(&state.db, KEY_TLS_CIPHERS).await {
         Some(v) if !v.trim().is_empty() => v,
         _                               => crate::tls::all_suite_names(),
     };
@@ -166,7 +166,7 @@ pub async fn get_settings(
     // Shown as stored, including a host left behind when sending was turned
     // off: turning it back on should not mean typing the address again.
     ctx.insert("syslog_enabled", &syslog_enabled(&state.db).await);
-    ctx.insert("syslog_host",    &get_setting(&state.db, KEY_SYSLOG_HOST).await.unwrap_or_default());
+    ctx.insert("syslog_host",    &crate::settings::get(&state.db, KEY_SYSLOG_HOST).await.unwrap_or_default());
     ctx.insert("syslog_port",    &syslog_port(&state.db).await);
     ctx.insert("log_dir",        &state.config.logging.dir);
     ctx.insert("log_keep_days",  &state.config.logging.keep_days);
@@ -175,7 +175,7 @@ pub async fn get_settings(
     // default: a field pre-filled with the default cannot be told apart from
     // one an operator deliberately set to the same value, and clearing it is
     // how you go back to the default.
-    let rule_update_url = get_setting(&state.db, crate::rules_update::KEY_URL)
+    let rule_update_url = crate::settings::get(&state.db, crate::rules_update::KEY_URL)
         .await
         .unwrap_or_default();
     let (checked, error) = crate::rules_update::status(&state.db).await;
@@ -185,7 +185,7 @@ pub async fn get_settings(
     ctx.insert("rule_update_checked", &checked.map(|t| format_utc(&t)).unwrap_or_default());
     ctx.insert("rule_update_error",   &error.unwrap_or_default());
     // The IP list channel, shown the same way: blank when it is the default.
-    let ip_list_url = get_setting(&state.db, crate::iplist_feeds::KEY_URL)
+    let ip_list_url = crate::settings::get(&state.db, crate::iplist_feeds::KEY_URL)
         .await
         .unwrap_or_default();
     let (lists_checked, lists_error) = crate::iplist_feeds::status(&state.db).await;
@@ -245,8 +245,8 @@ pub async fn post_settings_update(
         );
     }
 
-    set_setting(&state.db, KEY_RETENTION_DAYS, &days.to_string()).await?;
-    set_setting(&state.db, KEY_MAINTENANCE_MESSAGE, maintenance).await?;
+    crate::settings::set(&state.db, KEY_RETENTION_DAYS, &days.to_string()).await?;
+    crate::settings::set(&state.db, KEY_MAINTENANCE_MESSAGE, maintenance).await?;
 
     // Normalised through the same parser the listeners use, so an unexpected
     // value is stored as the fallback rather than kept to surprise the next
@@ -324,7 +324,7 @@ pub async fn post_settings_update(
             &format!("Not an address or CIDR block: {}", bad.join(", ")),
         );
     }
-    set_setting(&state.db, KEY_TRUSTED_PROXIES, &proxies).await?;
+    crate::settings::set(&state.db, KEY_TRUSTED_PROXIES, &proxies).await?;
     crate::forwarded::reload(&state.db).await;
 
     // Refused rather than clamped, like retention: the number typed is never
@@ -342,7 +342,7 @@ pub async fn post_settings_update(
             ),
         }
     };
-    set_setting(&state.db, KEY_BODY_INSPECT_KB, &kb.to_string()).await?;
+    crate::settings::set(&state.db, KEY_BODY_INSPECT_KB, &kb.to_string()).await?;
     // Applied to the running proxy, so the next request uses it.
     crate::proxy::set_inspection_limit(kb as usize * 1024);
 
@@ -392,9 +392,9 @@ pub async fn post_settings_update(
         }
     };
 
-    set_setting(&state.db, KEY_SYSLOG_ENABLED, if syslog_on { "1" } else { "0" }).await?;
-    set_setting(&state.db, KEY_SYSLOG_HOST, &syslog_host).await?;
-    set_setting(&state.db, KEY_SYSLOG_PORT, &syslog_port.to_string()).await?;
+    crate::settings::set(&state.db, KEY_SYSLOG_ENABLED, if syslog_on { "1" } else { "0" }).await?;
+    crate::settings::set(&state.db, KEY_SYSLOG_HOST, &syslog_host).await?;
+    crate::settings::set(&state.db, KEY_SYSLOG_PORT, &syslog_port.to_string()).await?;
     // Applied to the running logger, so the next request is logged to the new
     // collector rather than the one this appliance was started with.
     state.logger.set_collector(syslog_target(&state.db).await);
@@ -403,8 +403,8 @@ pub async fn post_settings_update(
     // Updates page since 0.13.1, and are deliberately not touched here: a
     // setting written from two forms is a setting one of them resets.
 
-    set_setting(&state.db, KEY_MANAGEMENT_CERT, &mgmt).await?;
-    set_setting(&state.db, KEY_TLS_PROFILE, profile.as_str()).await?;
+    crate::settings::set(&state.db, KEY_MANAGEMENT_CERT, &mgmt).await?;
+    crate::settings::set(&state.db, KEY_TLS_PROFILE, profile.as_str()).await?;
 
     // Stored normalised: the names rustls knows, in its own preference order,
     // rather than however they were typed. What is read back is then exactly
@@ -414,7 +414,7 @@ pub async fn post_settings_update(
         .map(crate::tls::suite_name)
         .collect::<Vec<_>>()
         .join(" ");
-    set_setting(&state.db, KEY_TLS_CIPHERS, &normalised).await?;
+    crate::settings::set(&state.db, KEY_TLS_CIPHERS, &normalised).await?;
 
     let msg = if days == 0 {
         "Settings saved — traffic history is kept indefinitely".to_string()
@@ -459,7 +459,7 @@ pub(crate) fn format_utc(raw: &str) -> String {
 /// Read the retention setting, falling back to the default when the row is
 /// missing or does not parse. Callers get a usable number in every case.
 pub async fn get_retention_days(db: &SqlitePool) -> i64 {
-    match get_setting(db, KEY_RETENTION_DAYS).await {
+    match crate::settings::get(db, KEY_RETENTION_DAYS).await {
         Some(v) => v.trim().parse().unwrap_or(DEFAULT_RETENTION_DAYS),
         None    => DEFAULT_RETENTION_DAYS,
     }
@@ -469,7 +469,7 @@ pub async fn get_retention_days(db: &SqlitePool) -> i64 {
 /// default when it has never been set or was cleared. A visitor always gets a
 /// sentence, never a blank page.
 pub async fn get_maintenance_message(db: &SqlitePool) -> String {
-    match get_setting(db, KEY_MAINTENANCE_MESSAGE).await {
+    match crate::settings::get(db, KEY_MAINTENANCE_MESSAGE).await {
         Some(v) if !v.trim().is_empty() => v,
         _                              => DEFAULT_MAINTENANCE_MESSAGE.to_string(),
     }
@@ -481,7 +481,7 @@ pub async fn get_maintenance_message(db: &SqlitePool) -> String {
 /// restart rather than immediately — the profile is fixed in the listener's
 /// configuration and cannot be swapped under an open socket.
 pub async fn get_tls_profile(db: &SqlitePool) -> crate::tls::TlsProfile {
-    let raw = get_setting(db, KEY_TLS_PROFILE).await.unwrap_or_default();
+    let raw = crate::settings::get(db, KEY_TLS_PROFILE).await.unwrap_or_default();
     crate::tls::TlsProfile::from_setting(&raw)
 }
 
@@ -493,7 +493,7 @@ pub async fn get_tls_profile(db: &SqlitePool) -> crate::tls::TlsProfile {
 /// The form rejects anything invalid, so this path means the row was edited
 /// outside EasyWAF.
 pub async fn get_tls_ciphers(db: &SqlitePool) -> Vec<rustls::SupportedCipherSuite> {
-    let raw = get_setting(db, KEY_TLS_CIPHERS).await.unwrap_or_default();
+    let raw = crate::settings::get(db, KEY_TLS_CIPHERS).await.unwrap_or_default();
     match crate::tls::parse_suites(&raw) {
         Ok(s) => s,
         Err(e) => {
@@ -505,7 +505,7 @@ pub async fn get_tls_ciphers(db: &SqlitePool) -> Vec<rustls::SupportedCipherSuit
 
 /// The certificate name the management interface should use.
 pub async fn get_management_cert(db: &SqlitePool) -> String {
-    match get_setting(db, KEY_MANAGEMENT_CERT).await {
+    match crate::settings::get(db, KEY_MANAGEMENT_CERT).await {
         Some(v) if !v.trim().is_empty() => v.trim().to_string(),
         _ => crate::cert::DEFAULT_CERT_NAME.to_string(),
     }
@@ -532,7 +532,7 @@ async fn cert_names(db: &SqlitePool) -> Vec<String> {
 /// renewing independently would duplicate issuance and hit the CA's rate
 /// limits.
 pub async fn get_acme_renew_here(db: &SqlitePool) -> bool {
-    match get_setting(db, KEY_ACME_RENEW_HERE).await {
+    match crate::settings::get(db, KEY_ACME_RENEW_HERE).await {
         Some(v) => !matches!(v.trim().to_lowercase().as_str(), "0" | "false" | "no"),
         None    => true,
     }
@@ -540,13 +540,13 @@ pub async fn get_acme_renew_here(db: &SqlitePool) -> bool {
 
 /// Whether flow lines are being sent off the box. Off unless it was turned on.
 pub async fn syslog_enabled(db: &SqlitePool) -> bool {
-    matches!(get_setting(db, KEY_SYSLOG_ENABLED).await.as_deref().map(str::trim), Some("1"))
+    matches!(crate::settings::get(db, KEY_SYSLOG_ENABLED).await.as_deref().map(str::trim), Some("1"))
 }
 
 /// The collector's port, falling back to the syslog default when the row is
 /// missing or does not parse.
 pub async fn syslog_port(db: &SqlitePool) -> u16 {
-    match get_setting(db, KEY_SYSLOG_PORT).await {
+    match crate::settings::get(db, KEY_SYSLOG_PORT).await {
         Some(v) => v.trim().parse().unwrap_or(DEFAULT_SYSLOG_PORT),
         None    => DEFAULT_SYSLOG_PORT,
     }
@@ -562,7 +562,7 @@ pub async fn syslog_target(db: &SqlitePool) -> Option<String> {
     if !syslog_enabled(db).await {
         return None;
     }
-    let host = get_setting(db, KEY_SYSLOG_HOST).await.unwrap_or_default().trim().to_string();
+    let host = crate::settings::get(db, KEY_SYSLOG_HOST).await.unwrap_or_default().trim().to_string();
     if host.is_empty() {
         return None;
     }
@@ -580,7 +580,7 @@ pub async fn syslog_target(db: &SqlitePool) -> Option<String> {
 /// something outside the range the form accepts, since a corrupt row must not
 /// leave bodies uninspected.
 pub async fn get_body_inspect_kb(db: &SqlitePool) -> u64 {
-    get_setting(db, KEY_BODY_INSPECT_KB)
+    crate::settings::get(db, KEY_BODY_INSPECT_KB)
         .await
         .and_then(|v| v.trim().parse::<u64>().ok())
         .filter(|v| (1..=MAX_BODY_INSPECT_KB).contains(v))
@@ -589,31 +589,7 @@ pub async fn get_body_inspect_kb(db: &SqlitePool) -> u64 {
 
 /// Addresses whose `X-Forwarded-For` header should be believed.
 pub async fn get_trusted_proxies(db: &SqlitePool) -> String {
-    get_setting(db, KEY_TRUSTED_PROXIES).await.unwrap_or_default()
-}
-
-/// Fetch one raw setting value. None when the key is not present.
-pub(crate) async fn get_setting(db: &SqlitePool, key: &str) -> Option<String> {
-    sqlx::query_scalar!("SELECT value FROM settings WHERE key = ?", key)
-        .fetch_optional(db)
-        .await
-        .ok()
-        .flatten()
-}
-
-/// Insert or replace one setting value.
-pub(crate) async fn set_setting(db: &SqlitePool, key: &str, value: &str) -> Result<()> {
-    sqlx::query!(
-        "INSERT INTO settings (key, value, updated_at)
-         VALUES (?, ?, datetime('now'))
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value,
-                                        updated_at = excluded.updated_at",
-        key,
-        value
-    )
-    .execute(db)
-    .await?;
-    Ok(())
+    crate::settings::get(db, KEY_TRUSTED_PROXIES).await.unwrap_or_default()
 }
 
 // ─── Flash redirect helper ───────────────────────────────

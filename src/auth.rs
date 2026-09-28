@@ -43,14 +43,7 @@ const KEY_COOKIE_SECRET: &str = "cookie_secret";
 /// management certificate is: a new key each boot would invalidate every
 /// session on every restart.
 pub async fn ensure_secret(db: &SqlitePool) -> String {
-    if let Some(existing) = sqlx::query_scalar!(
-        "SELECT value FROM settings WHERE key = ?", KEY_COOKIE_SECRET
-    )
-    .fetch_optional(db)
-    .await
-    .ok()
-    .flatten()
-    {
+    if let Some(existing) = crate::settings::get(db, KEY_COOKIE_SECRET).await {
         if existing.len() >= 64 {
             return existing;
         }
@@ -66,16 +59,7 @@ pub async fn ensure_secret(db: &SqlitePool) -> String {
     rand::rngs::OsRng.fill_bytes(&mut bytes);
     let secret: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
 
-    let _ = sqlx::query!(
-        "INSERT INTO settings (key, value, updated_at)
-         VALUES (?, ?, datetime('now'))
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value,
-                                        updated_at = excluded.updated_at",
-        KEY_COOKIE_SECRET,
-        secret
-    )
-    .execute(db)
-    .await;
+    crate::settings::record(db, KEY_COOKIE_SECRET, &secret).await;
 
     tracing::info!("Generated a cookie signing key and stored it in the database");
     secret

@@ -191,7 +191,6 @@ pub async fn catalog(db: &SqlitePool, policy_id: i64) -> Result<Vec<CatalogSet>>
     Ok(out)
 }
 
-
 // ─── Available updates ───────────────────────────────────
 
 /// A set a policy holds at an older version than the channel offers.
@@ -273,13 +272,13 @@ pub async fn check(db: &SqlitePool) {
             Ok(body) => {
                 let sets = parse_manifest(&body);
                 if sets.is_empty() {
-                    set(db, KEY_ERROR, "the manifest could not be parsed").await;
+                    crate::settings::record(db, KEY_ERROR, "the manifest could not be parsed").await;
                     return;
                 }
                 let previous = cached_manifest(db).await.unwrap_or_default();
-                set(db, KEY_MANIFEST, &body).await;
-                set(db, KEY_FETCHED, &chrono::Utc::now().to_rfc3339()).await;
-                set(db, KEY_ERROR, "").await;
+                crate::settings::record(db, KEY_MANIFEST, &body).await;
+                crate::settings::record(db, KEY_FETCHED, &chrono::Utc::now().to_rfc3339()).await;
+                crate::settings::record(db, KEY_ERROR, "").await;
 
                 // Logged only when it changes, so a working installation is
                 // silent rather than repeating itself every six hours.
@@ -287,10 +286,10 @@ pub async fn check(db: &SqlitePool) {
                     tracing::info!(sets = sets.len(), "Rule channel manifest updated");
                 }
             }
-            Err(e) => set(db, KEY_ERROR, &format!("could not read the manifest: {e}")).await,
+            Err(e) => crate::settings::record(db, KEY_ERROR, &format!("could not read the manifest: {e}")).await,
         },
-        Ok(r)  => set(db, KEY_ERROR, &format!("channel returned HTTP {}", r.status())).await,
-        Err(e) => set(db, KEY_ERROR, &format!("channel unreachable: {e}")).await,
+        Ok(r)  => crate::settings::record(db, KEY_ERROR, &format!("channel returned HTTP {}", r.status())).await,
+        Err(e) => crate::settings::record(db, KEY_ERROR, &format!("channel unreachable: {e}")).await,
     }
 }
 
@@ -307,8 +306,8 @@ pub fn spawn_check_task(db: SqlitePool) {
             // reach would teach its operator to stop reading the log.
             if enabled(&db).await {
                 match sync_cache(&db).await {
-                    Ok(_)  => set(&db, KEY_MIRROR_ERROR, "").await,
-                    Err(e) => set(&db, KEY_MIRROR_ERROR, &e).await,
+                    Ok(_)  => crate::settings::record(&db, KEY_MIRROR_ERROR, "").await,
+                    Err(e) => crate::settings::record(&db, KEY_MIRROR_ERROR, &e).await,
                 }
             }
 
@@ -436,14 +435,11 @@ pub async fn apply(db: &SqlitePool, policy_id: i64, set_id: &str) -> std::result
         .ok_or_else(|| format!("the channel does not offer a set called '{set_id}'"))?;
 
     let body = fetch(format!("{base}/{}", entry.file)).await?;
-    let digest = {
-        use sha2::{Digest, Sha256};
-        Sha256::digest(&body).iter().map(|b| format!("{b:02x}")).collect::<String>()
-    };
+    let digest = crate::channel::sha256_hex(&body);
     if digest != entry.sha256 {
         return Err(format!(
             "{} does not match the signed manifest: {} rather than {}",
-            entry.file, &digest[..12], &entry.sha256.chars().take(12).collect::<String>()
+            entry.file, crate::channel::short(&digest), crate::channel::short(&entry.sha256)
         ));
     }
 
@@ -512,18 +508,15 @@ async fn apply_from_cache(
     let name = std::path::Path::new(&entry.file).file_name()?;
     let body = std::fs::read(dir.join("sets").join(name)).ok()?;
 
-    let digest: String = {
-        use sha2::{Digest, Sha256};
-        Sha256::digest(&body).iter().map(|b| format!("{b:02x}")).collect()
-    };
+    let digest = crate::channel::sha256_hex(&body);
     if digest != entry.sha256 {
         // Not a fall-through. The file is here and is not what the signed
         // manifest describes, which is exactly the case worth refusing loudly.
         return Some(Err(format!(
             "the mirrored copy of {} does not match the signed manifest: {} rather than {}",
             entry.file,
-            &digest[..12.min(digest.len())],
-            &entry.sha256[..12.min(entry.sha256.len())]
+            crate::channel::short(&digest),
+            crate::channel::short(&entry.sha256)
         )));
     }
 
@@ -752,16 +745,13 @@ pub fn install_bundle(
                     "{} is named in the manifest and is not in the bundle", entry.file));
             };
 
-            let digest: String = {
-                use sha2::{Digest, Sha256};
-                Sha256::digest(body).iter().map(|b| format!("{b:02x}")).collect()
-            };
+            let digest = crate::channel::sha256_hex(body);
             if digest != entry.sha256 {
                 return Err(format!(
                     "{} does not match the signed manifest: {} rather than {}",
                     entry.file,
-                    &digest[..12.min(digest.len())],
-                    &entry.sha256[..12.min(entry.sha256.len())]
+                    crate::channel::short(&digest),
+                    crate::channel::short(&entry.sha256)
                 ));
             }
 
@@ -802,14 +792,14 @@ pub fn install_bundle(
 /// One switch for rule sets and published IP lists alike: the reason to turn
 /// it off is an installation with no outbound access, which is true of both.
 pub async fn enabled(db: &SqlitePool) -> bool {
-    match get(db, KEY_ENABLED).await {
+    match crate::settings::get(db, KEY_ENABLED).await {
         Some(v) => !matches!(v.trim().to_lowercase().as_str(), "0" | "false" | "no" | "off"),
         None    => true,
     }
 }
 
 pub async fn url(db: &SqlitePool) -> String {
-    match get(db, KEY_URL).await {
+    match crate::settings::get(db, KEY_URL).await {
         Some(v) if !v.trim().is_empty() => v.trim().to_string(),
         _                               => DEFAULT_URL.to_string(),
     }
@@ -824,14 +814,14 @@ pub async fn mirror_status(db: &SqlitePool) -> (usize, Option<String>) {
                 .count()
         })
         .unwrap_or(0);
-    let error = get(db, KEY_MIRROR_ERROR).await.filter(|v| !v.trim().is_empty());
+    let error = crate::settings::get(db, KEY_MIRROR_ERROR).await.filter(|v| !v.trim().is_empty());
     (sets, error)
 }
 
 /// When the manifest was last fetched, and what went wrong if anything.
 pub async fn status(db: &SqlitePool) -> (Option<String>, Option<String>) {
-    let fetched = get(db, KEY_FETCHED).await.filter(|v| !v.trim().is_empty());
-    let error   = get(db, KEY_ERROR).await.filter(|v| !v.trim().is_empty());
+    let fetched = crate::settings::get(db, KEY_FETCHED).await.filter(|v| !v.trim().is_empty());
+    let error   = crate::settings::get(db, KEY_ERROR).await.filter(|v| !v.trim().is_empty());
     (fetched, error)
 }
 
@@ -848,27 +838,7 @@ pub async fn offered(db: &SqlitePool) -> Vec<OfferedSet> {
 }
 
 async fn cached_manifest(db: &SqlitePool) -> Option<String> {
-    get(db, KEY_MANIFEST).await.filter(|v| !v.trim().is_empty())
-}
-
-async fn get(db: &SqlitePool, key: &str) -> Option<String> {
-    sqlx::query_scalar!("SELECT value FROM settings WHERE key = ?", key)
-        .fetch_optional(db)
-        .await
-        .ok()
-        .flatten()
-}
-
-async fn set(db: &SqlitePool, key: &str, value: &str) {
-    let _ = sqlx::query!(
-        "INSERT INTO settings (key, value, updated_at)
-         VALUES (?, ?, datetime('now'))
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value,
-                                        updated_at = excluded.updated_at",
-        key, value
-    )
-    .execute(db)
-    .await;
+    crate::settings::get(db, KEY_MANIFEST).await.filter(|v| !v.trim().is_empty())
 }
 
 #[cfg(test)]

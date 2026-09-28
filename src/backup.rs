@@ -85,14 +85,7 @@ fn owner_only(path: &Path) {
 /// Record which version this database was last run by. Called at startup,
 /// after the migrations have brought the schema up to this version's.
 pub async fn stamp(db: &SqlitePool) {
-    let _ = sqlx::query(
-        "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, datetime('now'))
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
-    )
-    .bind(KEY_WRITTEN_BY)
-    .bind(env!("CARGO_PKG_VERSION"))
-    .execute(db)
-    .await;
+    crate::settings::record(db, KEY_WRITTEN_BY, env!("CARGO_PKG_VERSION")).await;
 }
 
 // ─── Scheduled snapshots ─────────────────────────────────
@@ -207,11 +200,11 @@ pub async fn take_scheduled(db: &SqlitePool) -> Result<Stored, String> {
 }
 
 pub async fn scheduled(db: &SqlitePool) -> bool {
-    setting(db, KEY_SCHEDULED).await.as_deref() == Some("1")
+    crate::settings::get(db, KEY_SCHEDULED).await.as_deref() == Some("1")
 }
 
 pub async fn keep(db: &SqlitePool) -> usize {
-    setting(db, KEY_KEEP).await
+    crate::settings::get(db, KEY_KEEP).await
         .and_then(|v| v.trim().parse().ok())
         .filter(|n: &usize| (1..=365).contains(n))
         .unwrap_or(DEFAULT_KEEP)
@@ -220,8 +213,8 @@ pub async fn keep(db: &SqlitePool) -> usize {
 /// When the last scheduled snapshot was taken, and why the last one failed.
 pub async fn status(db: &SqlitePool) -> (Option<String>, Option<String>) {
     (
-        setting(db, KEY_LAST).await.filter(|v| !v.is_empty()),
-        setting(db, KEY_ERROR).await.filter(|v| !v.is_empty()),
+        crate::settings::get(db, KEY_LAST).await.filter(|v| !v.is_empty()),
+        crate::settings::get(db, KEY_ERROR).await.filter(|v| !v.is_empty()),
     )
 }
 
@@ -232,41 +225,21 @@ pub fn spawn_schedule(db: SqlitePool) {
             if scheduled(&db).await && due_in(&dir(), chrono::Utc::now().naive_utc()) {
                 match take_scheduled(&db).await {
                     Ok(s) => {
-                        put(&db, KEY_LAST, &s.taken).await;
-                        put(&db, KEY_ERROR, "").await;
+                        crate::settings::record(&db, KEY_LAST, &s.taken).await;
+                        crate::settings::record(&db, KEY_ERROR, "").await;
                     }
                     // Recorded for the page and logged once per attempt. A
                     // full disk is the usual cause, and it is exactly what an
                     // operator needs to hear about before the host is lost.
                     Err(e) => {
                         tracing::warn!("Scheduled snapshot failed: {e}");
-                        put(&db, KEY_ERROR, &e).await;
+                        crate::settings::record(&db, KEY_ERROR, &e).await;
                     }
                 }
             }
             tokio::time::sleep(CHECK_EVERY).await;
         }
     });
-}
-
-async fn setting(db: &SqlitePool, key: &str) -> Option<String> {
-    sqlx::query_scalar::<_, String>("SELECT value FROM settings WHERE key = ?")
-        .bind(key)
-        .fetch_optional(db)
-        .await
-        .ok()
-        .flatten()
-}
-
-async fn put(db: &SqlitePool, key: &str, value: &str) {
-    let _ = sqlx::query(
-        "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, datetime('now'))
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
-    )
-    .bind(key)
-    .bind(value)
-    .execute(db)
-    .await;
 }
 
 // ─── Restore ─────────────────────────────────────────────
@@ -420,9 +393,7 @@ async fn inspect_open(db: &SqlitePool) -> Result<Contents, String> {
         }
     }
 
-    let written_by: Option<String> = sqlx::query_scalar(
-        "SELECT value FROM settings WHERE key = ?")
-        .bind(KEY_WRITTEN_BY).fetch_optional(db).await.ok().flatten();
+    let written_by = crate::settings::get(db, KEY_WRITTEN_BY).await;
 
     // A newer EasyWAF may have tables and columns this one has never heard
     // of, and would run with them quietly ignored. Refused, with the fix.
@@ -599,9 +570,9 @@ pub async fn finish_restore(db: &SqlitePool) {
     // the file is how one start tells the next what happened.
     if let Ok(text) = std::fs::read_to_string(outcome_path()) {
         let (status, msg) = text.split_once('\n').unwrap_or((text.as_str(), ""));
-        put(db, KEY_RESTORE_OUTCOME, status.trim()).await;
-        put(db, KEY_RESTORE_MESSAGE, msg.trim()).await;
-        put(db, KEY_RESTORE_AT, &chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string()).await;
+        crate::settings::record(db, KEY_RESTORE_OUTCOME, status.trim()).await;
+        crate::settings::record(db, KEY_RESTORE_MESSAGE, msg.trim()).await;
+        crate::settings::record(db, KEY_RESTORE_AT, &chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string()).await;
         let _ = std::fs::remove_file(outcome_path());
     }
 }

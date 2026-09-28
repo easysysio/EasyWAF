@@ -80,7 +80,7 @@ pub async fn get_backup(
     ctx.insert("held_size",   &human_size(std::fs::metadata(&candidate).map(|m| m.len()).unwrap_or(0)));
     for key in [crate::backup::KEY_RESTORE_OUTCOME, crate::backup::KEY_RESTORE_MESSAGE,
                 crate::backup::KEY_RESTORE_AT] {
-        let v = crate::routes::settings::get_setting(&state.db, key).await.unwrap_or_default();
+        let v = crate::settings::get(&state.db, key).await.unwrap_or_default();
         ctx.insert(key, &v);
     }
     let before = crate::backup::before_path();
@@ -169,9 +169,9 @@ pub async fn post_schedule(
                  "Keep between 1 and 365 snapshots"),
     };
     let on = form.contains_key("scheduled");
-    crate::routes::settings::set_setting(
+    crate::settings::set(
         &state.db, crate::backup::KEY_SCHEDULED, if on { "1" } else { "0" }).await?;
-    crate::routes::settings::set_setting(
+    crate::settings::set(
         &state.db, crate::backup::KEY_KEEP, &keep.to_string()).await?;
 
     // Lowering the number kept takes effect now, not at the next snapshot, so

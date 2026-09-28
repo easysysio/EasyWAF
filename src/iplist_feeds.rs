@@ -86,7 +86,7 @@ pub fn parse_manifest(text: &str) -> Vec<OfferedList> {
         };
         // The id names a file on disk and a row in the database. Anything but
         // a plain slug is skipped rather than escaped.
-        if !is_slug(&id) {
+        if !crate::channel::is_slug(&id) {
             continue;
         }
         out.push(OfferedList {
@@ -105,32 +105,6 @@ pub fn parse_manifest(text: &str) -> Vec<OfferedList> {
         });
     }
     out
-}
-
-fn is_slug(s: &str) -> bool {
-    !s.is_empty()
-        && s.len() <= 64
-        && s.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
-}
-
-/// Whether a manifest's file path may be appended to the channel URL.
-///
-/// The manifest is signed, so this is not the line of defence — but a signed
-/// manifest naming `../../something` is still not something to follow.
-fn safe_relative(path: &str) -> bool {
-    !path.is_empty()
-        && !path.starts_with('/')
-        && !path.split('/').any(|part| part.is_empty() || part == "." || part == "..")
-        && path.bytes().all(|b| b.is_ascii_alphanumeric() || b"-_./".contains(&b))
-}
-
-fn sha256_hex(data: &[u8]) -> String {
-    use sha2::{Digest, Sha256};
-    Sha256::digest(data).iter().map(|b| format!("{b:02x}")).collect()
-}
-
-fn short(digest: &str) -> &str {
-    &digest[..12.min(digest.len())]
 }
 
 // ─── The mirror ──────────────────────────────────────────
@@ -162,12 +136,12 @@ fn verified_manifest(dir: &Path, key: &str) -> Result<Vec<OfferedList>, String> 
 fn verified_file(dir: &Path, list: &OfferedList) -> Result<String, String> {
     let body = std::fs::read(local_file(dir, &list.id))
         .map_err(|_| "its file is missing from the mirror".to_string())?;
-    let digest = sha256_hex(&body);
+    let digest = crate::channel::sha256_hex(&body);
     if digest != list.sha256 {
         return Err(format!(
             "its file does not match the signed manifest ({} rather than {})",
-            short(&digest),
-            short(&list.sha256)
+            crate::channel::short(&digest),
+            crate::channel::short(&list.sha256)
         ));
     }
     Ok(String::from_utf8_lossy(&body).into_owned())
@@ -216,7 +190,7 @@ pub async fn sync(db: &SqlitePool) -> Result<usize, String> {
     // the same way whether the bundle arrived over HTTP or was carried in.
     let mut files: HashMap<String, Vec<u8>> = HashMap::new();
     for list in &offered {
-        if !safe_relative(&list.file) {
+        if !crate::channel::safe_relative(&list.file) {
             return Err(format!("{}: refusing the file path {:?}", list.id, list.file));
         }
         files.insert(list.id.clone(), fetch(format!("{base}/{}", list.file)).await?);
@@ -238,7 +212,7 @@ pub async fn sync(db: &SqlitePool) -> Result<usize, String> {
         if let Some(body) = files.get(&list.id) {
             // Checked before it is written, even though it is not in force: a
             // held bundle that cannot verify is not worth keeping.
-            if sha256_hex(body) != list.sha256 {
+            if crate::channel::sha256_hex(body) != list.sha256 {
                 let _ = std::fs::remove_dir_all(&held);
                 return Err(format!("{} does not match the signed manifest", list.file));
             }
@@ -321,20 +295,20 @@ pub fn install_bundle(
 
     let staged: Result<(), String> = (|| {
         for list in &offered {
-            if !safe_relative(&list.file) {
+            if !crate::channel::safe_relative(&list.file) {
                 return Err(format!("{}: refusing the file path {:?}", list.id, list.file));
             }
             let Some(body) = files.get(&list.id) else {
                 return Err(format!(
                     "{} is named in the manifest and is not in the bundle", list.file));
             };
-            let digest = sha256_hex(body);
+            let digest = crate::channel::sha256_hex(body);
             if digest != list.sha256 {
                 return Err(format!(
                     "{} does not match the signed manifest: {} rather than {}",
                     list.file,
-                    short(&digest),
-                    short(&list.sha256)
+                    crate::channel::short(&digest),
+                    crate::channel::short(&list.sha256)
                 ));
             }
             std::fs::write(local_file(&stage, &list.id), body)
@@ -495,13 +469,13 @@ pub async fn check_now(db: &SqlitePool) -> Result<usize, String> {
     let result = sync(db).await;
     match &result {
         Ok(_) => {
-            set(db, KEY_FETCHED, &chrono::Utc::now().to_rfc3339()).await;
-            set(db, KEY_ERROR, "").await;
+            crate::settings::record(db, KEY_FETCHED, &chrono::Utc::now().to_rfc3339()).await;
+            crate::settings::record(db, KEY_ERROR, "").await;
         }
         // Stored rather than logged, like the rule channel: an appliance with
         // no outbound access is ordinary, and a log full of it teaches its
         // operator to stop reading the log.
-        Err(e) => set(db, KEY_ERROR, e).await,
+        Err(e) => crate::settings::record(db, KEY_ERROR, e).await,
     }
     // Either way: a list switched on while the channel is unreachable still
     // loads from what was mirrored before.
@@ -668,7 +642,7 @@ pub async fn save(
     response: Response,
     by: &str,
 ) -> Result<(), String> {
-    if !is_slug(id) {
+    if !crate::channel::is_slug(id) {
         return Err(format!("\"{id}\" is not a list"));
     }
     let (on, response) = (enabled as i64, response.as_str());
@@ -722,7 +696,7 @@ pub async fn follow_everywhere(db: &SqlitePool, policy_id: i64, id: &str) -> Res
 // ─── Settings ────────────────────────────────────────────
 
 pub async fn url(db: &SqlitePool) -> String {
-    match get(db, KEY_URL).await {
+    match crate::settings::get(db, KEY_URL).await {
         Some(v) if !v.trim().is_empty() => v.trim().to_string(),
         _                               => DEFAULT_URL.to_string(),
     }
@@ -730,29 +704,9 @@ pub async fn url(db: &SqlitePool) -> String {
 
 /// When the channel was last fetched, and what went wrong if anything.
 pub async fn status(db: &SqlitePool) -> (Option<String>, Option<String>) {
-    let fetched = get(db, KEY_FETCHED).await.filter(|v| !v.trim().is_empty());
-    let error   = get(db, KEY_ERROR).await.filter(|v| !v.trim().is_empty());
+    let fetched = crate::settings::get(db, KEY_FETCHED).await.filter(|v| !v.trim().is_empty());
+    let error   = crate::settings::get(db, KEY_ERROR).await.filter(|v| !v.trim().is_empty());
     (fetched, error)
-}
-
-async fn get(db: &SqlitePool, key: &str) -> Option<String> {
-    sqlx::query_scalar!("SELECT value FROM settings WHERE key = ?", key)
-        .fetch_optional(db)
-        .await
-        .ok()
-        .flatten()
-}
-
-async fn set(db: &SqlitePool, key: &str, value: &str) {
-    let _ = sqlx::query!(
-        "INSERT INTO settings (key, value, updated_at)
-         VALUES (?, ?, datetime('now'))
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value,
-                                        updated_at = excluded.updated_at",
-        key, value
-    )
-    .execute(db)
-    .await;
 }
 
 #[cfg(test)]
@@ -813,11 +767,11 @@ file = "lists/no-hash.txt"
 
     #[test]
     fn only_plain_relative_paths_are_followed() {
-        assert!(safe_relative("lists/spamhaus-drop.txt"));
-        assert!(safe_relative("drop.txt"));
+        assert!(crate::channel::safe_relative("lists/spamhaus-drop.txt"));
+        assert!(crate::channel::safe_relative("drop.txt"));
         for bad in ["", "/etc/passwd", "../x", "lists/../../x", "lists//x", "./x",
                     "https://elsewhere/x", "lists/x?y", "lists\\x"] {
-            assert!(!safe_relative(bad), "{bad:?} must be refused");
+            assert!(!crate::channel::safe_relative(bad), "{bad:?} must be refused");
         }
     }
 

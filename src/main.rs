@@ -15,6 +15,7 @@ mod backup;
 mod auth;
 mod cert;
 mod challenge;
+mod channel;
 mod config;
 mod db;
 mod error;
@@ -31,6 +32,7 @@ mod pgp_verify;
 mod proxy;
 mod routes;
 mod rules_update;
+mod settings;
 mod tls;
 mod upstream;
 

@@ -15,7 +15,7 @@
 // See docs/design/updates.md.
 // =========================================================
 
-use crate::routes::{flash_redirect, settings::{get_setting, set_setting}};
+use crate::routes::flash_redirect;
 use crate::{auth::{Admin, Viewer}, error::Result, AppState};
 use axum::{
     extract::{Path, Query, State},
@@ -84,7 +84,7 @@ pub struct UpdatesQuery {
 /// Whether a kind is applied as it arrives, with the defaults above.
 pub async fn auto(db: &sqlx::SqlitePool, key: &str) -> bool {
     let default = key != KEY_AUTO_RULES;
-    match get_setting(db, key).await {
+    match crate::settings::get(db, key).await {
         Some(v) => v.trim() == "1",
         None => default,
     }
@@ -114,7 +114,7 @@ pub async fn get_updates(
     ctx.insert("auto_rules",   &auto(&state.db, KEY_AUTO_RULES).await);
 
     // ── Rule sets ──
-    let rules_url = get_setting(&state.db, crate::rules_update::KEY_URL)
+    let rules_url = crate::settings::get(&state.db, crate::rules_update::KEY_URL)
         .await
         .unwrap_or_default();
     let (checked, check_error) = crate::rules_update::status(&state.db).await;
@@ -128,7 +128,7 @@ pub async fn get_updates(
     ctx.insert("behind",       &crate::rules_update::available(&state.db).await?);
 
     // ── Published IP lists ──
-    let lists_url = get_setting(&state.db, crate::iplist_feeds::KEY_URL)
+    let lists_url = crate::settings::get(&state.db, crate::iplist_feeds::KEY_URL)
         .await
         .unwrap_or_default();
     let (fetched, fetch_error) = crate::iplist_feeds::status(&state.db).await;
@@ -161,7 +161,7 @@ pub async fn get_updates(
     // What the channel offers, which is not always what is loaded: with the
     // switch off a fetch waits here until somebody applies it.
     let (geo_fetched, geo_error) = crate::geo_update::status(&state.db).await;
-    let geo_url = get_setting(&state.db, crate::geo_update::KEY_URL)
+    let geo_url = crate::settings::get(&state.db, crate::geo_update::KEY_URL)
         .await
         .unwrap_or_default();
     ctx.insert("geo_url",     &geo_url);
@@ -201,16 +201,16 @@ pub async fn post_updates_settings(
         Ok(c)  => c,
         Err(e) => return flash_redirect("/updates", "failed", &e),
     };
-    set_setting(&state.db, crate::rules_update::KEY_URL, &rules).await?;
-    set_setting(&state.db, crate::iplist_feeds::KEY_URL, &lists).await?;
-    set_setting(&state.db, crate::geo_update::KEY_URL,   &geo).await?;
+    crate::settings::set(&state.db, crate::rules_update::KEY_URL, &rules).await?;
+    crate::settings::set(&state.db, crate::iplist_feeds::KEY_URL, &lists).await?;
+    crate::settings::set(&state.db, crate::geo_update::KEY_URL,   &geo).await?;
 
     // Unticked checkboxes send nothing at all, so absence is the answer.
     let on = |k: &str| if form.contains_key(k) { "1" } else { "0" };
-    set_setting(&state.db, crate::rules_update::KEY_ENABLED, on("check_enabled")).await?;
-    set_setting(&state.db, KEY_AUTO_LISTS, on("auto_lists")).await?;
-    set_setting(&state.db, KEY_AUTO_GEO,   on("auto_geo")).await?;
-    set_setting(&state.db, KEY_AUTO_RULES, on("auto_rules")).await?;
+    crate::settings::set(&state.db, crate::rules_update::KEY_ENABLED, on("check_enabled")).await?;
+    crate::settings::set(&state.db, KEY_AUTO_LISTS, on("auto_lists")).await?;
+    crate::settings::set(&state.db, KEY_AUTO_GEO,   on("auto_geo")).await?;
+    crate::settings::set(&state.db, KEY_AUTO_RULES, on("auto_rules")).await?;
 
     tracing::info!(by = %session.username, auto_rules = form.contains_key("auto_rules"),
                    "Update settings saved");
@@ -534,7 +534,7 @@ mod tests {
 
         // And each is settable, including back again.
         for (key, want) in [(KEY_AUTO_RULES, true), (KEY_AUTO_LISTS, false)] {
-            crate::routes::settings::set_setting(&db, key, if want { "1" } else { "0" })
+            crate::settings::set(&db, key, if want { "1" } else { "0" })
                 .await
                 .expect("stored");
             assert_eq!(auto(&db, key).await, want, "{key} did not take");
