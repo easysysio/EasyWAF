@@ -8,6 +8,9 @@ Version bumps and tags are created only after explicit approval.
 
 ## [Unreleased]
 
+### Removed
+- **The *Import OWASP rules* button on a policy's rules page.** It added only the rules a policy did not have, but recorded each set at the newest version — so a policy that had not applied an update was marked as having it, the update left the Updates page, and the policy went on running the old rules. The *Rule Sets* page installs and updates sets correctly, and keeps the version it replaced so it can be put back.
+
 ### Fixed
 - The message 0.14.1 gives for an EC key that spells its curve out now shows for every such key. About one `EC PRIVATE KEY` in ten still got "failed to parse private key as RSA, ECDSA, or EdDSA", because the check searched for a byte that the random private key could also contain.
 

@@ -956,33 +956,6 @@ pub async fn uninstall_set(
     Ok((removed as usize, clones as usize))
 }
 
-// ─── record_installed_set ────────────────────────────────
-
-/// Note that a policy now holds a version of a set.
-///
-/// Recorded on install so an update check has something to compare against. A
-/// policy that does not know which version it holds cannot be told a newer one
-/// exists, which is why correcting a rule has so far meant a migration
-/// rewriting patterns by hand.
-async fn record_installed_set(
-    db: &SqlitePool,
-    policy_id: i64,
-    set: &RuleFileSet,
-) -> Result<()> {
-    let name = set.name.clone().unwrap_or_else(|| set.id.clone());
-    sqlx::query!(
-        "INSERT INTO policy_rule_sets (policy_id, set_id, name, version, installed_at)
-         VALUES (?, ?, ?, ?, datetime('now'))
-         ON CONFLICT(policy_id, set_id) DO UPDATE SET
-             name = excluded.name, version = excluded.version,
-             installed_at = excluded.installed_at",
-        policy_id, set.id, name, set.version
-    )
-    .execute(db)
-    .await?;
-    Ok(())
-}
-
 // ─── TOML rule file structs ───────────────────────────────
 
 /// Top-level structure of a TOML rule file.
@@ -1015,7 +988,7 @@ struct RuleFileDef {
     action:      String,
 }
 
-// ─── post_import_rules ───────────────────────────────────
+// ─── Rule files ──────────────────────────────────────────
 
 /// Whether a path is a rule set: `<something>.rules.toml`.
 ///
@@ -1027,153 +1000,6 @@ fn is_rule_file(path: &std::path::Path) -> bool {
     path.file_name()
         .and_then(|n| n.to_str())
         .is_some_and(|n| n.ends_with(".rules.toml"))
-}
-
-/// Read every *.rules.toml file from the rules/ directory and insert any rule
-/// whose external_id is not yet present for this policy.
-/// This makes repeated imports fully idempotent — safe to run many times.
-pub async fn post_import_rules(
-    State(state): State<AppState>,
-    _jar: SignedCookieJar,
-    _: Admin,
-    Path(policy_name): Path<String>,
-) -> Result<Response> {
-
-    let redirect = format!("/policy/{}/rules", policy_name);
-
-    let policy_id: i64 = sqlx::query_scalar!(
-        "SELECT id as \"id!\" FROM policies WHERE name = ?",
-        policy_name
-    )
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or_else(|| AppError::NotFound(format!("Policy '{}' not found", policy_name)))?;
-
-    // Read all rule sets from the rules/ directory.
-    let rules_dir = crate::rules_update::rules_source();
-    let rules_dir = rules_dir.as_path();
-    if !rules_dir.exists() {
-        tracing::warn!("rules/ directory not found — nothing imported");
-        return Ok(Redirect::to(&redirect).into_response());
-    }
-
-    let mut imported = 0usize;
-    let mut skipped  = 0usize;
-    let basic_only = crate::rules_update::basic_set_ids();
-
-    let entries = std::fs::read_dir(rules_dir)
-        .map_err(|e| AppError::Internal(format!("Cannot read rules dir: {}", e)))?;
-
-    for entry in entries {
-        let entry = match entry {
-            Ok(e)  => e,
-            Err(e) => { tracing::warn!("Skipping unreadable rules dir entry: {}", e); continue; }
-        };
-
-        let path = entry.path();
-
-        // Only rule sets. The suffix is checked whole rather than by extension,
-        // so an unrelated .toml dropped into the directory is not parsed as
-        // rules and silently imported.
-        if !is_rule_file(&path) {
-            continue;
-        }
-
-        let content = match std::fs::read_to_string(&path) {
-            Ok(s)  => s,
-            Err(e) => {
-                tracing::warn!(file = %path.display(), "Cannot read rule file: {}", e);
-                continue;
-            }
-        };
-
-        let file: RuleFile = match toml::from_str(&content) {
-            Ok(f)  => f,
-            Err(e) => {
-                tracing::warn!(file = %path.display(), "Cannot parse rule file: {}", e);
-                continue;
-            }
-        };
-
-        // Import means the basic sets, not every file present. The directory
-        // now holds everything the channel publishes, so without this an
-        // optional set — WordPress, Apache — would be installed onto every
-        // policy that pressed the button, which is the one thing the optional
-        // tier exists to prevent. The tier comes from the manifest beside the
-        // sets; with no manifest there is no filter, which is right for a
-        // bundle that only ever held basic sets.
-        if let Some(basic) = &basic_only
-            && let Some(set) = file.set.as_ref()
-            && !basic.contains(&set.id)
-        {
-            tracing::debug!(set = %set.id, "Skipping an optional set on import");
-            continue;
-        }
-
-        // Recorded per rule so "which rules in this policy belong to the SQLi
-        // set" is a stored fact rather than arithmetic on the id range — which
-        // this project's own history has already got wrong, when 931100 sat in
-        // the RCE file for several releases.
-        let set_id = file.set.as_ref().map(|s| s.id.clone());
-
-        for rule in file.rules {
-            // Skip if this external_id already exists for this policy.
-            let exists: i64 = sqlx::query_scalar!(
-                "SELECT COUNT(*) FROM waf_rules WHERE policy_id = ? AND external_id = ?",
-                policy_id, rule.id
-            )
-            .fetch_one(&state.db)
-            .await?;
-
-            if exists > 0 {
-                skipped += 1;
-                continue;
-            }
-
-            let description = rule.description.unwrap_or_default();
-
-            sqlx::query!(
-                "INSERT INTO waf_rules
-                 (policy_id, name, description, zone, pattern, score, action, external_id,
-                  rule_set, imported_pattern, imported_score, imported_action)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                policy_id,
-                rule.name,
-                description,
-                rule.zone,
-                rule.pattern,
-                rule.score,
-                rule.action,
-                rule.id,
-                set_id,
-                // What the rule looked like on import, so a later update can
-                // tell an untouched rule from one an administrator changed.
-                rule.pattern,
-                rule.score,
-                rule.action,
-            )
-            .execute(&state.db)
-            .await?;
-
-            imported += 1;
-        }
-
-        // Recorded once the file's rules are in, and regardless of how many
-        // were skipped as already present: what matters is which version of
-        // the set this policy now holds, not how much of it was new.
-        if let Some(set) = file.set.as_ref() {
-            record_installed_set(&state.db, policy_id, set).await?;
-        }
-    }
-
-    tracing::info!(
-        policy = %policy_name,
-        imported,
-        skipped,
-        "OWASP rule import complete"
-    );
-
-    Ok(Redirect::to(&redirect).into_response())
 }
 
 // ─── Rule Library (catalog) ──────────────────────────────

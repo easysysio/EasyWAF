@@ -70,13 +70,6 @@
         <a href="/policy/{{ policy.name }}/rules/new" class="btn btn-success btn-sm admin-only" style="margin-left:6px">
             <i class="fa fa-plus"></i> Add Rule
         </a>
-        <form class="admin-only" method="post" action="/policy/{{ policy.name }}/rules/import"
-              style="display:inline;margin-left:6px"
-              onsubmit="return confirm('Import OWASP rules from rules/ directory?');">
-            <button type="submit" class="btn btn-warning btn-sm">
-                <i class="fa fa-upload"></i> Import OWASP rules
-            </button>
-        </form>
         <a href="/policy/{{ policy.name }}/edit" class="btn btn-default btn-sm" style="margin-left:6px">
             <i class="fa fa-arrow-left"></i> Policy settings
         </a>
@@ -243,10 +236,9 @@
                 This policy has no rules yet — there is nothing to select.
             </p>
             <p>
-                Click
-                <strong>Select from Rule Library</strong> to pick the rules that
-                apply to you, or <strong>Import OWASP rules</strong> to load them all,
-                or <strong>Add Rule</strong> to write your own.
+                Click <strong>Rule Sets</strong> to install the published
+                signatures, <strong>Select from Rule Library</strong> to pick the
+                rules that apply to you, or <strong>Add Rule</strong> to write your own.
             </p>
         </div>
         {% endif %}

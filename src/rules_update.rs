@@ -645,23 +645,6 @@ pub fn seed_cache_from_bundle() {
     }
 }
 
-/// Which sets the manifest beside the rules marks as `basic`.
-///
-/// `None` when there is no manifest to read — an older bundle, or a directory
-/// that has never synced. Callers take that to mean "no filter", which is right
-/// for a bundle that only ever contained basic sets.
-pub fn basic_set_ids() -> Option<std::collections::HashSet<String>> {
-    let manifest = std::fs::read_to_string(cache_dir().join("sets.toml"))
-        .or_else(|_| std::fs::read_to_string("rules/sets.toml"))
-        .ok()?;
-    let ids: std::collections::HashSet<String> = parse_manifest(&manifest)
-        .into_iter()
-        .filter(|s| s.tier == "basic")
-        .map(|s| s.id)
-        .collect();
-    if ids.is_empty() { None } else { Some(ids) }
-}
-
 /// Mirror the channel to disk: the manifest, its signature, and every set.
 ///
 /// The signature and the manifest are stored **beside** the sets rather than

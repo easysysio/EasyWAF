@@ -137,7 +137,7 @@ assets = [
     # with their own key; because the package no longer writes one, its
     # presence is always somebody's decision, and it is logged on every use.
     ["rules/SOURCE",                  "/opt/easywaf/rules/SOURCE",              "644"],
-    # The manifest, so Import can tell a basic set from an optional one.
+    # The manifest, seeded beside the sets on a first run with no network.
     ["rules/sets.toml",               "/opt/easywaf/rules/sets.toml",           "644"],
     ["config.toml",                   "/opt/easywaf/config.toml",               "644"],
     ["packaging/easywaf.service",     "/lib/systemd/system/easywaf.service",    "644"],
