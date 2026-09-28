@@ -49,16 +49,27 @@ fn seen() -> &'static Mutex<Seen> {
 /// The configuration generation, read from the database at most once per
 /// [`MAX_AGE`].
 pub async fn current(db: &SqlitePool) -> u64 {
-    if let Ok(s) = seen().lock()
-        && let Some(at) = s.checked
-        && at.elapsed() < MAX_AGE
     {
-        return s.value;
+        let mut s = match seen().lock() {
+            Ok(s)  => s,
+            Err(p) => p.into_inner(),
+        };
+        match s.checked {
+            Some(at) if at.elapsed() < MAX_AGE => return s.value,
+            // Claimed before reading, so this request is the only one that
+            // reads; every other goes on with the value it has for one more
+            // second. Until 0.14.2 each request arriving while the read was
+            // in flight made its own, and under load they queued behind the
+            // traffic rows for a database connection — every request stalled
+            // at once, once a second. The very first read is not claimed:
+            // there is no value yet to go on with.
+            Some(_) => s.checked = Some(Instant::now()),
+            None => {}
+        }
     }
 
     // The lock is not held across this await: a std mutex held through a query
-    // would stall a runtime thread for its duration. Two requests arriving as
-    // the second expires may both read — a pair of tiny reads, not a problem.
+    // would stall a runtime thread for its duration.
     let read = sqlx::query_scalar!(
         r#"SELECT value as "value!: i64" FROM config_generation WHERE id = 1"#
     )
@@ -213,6 +224,16 @@ mod tests {
                                    VALUES ((SELECT id FROM policies WHERE name = 'g'), 'drop', 1)"),
             ("list choice update", "UPDATE ip_list_feeds SET response = 'block'"),
             ("list choice delete", "DELETE FROM ip_list_feeds"),
+            ("upstream insert",   "INSERT INTO upstreams (site_id, url)
+                                   VALUES ((SELECT id FROM sites WHERE name = 'g'), 'http://10.0.0.1')"),
+            ("upstream update",   "UPDATE upstreams SET weight = 2"),
+            ("upstream delete",   "DELETE FROM upstreams"),
+            ("alias insert",      "INSERT INTO site_aliases (site_id, name)
+                                   VALUES ((SELECT id FROM sites WHERE name = 'g'), 'www.g.example')"),
+            ("alias delete",      "DELETE FROM site_aliases"),
+            ("cert insert",       "INSERT INTO certs (name, domain, cert_pem, key_pem) VALUES ('c', 'g.example', 'a', 'b')"),
+            ("cert replaced",     "UPDATE certs SET cert_pem = 'a2', key_pem = 'b2' WHERE name = 'c'"),
+            ("cert delete",       "DELETE FROM certs WHERE name = 'c'"),
             ("rules delete",      "DELETE FROM waf_rules WHERE name = 'r'"),
             ("sites delete",      "DELETE FROM sites WHERE name = 'g'"),
             ("policies delete",   "DELETE FROM policies WHERE name = 'g'"),
@@ -233,6 +254,15 @@ mod tests {
                                '203.0.113.9', 'GET', 't.example', '/', 200)")
             .execute(&db).await.unwrap();
         assert_eq!(value().await, before, "recording traffic moved the generation");
+
+        // Nor renewal bookkeeping on a certificate: it is written daily, and
+        // only the certificate itself changes what the proxy serves.
+        sqlx::raw_sql("INSERT INTO certs (name, domain, cert_pem, key_pem) VALUES ('k', 't.example', 'a', 'b')")
+            .execute(&db).await.unwrap();
+        let before = value().await;
+        sqlx::raw_sql("UPDATE certs SET acme_last_attempt = '2026-09-28T00:00:00Z' WHERE name = 'k'")
+            .execute(&db).await.unwrap();
+        assert_eq!(value().await, before, "renewal bookkeeping moved the generation");
 
         db.close().await;
         for sfx in ["", "-wal", "-shm"] { let _ = std::fs::remove_file(format!("{}{sfx}", path.display())); }

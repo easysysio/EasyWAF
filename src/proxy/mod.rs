@@ -6,7 +6,8 @@
 // enabled sites and binds one TCP listener per unique port.
 // Incoming requests are routed to a backend site by matching
 // the Host: header against sites.server_name — or one of the
-// site's aliases — in the database.
+// site's aliases — in a table of every site held in memory
+// and reloaded when the configuration changes.
 // Every request is passed through the module pipeline before
 // being forwarded to the upstream.
 //
@@ -183,7 +184,7 @@ pub struct ProxyState {
 
 // ─── SiteRow ─────────────────────────────────────────────
 
-/// Minimal site data fetched per request from the database.
+/// What the proxy needs of a site to serve a request, as the site table holds it.
 struct SiteRow {
     id:             i64,
     name:           String,
@@ -765,14 +766,15 @@ async fn handle_request(
     }
 
     // ── 2. Look up site ───────────────────────────────────
-    let site = match lookup_site(&state.db, &host).await {
-        Some(s) => s,
+    let table = site_table(&state.db).await;
+    let site = match table.enabled.get(&host) {
+        Some(s) => s.clone(),
         None => {
             // A site that exists but is switched off is a different situation
             // from a hostname nobody configured: the first is the operator
             // taking it down on purpose, and its visitors deserve to be told
             // that rather than being shown a 404 that reads like a mistake.
-            if site_is_disabled(&state.db, &host).await {
+            if table.disabled.contains(&host) {
                 let message = crate::routes::settings::get_maintenance_message(&state.db).await;
                 tracing::debug!(host = %host, "site is disabled — serving maintenance page");
                 return maintenance_response(&message);
@@ -894,8 +896,11 @@ async fn handle_request(
             let country_l  = country.clone();
             let reason_log = reason.clone();
 
+            let site_name = site.name.clone();
+
             tokio::spawn(async move {
                 log_event(db, logger, TrafficRecord {
+                    site_name,
                     upstream:     None,
                     site_id,
                     client_ip:    ip_l,
@@ -1026,8 +1031,10 @@ async fn handle_request(
                 let logger     = state.logger.clone();
             let method_str = method.to_string();
             let reason_log = reason.clone();
+            let site_name = site.name.clone();
             tokio::spawn(async move {
                 log_event(db, logger, TrafficRecord {
+                    site_name,
                     upstream:     None,
                     site_id:      site.id,
                     client_ip:    client_ip.to_string(),
@@ -1075,8 +1082,10 @@ async fn handle_request(
                 let host_l     = host.clone();
                 let path_l     = path.clone();
                 let ip_l       = client_ip.to_string();
+                let site_name = site.name.clone();
                 tokio::spawn(async move {
                     log_event(db, logger, TrafficRecord {
+                        site_name,
                         upstream:     None,
                         site_id:      site.id,
                         client_ip:    ip_l,
@@ -1195,9 +1204,11 @@ async fn handle_request(
             let ip         = client_ip.to_string();
             let found      = detected.clone();
             let up_l       = chosen_url.clone();
+            let site_name = site.name.clone();
             tokio::spawn(async move {
                 let (score, hits, detection, why) = split_detection(found);
                 log_event(db, logger, TrafficRecord {
+                    site_name,
                     upstream:     Some(up_l.clone()),
                     site_id,
                     client_ip:    ip,
@@ -1303,9 +1314,11 @@ async fn handle_request(
                 let method_str = method.to_string();
                 let found      = detected.clone();
                 let up_l       = chosen_url.clone();
+                let site_name = site.name.clone();
                 tokio::spawn(async move {
                     let (score, hits, detection, why) = split_detection(found);
                     log_event(db, logger, TrafficRecord {
+                        site_name,
                         upstream:     Some(up_l.clone()),
                         site_id:      site.id,
                         client_ip:    client_ip.to_string(),
@@ -1389,9 +1402,11 @@ async fn handle_request(
                 let method_str = method.to_string();
                 let found      = detected.clone();
                 let up_l       = chosen_url.clone();
+                let site_name = site.name.clone();
                 tokio::spawn(async move {
                     let (score, hits, detection, why) = split_detection(found);
                     log_event(db, logger, TrafficRecord {
+                        site_name,
                         upstream:     Some(up_l.clone()),
                         site_id:      site.id,
                         client_ip:    client_ip.to_string(),
@@ -1465,17 +1480,80 @@ fn stronger(
     }
 }
 
-// ─── lookup_site ─────────────────────────────────────────
+// ─── The site table ──────────────────────────────────────
 
-/// Find an enabled site by hostname — its `server_name`, or any of its
-/// aliases.
-/// Returns None if no enabled site matches, so the proxy returns 404.
-async fn lookup_site(db: &SqlitePool, host: &str) -> Option<SiteRow> {
-    sqlx::query!(
-        // The pool travels with the row: a second query per request would put
-        // back the cost that 0.11.0's caching took out. A URL holds neither a
-        // space nor a newline, so `url weight` per line needs no escaping.
-        "SELECT id as \"id!\", name,
+/// Every site, by each hostname it answers for.
+///
+/// Until 0.14.2 each request found its site with a query, and that query was
+/// most of what a request cost: about half the CPU of a blocked request, and a
+/// ceiling of about 8,000 a second where the table allows 35,000. Sites change
+/// when an administrator saves something, so they are read once and read again
+/// when the configuration generation moves — the invalidation the rule caches
+/// already rely on, which the database's own triggers drive (migrations 025 and
+/// 035), so no handler can forget it. A change reaches the proxy within
+/// [`crate::modules::generation::MAX_AGE`].
+///
+/// Held whole rather than filled per hostname, so a hostname nobody configured
+/// costs nothing to refuse, and scanners sending made-up `Host` headers cannot
+/// grow it.
+struct SiteTable {
+    generation: u64,
+    /// Enabled sites, under their `server_name` and every alias.
+    enabled:    HashMap<String, Arc<SiteRow>>,
+    /// Hostnames of sites that are switched off, which get the maintenance page.
+    disabled:   HashSet<String>,
+}
+
+static SITES: OnceLock<RwLock<Option<Arc<SiteTable>>>> = OnceLock::new();
+
+fn sites() -> &'static RwLock<Option<Arc<SiteTable>>> {
+    SITES.get_or_init(|| RwLock::new(None))
+}
+
+/// The site table for the current generation, reloading it if that moved.
+///
+/// If the reload fails, the table already held goes on being used: the sites as
+/// they were a moment ago beat refusing every request until the database
+/// answers. With nothing held yet, an empty table is returned and not kept, so
+/// the next request tries again.
+async fn site_table(db: &SqlitePool) -> Arc<SiteTable> {
+    let generation = crate::modules::generation::current(db).await;
+    let held = sites().read().ok().and_then(|t| t.clone());
+    if let Some(t) = &held
+        && t.generation == generation
+    {
+        return t.clone();
+    }
+
+    let loaded = match load_sites(db, generation).await {
+        Ok(t) => Arc::new(t),
+        Err(e) => {
+            tracing::warn!("Could not load the sites: {e}");
+            return held.unwrap_or_else(|| Arc::new(SiteTable {
+                generation: 0,
+                enabled:    HashMap::new(),
+                disabled:   HashSet::new(),
+            }));
+        }
+    };
+
+    // Two requests can reload at once. The table read at the newer generation
+    // is the one kept, so a slow read cannot put back sites a faster one had
+    // already seen changed.
+    if let Ok(mut t) = sites().write()
+        && t.as_ref().is_none_or(|t| t.generation <= generation)
+    {
+        *t = Some(loaded.clone());
+    }
+    loaded
+}
+
+/// Read every site and its aliases.
+async fn load_sites(db: &SqlitePool, generation: u64) -> Result<SiteTable, sqlx::Error> {
+    let rows = sqlx::query!(
+        // A URL holds neither a space nor a newline, so `url weight` per line
+        // needs no escaping.
+        "SELECT id as \"id!\", name, server_name, enabled as \"enabled!: bool\",
                 (SELECT group_concat(id || ' ' || url || ' ' || weight, char(10))
                    FROM upstreams
                   WHERE site_id = sites.id AND enabled = 1) as \"pool?: String\",
@@ -1495,54 +1573,55 @@ async fn lookup_site(db: &SqlitePool, host: &str) -> Option<SiteRow> {
                 (SELECT rule_engine FROM policies p WHERE p.id = sites.waf_policy_id)
                                as \"rule_engine?: String\"
          FROM sites
-         WHERE enabled = 1
-           AND (server_name = ?1
-                OR EXISTS (SELECT 1 FROM site_aliases a
-                           WHERE a.site_id = sites.id AND a.name = ?1))
-         LIMIT 1",
-        host
+         ORDER BY id"
     )
-    .fetch_optional(db)
-    .await
-    .ok()
-    .flatten()
-    .map(|r| SiteRow {
-        id:             r.id,
-        name:           r.name,
-        upstreams:      crate::upstream::parse_pool(r.pool.as_deref().unwrap_or("")),
-        tls_port:       r.tls_port,
-        has_cert:       r.has_cert,
-        tls_redirect:   r.tls_redirect,
-        hsts:           r.hsts,
-        x_frame:        r.x_frame,
-        x_frame_value:  r.x_frame_value,
-        x_content_type: r.x_content_type,
-        xss_protection: r.xss_protection,
-        affinity:       r.affinity,
-        policy_id:      r.waf_policy_id,
-        rule_engine:    r.rule_engine,
-    })
-}
+    .fetch_all(db)
+    .await?;
 
-// ─── site_is_disabled ────────────────────────────────────
+    let mut aliases: HashMap<i64, Vec<String>> = HashMap::new();
+    for a in sqlx::query!("SELECT site_id, name FROM site_aliases ORDER BY id")
+        .fetch_all(db)
+        .await?
+    {
+        aliases.entry(a.site_id).or_default().push(a.name);
+    }
 
-/// True when a site exists for this hostname but is switched off.
-///
-/// Only reached when `lookup_site` found nothing, so this runs on the miss path
-/// and never on a served request.
-async fn site_is_disabled(db: &SqlitePool, host: &str) -> bool {
-    sqlx::query_scalar!(
-        "SELECT COUNT(*) FROM sites
-         WHERE enabled = 0
-           AND (server_name = ?1
-                OR EXISTS (SELECT 1 FROM site_aliases a
-                           WHERE a.site_id = sites.id AND a.name = ?1))",
-        host
-    )
-    .fetch_one(db)
-    .await
-    .map(|n| n > 0)
-    .unwrap_or(false)
+    let mut table = SiteTable { generation, enabled: HashMap::new(), disabled: HashSet::new() };
+    for r in rows {
+        let mut names = vec![r.server_name];
+        names.extend(aliases.remove(&r.id).unwrap_or_default());
+
+        if !r.enabled {
+            table.disabled.extend(names);
+            continue;
+        }
+        let site = Arc::new(SiteRow {
+            id:             r.id,
+            name:           r.name,
+            upstreams:      crate::upstream::parse_pool(r.pool.as_deref().unwrap_or("")),
+            tls_port:       r.tls_port,
+            has_cert:       r.has_cert,
+            tls_redirect:   r.tls_redirect,
+            hsts:           r.hsts,
+            x_frame:        r.x_frame,
+            x_frame_value:  r.x_frame_value,
+            x_content_type: r.x_content_type,
+            xss_protection: r.xss_protection,
+            affinity:       r.affinity,
+            policy_id:      r.waf_policy_id,
+            rule_engine:    r.rule_engine,
+        });
+        // The oldest site keeps a name two of them claim, as the lowest id
+        // did when this was a query. The forms refuse that, so it is a
+        // tiebreak for a database edited by hand.
+        for name in names {
+            table.enabled.entry(name).or_insert_with(|| site.clone());
+        }
+    }
+    // A name an enabled site answers for is served, even if a disabled site
+    // also lists it.
+    table.disabled.retain(|n| !table.enabled.contains_key(n));
+    Ok(table)
 }
 
 // ─── maintenance_response ────────────────────────────────
@@ -2034,5 +2113,70 @@ mod prefix_tests {
         let p = read_prefix(body(&[]), 1024).await.unwrap();
         assert!(p.complete);
         assert!(p.head.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod site_table_tests {
+    use super::*;
+
+    async fn db() -> (SqlitePool, std::path::PathBuf) {
+        let path = std::env::temp_dir()
+            .join(format!("easywaf-sites-{}-{}.db", std::process::id(), rand::random::<u32>()));
+        let db = crate::db::init(&format!("sqlite://{}", path.display())).await;
+        sqlx::raw_sql(
+            "INSERT INTO sites (name, server_name, enabled) VALUES ('shop', 'shop.example', 1);
+             INSERT INTO site_aliases (site_id, name) VALUES (1, 'www.shop.example');
+             INSERT INTO upstreams (site_id, url, weight, enabled) VALUES (1, 'http://10.0.0.1:8080', 1, 1);
+             INSERT INTO sites (name, server_name, enabled) VALUES ('old', 'old.example', 0);
+             INSERT INTO site_aliases (site_id, name) VALUES (2, 'www.old.example');",
+        )
+        .execute(&db)
+        .await
+        .unwrap();
+        (db, path)
+    }
+
+    #[tokio::test]
+    async fn every_name_of_a_site_finds_it_and_a_disabled_one_is_told_apart() {
+        let (db, path) = db().await;
+        let t = load_sites(&db, 1).await.unwrap();
+
+        let shop = t.enabled.get("shop.example").expect("server_name");
+        let www = t.enabled.get("www.shop.example").expect("alias");
+        assert!(Arc::ptr_eq(shop, www), "an alias is the same site, not a copy");
+        assert_eq!(shop.upstreams.len(), 1);
+
+        // Switched off, under both names: the maintenance page rather than 404.
+        assert!(t.disabled.contains("old.example") && t.disabled.contains("www.old.example"));
+        assert!(!t.enabled.contains_key("old.example"));
+        // A name nobody configured is neither.
+        assert!(!t.enabled.contains_key("nobody.example") && !t.disabled.contains("nobody.example"));
+
+        db.close().await;
+        for sfx in ["", "-wal", "-shm"] { let _ = std::fs::remove_file(format!("{}{sfx}", path.display())); }
+    }
+
+    #[tokio::test]
+    async fn a_new_backend_is_seen_once_the_generation_moves() {
+        // The table is the only thing between a saved change and the proxy,
+        // so a write that did not move the generation would never be served.
+        let (db, path) = db().await;
+        let before = load_sites(&db, 1).await.unwrap();
+        let generation = || async {
+            sqlx::query_scalar::<_, i64>("SELECT value FROM config_generation WHERE id = 1")
+                .fetch_one(&db).await.unwrap()
+        };
+        let g0 = generation().await;
+        sqlx::raw_sql("INSERT INTO upstreams (site_id, url, weight, enabled) VALUES (1, 'http://10.0.0.2:8080', 1, 1)")
+            .execute(&db).await.unwrap();
+        assert!(generation().await > g0, "adding a backend did not move the generation");
+
+        let after = load_sites(&db, generation().await as u64).await.unwrap();
+        assert_eq!(before.enabled["shop.example"].upstreams.len(), 1);
+        assert_eq!(after.enabled["shop.example"].upstreams.len(), 2);
+
+        db.close().await;
+        for sfx in ["", "-wal", "-shm"] { let _ = std::fs::remove_file(format!("{}{sfx}", path.display())); }
     }
 }

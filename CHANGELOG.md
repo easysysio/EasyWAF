@@ -8,6 +8,10 @@ Version bumps and tags are created only after explicit approval.
 
 ## [Unreleased]
 
+### Changed
+- **The proxy holds every site in memory instead of looking each request's site up in the database.** On the same machine, blocked requests went from about 7,400 a second to 13,400 sustained, and about half the CPU each. A saved change to a site, its backends, its aliases or its certificate reaches the proxy within a second, as rule changes already did.
+- A traffic row no longer reads the site's name back from the database after it is written, and the syslog line is built only when syslog is on.
+
 ### Removed
 - **The *Import OWASP rules* button on a policy's rules page.** It added only the rules a policy did not have, but recorded each set at the newest version — so a policy that had not applied an update was marked as having it, the update left the Updates page, and the policy went on running the old rules. The *Rule Sets* page installs and updates sets correctly, and keeps the version it replaced so it can be put back.
 

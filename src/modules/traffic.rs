@@ -43,6 +43,10 @@ impl InspectionModule for TrafficLogger {
 /// Completed request info written to traffic_events.
 pub struct TrafficRecord {
     pub site_id:      i64,
+    /// The site's name, for the flow line. Passed in because the proxy has it
+    /// already; until 0.14.2 it was read back from the database after every
+    /// row, a query per request whether a flow line was being sent or not.
+    pub site_name:    String,
     pub client_ip:    String,
     pub method:       String,
     pub host:         String,
@@ -83,7 +87,7 @@ pub struct TrafficRecord {
 ///
 /// Built from the same record that becomes the database row, in the same
 /// call, so the line and the row cannot describe different events.
-fn flow_line(r: &TrafficRecord, site: &str) -> String {
+fn flow_line(r: &TrafficRecord) -> String {
     use crate::logging::{clip, field};
 
     // The verdict, collapsed from the three things that record one: whether it
@@ -115,7 +119,7 @@ fn flow_line(r: &TrafficRecord, site: &str) -> String {
     let mut out = format!(
         "ts={} site={} host={} client={} method={} path={} status={} ms={} verdict={}",
         chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ"),
-        field(site),
+        field(&r.site_name),
         field(&r.host),
         field(&r.client_ip),
         field(&r.method),
@@ -185,16 +189,9 @@ pub async fn log_event(db: SqlitePool, logger: crate::logging::Logger, r: Traffi
         tracing::error!("Failed to log traffic event: {}", e);
     }
 
-    // After the row, so the site name can come from the database rather than
-    // being threaded through every call site. A site deleted between the
-    // request and this line reports its id, which is worth more than nothing.
-    let site = sqlx::query_scalar!("SELECT name FROM sites WHERE id = ?", r.site_id)
-        .fetch_optional(&db)
-        .await
-        .ok()
-        .flatten()
-        .unwrap_or_else(|| format!("site-{}", r.site_id));
-    logger.flow(flow_line(&r, &site));
+    if logger.flow_enabled() {
+        logger.flow(flow_line(&r));
+    }
 }
 
 // ─── Retention ───────────────────────────────────────────

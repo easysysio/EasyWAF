@@ -27,7 +27,7 @@ appeared on only one of the names.
 - **No wildcards.** The `Host:` header is matched exactly, and a wildcard
   certificate needs a DNS-01 challenge EasyWAF does not implement.
 - Saving the form does **not** reissue a certificate. A name added to a live site
-  is served immediately, but a browser reaching it gets a warning until the
+  is served within a second, but a browser reaching it gets a warning until the
   certificate covers it — [request one](tls.md#lets-encrypt) and every name on
   the site is included.
 

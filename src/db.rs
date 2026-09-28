@@ -83,6 +83,7 @@ pub async fn init(database_url: &str) -> SqlitePool {
     run_migration_032(&pool).await;
     run_migration_033(&pool).await;
     run_migration_034(&pool).await;
+    run_migration_035(&pool).await;
 
     // After the migrations, so the version recorded is the one whose schema
     // this now is. A snapshot carries it, and a restore reads it.
@@ -90,6 +91,19 @@ pub async fn init(database_url: &str) -> SqlitePool {
 
     info!("Database ready: {}", database_url);
     pool
+}
+
+// ─── run_migration_035 ───────────────────────────────────
+
+/// Triggers so that a site's backends, aliases and certificate move the
+/// configuration generation, now that the proxy caches its sites against it.
+/// Runs every start, like 025, so a dropped trigger comes back.
+async fn run_migration_035(pool: &SqlitePool) {
+    let sql = include_str!("../migrations/035_site_lookup_generation.sql");
+    sqlx::raw_sql(sql)
+        .execute(pool)
+        .await
+        .unwrap_or_else(|e| panic!("Migration 035 failed: {}", e));
 }
 
 // ─── run_migration_034 ───────────────────────────────────
