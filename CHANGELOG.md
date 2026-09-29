@@ -6,6 +6,13 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
+## [Unreleased]
+
+### Removed
+- The **Updates** tab on Settings → General, which held nothing but a note pointing to Settings → Updates; the menu already names that page.
+
+---
+
 ## [0.14.4] — 2026-09-29
 
 ### Security
