@@ -22,7 +22,7 @@ Version bumps and tags are created only after explicit approval.
 - Waiting challenges are capped at 10,000. Each draws an image and is kept for three minutes, so a flood of requests crossing a challenge threshold cost memory and CPU without limit; past the cap a visitor is asked to try again in a minute, before any image is drawn.
 
 ### Changed
-- Code that described things it no longer did was corrected or removed: comments claiming a new port needs a restart, that alerts and blocks were "not yet produced", and a 32 MB body limit; a pipeline module that did nothing; and fields and an error variant nothing used. The request handler's steps are numbered in the order they run.
+- Code that described things it no longer did was corrected or removed: comments claiming a new port needs a restart, that alerts and blocks were "not yet produced", and a 32 MB body limit; a pipeline module that did nothing; and fields and an error variant nothing used. The proxy's request handler, one function of about 570 lines, is split into its steps — each a function of its own, named for what it does — so it reads top to bottom as the list of what happens to a request.
 
 ---
 

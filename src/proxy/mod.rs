@@ -705,7 +705,7 @@ async fn proxy_upgrade(
     resp.body(Body::empty()).map_err(|e| format!("response: {e}"))
 }
 
-// ─── handle_request ──────────────────────────────────────
+// ─── Traffic rows ────────────────────────────────────────
 
 /// Spread an allowed request's detection into the four columns that store it.
 ///
@@ -726,8 +726,6 @@ fn split_detection(
         None => (None, None, None, None),
     }
 }
-
-// ─── Traffic rows ────────────────────────────────────────
 
 /// What every traffic row for one request shares.
 ///
@@ -797,23 +795,27 @@ impl Visit {
     }
 }
 
+// ─── handle_request ──────────────────────────────────────
+
 /// Main proxy handler — called for every incoming request on every port.
 ///
-/// The steps, as numbered in the body:
-///   1. The Host header.
-///   2. A Let's Encrypt validation, answered before anything else.
-///   3. The site, from the site table.
-///   4. The redirect to HTTPS, when the site asks for one.
-///   5. The request taken apart, and who the client is.
-///   6. The site's IP lists.
-///   7. As much of the body as the rules inspect.
-///   8. A CAPTCHA answer, handled before the rules.
-///   9. The module pipeline.
-///  10. A challenge, unless the visitor has already answered one.
-///  11. Forwarding to the upstream, and streaming its response back.
+/// Reads as the list of what happens to a request, in order. Each step is a
+/// function below, and the first one that answers ends the request:
 ///
-/// Whichever step answers, the site's security headers are added and the
-/// request's traffic row is queued.
+///   1. `request_host`     — the Host header.
+///   2. `acme_answer`      — a Let's Encrypt validation, before anything else.
+///   3. `find_site`        — the site, from the site table.
+///   4. `https_redirect`   — the redirect to HTTPS, when the site asks for one.
+///   5. `Incoming::take`   — the request taken apart, and who the client is.
+///   6. `refused_by_lists` — the site's IP lists.
+///   7. `read_body_start`  — as much of the body as the rules inspect.
+///   8. `handle_verify`    — a CAPTCHA answer, handled before the rules.
+///   9. `judge`            — the module pipeline, and what the lists add to it.
+///  10. `challenge`        — a CAPTCHA, unless the visitor has answered one.
+///  11. `forward`          — the upstream, and its response streamed back.
+///
+/// Whichever step answers, the site's security headers are added (from step 3
+/// on) and the request's traffic row is queued (from step 6 on).
 async fn handle_request(
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     State(state): State<ProxyState>,
@@ -821,294 +823,71 @@ async fn handle_request(
 ) -> Response<Body> {
     let started_at = Instant::now();
 
-    // ── 1. Extract Host header ────────────────────────────
-    // Strip the port suffix (e.g. "example.com:8081" → "example.com")
-    // so routing works regardless of which port the client connected on.
-    let host = req
-        .headers()
-        .get("host")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("")
-        .split(':')
-        .next()
-        .unwrap_or("")
-        .to_lowercase();
-
-    if host.is_empty() {
+    let Some(host) = request_host(&req) else {
         return error_response(StatusCode::BAD_REQUEST, "Missing Host header");
+    };
+    if let Some(answer) = acme_answer(&state, &host, &req) {
+        return answer;
     }
-
-    // ── 2. ACME HTTP-01 challenge ────────────────────────
-    // Answered before everything else, and on purpose.
-    //
-    // Before the site lookup, so it works for a site that is disabled or not
-    // configured yet. Before the HTTPS redirect, because the CA follows
-    // redirects and a site with a broken certificate would bounce the
-    // validator into a connection it cannot complete — the exact situation
-    // someone is trying to fix. Before the pipeline, because a token is opaque
-    // base64url and nothing should be able to score or block one: a renewal
-    // that failed because a scanner rule matched its challenge token would be
-    // a genuinely awful outage to diagnose.
-    //
-    // Only on the plain-HTTP listener: HTTP-01 validation always arrives on
-    // port 80, so answering on the TLS one would serve a token to something
-    // that is not the CA.
-    //
-    // A challenge path with no answer published falls through to be handled as
-    // any other request would be, rather than confirming the path exists.
-    if !state.is_tls
-        && let Some(token) = crate::acme::token_from_path(req.uri().path())
-        && let Some(answer) = crate::acme::answer(token)
-    {
-        tracing::info!(host = %host, "Answered an ACME HTTP-01 challenge");
-        return Response::builder()
-            .status(StatusCode::OK)
-            .header("content-type", "text/plain")
-            .body(Body::from(answer))
-            .unwrap_or_else(|_| error_response(StatusCode::INTERNAL_SERVER_ERROR, "response"));
-    }
-
-    // ── 3. Look up site ───────────────────────────────────
-    let table = site_table(&state.db).await;
-    let site = match table.enabled.get(&host) {
-        Some(s) => s.clone(),
-        None => {
-            // A site that exists but is switched off is a different situation
-            // from a hostname nobody configured: the first is the operator
-            // taking it down on purpose, and its visitors deserve to be told
-            // that rather than being shown a 404 that reads like a mistake.
-            if table.disabled.contains(&host) {
-                let message = crate::routes::settings::get_maintenance_message(&state.db).await;
-                tracing::debug!(host = %host, "site is disabled — serving maintenance page");
-                return maintenance_response(&message);
-            }
-            tracing::debug!(host = %host, "no site matched");
-            return error_response(StatusCode::NOT_FOUND, "No site configured for this host");
-        }
+    let site = match find_site(&state, &host).await {
+        Ok(site)  => site,
+        Err(page) => return page,
     };
 
-    // What this site asked to be sent with every response, taken now: the
-    // block below consumes the request and may move the row.
+    // Everything from here is this site's response, whichever step produces it
+    // — the upstream's, a block, a challenge, a gateway error — and carries the
+    // headers the site asked for. Until 0.14.1 they were added to the
+    // upstream's response only, so a visitor whose first response was one of
+    // EasyWAF's own pages never received the HSTS the site promised.
     let security = SecurityHeaders::of(&site, state.is_tls);
+    let mut response = serve_site(&state, peer, &site, host, req, started_at).await;
+    security.apply(response.headers_mut());
+    response
+}
 
-    // Everything from here is this site's response, whichever path produces
-    // it — the upstream's, a block, a challenge, a gateway error. The site's
-    // security headers were added only to the upstream's until 0.14.1, so a
-    // visitor whose first response was one of EasyWAF's own pages never
-    // received the HSTS the site's settings said every response carried.
-    let mut response = async {
+/// Steps 4 to 11, for a request whose site is known.
+async fn serve_site(
+    state:      &ProxyState,
+    peer:       SocketAddr,
+    site:       &SiteRow,
+    host:       String,
+    req:        axum::extract::Request,
+    started_at: Instant,
+) -> Response<Body> {
+    if let Some(redirect) = https_redirect(state, site, &host, &req) {
+        return redirect;
+    }
 
-        // ── 4. Redirect to HTTPS when the site asks for it ───
-        // Only from a plain listener, and only when there is somewhere to send
-        // them: redirecting to a TLS port that is not bound would take the site
-        // off the air instead of securing it. Done before any inspection, since
-        // the request is not being served here either way.
-        //
-        // "Somewhere" includes a certificate. An HTTPS port with none refuses
-        // every handshake, and a redirect to it made the whole site unreachable
-        // while its page said it was active. The form no longer saves a site that
-        // way, but one can still arrive there — a certificate requested from
-        // Let's Encrypt while creating the site, and refused — and serving plain
-        // HTTP is never worse than sending visitors to a port that cannot answer.
-        if !state.is_tls
-            && site.tls_redirect
-            && site.has_cert
-            && let Some(tls_port) = site.tls_port
-        {
-            let path = req.uri().path_and_query().map(|p| p.as_str()).unwrap_or("/");
-            let target = if tls_port == 443 {
-                format!("https://{host}{path}")
-            } else {
-                format!("https://{host}:{tls_port}{path}")
-            };
-            return Response::builder()
-                .status(StatusCode::TEMPORARY_REDIRECT)
-                .header("location", target)
-                .body(Body::empty())
-                .unwrap_or_else(|_| {
-                    error_response(StatusCode::INTERNAL_SERVER_ERROR, "Redirect build error")
-                });
+    let (incoming, body, on_upgrade) = Incoming::take(req, peer);
+    let visit = Visit::of(site, &incoming, host, started_at);
+
+    let lists = ListCheck::of(state, site, incoming.client_ip).await;
+    if let Some(refusal) = refused_by_lists(state, &visit, &lists) {
+        return refusal;
+    }
+
+    let body = match read_body_start(body).await {
+        Ok(body)  => body,
+        Err(resp) => return resp,
+    };
+
+    // A CAPTCHA answer. Always a tiny form this server rendered, so it is
+    // answered only when it arrived whole: a submission larger than the
+    // inspection limit is not one this server sent.
+    if incoming.method == Method::POST && incoming.path == VERIFY_PATH {
+        if !body.start.complete {
+            return error_response(StatusCode::PAYLOAD_TOO_LARGE, "Verification submission too large");
         }
+        return handle_verify(state, &incoming.client_ip.to_string(), &body.start.head);
+    }
 
-        // ── 5. Decompose request ──────────────────────────────
-        // Taken before the request is torn apart: the handle that lets this
-        // connection be upgraded lives in its extensions and goes with them.
-        let mut req = req;
-        let on_upgrade = req.extensions_mut().remove::<hyper::upgrade::OnUpgrade>();
+    // Whether the visitor already holds a valid challenge clearance cookie.
+    let cleared = clearance_ok(state, &incoming.headers, &incoming.client_ip.to_string());
 
-        let (parts, body) = req.into_parts();
-        let method    = parts.method.clone();
-        let path      = parts.uri.path().to_string();
-        let query     = parts.uri.query().map(str::to_string);
-        let headers   = parts.headers.clone();
-        // The connection's peer unless it came from a configured proxy, in which
-        // case the client address that proxy reported. Resolved here, once, so
-        // everything downstream — country rules, CAPTCHA clearance, the traffic
-        // log — agrees on who the client is.
-        let client_ip = crate::forwarded::client_ip(peer.ip(), &headers);
-        // Resolved once and reused: the traffic log records it, and the country
-        // rules in the pipeline read it from the same lookup.
-        let country   = crate::geo::country_of(client_ip);
+    let verdict = judge(state, site, &incoming, body.inspected, &lists, cleared).await;
 
-        // What every traffic row for this request shares, taken once. Whichever
-        // way the request ends — refused by a list, blocked, challenged, or
-        // forwarded — its row is this plus how it ended.
-        let visit = Visit {
-            site_id:    site.id,
-            site_name:  site.name.clone(),
-            client_ip:  client_ip.to_string(),
-            method:     method.to_string(),
-            host:       host.clone(),
-            path:       path.clone(),
-            query:      query.clone(),
-            country:    country.clone(),
-            started_at,
-        };
-
-        // ── 6. IP lists ──────────────────────────────────────
-        //
-        // Before the body is read, so a refused address costs no reads at all.
-        //
-        // Before the pipeline, and that is the whole design rather than an
-        // optimisation. An allowed address has to skip GeoIP, the WAF and the
-        // challenge alike, and making that a verdict every module must remember to
-        // honour would be one forgotten check away from being false. Never
-        // entering the pipeline is true regardless of which modules exist now or
-        // are added later.
-        //
-        // A blocked address is refused here for a second reason: a site with no
-        // policy runs no pipeline at all, and "refuse this client" has to work
-        // there too.
-        //
-        // A published list that blocks is refused here too, and the row names the
-        // list: a refusal nobody can explain is the one people switch the whole
-        // feature off over.
-        //
-        // The lists are the site's policy's, and follow its mode: Off ignores them
-        // with the rest of the policy, DetectionOnly records what they would have
-        // done, and anything else enforces them. A site with no policy has none.
-        let listed = match (site.policy_id, site.rule_engine.as_deref()) {
-            (Some(policy), Some(mode)) if mode != "Off" => {
-                crate::iplist::check(&state.db, policy, client_ip).await
-            }
-            _ => None,
-        };
-        let detection_only = site.rule_engine.as_deref() == Some("DetectionOnly");
-
-        let refusal = match list_verdict(&listed) {
-            Some((why, crate::modules::Detection::WouldBlock)) if !detection_only => Some(why),
-            _ => None,
-        };
-
-        if let Some(reason) = refusal {
-            // No rule fired and no score accumulated: the address was refused
-            // for being itself. Recording a score of zero would read as a WAF
-            // decision that never happened.
-            visit.record(&state.traffic, Outcome {
-                status:  403,
-                blocked: true,
-                reason:  Some(reason.clone()),
-                ..Outcome::default()
-            });
-            return error_response(StatusCode::FORBIDDEN, &reason);
-        }
-
-        // ── 7. Read as much of the body as the rules inspect ──
-        //
-        // Until 0.11.0 every body was read whole, up to 32 MB, before anything was
-        // forwarded, and anything larger was refused. The cost below the cap was
-        // worse than the cap: the rules decode a body several ways, so a 30 MB
-        // upload took EasyWAF from 78 MB to 480 MB, and a few concurrent ones were a
-        // way to exhaust memory.
-        //
-        // Now only the first `inspection_limit()` bytes are read before the verdict.
-        // Attacks sit at the start of a body — the tail of a video does not contain
-        // SQL injection. The rest streams to the upstream as it arrives, so an
-        // upload of any size costs about the limit rather than its own size.
-        //
-        // The trade-off is stated in Settings, where the limit is set: bytes past it
-        // are forwarded uninspected, so a payload padded past it is not seen.
-        let inspect_limit = inspection_limit();
-        let prefix = match read_prefix(Box::pin(body.into_data_stream()), inspect_limit).await {
-            Ok(p)  => p,
-            Err(_) => return error_response(StatusCode::BAD_REQUEST, "Failed to read request body"),
-        };
-        let inspected = if prefix.head.len() > inspect_limit {
-            prefix.head.slice(..inspect_limit)
-        } else {
-            prefix.head.clone()
-        };
-
-        // ── 8. CAPTCHA verify submissions — handled before the WAF ──
-        // Always a tiny form this server rendered, so it is answered only when it
-        // arrived whole. A verification submission larger than the inspection limit
-        // is not one this server sent.
-        if method == Method::POST && path == VERIFY_PATH {
-            if !prefix.complete {
-                return error_response(StatusCode::PAYLOAD_TOO_LARGE, "Verification submission too large");
-            }
-            return handle_verify(&state, &client_ip.to_string(), &prefix.head);
-        }
-
-        // Does the visitor already hold a valid challenge clearance cookie?
-        let cleared = clearance_ok(&state, &headers, &client_ip.to_string());
-
-        // ── 9. Build RequestContext and run pipeline ──────────
-        let ctx = RequestContext {
-            site_id:    site.id,
-            site_name:  site.name.clone(),
-            client_ip,
-            path:       path.clone(),
-            query:      query.clone(),
-            headers:    headers.clone(),
-            body:       inspected,
-        };
-
-        // An allowed address skips the pipeline rather than being waved through
-        // it. Substituting a clean verdict rather than returning early keeps every
-        // path below unchanged — the WebSocket upgrade, the ordinary response, and
-        // the traffic row that all three of them write.
-        let verdict = if listed == Some(crate::iplist::Listed::Allowed) {
-            PipelineVerdict::Allow {
-                alerts:   Vec::new(),
-                findings: crate::modules::Findings::default(),
-            }
-        } else {
-            state.pipeline.run(&ctx).await
-        };
-
-        // A published list whose response is a challenge. Applied to what the
-        // pipeline decided rather than before it, so a request the rules would
-        // block is still blocked and one they would challenge is challenged once.
-        //
-        // Not for a visitor who has already answered a challenge: they have shown
-        // what the list was asking, and turning their request into a challenge
-        // they skip would also drop what a DetectionOnly policy found on it.
-        let verdict = match (verdict, &listed) {
-            (PipelineVerdict::Allow { findings, .. }, Some(crate::iplist::Listed::Published(hit)))
-                if hit.response == crate::iplist::Response::Challenge && !cleared && !detection_only =>
-            {
-                PipelineVerdict::Challenge {
-                    reason: format!("Client address is on the published list \"{}\"", hit.name),
-                    findings,
-                }
-            }
-            (verdict, _) => verdict,
-        };
-
-        // In DetectionOnly a list refuses and challenges nobody. It records what it
-        // would have done, beside whatever the rules found, the way the rules
-        // record theirs — so a policy can be trialled with its lists as well.
-        let verdict = match (verdict, list_verdict(&listed).filter(|_| detection_only)) {
-            (PipelineVerdict::Allow { mut alerts, mut findings }, Some((why, would))) => {
-                findings.detection = Some(stronger(findings.detection, would));
-                alerts.push(crate::modules::Alert { reason: why });
-                PipelineVerdict::Allow { alerts, findings }
-            }
-            (verdict, _) => verdict,
-        };
-
-        if let PipelineVerdict::Block { reason, status, findings, .. } = verdict {
+    let findings = match verdict {
+        PipelineVerdict::Block { reason, status, findings } => {
             // The request was refused; `blocked` says so. `detection` is for
             // what would have happened and did not.
             visit.record(&state.traffic, Outcome {
@@ -1121,268 +900,634 @@ async fn handle_request(
             });
             return error_response(status, &reason);
         }
-
-        // ── 10. Challenge verdict: show CAPTCHA unless already cleared ──
-        if let PipelineVerdict::Challenge { reason, findings, .. } = &verdict
-            && !cleared
-        {
-            let dest = match &query {
-                Some(q) => format!("{}?{}", path, q),
-                None    => path.clone(),
-            };
-            let issued = state.challenges.issue(&dest, &client_ip.to_string());
-
-            // Attributed like a block: a challenged request is worth knowing
-            // the rules of for the same reason. Not a detection — it was
-            // challenged, not merely detected.
-            visit.record(&state.traffic, Outcome {
-                status: if issued.is_some() { 200 } else { 429 },
-                reason: Some(format!("challenge: {}", reason)),
-                score:  Some(findings.score),
-                hits:   findings.hits_json(),
-                ..Outcome::default()
-            });
-            return match issued {
-                Some((id, data_uri)) => challenge_response(&id, &data_uri, false),
-                None                 => too_many_challenges(),
-            };
+        PipelineVerdict::Challenge { reason, findings } if !cleared => {
+            return challenge(state, &visit, &incoming, &reason, &findings);
         }
-        // A cleared visitor falls through and is forwarded normally.
+        // A visitor who has answered a challenge is forwarded. It was
+        // challenged, and they answered; that is not a detection to report
+        // again.
+        PipelineVerdict::Challenge { .. } => None,
+        PipelineVerdict::Allow { alerts, findings } => detection_of(&alerts, &findings),
+    };
 
-        // What the WAF found on a request it is about to allow.
-        //
-        // Until 0.6.11 this was dropped: every allowed request logged a clean
-        // record, whether nothing had matched or a DetectionOnly policy had just
-        // decided it would have blocked. That made DetectionOnly report nothing,
-        // and hid every near-miss in enforcing mode too.
-        //
-        // Computed once here because three paths below forward a request —
-        // WebSocket upgrade, cleared challenge, and the ordinary response.
-        let detected: Option<(i64, Option<String>, String, String)> = match &verdict {
-            PipelineVerdict::Allow { findings, alerts } => findings.detection.map(|d| {
-                let why = alerts
-                    .iter()
-                    .map(|a| a.reason.as_str())
-                    .collect::<Vec<_>>()
-                    .join("; ");
-                (findings.score, findings.hits_json(), d.as_str().to_string(), why)
-            }),
-            // A cleared challenge falls through to here. It was challenged, and
-            // the visitor answered; that is not a detection to report again.
+    forward(state, site, &incoming, &visit, &findings, body.start, on_upgrade).await
+}
+
+// ─── Steps 1 to 4 ────────────────────────────────────────
+
+/// Step 1. The hostname the request is for, lowercase and without its port —
+/// "example.com:8081" routes as "example.com", whichever port the client
+/// connected on. `None` when there is no Host header to route by.
+fn request_host(req: &axum::extract::Request) -> Option<String> {
+    let host = req
+        .headers()
+        .get("host")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .split(':')
+        .next()
+        .unwrap_or("")
+        .to_lowercase();
+    (!host.is_empty()).then_some(host)
+}
+
+/// Step 2. The answer to a Let's Encrypt HTTP-01 validation, if this is one.
+///
+/// Answered before everything else, and on purpose. Before the site lookup, so
+/// it works for a site that is disabled or not configured yet. Before the HTTPS
+/// redirect, because the CA follows redirects and a site with a broken
+/// certificate would bounce the validator into a connection it cannot complete
+/// — the exact situation someone is trying to fix. Before the pipeline, because
+/// a token is opaque base64url and nothing should be able to score or block
+/// one: a renewal that failed because a scanner rule matched its challenge
+/// token would be a genuinely awful outage to diagnose.
+///
+/// Only on the plain-HTTP listener: HTTP-01 validation always arrives on port
+/// 80, so answering on the TLS one would serve a token to something that is not
+/// the CA. A challenge path with no answer published falls through to be
+/// handled as any other request would be, rather than confirming the path
+/// exists.
+fn acme_answer(state: &ProxyState, host: &str, req: &axum::extract::Request) -> Option<Response<Body>> {
+    if state.is_tls {
+        return None;
+    }
+    let token = crate::acme::token_from_path(req.uri().path())?;
+    let answer = crate::acme::answer(token)?;
+    tracing::info!(host = %host, "Answered an ACME HTTP-01 challenge");
+    Some(
+        Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", "text/plain")
+            .body(Body::from(answer))
+            .unwrap_or_else(|_| error_response(StatusCode::INTERNAL_SERVER_ERROR, "response")),
+    )
+}
+
+/// Step 3. The enabled site this hostname belongs to, or the page to answer
+/// with instead.
+///
+/// A site that exists but is switched off is a different situation from a
+/// hostname nobody configured: the first is the operator taking it down on
+/// purpose, and its visitors deserve to be told that rather than being shown a
+/// 404 that reads like a mistake.
+async fn find_site(state: &ProxyState, host: &str) -> Result<Arc<SiteRow>, Response<Body>> {
+    let table = site_table(&state.db).await;
+    if let Some(site) = table.enabled.get(host) {
+        return Ok(site.clone());
+    }
+    if table.disabled.contains(host) {
+        let message = crate::routes::settings::get_maintenance_message(&state.db).await;
+        tracing::debug!(host = %host, "site is disabled — serving maintenance page");
+        return Err(maintenance_response(&message));
+    }
+    tracing::debug!(host = %host, "no site matched");
+    Err(error_response(StatusCode::NOT_FOUND, "No site configured for this host"))
+}
+
+/// Step 4. The redirect to HTTPS, when the site asks for one and it can work.
+///
+/// Only from a plain listener, and only when there is somewhere to send them:
+/// redirecting to a TLS port that is not bound would take the site off the air
+/// instead of securing it. Done before any inspection, since the request is not
+/// being served here either way.
+///
+/// "Somewhere" includes a certificate. An HTTPS port with none refuses every
+/// handshake, and a redirect to it made the whole site unreachable while its
+/// page said it was active. The form no longer saves a site that way, but one
+/// can still arrive there — a certificate requested from Let's Encrypt while
+/// creating the site, and refused — and serving plain HTTP is never worse than
+/// sending visitors to a port that cannot answer.
+fn https_redirect(
+    state: &ProxyState,
+    site:  &SiteRow,
+    host:  &str,
+    req:   &axum::extract::Request,
+) -> Option<Response<Body>> {
+    if state.is_tls || !site.tls_redirect || !site.has_cert {
+        return None;
+    }
+    let tls_port = site.tls_port?;
+    let path = req.uri().path_and_query().map(|p| p.as_str()).unwrap_or("/");
+    let target = if tls_port == 443 {
+        format!("https://{host}{path}")
+    } else {
+        format!("https://{host}:{tls_port}{path}")
+    };
+    Some(
+        Response::builder()
+            .status(StatusCode::TEMPORARY_REDIRECT)
+            .header("location", target)
+            .body(Body::empty())
+            .unwrap_or_else(|_| error_response(StatusCode::INTERNAL_SERVER_ERROR, "Redirect build error")),
+    )
+}
+
+// ─── Step 5: the request, taken apart ────────────────────
+
+/// What the later steps read about a request, taken once.
+struct Incoming {
+    /// The address the connection came from.
+    peer:      std::net::IpAddr,
+    /// The client: the peer, unless it is a trusted proxy, in which case the
+    /// client that proxy reported. Resolved once, so everything downstream —
+    /// country rules, CAPTCHA clearance, the traffic log — agrees on who the
+    /// client is.
+    client_ip: std::net::IpAddr,
+    method:    Method,
+    path:      String,
+    query:     Option<String>,
+    headers:   HeaderMap,
+}
+
+/// The request body, before any of it is read.
+type BodyStream = std::pin::Pin<Box<axum::body::BodyDataStream>>;
+
+impl Incoming {
+    /// Step 5. Take the request apart: what later steps read, the body still
+    /// to be read, and the handle that lets the connection be upgraded — taken
+    /// first, because it lives in the request's extensions and goes with them.
+    fn take(
+        mut req: axum::extract::Request,
+        peer: SocketAddr,
+    ) -> (Self, BodyStream, Option<hyper::upgrade::OnUpgrade>) {
+        let on_upgrade = req.extensions_mut().remove::<hyper::upgrade::OnUpgrade>();
+        let (parts, body) = req.into_parts();
+        let client_ip = crate::forwarded::client_ip(peer.ip(), &parts.headers);
+        let incoming = Incoming {
+            peer: peer.ip(),
+            client_ip,
+            method: parts.method,
+            path: parts.uri.path().to_string(),
+            query: parts.uri.query().map(str::to_string),
+            headers: parts.headers,
+        };
+        (incoming, Box::pin(body.into_data_stream()), on_upgrade)
+    }
+
+    /// The path with its query string, as the request line had them.
+    fn path_and_query(&self) -> String {
+        match &self.query {
+            Some(q) => format!("{}?{}", self.path, q),
+            None    => self.path.clone(),
+        }
+    }
+}
+
+impl Visit {
+    /// What every traffic row for this request shares. Whichever way it ends —
+    /// refused by a list, blocked, challenged, or forwarded — its row is this
+    /// plus how it ended.
+    fn of(site: &SiteRow, incoming: &Incoming, host: String, started_at: Instant) -> Self {
+        Visit {
+            site_id:    site.id,
+            site_name:  site.name.clone(),
+            client_ip:  incoming.client_ip.to_string(),
+            method:     incoming.method.to_string(),
+            host,
+            path:       incoming.path.clone(),
+            query:      incoming.query.clone(),
+            // Looked up once: the traffic row records it, and the country
+            // rules in the pipeline read the same lookup.
+            country:    crate::geo::country_of(incoming.client_ip),
+            started_at,
+        }
+    }
+}
+
+// ─── Step 6: the IP lists ────────────────────────────────
+
+/// What the site's IP lists say about this client.
+struct ListCheck {
+    listed:         Option<crate::iplist::Listed>,
+    /// The site's policy records what its lists would do rather than doing it.
+    detection_only: bool,
+}
+
+impl ListCheck {
+    /// Look the client up in the site's policy's lists.
+    ///
+    /// The lists are the policy's, and follow its mode: Off ignores them with
+    /// the rest of the policy, DetectionOnly records what they would have done,
+    /// and anything else enforces them. A site with no policy has none.
+    async fn of(state: &ProxyState, site: &SiteRow, client_ip: std::net::IpAddr) -> Self {
+        let listed = match (site.policy_id, site.rule_engine.as_deref()) {
+            (Some(policy), Some(mode)) if mode != "Off" => {
+                crate::iplist::check(&state.db, policy, client_ip).await
+            }
             _ => None,
         };
+        ListCheck {
+            listed,
+            detection_only: site.rule_engine.as_deref() == Some("DetectionOnly"),
+        }
+    }
+}
 
-        // ── 11. Forward to upstream ────────────────────────────
-        let path_and_query = match &query {
-            Some(q) => format!("{}?{}", path, q),
-            None    => path.clone(),
-        };
-        // Which backend serves this request. With one upstream it is that one,
-        // every time, as it was before a site could have more.
-        //
-        // With affinity on, the cookie the client sends back decides — as long as
-        // the backend it names is still in this site's pool and still answering.
-        let pinned = if site.affinity {
-            cookie_value(&headers, crate::upstream::AFFINITY_COOKIE)
-                .and_then(|v| crate::upstream::read_pin(&state.secret, &v))
-        } else {
-            None
-        };
-        let Some(chosen) = crate::upstream::choose_pinned(site.id, &site.upstreams, pinned) else {
-            // A site with no upstream at all: nothing to forward to, and saying so
-            // beats a generic gateway error nobody can act on.
-            tracing::warn!(site = %site.name, "no upstream is configured for this site");
-            return error_response(StatusCode::BAD_GATEWAY, "No upstream is configured for this site");
-        };
-        let mut chosen_id  = chosen.upstream.id;
-        let mut chosen_url = chosen.upstream.url.clone();
-        let all_out        = chosen.all_out;
-        // A cookie is set when the site pins and this request did not arrive with
-        // the right one — first request, or a re-pin because the old backend has
-        // gone. Sending it every time would be a header on every response for
-        // nothing.
-        let repin = site.affinity && pinned != Some(chosen_id);
-        let upstream_url   = format!(
-            "{}{}",
-            chosen_url.trim_end_matches('/'),
-            path_and_query
-        );
+/// Step 6. The refusal, when a list the policy enforces blocks this client.
+///
+/// Before the body is read, so a refused address costs no reads at all. Before
+/// the pipeline, and that is the whole design rather than an optimisation: a
+/// site with no policy runs no pipeline at all, and "refuse this client" has to
+/// work there too. A published list that blocks is refused here as well, and
+/// the row names the list: a refusal nobody can explain is the one people
+/// switch the whole feature off over.
+fn refused_by_lists(state: &ProxyState, visit: &Visit, lists: &ListCheck) -> Option<Response<Body>> {
+    let reason = match list_verdict(&lists.listed) {
+        Some((why, crate::modules::Detection::WouldBlock)) if !lists.detection_only => why,
+        _ => return None,
+    };
+    // No rule fired and no score accumulated: the address was refused for
+    // being itself. Recording a score of zero would read as a WAF decision
+    // that never happened.
+    visit.record(&state.traffic, Outcome {
+        status:  403,
+        blocked: true,
+        reason:  Some(reason.clone()),
+        ..Outcome::default()
+    });
+    Some(error_response(StatusCode::FORBIDDEN, &reason))
+}
 
-        // An accepted upgrade leaves HTTP behind, so it cannot go through reqwest,
-        // which has no way to take over a connection after the response. It happens
-        // here rather than earlier so the handshake is inspected like any other
-        // request — it is a normal GET with headers, and the pipeline has already
-        // had its say by this point.
-        if is_upgrade(&headers)
-            && let Some(on_upgrade) = on_upgrade
+// ─── Step 7: the start of the body ───────────────────────
+
+/// The start of the body, and the part of it the rules see.
+struct BodyStart {
+    /// What has been read, and the rest still to come.
+    start:     Prefix<BodyStream>,
+    /// The first `inspection_limit()` bytes of it: `start.head` can run past
+    /// the limit by part of a chunk, and those bytes are forwarded but not
+    /// inspected.
+    inspected: bytes::Bytes,
+}
+
+/// Step 7. Read as much of the body as the rules inspect.
+///
+/// Until 0.11.0 every body was read whole, up to 32 MB, before anything was
+/// forwarded, and anything larger was refused. The cost below the cap was worse
+/// than the cap: the rules decode a body several ways, so a 30 MB upload took
+/// EasyWAF from 78 MB to 480 MB, and a few concurrent ones were a way to exhaust
+/// memory.
+///
+/// Now only the first `inspection_limit()` bytes are read before the verdict.
+/// Attacks sit at the start of a body — the tail of a video does not contain SQL
+/// injection. The rest streams to the upstream as it arrives, so an upload of
+/// any size costs about the limit rather than its own size. The trade-off is
+/// stated in Settings, where the limit is set: bytes past it are forwarded
+/// uninspected, so a payload padded past it is not seen.
+async fn read_body_start(body: BodyStream) -> Result<BodyStart, Response<Body>> {
+    let limit = inspection_limit();
+    let start = read_prefix(body, limit)
+        .await
+        .map_err(|_| error_response(StatusCode::BAD_REQUEST, "Failed to read request body"))?;
+    let inspected = if start.head.len() > limit {
+        start.head.slice(..limit)
+    } else {
+        start.head.clone()
+    };
+    Ok(BodyStart { start, inspected })
+}
+
+// ─── Steps 9 and 10: the verdict ─────────────────────────
+
+/// Step 9. What the modules decide, and what the IP lists add to it.
+async fn judge(
+    state:     &ProxyState,
+    site:      &SiteRow,
+    incoming:  &Incoming,
+    inspected: bytes::Bytes,
+    lists:     &ListCheck,
+    cleared:   bool,
+) -> PipelineVerdict {
+    // An allowed address skips the pipeline rather than being waved through
+    // it. An allowed address has to skip GeoIP, the WAF and the challenge
+    // alike, and making that a verdict every module must remember to honour
+    // would be one forgotten check away from being false. Never entering the
+    // pipeline is true regardless of which modules exist now or are added
+    // later.
+    let verdict = if lists.listed == Some(crate::iplist::Listed::Allowed) {
+        PipelineVerdict::Allow {
+            alerts:   Vec::new(),
+            findings: crate::modules::Findings::default(),
+        }
+    } else {
+        state.pipeline.run(&RequestContext {
+            site_id:   site.id,
+            site_name: site.name.clone(),
+            client_ip: incoming.client_ip,
+            path:      incoming.path.clone(),
+            query:     incoming.query.clone(),
+            headers:   incoming.headers.clone(),
+            body:      inspected,
+        }).await
+    };
+
+    // A published list whose response is a challenge. Applied to what the
+    // pipeline decided rather than before it, so a request the rules would
+    // block is still blocked and one they would challenge is challenged once.
+    //
+    // Not for a visitor who has already answered a challenge: they have shown
+    // what the list was asking, and turning their request into a challenge
+    // they skip would also drop what a DetectionOnly policy found on it.
+    let verdict = match (verdict, &lists.listed) {
+        (PipelineVerdict::Allow { findings, .. }, Some(crate::iplist::Listed::Published(hit)))
+            if hit.response == crate::iplist::Response::Challenge && !cleared && !lists.detection_only =>
         {
-            tracing::debug!(host = %host, path = %path, "proxying a protocol upgrade");
-            let resp = match proxy_upgrade(&upstream_url, &method, &upgrade_headers(&headers, peer.ip(), client_ip, state.is_tls), on_upgrade).await {
-                Ok(resp) => resp,
-                Err(e) => {
-                    tracing::warn!(upstream = %upstream_url, "upgrade failed: {}", e);
-                    error_response(StatusCode::BAD_GATEWAY, "Upgrade failed")
-                }
-            };
+            PipelineVerdict::Challenge {
+                reason: format!("Client address is on the published list \"{}\"", hit.name),
+                findings,
+            }
+        }
+        (verdict, _) => verdict,
+    };
 
-            // Logged like any other request. The tunnel that follows cannot be,
-            // but the handshake is the only record that the connection happened at
-            // all — without it a WebSocket application is invisible in Traffic
-            // Monitor, which is worse than useless when someone is trying to work
-            // out whether their traffic is reaching the site.
+    // In DetectionOnly a list refuses and challenges nobody. It records what it
+    // would have done, beside whatever the rules found, the way the rules
+    // record theirs — so a policy can be trialled with its lists as well.
+    match (verdict, list_verdict(&lists.listed).filter(|_| lists.detection_only)) {
+        (PipelineVerdict::Allow { mut alerts, mut findings }, Some((why, would))) => {
+            findings.detection = Some(stronger(findings.detection, would));
+            alerts.push(crate::modules::Alert { reason: why });
+            PipelineVerdict::Allow { alerts, findings }
+        }
+        (verdict, _) => verdict,
+    }
+}
+
+/// Step 10. Show a CAPTCHA, and remember where the visitor was going.
+fn challenge(
+    state:    &ProxyState,
+    visit:    &Visit,
+    incoming: &Incoming,
+    reason:   &str,
+    findings: &crate::modules::Findings,
+) -> Response<Body> {
+    let issued = state.challenges.issue(&incoming.path_and_query(), &incoming.client_ip.to_string());
+
+    // Attributed like a block: a challenged request is worth knowing the rules
+    // of for the same reason. Not a detection — it was challenged, not merely
+    // detected.
+    visit.record(&state.traffic, Outcome {
+        status: if issued.is_some() { 200 } else { 429 },
+        reason: Some(format!("challenge: {}", reason)),
+        score:  Some(findings.score),
+        hits:   findings.hits_json(),
+        ..Outcome::default()
+    });
+    match issued {
+        Some((id, data_uri)) => challenge_response(&id, &data_uri, false),
+        None                 => too_many_challenges(),
+    }
+}
+
+/// What the rules found on a request that is being let through, for its
+/// traffic row: score, rules, detection and the alerts' reasons.
+///
+/// Until 0.6.11 this was dropped: every allowed request logged a clean record,
+/// whether nothing had matched or a DetectionOnly policy had just decided it
+/// would have blocked. That made DetectionOnly report nothing, and hid every
+/// near-miss in enforcing mode too.
+fn detection_of(
+    alerts:   &[crate::modules::Alert],
+    findings: &crate::modules::Findings,
+) -> Option<(i64, Option<String>, String, String)> {
+    findings.detection.map(|d| {
+        let why = alerts.iter().map(|a| a.reason.as_str()).collect::<Vec<_>>().join("; ");
+        (findings.score, findings.hits_json(), d.as_str().to_string(), why)
+    })
+}
+
+// ─── Step 11: forwarding ─────────────────────────────────
+
+/// Step 11. Send the request to one of the site's backends and stream the
+/// answer back — or hand the connection over, for an upgrade.
+async fn forward(
+    state:      &ProxyState,
+    site:       &SiteRow,
+    incoming:   &Incoming,
+    visit:      &Visit,
+    detected:   &Option<(i64, Option<String>, String, String)>,
+    body:       Prefix<BodyStream>,
+    on_upgrade: Option<hyper::upgrade::OnUpgrade>,
+) -> Response<Body> {
+    // Which backend serves this request. With one upstream it is that one,
+    // every time, as it was before a site could have more. With affinity on,
+    // the cookie the client sends back decides — as long as the backend it
+    // names is still in this site's pool and still answering.
+    let pinned = if site.affinity {
+        cookie_value(&incoming.headers, crate::upstream::AFFINITY_COOKIE)
+            .and_then(|v| crate::upstream::read_pin(&state.secret, &v))
+    } else {
+        None
+    };
+    let Some(chosen) = crate::upstream::choose_pinned(site.id, &site.upstreams, pinned) else {
+        // A site with no upstream at all: nothing to forward to, and saying so
+        // beats a generic gateway error nobody can act on.
+        tracing::warn!(site = %site.name, "no upstream is configured for this site");
+        return error_response(StatusCode::BAD_GATEWAY, "No upstream is configured for this site");
+    };
+
+    // An accepted upgrade leaves HTTP behind, so it cannot go through reqwest,
+    // which has no way to take over a connection after the response. It happens
+    // here rather than earlier so the handshake is inspected like any other
+    // request — it is a normal GET with headers, and the pipeline has already
+    // had its say by this point.
+    if is_upgrade(&incoming.headers)
+        && let Some(on_upgrade) = on_upgrade
+    {
+        return forward_upgrade(state, incoming, visit, detected, &chosen.upstream.url, on_upgrade).await;
+    }
+
+    // A cookie is set when the site pins and this request did not arrive with
+    // the right one — first request, or a re-pin because the old backend has
+    // gone. Sending it every time would be a header on every response for
+    // nothing.
+    let result = send_upstream(state, site, incoming, chosen.upstream, body).await;
+    let repin = site.affinity && pinned != Some(result.upstream.id);
+
+    match result.response {
+        Ok(upstream_resp) => {
             visit.record(&state.traffic,
-                         Outcome::forwarded(&detected, resp.status().as_u16() as i64, &chosen_url));
-            return resp;
+                         Outcome::forwarded(detected, upstream_resp.status().as_u16() as i64, &result.upstream.url));
+            stream_back(state, upstream_resp, result.upstream.id, repin)
         }
-
-        // Strip hop-by-hop headers before forwarding.
-        let mut fwd_headers = headers.clone();
-        for h in HOP_HEADERS {
-            fwd_headers.remove(*h);
-        }
-
-        apply_forwarded_headers(
-            &mut fwd_headers,
-            peer.ip(),
-            client_ip,
-            headers.get(axum::http::header::HOST),
-            state.is_tls,
-        );
-
-        // A body that ended within the limit is sent as it is, exactly as before.
-        // Otherwise the inspected start goes first and the rest follows as it
-        // arrives from the client — with the client's own Content-Length, which is
-        // forwarded unchanged and still matches, since not one byte is altered.
-        // A body that ended within the inspected prefix is held whole, so it can be
-        // sent again to a second backend. One that is still arriving cannot: it is
-        // a stream, the first attempt consumes it, and there is nothing left to
-        // replay. So a large upload gets one attempt and an honest 502, rather than
-        // a retry that would send half a body.
-        let replayable = prefix.complete;
-        let head       = prefix.head.clone();
-        let mut streamed = if prefix.complete {
-            None
-        } else {
-            let first = futures::stream::once(std::future::ready(
-                Ok::<bytes::Bytes, axum::Error>(prefix.head),
-            ));
-            Some(reqwest::Body::wrap_stream(futures::StreamExt::chain(first, prefix.rest)))
-        };
-
-        // At most three backends: a pool large enough for a fourth attempt is a
-        // pool where the client has waited long enough to be told.
-        const ATTEMPTS: usize = 3;
-        let mut tried: Vec<i64> = Vec::new();
-        let mut url = upstream_url.clone();
-
-        let upstream_result = loop {
-            let body = match streamed.take() {
-                Some(b) => b,
-                None    => reqwest::Body::from(head.clone()),
-            };
-            let result = state
-                .client
-                .request(to_reqwest_method(&method), &url)
-                .headers(to_reqwest_headers(&fwd_headers))
-                .body(body)
-                .send()
-                .await;
-
-            let Err(ref e) = result else {
-                break result;
-            };
-
-            // Could not be reached: that is the backend's fault, whatever the
-            // application would have said.
-            crate::upstream::failed(chosen_id);
-            tried.push(chosen_id);
-            if !replayable || tried.len() >= ATTEMPTS {
-                break result;
-            }
-            let Some(next) = crate::upstream::choose_except(site.id, &site.upstreams, &tried) else {
-                break result;
-            };
-            tracing::warn!(upstream = %url, error = %e, next = %next.upstream.url,
-                           "upstream unreachable, trying another backend");
-            chosen_id  = next.upstream.id;
-            chosen_url = next.upstream.url.clone();
-            url = format!("{}{}", chosen_url.trim_end_matches('/'), path_and_query);
-        };
-
-        match upstream_result {
-            // ── Upstream unreachable ──────────────────────────
-            Err(e) => {
-                tracing::warn!(upstream = %upstream_url, error = %e, "upstream unreachable");
-                visit.record(&state.traffic, Outcome::forwarded(&detected, 502, &chosen_url));                // Two different problems with two different next steps, so they
-                // are not given the same sentence: one backend is unreachable, or
-                // every backend of this site is.
-                if all_out || tried.len() > 1 {
-                    error_response(StatusCode::BAD_GATEWAY,
-                                   "All upstreams for this site are down")
-                } else {
-                    error_response(StatusCode::BAD_GATEWAY, "Upstream unreachable")
-                }
-            }
-
-            // ── Upstream responded — stream back to client ────
-            Ok(upstream_resp) => {
-                let status       = upstream_resp.status();
-                // A 5xx is the backend saying it cannot answer, and counts against
-                // it. A 404 is the application answering, and does not: taking a
-                // working backend out of rotation because somebody asked for a
-                // missing page would be a worse fault than the one being guarded
-                // against.
-                if status.is_server_error() {
-                    crate::upstream::failed(chosen_id);
-                } else {
-                    crate::upstream::succeeded(chosen_id);
-                }
-                let resp_headers = upstream_resp.headers().clone();
-
-                // Stream the response body back without buffering it.
-                let body_stream = upstream_resp.bytes_stream();
-                let body        = Body::from_stream(body_stream);
-
-                // Copy upstream response headers (minus hop-by-hop).
-                //
-                // `append`, not `insert`. A HeaderMap yields one pair per value, so
-                // inserting in a loop keeps only the last of any repeated header —
-                // and the header applications repeat most is Set-Cookie. A login
-                // that sets a session cookie and a passphrase cookie together would
-                // arrive with one of them, and the browser would come back
-                // unauthenticated to the login page with nothing logged anywhere.
-                let mut resp = Response::builder().status(status);
-                if let Some(headers_mut) = resp.headers_mut() {
-                    copy_response_headers(headers_mut, &resp_headers);
-
-                    // Pin the client to the backend that served it. A session
-                    // cookie: affinity that outlives the browser session would
-                    // hold a client to a backend long after anything it was
-                    // keeping in memory had gone. HttpOnly because no page has
-                    // any business reading it, and Secure over TLS so it is not
-                    // sent back in clear.
-                    if repin
-                        && let Ok(v) = axum::http::HeaderValue::from_str(&format!(
-                            "{}={}; Path=/; HttpOnly; SameSite=Lax{}",
-                            crate::upstream::AFFINITY_COOKIE,
-                            crate::upstream::make_pin(&state.secret, chosen_id),
-                            if state.is_tls { "; Secure" } else { "" }))
-                    {
-                        headers_mut.append(axum::http::header::SET_COOKIE, v);
-                    }
-                }
-
-                visit.record(&state.traffic,
-                             Outcome::forwarded(&detected, status.as_u16() as i64, &chosen_url));
-                resp.body(body).unwrap_or_else(|_| {
-                    error_response(StatusCode::INTERNAL_SERVER_ERROR, "Response build error")
-                })
+        Err(e) => {
+            tracing::warn!(upstream = %result.upstream.url, error = %e, "upstream unreachable");
+            visit.record(&state.traffic, Outcome::forwarded(detected, 502, &result.upstream.url));
+            // Two different problems with two different next steps, so they
+            // are not given the same sentence: one backend is unreachable, or
+            // every backend of this site is.
+            if chosen.all_out || result.tried > 1 {
+                error_response(StatusCode::BAD_GATEWAY, "All upstreams for this site are down")
+            } else {
+                error_response(StatusCode::BAD_GATEWAY, "Upstream unreachable")
             }
         }
     }
-    .await;
-    security.apply(response.headers_mut());
-    response
+}
+
+/// Proxy an upgrade handshake and, if the backend accepts, the connection.
+async fn forward_upgrade(
+    state:      &ProxyState,
+    incoming:   &Incoming,
+    visit:      &Visit,
+    detected:   &Option<(i64, Option<String>, String, String)>,
+    upstream:   &str,
+    on_upgrade: hyper::upgrade::OnUpgrade,
+) -> Response<Body> {
+    let url = format!("{}{}", upstream.trim_end_matches('/'), incoming.path_and_query());
+    tracing::debug!(path = %incoming.path, "proxying a protocol upgrade");
+    let headers = upgrade_headers(&incoming.headers, incoming.peer, incoming.client_ip, state.is_tls);
+    let resp = match proxy_upgrade(&url, &incoming.method, &headers, on_upgrade).await {
+        Ok(resp) => resp,
+        Err(e) => {
+            tracing::warn!(upstream = %url, "upgrade failed: {}", e);
+            error_response(StatusCode::BAD_GATEWAY, "Upgrade failed")
+        }
+    };
+
+    // Logged like any other request. The tunnel that follows cannot be, but
+    // the handshake is the only record that the connection happened at all —
+    // without it a WebSocket application is invisible in Traffic Monitor, which
+    // is worse than useless when someone is trying to work out whether their
+    // traffic is reaching the site.
+    visit.record(&state.traffic, Outcome::forwarded(detected, resp.status().as_u16() as i64, upstream));
+    resp
+}
+
+/// How sending a request upstream went.
+struct Sent<'a> {
+    /// The upstream's response, or the last error trying to reach one.
+    response: Result<reqwest::Response, reqwest::Error>,
+    /// The backend that answered, or the last one tried.
+    upstream: &'a crate::upstream::Upstream,
+    /// How many backends were tried.
+    tried:    usize,
+}
+
+/// Send the request to `first`, and to another backend if it cannot be reached
+/// and the body can be sent again.
+///
+/// A body that ended within the inspected start is held whole, so it can be
+/// sent again to a second backend. One that is still arriving cannot: it is a
+/// stream, the first attempt consumes it, and there is nothing left to replay.
+/// So a large upload gets one attempt and an honest 502, rather than a retry
+/// that would send half a body. It is sent with the client's own
+/// Content-Length, which still matches, since not one byte is altered.
+async fn send_upstream<'a>(
+    state:    &ProxyState,
+    site:     &'a SiteRow,
+    incoming: &Incoming,
+    first:    &'a crate::upstream::Upstream,
+    body:     Prefix<BodyStream>,
+) -> Sent<'a> {
+    // At most three backends: a pool large enough for a fourth attempt is a
+    // pool where the client has waited long enough to be told.
+    const ATTEMPTS: usize = 3;
+
+    let mut headers = incoming.headers.clone();
+    for h in HOP_HEADERS {
+        headers.remove(*h);
+    }
+    apply_forwarded_headers(
+        &mut headers,
+        incoming.peer,
+        incoming.client_ip,
+        incoming.headers.get(axum::http::header::HOST),
+        state.is_tls,
+    );
+    let headers = to_reqwest_headers(&headers);
+
+    let replayable = body.complete;
+    let head = body.head.clone();
+    let mut streamed = if body.complete {
+        None
+    } else {
+        let first_chunk = futures::stream::once(std::future::ready(
+            Ok::<bytes::Bytes, axum::Error>(body.head),
+        ));
+        Some(reqwest::Body::wrap_stream(futures::StreamExt::chain(first_chunk, body.rest)))
+    };
+
+    let path_and_query = incoming.path_and_query();
+    let mut upstream = first;
+    let mut tried: Vec<i64> = Vec::new();
+    loop {
+        let url = format!("{}{}", upstream.url.trim_end_matches('/'), path_and_query);
+        let request_body = match streamed.take() {
+            Some(b) => b,
+            None    => reqwest::Body::from(head.clone()),
+        };
+        let response = state
+            .client
+            .request(to_reqwest_method(&incoming.method), &url)
+            .headers(headers.clone())
+            .body(request_body)
+            .send()
+            .await;
+
+        let Err(e) = &response else {
+            return Sent { response, upstream, tried: tried.len() + 1 };
+        };
+
+        // Could not be reached: that is the backend's fault, whatever the
+        // application would have said.
+        crate::upstream::failed(upstream.id);
+        tried.push(upstream.id);
+        if !replayable || tried.len() >= ATTEMPTS {
+            return Sent { response, upstream, tried: tried.len() };
+        }
+        let Some(next) = crate::upstream::choose_except(site.id, &site.upstreams, &tried) else {
+            return Sent { response, upstream, tried: tried.len() };
+        };
+        tracing::warn!(upstream = %url, error = %e, next = %next.upstream.url,
+                       "upstream unreachable, trying another backend");
+        upstream = next.upstream;
+    }
+}
+
+/// Turn the upstream's response into the client's, streaming the body without
+/// buffering it. `served` is the backend that answered; `repin` says the client
+/// needs a new affinity cookie naming it.
+fn stream_back(
+    state:         &ProxyState,
+    upstream_resp: reqwest::Response,
+    served:        i64,
+    repin:         bool,
+) -> Response<Body> {
+    let status = upstream_resp.status();
+    // A 5xx is the backend saying it cannot answer, and counts against it. A
+    // 404 is the application answering, and does not: taking a working backend
+    // out of rotation because somebody asked for a missing page would be a
+    // worse fault than the one being guarded against.
+    if status.is_server_error() {
+        crate::upstream::failed(served);
+    } else {
+        crate::upstream::succeeded(served);
+    }
+    let resp_headers = upstream_resp.headers().clone();
+    let body = Body::from_stream(upstream_resp.bytes_stream());
+
+    let mut resp = Response::builder().status(status);
+    if let Some(headers) = resp.headers_mut() {
+        copy_response_headers(headers, &resp_headers);
+
+        // Pin the client to the backend that served it. A session cookie:
+        // affinity that outlives the browser session would hold a client to a
+        // backend long after anything it was keeping in memory had gone.
+        // HttpOnly because no page has any business reading it, and Secure over
+        // TLS so it is not sent back in clear.
+        if repin
+            && let Ok(v) = axum::http::HeaderValue::from_str(&format!(
+                "{}={}; Path=/; HttpOnly; SameSite=Lax{}",
+                crate::upstream::AFFINITY_COOKIE,
+                crate::upstream::make_pin(&state.secret, served),
+                if state.is_tls { "; Secure" } else { "" }))
+        {
+            headers.append(axum::http::header::SET_COOKIE, v);
+        }
+    }
+    resp.body(body)
+        .unwrap_or_else(|_| error_response(StatusCode::INTERNAL_SERVER_ERROR, "Response build error"))
 }
 
 // ─── IP list verdicts ────────────────────────────────────
