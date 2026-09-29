@@ -5,13 +5,15 @@
 *.db.backup-*
 .env
 
-# Written beside the database by a run from the checkout (0.13.5, 0.14.0).
+# Written beside the database by a run from the checkout.
 # The first two are whole databases — every private key and password hash —
 # and must never reach git by an `add -A`.
 *.db.before-restore*
 *.db.restore*
 /backups/
 /geo/
+/rules-cache/
+/lists-cache/
 
 # Built documentation site — mkdocs build output
 /site/
