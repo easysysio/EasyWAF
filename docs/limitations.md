@@ -3,7 +3,7 @@
 Called out so nothing here is a surprise in production. Split by whether it is
 scheduled or decided.
 
-Current as of **0.14.0**.
+Current as of **0.14.4**.
 
 ## As a reverse proxy
 
@@ -53,6 +53,10 @@ Current as of **0.14.0**.
   and verdict only, and the path without its query string. A new rule cannot be
   replayed against past traffic to see what it would have matched. The
   [flow log](logging.md) carries the full path and query.
+- **Under a flood, traffic rows can be dropped.** Rows are written in batches
+  from a queue, and a request is never held up to record it: if the queue fills —
+  tens of thousands of requests a second — the rows that do not fit are dropped,
+  and the journal says how many.
 - **Request bodies are inspected up to a limit** — 128 KB by default, under
   **Settings → Proxy**. The rest of a body is forwarded uninspected as it
   arrives, so a payload padded past the limit is not seen.

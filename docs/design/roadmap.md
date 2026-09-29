@@ -25,6 +25,7 @@ next minor, so a release's notes stay about its feature.
 | 0.14.1 | What the 0.14.0 review found: a site with an HTTPS port and no certificate, changes sent to the interface from a sibling subdomain, and site headers missing from EasyWAF's own pages; and the unambiguous signatures block on their own — **released 2026-09-27** |
 | 0.14.2 | Simpler and faster: sites held in memory and traffic recorded by one batched writer — five times the throughput at under half the CPU — and the *Import OWASP rules* button removed, which could mark a rule update applied that was not — **released 2026-09-28** |
 | 0.14.3 | The Dashboard and Traffic Monitor charts follow the window as it widens, not only as it narrows — **released 2026-09-29** |
+| 0.14.4 | What a correctness review found: a forged client address behind a proxy, exclusions reaching past their path, WebSocket handshakes forwarded unchecked, an open redirect after a challenge, sign-in without a limit on attempts, sessions the server never expired; and the proxy's handler split into the steps it takes — **released 2026-09-29** |
 | 0.15.0 | Smart Protect: an address refused repeatedly in a short window is blocked for a while (see [smart-protect.md](smart-protect.md)) |
 | 0.16.0 | Authentication gateway: a sign-in in front of a site or a path, local accounts then LDAP (see [auth-gateway.md](auth-gateway.md)) |
 | 0.17.0 | Configuration sync between nodes — HA (see [ha-config-sync.md](ha-config-sync.md)) |

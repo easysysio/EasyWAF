@@ -6,7 +6,7 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
-## [Unreleased]
+## [0.14.4] — 2026-09-29
 
 ### Security
 - **A client could pass itself off as another address behind a proxy that adds its own `X-Forwarded-For` line.** Only the first line was read — the one the client wrote — so behind HAProxy's `option forwardfor`, for one, a forged address was taken as the client's, and IP lists, country rules and challenge clearance all went by it. Every line is now read, in order, as the one list HTTP says they are. Only installations with trusted proxies configured were affected.
@@ -24,6 +24,11 @@ Version bumps and tags are created only after explicit approval.
 ### Changed
 - Code that described things it no longer did was corrected or removed: comments claiming a new port needs a restart, that alerts and blocks were "not yet produced", and a 32 MB body limit; a pipeline module that did nothing; and fields and an error variant nothing used. The proxy's request handler, one function of about 570 lines, is split into its steps — each a function of its own, named for what it does — so it reads top to bottom as the list of what happens to a request.
 - Comments say what the code does and why; how it used to behave is left to this changelog and the git history. A version is still named where code exists to handle what an older release left behind, such as a cookie with no role or a config file with keys since removed.
+
+### Upgrading
+- Everyone signs in once more: sessions issued before this release carry no start time, so the server refuses them.
+- An exclusion's path now covers whole path segments: `/api/upload` no longer covers `/api/uploads`. Add an exclusion for each path it was meant to reach.
+- If the management interface is reached through a proxy — EasyWAF itself or another — list that proxy under **Settings → Proxy**, or every sign-in counts against the proxy's one address.
 
 ---
 
