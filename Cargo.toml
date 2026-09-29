@@ -82,6 +82,11 @@ async-trait = "0.1"
 futures = "0.3"
 bytes = "1.6"
 
+# Resolving a request path the way the upstream request will: the same crate
+# reqwest parses that URL with, so an exclusion is matched against the path the
+# backend actually receives. Already in the tree through reqwest.
+url = "2"
+
 # WAF pattern matching — uses a safe automata engine (no ReDoS risk)
 regex = "1"
 

@@ -49,7 +49,7 @@ use axum::http::{header, HeaderValue};
 use tower_http::set_header::SetResponseHeaderLayer;
 use std::net::SocketAddr;
 use axum_extra::extract::cookie::Key;
-use modules::{geoip::GeoIpModule, traffic::TrafficLogger, waf::WafModule, Pipeline};
+use modules::{geoip::GeoIpModule, waf::WafModule, Pipeline};
 use sqlx::SqlitePool;
 use std::sync::Arc;
 use tera::Tera;
@@ -144,16 +144,12 @@ async fn main() {
     proxy::set_inspection_limit(routes::settings::get_body_inspect_kb(&db).await as usize * 1024);
 
     // ── Build module pipeline ─────────────────────────────
-    // Modules run in order for every proxied request.
-    // TrafficLogger always returns Pass; the proxy handler
-    // queues each request's row with TrafficWriter::record.
+    // Modules run in order for every proxied request. Every request is
+    // recorded whatever they decide: the proxy queues its traffic row itself.
     let mut pipeline = Pipeline::new();
-    pipeline.add(TrafficLogger::new(db.clone()));
     // Country rules run before the pattern rules: if a whole country is denied
     // there is nothing to gain from scoring its payloads first.
     pipeline.add(GeoIpModule::new(db.clone()));
-    // WAF module runs after traffic logging so every request is counted
-    // even if it ends up being blocked.
     pipeline.add(WafModule::new(db.clone()));
     let pipeline = Arc::new(pipeline);
 

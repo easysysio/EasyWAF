@@ -6,6 +6,26 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
+## [Unreleased]
+
+### Security
+- **A client could pass itself off as another address behind a proxy that adds its own `X-Forwarded-For` line.** Only the first line was read — the one the client wrote — so behind HAProxy's `option forwardfor`, for one, a forged address was taken as the client's, and IP lists, country rules and challenge clearance all went by it. Every line is now read, in order, as the one list HTTP says they are. Only installations with trusted proxies configured were affected.
+- **A rule excluded for a path was also skipped for requests that only looked as if they were under it.** `/files/../admin` counted as under `/files`, and so did the encoded `%2e%2e` form — and the request reached the application as `/admin`, with the rule off. A prefix also covered longer names: `/files` covered `/filesystem`. An exclusion's path is now compared with the path the application receives, a whole segment at a time.
+- **WebSocket handshakes were forwarded with the client's headers as they arrived.** An `X-Forwarded-For` the client wrote reached the application unchecked, `X-Real-IP` and `X-Forwarded-Proto` were not sent, and `Host` was replaced with the backend's address, which an application comparing `Origin` with `Host` refuses. A handshake now carries the same forwarding headers as any other request, the browser's `Host`, and every value of a repeated header.
+- **After solving a challenge, a crafted link could send the visitor to another site.** The return path had only to start with `/`, and `//evil.example/` does. It must now be a single-slash path on the same site.
+- **Sign-in had no limit on attempts.** An address is now refused for the rest of a 15-minute window after 10 failed sign-ins in it. Counted per address, not per account, so nobody can lock an administrator out.
+- **How long a refused sign-in took said whether the account existed** — about 2 ms for an unknown name against 230 for a known one. Both now take the same time.
+- **A session's eight hours are enforced by the server**, not only by the cookie's lifetime in the browser, so a copied cookie stops working when the session would have ended. Cookies issued before this release carry no start time, so everyone signs in once more after upgrading.
+- The challenge clearance cookie is marked `Secure` over HTTPS.
+
+### Fixed
+- Waiting challenges are capped at 10,000. Each draws an image and is kept for three minutes, so a flood of requests crossing a challenge threshold cost memory and CPU without limit; past the cap a visitor is asked to try again in a minute, before any image is drawn.
+
+### Changed
+- Code that described things it no longer did was corrected or removed: comments claiming a new port needs a restart, that alerts and blocks were "not yet produced", and a 32 MB body limit; a pipeline module that did nothing; and fields and an error variant nothing used. The request handler's steps are numbered in the order they run.
+
+---
+
 ## [0.14.3] — 2026-09-29
 
 ### Fixed

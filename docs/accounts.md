@@ -34,14 +34,22 @@ cannot be demoted, suspended or deleted.
 
 ## Sessions
 
-A session lasts 8 hours, and each request checks the account behind the cookie
-rather than trusting the cookie alone. That is what makes the following take
-effect immediately rather than within 8 hours:
+A session lasts 8 hours from sign-in. The server enforces that itself, so a
+copied cookie stops working when the session would have ended, whatever the
+browser keeps. Each request also checks the account behind the cookie rather
+than trusting the cookie alone, which is what makes the following take effect
+immediately rather than within 8 hours:
 
 - changing a password
 - changing a role — a demoted administrator is a viewer on their next request
 - suspending or deleting an account
 - **sign out everywhere**
+
+After **10 failed sign-ins from one address within 15 minutes**, that address
+is refused for the rest of the 15 minutes without the password being checked.
+The limit is per address, not per account, so nobody can lock an administrator
+out by guessing at their name. The address is the one EasyWAF sees, or the
+client a [trusted proxy](configuration.md) reports.
 
 Everyone changing their own password does so under **Account → Change Password**,
 which is available to viewers as well: an account changing its own password is

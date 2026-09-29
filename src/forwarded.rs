@@ -165,6 +165,27 @@ pub async fn reload(db: &SqlitePool) -> usize {
 
 // ─── client_ip ───────────────────────────────────────────
 
+/// Every `X-Forwarded-For` line, read as the one list HTTP says they are.
+///
+/// A header sent on several lines means the same as one line with the values
+/// joined by commas, in order, and proxies differ in which they write: nginx
+/// extends the line it received, HAProxy's `option forwardfor` adds a line of
+/// its own. Until 0.14.4 only the first line was read — the one the client
+/// wrote — so behind a proxy of the second kind a forged address was believed
+/// as the client's, and IP lists, country rules and challenge clearance all
+/// went by it.
+pub fn forwarded_for(headers: &HeaderMap) -> Option<String> {
+    let lines: Vec<&str> = headers
+        .get_all("x-forwarded-for")
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .collect();
+    if lines.is_empty() { None } else { Some(lines.join(", ")) }
+}
+
+
 /// The address to treat as the client's.
 ///
 /// The connection's own peer address unless it came from a trusted proxy, in
@@ -194,7 +215,7 @@ pub fn resolve(peer: IpAddr, headers: &HeaderMap, trusted: &[Cidr]) -> IpAddr {
         return peer;
     }
 
-    let Some(raw) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) else {
+    let Some(raw) = forwarded_for(headers) else {
         return peer;
     };
 
@@ -246,6 +267,19 @@ fn normalise(s: &str) -> Option<IpAddr> {
 mod tests {
     use super::*;
     use std::net::{Ipv4Addr, Ipv6Addr};
+
+    #[test]
+    fn a_proxy_that_adds_its_own_line_is_read_after_the_clients() {
+        // HAProxy adds a line rather than extending the client's. Reading only
+        // the first line believed the forger.
+        let trusted = [Cidr::parse("127.0.0.1").unwrap()];
+        let peer: IpAddr = "127.0.0.1".parse().unwrap();
+        let mut h = HeaderMap::new();
+        h.append("x-forwarded-for", "6.6.6.6".parse().unwrap());
+        h.append("x-forwarded-for", "203.0.113.50".parse().unwrap());
+        assert_eq!(resolve(peer, &h, &trusted), "203.0.113.50".parse::<IpAddr>().unwrap());
+        assert_eq!(forwarded_for(&h).as_deref(), Some("6.6.6.6, 203.0.113.50"));
+    }
 
     fn list(s: &str) -> Vec<Cidr> {
         let (l, bad) = parse_list(s);

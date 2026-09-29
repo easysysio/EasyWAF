@@ -126,7 +126,7 @@ impl WafModule {
 
 // ─── Internal DB row types ───────────────────────────────
 
-/// Policy configuration fetched per request.
+/// A policy's settings, as the cached site snapshot holds them.
 struct PolicyInfo {
     id:                  i64,
     rule_engine:         String,
@@ -168,7 +168,9 @@ impl InspectionModule for WafModule {
     fn name(&self) -> &'static str { "waf" }
 
     /// Evaluate all enabled rules for this request's policy.
-    /// Returns Pass, Alert (DetectionOnly), or Drop (rule_engine=On).
+    /// Returns Drop or Challenge when the policy enforces and a threshold is
+    /// reached, Alert when rules matched and the request is let through —
+    /// under the thresholds, or in DetectionOnly — and Pass when nothing did.
     async fn inspect(&self, ctx: &RequestContext) -> ModuleDecision {
         // Step 1 — this site's policy, rules and exclusions, from the cache.
         let snap = self.snapshot(ctx.site_id).await;
@@ -195,6 +197,9 @@ impl InspectionModule for WafModule {
         // that silently does not run is the kind of thing that is discovered
         // during an incident rather than before one.
         let exclusions = &snap.exclusions;
+        // The path an exclusion is matched against: the one the backend will
+        // be sent, not the one as typed. See `path_as_forwarded`.
+        let forwarded_path = path_as_forwarded(&ctx.path);
 
         // Step 4 — build zone content forms from the request.
         // Each zone is a small list of candidate strings — raw, then
@@ -240,7 +245,7 @@ impl InspectionModule for WafModule {
             // A rule this site excludes never runs, and never scores. Checked
             // before matching so the cost of an exclusion is one string
             // comparison rather than a regex.
-            if let Some(ex) = exclusions.iter().find(|e| e.silences(rule, &ctx.path, ctx.client_ip)) {
+            if let Some(ex) = exclusions.iter().find(|e| e.silences(rule, &forwarded_path, ctx.client_ip)) {
                 tracing::debug!(
                     rule = %rule.name,
                     site = %ctx.site_name,
@@ -397,7 +402,8 @@ impl InspectionModule for WafModule {
 /// space. It is wrong for a path, where `+` is a literal character.
 ///
 /// A single-element result costs only the scan for `%` — this runs per
-/// request, and bodies reach 32 MB — when the text carries no encoding.
+/// request, on up to the inspection limit of each body — when the text carries
+/// no encoding.
 fn zone_text(raw: &str, plus_is_space: bool) -> Vec<String> {
     let has_pct  = raw.contains('%');
     let has_plus = plus_is_space && raw.contains('+');
@@ -881,7 +887,7 @@ impl Exclusion {
         if !same_rule {
             return false;
         }
-        if !(self.path_prefix.is_empty() || path.starts_with(&self.path_prefix)) {
+        if !under_prefix(path, &self.path_prefix) {
             return false;
         }
         // An exclusion with no block covers every client. One with a block
@@ -891,6 +897,38 @@ impl Exclusion {
             Some(cidr) => cidr.contains(client),
             None       => true,
         }
+    }
+}
+
+/// Whether `path` is the prefix or below it, a whole segment at a time: `/dav`
+/// covers `/dav` and `/dav/files`, not `/davx`. An empty prefix covers every
+/// path.
+///
+/// By segment since 0.14.4. A plain string prefix let `/files` switch a rule off
+/// for `/filesystem` too, which nobody writing `/files` meant.
+fn under_prefix(path: &str, prefix: &str) -> bool {
+    if prefix.is_empty() {
+        return true;
+    }
+    match path.strip_prefix(prefix) {
+        Some(rest) => prefix.ends_with('/') || rest.is_empty() || rest.starts_with('/'),
+        None       => false,
+    }
+}
+
+/// A request path as the upstream will receive it: `.` and `..` segments
+/// resolved, and their percent-encoded forms with them.
+///
+/// The upstream request is built by parsing a URL, and parsing resolves dot
+/// segments, so `/files/../admin` reaches the backend as `/admin`. Until 0.14.4
+/// exclusions were matched against the path as typed, so a rule excluded for
+/// `/files` was skipped for that request too — and the attack went to `/admin`
+/// with the rule switched off. The rules themselves still see the raw path:
+/// the `../` in it is exactly what the traversal rules look for.
+fn path_as_forwarded(path: &str) -> String {
+    match url::Url::parse(&format!("http://upstream{path}")) {
+        Ok(u)  => u.path().to_string(),
+        Err(_) => path.to_string(),
     }
 }
 
@@ -1555,15 +1593,12 @@ mod bench {
             site_id,
             site_name:  "bench".into(),
             client_ip:  "203.0.113.9".parse().unwrap(),
-            method:     axum::http::Method::POST,
-            host:       "bench.example".into(),
             path:       "/api/search".into(),
             query:      Some("q=red%20running%20shoes&size=42&sort=price%20asc".into()),
             headers,
             body:       bytes::Bytes::from_static(
                 br#"{"user":"alice","comment":"looking for something in blue","items":[1,2,3]}"#,
             ),
-            started_at: Instant::now(),
         }
     }
 
@@ -1612,5 +1647,35 @@ mod bench {
             db.close().await;
             remove_db(&path);
         }
+    }
+}
+
+#[cfg(test)]
+mod exclusion_path_tests {
+    use super::{path_as_forwarded, under_prefix};
+
+    #[test]
+    fn a_prefix_covers_whole_segments_only() {
+        assert!(under_prefix("/files", "/files"));
+        assert!(under_prefix("/files/report", "/files"));
+        assert!(under_prefix("/files/report", "/files/"));
+        assert!(!under_prefix("/filesystem/x", "/files"), "a longer name is not below the prefix");
+        assert!(!under_prefix("/other", "/files"));
+        assert!(under_prefix("/anything", ""), "no prefix covers every path");
+    }
+
+    #[test]
+    fn a_path_is_matched_as_the_backend_receives_it() {
+        // Each of these reaches the upstream as /download, so none of them may
+        // count as being under /files.
+        for sneaky in ["/files/../download", "/files/%2e%2e/download", "/files/%2E%2E/download",
+                       "/files/./../download", "/files/sub/../../download"] {
+            let p = path_as_forwarded(sneaky);
+            assert_eq!(p, "/download", "{sneaky}");
+            assert!(!under_prefix(&p, "/files"), "{sneaky} was treated as under /files");
+        }
+        // An ordinary path is unchanged.
+        assert_eq!(path_as_forwarded("/files/report.pdf"), "/files/report.pdf");
+        assert_eq!(path_as_forwarded("/files/caf%C3%A9"), "/files/caf%C3%A9");
     }
 }

@@ -167,6 +167,10 @@ from narrowest to widest.
 shows the block, one click excludes that rule for the address that was refused.
 Under **Security Policy → Rule Exclusions** an exclusion can instead be narrowed
 to a path prefix, or to a CIDR block. The rule goes on protecting everyone else.
+A path prefix covers that path and everything below it, a whole segment at a
+time — `/dav` covers `/dav` and `/dav/files`, not `/davx` — and is compared with
+the path as your application receives it, after `..` segments are resolved, so
+`/dav/../admin` is not under `/dav`.
 
 **Switch the rule off for the policy.** Wider: the rule stops running for every
 request on every site using the policy. Untick it in the policy's Rules tab, or

@@ -2,18 +2,16 @@
 // proxy/mod.rs — EasyWAF
 // HTTP reverse proxy engine.
 //
-// On startup, reads all distinct listen_port values from
-// enabled sites and binds one TCP listener per unique port.
-// Incoming requests are routed to a backend site by matching
-// the Host: header against sites.server_name — or one of the
-// site's aliases — in a table of every site held in memory
-// and reloaded when the configuration changes.
-// Every request is passed through the module pipeline before
-// being forwarded to the upstream.
+// Binds one listener per port the enabled sites use, at
+// startup and again whenever a site is saved with a new one.
+// A port no site uses any more stays bound until the next
+// restart.
 //
-// Note: adding a site with a new port or changing a site's
-// port requires a proxy restart to take effect, because TCP
-// listeners are bound once at startup.
+// Incoming requests are routed to a site by matching the
+// Host: header against its server_name or one of its
+// aliases, in a table of every site held in memory and
+// reloaded when the configuration changes. Every request
+// goes through the module pipeline before it is forwarded.
 // =========================================================
 
 use crate::challenge::{
@@ -36,10 +34,8 @@ use std::{collections::{HashMap, HashSet}, net::SocketAddr, sync::Arc, sync::Onc
 use axum_server::tls_rustls::RustlsConfig;
 use tokio::{net::TcpListener, sync::mpsc};
 
-// ─── Hop-by-hop headers ──────────────────────────────────
+// ─── Timeouts and limits ─────────────────────────────────
 
-/// Headers that must not be forwarded between proxy and upstream.
-/// These are connection-specific and are stripped before forwarding.
 /// How long to wait for an upstream to accept a connection.
 pub const UPSTREAM_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
@@ -110,6 +106,8 @@ where
     Ok(Prefix { head: head.freeze(), complete: false, rest: body })
 }
 
+/// Headers that describe one connection rather than the request, so they are
+/// not passed from one side of the proxy to the other.
 const HOP_HEADERS: &[&str] = &[
     "connection",
     "keep-alive",
@@ -501,7 +499,7 @@ fn apply_forwarded_headers(
     // client that sends its own X-Forwarded-For is claiming an address, and
     // forwarding that claim would hand the upstream a forgery this proxy
     // already decided not to believe.
-    let xff = match headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
+    let xff = match crate::forwarded::forwarded_for(headers) {
         Some(existing) if client != peer => format!("{existing}, {peer}"),
         _ => client.to_string(),
     };
@@ -544,6 +542,33 @@ pub fn is_upgrade(headers: &HeaderMap) -> bool {
         .any(|t| t.trim().eq_ignore_ascii_case("upgrade"));
 
     connection_says_upgrade && headers.contains_key("upgrade")
+}
+
+/// The headers an upgrade handshake is sent upstream with.
+///
+/// What every other request gets — the client's headers without the hop-by-hop
+/// ones, and the forwarding headers that say who the client is — except that
+/// `Connection` and `Upgrade` are kept, because they are the request.
+///
+/// Until 0.14.4 a handshake was forwarded with the client's headers exactly as
+/// they arrived: an `X-Forwarded-For` the client wrote itself reached the
+/// application unchecked, `X-Real-IP` and `X-Forwarded-Proto` were missing, and
+/// `Host` was replaced with the backend's address — which an application that
+/// compares `Origin` with `Host` refuses.
+fn upgrade_headers(
+    headers: &HeaderMap,
+    peer: std::net::IpAddr,
+    client: std::net::IpAddr,
+    is_tls: bool,
+) -> HeaderMap {
+    let mut out = headers.clone();
+    for h in HOP_HEADERS {
+        if *h != "connection" && *h != "upgrade" {
+            out.remove(*h);
+        }
+    }
+    apply_forwarded_headers(&mut out, peer, client, headers.get(axum::http::header::HOST), is_tls);
+    out
 }
 
 /// Proxy an upgrade request, tunnelling the connection if the upstream accepts.
@@ -597,13 +622,17 @@ async fn proxy_upgrade(
     let mut builder = hyper::Request::builder().method(method).uri(path);
 
     if let Some(hs) = builder.headers_mut() {
-        // Forwarded whole, including Connection and Upgrade. They are
-        // hop-by-hop and stripped for every other request, which is correct —
-        // and is exactly why an upgrade never reached the upstream before.
+        // Prepared by `upgrade_headers`: the client's own, with the forwarding
+        // headers every request gets and the two hop-by-hop headers an upgrade
+        // needs. `append`, so a repeated header keeps every value.
         for (k, v) in headers {
-            hs.insert(k, v.clone());
+            hs.append(k, v.clone());
         }
-        if let Ok(h) = hyper::header::HeaderValue::from_str(&format!("{host}:{port}")) {
+        // The client's Host, as every other request carries. Only a request
+        // that came without one is given the upstream's.
+        if !hs.contains_key(hyper::header::HOST)
+            && let Ok(h) = hyper::header::HeaderValue::from_str(&format!("{host}:{port}"))
+        {
             hs.insert(hyper::header::HOST, h);
         }
     }
@@ -626,11 +655,7 @@ async fn proxy_upgrade(
         conn_task.abort();
         let mut resp = Response::builder().status(status);
         if let Some(hs) = resp.headers_mut() {
-            for (k, v) in &resp_headers {
-                if !HOP_HEADERS.contains(&k.as_str()) {
-                    hs.insert(k, v.clone());
-                }
-            }
+            copy_response_headers(hs, &resp_headers);
         }
         return resp
             .body(Body::empty())
@@ -674,7 +699,7 @@ async fn proxy_upgrade(
     let mut resp = Response::builder().status(StatusCode::SWITCHING_PROTOCOLS);
     if let Some(hs) = resp.headers_mut() {
         for (k, v) in &resp_headers {
-            hs.insert(k, v.clone());
+            hs.append(k, v.clone());
         }
     }
     resp.body(Body::empty()).map_err(|e| format!("response: {e}"))
@@ -773,14 +798,22 @@ impl Visit {
 }
 
 /// Main proxy handler — called for every incoming request on every port.
-/// Flow:
-///   1. Extract and validate the Host: header.
-///   2. Look up the matching enabled site in the site table.
-///   3. Buffer the request body (needed by WAF modules).
-///   4. Run the module pipeline — block if any module returns Block.
-///   5. Forward the request to the upstream via reqwest.
-///   6. Inject security headers and stream the response back.
-///   7. Queue its traffic row, which the writer task records.
+///
+/// The steps, as numbered in the body:
+///   1. The Host header.
+///   2. A Let's Encrypt validation, answered before anything else.
+///   3. The site, from the site table.
+///   4. The redirect to HTTPS, when the site asks for one.
+///   5. The request taken apart, and who the client is.
+///   6. The site's IP lists.
+///   7. As much of the body as the rules inspect.
+///   8. A CAPTCHA answer, handled before the rules.
+///   9. The module pipeline.
+///  10. A challenge, unless the visitor has already answered one.
+///  11. Forwarding to the upstream, and streaming its response back.
+///
+/// Whichever step answers, the site's security headers are added and the
+/// request's traffic row is queued.
 async fn handle_request(
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     State(state): State<ProxyState>,
@@ -805,7 +838,7 @@ async fn handle_request(
         return error_response(StatusCode::BAD_REQUEST, "Missing Host header");
     }
 
-    // ── 1b. ACME HTTP-01 challenge ────────────────────────
+    // ── 2. ACME HTTP-01 challenge ────────────────────────
     // Answered before everything else, and on purpose.
     //
     // Before the site lookup, so it works for a site that is disabled or not
@@ -835,7 +868,7 @@ async fn handle_request(
             .unwrap_or_else(|_| error_response(StatusCode::INTERNAL_SERVER_ERROR, "response"));
     }
 
-    // ── 2. Look up site ───────────────────────────────────
+    // ── 3. Look up site ───────────────────────────────────
     let table = site_table(&state.db).await;
     let site = match table.enabled.get(&host) {
         Some(s) => s.clone(),
@@ -865,7 +898,7 @@ async fn handle_request(
     // received the HSTS the site's settings said every response carried.
     let mut response = async {
 
-        // ── 2b. Redirect to HTTPS when the site asks for it ───
+        // ── 4. Redirect to HTTPS when the site asks for it ───
         // Only from a plain listener, and only when there is somewhere to send
         // them: redirecting to a TLS port that is not bound would take the site
         // off the air instead of securing it. Done before any inspection, since
@@ -897,7 +930,7 @@ async fn handle_request(
                 });
         }
 
-        // ── 3. Decompose request ──────────────────────────────
+        // ── 5. Decompose request ──────────────────────────────
         // Taken before the request is torn apart: the handle that lets this
         // connection be upgraded lives in its extensions and goes with them.
         let mut req = req;
@@ -932,10 +965,9 @@ async fn handle_request(
             started_at,
         };
 
-        // ── 3c. IP lists ──────────────────────────────────────
+        // ── 6. IP lists ──────────────────────────────────────
         //
-        // Before the body is buffered, so a refused address does not cost 32 MB of
-        // reads first.
+        // Before the body is read, so a refused address costs no reads at all.
         //
         // Before the pipeline, and that is the whole design rather than an
         // optimisation. An allowed address has to skip GeoIP, the WAF and the
@@ -981,7 +1013,7 @@ async fn handle_request(
             return error_response(StatusCode::FORBIDDEN, &reason);
         }
 
-        // ── 3d. Read as much of the body as the rules inspect ──
+        // ── 7. Read as much of the body as the rules inspect ──
         //
         // Until 0.11.0 every body was read whole, up to 32 MB, before anything was
         // forwarded, and anything larger was refused. The cost below the cap was
@@ -1007,7 +1039,7 @@ async fn handle_request(
             prefix.head.clone()
         };
 
-        // ── 3b. CAPTCHA verify submissions — handled before the WAF ──
+        // ── 8. CAPTCHA verify submissions — handled before the WAF ──
         // Always a tiny form this server rendered, so it is answered only when it
         // arrived whole. A verification submission larger than the inspection limit
         // is not one this server sent.
@@ -1021,18 +1053,15 @@ async fn handle_request(
         // Does the visitor already hold a valid challenge clearance cookie?
         let cleared = clearance_ok(&state, &headers, &client_ip.to_string());
 
-        // ── 4. Build RequestContext and run pipeline ──────────
+        // ── 9. Build RequestContext and run pipeline ──────────
         let ctx = RequestContext {
             site_id:    site.id,
             site_name:  site.name.clone(),
             client_ip,
-            method:     method.clone(),
-            host:       host.clone(),
             path:       path.clone(),
             query:      query.clone(),
             headers:    headers.clone(),
             body:       inspected,
-            started_at,
         };
 
         // An allowed address skips the pipeline rather than being waved through
@@ -1056,12 +1085,11 @@ async fn handle_request(
         // what the list was asking, and turning their request into a challenge
         // they skip would also drop what a DetectionOnly policy found on it.
         let verdict = match (verdict, &listed) {
-            (PipelineVerdict::Allow { alerts, findings }, Some(crate::iplist::Listed::Published(hit)))
+            (PipelineVerdict::Allow { findings, .. }, Some(crate::iplist::Listed::Published(hit)))
                 if hit.response == crate::iplist::Response::Challenge && !cleared && !detection_only =>
             {
                 PipelineVerdict::Challenge {
                     reason: format!("Client address is on the published list \"{}\"", hit.name),
-                    alerts,
                     findings,
                 }
             }
@@ -1074,7 +1102,7 @@ async fn handle_request(
         let verdict = match (verdict, list_verdict(&listed).filter(|_| detection_only)) {
             (PipelineVerdict::Allow { mut alerts, mut findings }, Some((why, would))) => {
                 findings.detection = Some(stronger(findings.detection, would));
-                alerts.push(crate::modules::Alert { module: "iplist", reason: why });
+                alerts.push(crate::modules::Alert { reason: why });
                 PipelineVerdict::Allow { alerts, findings }
             }
             (verdict, _) => verdict,
@@ -1094,7 +1122,7 @@ async fn handle_request(
             return error_response(status, &reason);
         }
 
-        // ── 4b. Challenge verdict: show CAPTCHA unless already cleared ──
+        // ── 10. Challenge verdict: show CAPTCHA unless already cleared ──
         if let PipelineVerdict::Challenge { reason, findings, .. } = &verdict
             && !cleared
         {
@@ -1102,19 +1130,22 @@ async fn handle_request(
                 Some(q) => format!("{}?{}", path, q),
                 None    => path.clone(),
             };
-            let (id, data_uri) = state.challenges.issue(&dest, &client_ip.to_string());
+            let issued = state.challenges.issue(&dest, &client_ip.to_string());
 
             // Attributed like a block: a challenged request is worth knowing
             // the rules of for the same reason. Not a detection — it was
             // challenged, not merely detected.
             visit.record(&state.traffic, Outcome {
-                status: 200,
+                status: if issued.is_some() { 200 } else { 429 },
                 reason: Some(format!("challenge: {}", reason)),
                 score:  Some(findings.score),
                 hits:   findings.hits_json(),
                 ..Outcome::default()
             });
-            return challenge_response(&id, &data_uri, false);
+            return match issued {
+                Some((id, data_uri)) => challenge_response(&id, &data_uri, false),
+                None                 => too_many_challenges(),
+            };
         }
         // A cleared visitor falls through and is forwarded normally.
 
@@ -1141,7 +1172,7 @@ async fn handle_request(
             _ => None,
         };
 
-        // ── 5. Forward to upstream ────────────────────────────
+        // ── 11. Forward to upstream ────────────────────────────
         let path_and_query = match &query {
             Some(q) => format!("{}?{}", path, q),
             None    => path.clone(),
@@ -1186,7 +1217,7 @@ async fn handle_request(
             && let Some(on_upgrade) = on_upgrade
         {
             tracing::debug!(host = %host, path = %path, "proxying a protocol upgrade");
-            let resp = match proxy_upgrade(&upstream_url, &method, &headers, on_upgrade).await {
+            let resp = match proxy_upgrade(&upstream_url, &method, &upgrade_headers(&headers, peer.ip(), client_ip, state.is_tls), on_upgrade).await {
                 Ok(resp) => resp,
                 Err(e) => {
                     tracing::warn!(upstream = %upstream_url, "upgrade failed: {}", e);
@@ -1694,12 +1725,13 @@ fn handle_verify(state: &ProxyState, client_ip: &str, body: &[u8]) -> Response<B
 
     if let Some(dest) = state.challenges.verify(id, answer, client_ip) {
         let cookie = challenge::make_clearance(&state.secret, client_ip);
+        // Secure over HTTPS, like the affinity cookie: a clearance sent back
+        // in clear on a plain port could be lifted and replayed.
         let set_cookie = format!(
-            "{}={}; Path=/; Max-Age=1800; HttpOnly; SameSite=Lax",
-            CLEARANCE_COOKIE, cookie
+            "{}={}; Path=/; Max-Age=1800; HttpOnly; SameSite=Lax{}",
+            CLEARANCE_COOKIE, cookie, if state.is_tls { "; Secure" } else { "" }
         );
-        // Only redirect to a same-site path, never an absolute URL.
-        let location = if dest.starts_with('/') { dest } else { "/".to_string() };
+        let location = if challenge::stays_on_site(&dest) { dest } else { "/".to_string() };
         return Response::builder()
             .status(StatusCode::SEE_OTHER)
             .header("location", location)
@@ -1711,8 +1743,26 @@ fn handle_verify(state: &ProxyState, client_ip: &str, body: &[u8]) -> Response<B
 
     // Wrong or expired answer — re-issue a challenge to the same destination.
     let dest = state.challenges.dest_of(id).unwrap_or_else(|| "/".to_string());
-    let (new_id, data_uri) = state.challenges.issue(&dest, client_ip);
-    challenge_response(&new_id, &data_uri, true)
+    match state.challenges.issue(&dest, client_ip) {
+        Some((new_id, data_uri)) => challenge_response(&new_id, &data_uri, true),
+        None                     => too_many_challenges(),
+    }
+}
+
+/// The answer when as many challenges are waiting as the store will hold.
+///
+/// Every challenge draws an image and is kept for three minutes, so a flood of
+/// requests that each cross the challenge threshold used to cost memory and
+/// CPU without limit. Past the cap a visitor is asked to come back instead,
+/// before any image is drawn.
+fn too_many_challenges() -> Response<Body> {
+    Response::builder()
+        .status(StatusCode::TOO_MANY_REQUESTS)
+        .header("content-type", "text/plain; charset=utf-8")
+        .header("retry-after", "60")
+        .header("cache-control", "no-store")
+        .body(Body::from("Too many visitors are being checked right now. Please try again in a minute."))
+        .unwrap()
 }
 
 /// True if the request carries a valid clearance cookie for this client IP.
@@ -1784,6 +1834,29 @@ fn to_reqwest_headers(headers: &HeaderMap) -> reqwest::header::HeaderMap {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_upgrade_is_forwarded_with_the_headers_every_request_gets() {
+        let mut h = HeaderMap::new();
+        h.insert("host", "chat.example".parse().unwrap());
+        h.insert("connection", "Upgrade".parse().unwrap());
+        h.insert("upgrade", "websocket".parse().unwrap());
+        h.insert("x-forwarded-for", "6.6.6.6".parse().unwrap());
+        h.insert("te", "trailers".parse().unwrap());
+        h.append("sec-websocket-protocol", "chat".parse().unwrap());
+        h.append("sec-websocket-protocol", "superchat".parse().unwrap());
+        let peer: std::net::IpAddr = "198.51.100.4".parse().unwrap();
+
+        let out = upgrade_headers(&h, peer, peer, true);
+        assert_eq!(out["x-forwarded-for"], "198.51.100.4", "the client's own claim went through");
+        assert_eq!(out["x-real-ip"], "198.51.100.4");
+        assert_eq!(out["x-forwarded-proto"], "https");
+        assert_eq!(out["host"], "chat.example", "the Host the browser sent must reach the app");
+        assert_eq!(out["connection"], "Upgrade");
+        assert_eq!(out["upgrade"], "websocket");
+        assert!(!out.contains_key("te"), "other hop-by-hop headers are not forwarded");
+        assert_eq!(out.get_all("sec-websocket-protocol").iter().count(), 2, "a repeated header lost a value");
+    }
 
     fn hm(pairs: &[(&str, &str)]) -> HeaderMap {
         let mut h = HeaderMap::new();

@@ -28,17 +28,11 @@ pub enum AppError {
 
     #[error("Not found: {0}")]
     NotFound(String),
-
-    /// Used by future auth middleware; not yet constructed in any route.
-    #[allow(dead_code)]
-    #[error("Unauthorized")]
-    Unauthorized,
 }
 
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let (status, msg) = match &self {
-            AppError::Unauthorized => (StatusCode::UNAUTHORIZED, self.to_string()),
             AppError::NotFound(_) => (StatusCode::NOT_FOUND, self.to_string()),
             _ => {
                 tracing::error!("Internal error: {}", self);

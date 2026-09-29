@@ -2,45 +2,18 @@
 // modules/traffic.rs — EasyWAF
 // Traffic logging module, plus retention pruning.
 //
-// Always returns Pass. Every request is recorded in the
-// traffic_events table by one writer task, which takes rows
-// from a bounded queue and inserts them in batches, so the
-// proxy path never waits for a write. The proxy handler
-// queues its row with TrafficWriter::record; this module
-// itself only returns Pass during pipeline inspection.
+// Every request is recorded in the traffic_events table by
+// one writer task, which takes rows from a bounded queue and
+// inserts them in batches, so the proxy path never waits for
+// a write. The proxy handler queues each row with
+// TrafficWriter::record. Also the retention sweep.
 // =========================================================
 
-use crate::modules::{InspectionModule, ModuleDecision, RequestContext};
 use sqlx::SqlitePool;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
-
-// ─── TrafficLogger ───────────────────────────────────────
-
-/// Pipeline module that always returns Pass.
-/// Rows are queued by the proxy handler through `TrafficWriter`, not here,
-/// so no DB handle is needed on this struct.
-pub struct TrafficLogger;
-
-impl TrafficLogger {
-    /// Create a new TrafficLogger. The `db` parameter is accepted for
-    /// API symmetry with other modules but is not stored here.
-    pub fn new(_db: SqlitePool) -> Self {
-        Self
-    }
-}
-
-#[async_trait::async_trait]
-impl InspectionModule for TrafficLogger {
-    fn name(&self) -> &'static str { "traffic" }
-
-    /// Traffic logger never blocks — it always passes.
-    async fn inspect(&self, _ctx: &RequestContext) -> ModuleDecision {
-        ModuleDecision::Pass
-    }
-}
 
 // ─── TrafficRecord ───────────────────────────────────────
 

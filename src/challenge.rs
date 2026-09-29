@@ -8,7 +8,7 @@
 // HMAC-signed "clearance" cookie and are redirected to where they were going.
 // Subsequent requests with a valid clearance cookie skip the challenge.
 //
-// State for in-flight challenges is kept in memory (they live ~2 minutes);
+// State for in-flight challenges is kept in memory (they live 3 minutes);
 // the clearance cookie itself is stateless (verified by HMAC).
 // =========================================================
 
@@ -32,6 +32,11 @@ const CLEARANCE_TTL_SECS: u64 = 1800; // 30 minutes
 
 /// How long an unsolved challenge stays valid in the store.
 const CHALLENGE_TTL: Duration = Duration::from_secs(180); // 3 minutes
+
+/// How many unsolved challenges may wait at once. Each holds a few hundred
+/// bytes, so this bounds the store at a few megabytes however many requests
+/// cross a challenge threshold.
+const MAX_PENDING: usize = 10_000;
 
 /// Internal path prefix the proxy intercepts for challenge handling.
 pub const VERIFY_PATH: &str = "/__easywaf/verify";
@@ -58,8 +63,21 @@ impl ChallengeStore {
     }
 
     /// Create a new challenge for the given destination and client IP.
-    /// Returns (challenge_id, captcha_png_data_uri).
-    pub fn issue(&self, dest: &str, client_ip: &str) -> (String, String) {
+    /// Returns (challenge_id, captcha_png_data_uri), or `None` when
+    /// [`MAX_PENDING`] challenges are already waiting — checked before the
+    /// image is drawn, since drawing it is the expensive part.
+    pub fn issue(&self, dest: &str, client_ip: &str) -> Option<(String, String)> {
+        {
+            let mut map = self.inner.lock().unwrap();
+            if map.len() >= MAX_PENDING {
+                let now = Instant::now();
+                map.retain(|_, p| p.expires > now);
+                if map.len() >= MAX_PENDING {
+                    return None;
+                }
+            }
+        }
+
         // `gen` is a reserved keyword in edition 2024 — call via raw identifier.
         let captcha = captcha::r#gen(captcha::Difficulty::Medium);
         let answer  = captcha.chars_as_string().to_uppercase();
@@ -72,18 +90,14 @@ impl ChallengeStore {
         let id = random_id();
 
         let mut map = self.inner.lock().unwrap();
-        // Opportunistically drop expired entries so the map stays bounded.
-        let now = Instant::now();
-        map.retain(|_, p| p.expires > now);
-
         map.insert(id.clone(), Pending {
             answer,
             dest: dest.to_string(),
             client_ip: client_ip.to_string(),
-            expires: now + CHALLENGE_TTL,
+            expires: Instant::now() + CHALLENGE_TTL,
         });
 
-        (id, data_uri)
+        Some((id, data_uri))
     }
 
     /// Look up the intended destination for a challenge id without consuming
@@ -117,6 +131,23 @@ impl ChallengeStore {
 
 impl Default for ChallengeStore {
     fn default() -> Self { Self::new() }
+}
+
+// ─── Where a solved challenge returns to ─────────────────
+
+/// Whether a path is safe to redirect to after a challenge: somewhere on this
+/// site, and nowhere else.
+///
+/// A single leading slash is required. `//host/...` is a link to another site
+/// that happens to start with a slash, and browsers read `/\host` the same way;
+/// until 0.14.4 both were accepted, so a crafted link sent whoever solved the
+/// challenge to a site of the attacker's choosing. Control characters are
+/// refused too, since browsers drop them before reading the URL.
+pub fn stays_on_site(dest: &str) -> bool {
+    dest.starts_with('/')
+        && !dest.starts_with("//")
+        && !dest.starts_with("/\\")
+        && !dest.chars().any(|c| c.is_control())
 }
 
 // ─── Clearance cookie (stateless, HMAC-signed) ───────────
@@ -249,4 +280,38 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
         diff |= x ^ y;
     }
     diff == 0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_solved_challenge_only_returns_to_this_site() {
+        assert!(stays_on_site("/"));
+        assert!(stays_on_site("/shop/cart?item=3"));
+        for elsewhere in ["//evil.example/", "/\\evil.example", "https://evil.example/", "evil.example",
+                          "/\t/evil.example", ""] {
+            assert!(!stays_on_site(elsewhere), "{elsewhere:?} was allowed");
+        }
+    }
+
+    #[test]
+    fn the_store_stops_issuing_at_its_cap() {
+        let store = ChallengeStore::new();
+        {
+            let mut map = store.inner.lock().unwrap();
+            for i in 0..MAX_PENDING {
+                map.insert(i.to_string(), Pending {
+                    answer: "X".into(), dest: "/".into(), client_ip: "203.0.113.9".into(),
+                    expires: Instant::now() + CHALLENGE_TTL,
+                });
+            }
+        }
+        assert!(store.issue("/", "203.0.113.9").is_none(), "a full store drew another image");
+
+        // Expired ones make room again.
+        store.inner.lock().unwrap().values_mut().for_each(|p| p.expires = Instant::now());
+        assert!(store.issue("/", "203.0.113.9").is_some());
+    }
 }

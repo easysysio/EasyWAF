@@ -106,6 +106,17 @@ session. Make the change from the interface. If it happens there, something in
 between — an extension, or a proxy rewriting requests — is presenting it as
 coming from elsewhere.
 
+## Sign-in says "Too many failed sign-ins from this address"
+
+Ten wrong passwords from one address within 15 minutes, and that address is
+refused for the rest of the 15 minutes. Wait it out. Below the limit, a
+successful sign-in clears the count.
+
+If everyone is refused at once, the interface is probably behind a proxy — EasyWAF
+itself, or another — that is not listed as a trusted proxy under **Settings → Proxy**, so
+every sign-in appears to come from that proxy's one address. List it, and each
+person is counted by their own.
+
 ## Locked out of the interface
 
 There is no password recovery — no mailer, and no second account to reset from.

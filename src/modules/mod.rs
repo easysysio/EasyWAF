@@ -3,11 +3,15 @@
 // Inspection module pipeline.
 //
 // Each module receives a RequestContext and returns one of:
-//   Pass  — allow, continue to next module
-//   Alert — flag the request (logged) but continue
-//   Drop  — block the request immediately, stop the chain
+//   Pass      — nothing to say; continue with the next module
+//   Alert     — something matched, but the request is allowed;
+//               continue
+//   Challenge — show a CAPTCHA; stop the chain
+//   Drop      — block the request; stop the chain
 //
-// The pipeline runs modules in order; the first Drop wins.
+// Modules run in order, and the first Challenge or Drop ends
+// the chain. What every module found is carried forward, so
+// the verdict reports all of it.
 // =========================================================
 
 pub mod generation;
@@ -19,34 +23,26 @@ use axum::http::StatusCode;
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
 use bytes::Bytes;
-use axum::http::{HeaderMap, Method};
+use axum::http::HeaderMap;
 
 // ─── RequestContext ───────────────────────────────────────
 
-/// All information about an incoming request, shared across modules.
-/// Fields are read by GeoIP, WAF-rules, and other future modules.
-#[allow(dead_code)]
+/// What the modules read about a request.
 pub struct RequestContext {
     pub site_id:    i64,
     pub site_name:  String,
     pub client_ip:  IpAddr,
-    pub method:     Method,
-    pub host:       String,
     pub path:       String,
     pub query:      Option<String>,
     pub headers:    HeaderMap,
+    /// As much of the body as the rules inspect — see `proxy::inspection_limit`.
     pub body:       Bytes,
-    /// Wall-clock time the request arrived (for response_ms calculation).
-    pub started_at: std::time::Instant,
 }
 
 // ─── ModuleDecision ──────────────────────────────────────
 
 /// Decision returned by a single module.
-/// Alert and Drop are not yet produced by any built-in module but will be
-/// used by the GeoIP and WAF-rules modules when they are implemented.
 #[derive(Debug)]
-#[allow(dead_code)]
 pub enum ModuleDecision {
     /// Request is clean — pass to the next module.
     Pass,
@@ -140,35 +136,29 @@ impl Findings {
 
 // ─── Alert ───────────────────────────────────────────────
 
-/// A non-blocking alert raised by a module.
-/// Will be written to traffic_events once the alerting pipeline is wired up.
+/// Why a module flagged a request it let through. The reasons of every alert
+/// on an allowed request become its traffic row's reason.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct Alert {
-    pub module: &'static str,
     pub reason: String,
 }
 
 // ─── PipelineVerdict ─────────────────────────────────────
 
 /// Final outcome after all modules have run.
-/// The `alerts` field is populated now but only read once alert-logging is implemented.
 #[derive(Debug)]
-#[allow(dead_code)]
 pub enum PipelineVerdict {
-    /// Forward to upstream. May carry alerts from intermediate modules.
+    /// Forward to upstream, with any alerts raised along the way.
     Allow { alerts: Vec<Alert>, findings: Findings },
     /// Show a CAPTCHA challenge unless the client already has clearance.
     Challenge {
         reason:   String,
-        alerts:   Vec<Alert>,
         findings: Findings,
     },
     /// Block the request. The chain was stopped by one module.
     Block {
         reason:   String,
         status:   StatusCode,
-        alerts:   Vec<Alert>,
         findings: Findings,
     },
 }
@@ -225,7 +215,7 @@ impl Pipeline {
                         "module alert"
                     );
                     findings.merge(f);
-                    alerts.push(Alert { module: module.name(), reason });
+                    alerts.push(Alert { reason });
                 }
 
                 ModuleDecision::Challenge { reason, findings: f } => {
@@ -235,7 +225,7 @@ impl Pipeline {
                         "request challenged"
                     );
                     findings.merge(f);
-                    return PipelineVerdict::Challenge { reason, alerts, findings };
+                    return PipelineVerdict::Challenge { reason, findings };
                 }
 
                 ModuleDecision::Drop { reason, status, findings: f } => {
@@ -246,7 +236,7 @@ impl Pipeline {
                         "request blocked"
                     );
                     findings.merge(f);
-                    return PipelineVerdict::Block { reason, status, alerts, findings };
+                    return PipelineVerdict::Block { reason, status, findings };
                 }
             }
         }

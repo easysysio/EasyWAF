@@ -82,6 +82,25 @@ pub struct SessionData {
     /// A cookie whose epoch is behind the account's is refused.
     #[serde(default)]
     pub epoch: i64,
+    /// When the session began, in Unix seconds. A cookie older than
+    /// [`SESSION_LIFETIME_SECS`] is refused, whatever the browser still holds.
+    /// Cookies from before 0.14.4 have none, read as 0, and are refused.
+    #[serde(default)]
+    pub issued: i64,
+}
+
+/// How long a session lasts from sign-in.
+///
+/// Enforced by the server since 0.14.4. Before, eight hours was only the
+/// cookie's `Max-Age` — an instruction to the browser — and the signed value
+/// itself never expired, so a copied cookie went on working until the account's
+/// sessions were ended by hand.
+pub const SESSION_LIFETIME_SECS: i64 = 8 * 3600;
+
+/// Whether a session issued at `issued` is still within its lifetime at `now`.
+/// A minute of clock skew is allowed the other way.
+fn within_lifetime(issued: i64, now: i64) -> bool {
+    issued > 0 && issued <= now + 60 && now - issued < SESSION_LIFETIME_SECS
 }
 
 /// Cookies minted before 0.8.0 carry no role. They were issued when every
@@ -164,6 +183,9 @@ pub async fn authenticate(db: &SqlitePool, jar: &SignedCookieJar) -> Option<Sess
     if row.enabled == 0 || row.session_epoch != cookie.epoch {
         return None;
     }
+    if !within_lifetime(cookie.issued, chrono::Utc::now().timestamp()) {
+        return None;
+    }
 
     // The role is taken from the row rather than the cookie, so a demotion
     // does not wait for the cookie to expire.
@@ -201,7 +223,7 @@ pub fn set_session(jar: SignedCookieJar, data: &SessionData) -> SignedCookieJar 
         // that port in cleartext on its way there.
         .secure(true)
         .same_site(SameSite::Lax)
-        .max_age(Duration::hours(8))
+        .max_age(Duration::seconds(SESSION_LIFETIME_SECS))
         .build();
     jar.add(cookie)
 }
@@ -343,6 +365,7 @@ mod tests {
             username: "yariv".into(),
             role: role.into(),
             epoch,
+            issued: chrono::Utc::now().timestamp(),
         }
     }
 
@@ -468,7 +491,7 @@ mod cookie_tests {
             SignedCookieJar::new(make_key(&"k".repeat(64))),
             &SessionData {
                 user_id: 1, username: "yariv".into(),
-                role: ROLE_ADMIN.into(), epoch: 0,
+                role: ROLE_ADMIN.into(), epoch: 0, issued: 1,
             },
         );
         let issued = jar.get(SESSION_COOKIE).expect("a session cookie");
@@ -596,5 +619,16 @@ mod same_origin_tests {
         // A link from anywhere to a page of the interface is how people get
         // there; only changes are guarded.
         assert_eq!(status(&[("sec-fetch-site", "cross-site")], "GET").await, StatusCode::OK);
+    }
+
+    #[test]
+    fn a_session_ends_after_its_lifetime_whatever_the_browser_holds() {
+        use crate::auth::{within_lifetime, SESSION_LIFETIME_SECS};
+        let now = 1_800_000_000;
+        assert!(within_lifetime(now - 60, now));
+        assert!(within_lifetime(now - SESSION_LIFETIME_SECS + 1, now));
+        assert!(!within_lifetime(now - SESSION_LIFETIME_SECS, now), "an eight-hour-old session was accepted");
+        assert!(!within_lifetime(0, now), "a cookie from before issue times was accepted");
+        assert!(!within_lifetime(now + 3600, now), "a session issued in the future was accepted");
     }
 }

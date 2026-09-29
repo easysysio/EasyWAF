@@ -10,7 +10,8 @@ use crate::{
     AppState,
 };
 use axum::{
-    extract::State,
+    extract::{ConnectInfo, State},
+    http::HeaderMap,
     response::{Html, IntoResponse, Redirect, Response},
     Form,
 };
@@ -18,6 +19,10 @@ use axum_extra::extract::cookie::SignedCookieJar;
 use bcrypt::verify;
 use serde::Deserialize;
 use sqlx::SqlitePool;
+use std::collections::HashMap;
+use std::net::{IpAddr, SocketAddr};
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 use tera::Context;
 
 // ─── LoginForm ───────────────────────────────────────────
@@ -71,9 +76,26 @@ pub async fn get_login(
 /// POST /login — Validate credentials and start session.
 pub async fn post_login(
     State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     jar: SignedCookieJar,
     Form(form): Form<LoginForm>,
 ) -> Result<Response> {
+    // The address attempts are counted against: the connection's, or the
+    // client a trusted proxy reported, as everywhere else.
+    let client = crate::forwarded::client_ip(peer.ip(), &headers);
+    if let Some(wait) = throttled(client) {
+        tracing::warn!(%client, user = %form.user, "Sign-in refused: too many failed attempts from this address");
+        let minutes = wait.as_secs().div_ceil(60).max(1);
+        let msg = format!(
+            "Too many failed sign-ins from this address. Try again in {minutes} minute{}.",
+            if minutes == 1 { "" } else { "s" }
+        );
+        let mut res = render_login(&state, "failed", &msg, jar).await?;
+        res.extensions_mut().insert(audit::Note::sign_in(&form.user, false));
+        return Ok(res);
+    }
+
     // The audit layer cannot see either half of this on its own: the account
     // is in the request body, which it does not read, and a refused sign-in
     // answers 200 with the form again — the same status as anything else that
@@ -93,12 +115,14 @@ pub async fn post_login(
                 tracing::warn!(user = %session.username, "Could not record the sign-in time: {e}");
             }
             tracing::info!(user = %session.username, role = %session.role, "Signed in");
+            forget_failures(client);
             let jar = set_session(jar, &session);
             let mut res = (jar, Redirect::to("/")).into_response();
             res.extensions_mut().insert(audit::Note::sign_in(&form.user, true));
             Ok(res)
         }
         None => {
+            note_failure(client);
             let mut res =
                 render_login(&state, "failed", "Bad username or password", jar).await?;
             // The name as typed, escaped when it is written: a failed sign-in
@@ -145,7 +169,15 @@ async fn verify_credentials(
     )
     .fetch_optional(db)
     .await
-    .ok()??;
+    .ok()?;
+
+    // An unknown name costs the same password check a known one does. Until
+    // 0.14.4 it was refused at once — about 2 ms against 230 — so the time a
+    // refusal took said whether the account existed, whatever the message.
+    let Some(row) = row else {
+        let _ = verify(password, stand_in_hash());
+        return None;
+    };
 
     if !verify(password, &row.password_hash).unwrap_or(false) {
         return None;
@@ -162,7 +194,71 @@ async fn verify_credentials(
         username: username.to_string(),
         role:     row.role,
         epoch:    row.session_epoch,
+        issued:   chrono::Utc::now().timestamp(),
     })
+}
+
+/// A hash to check a password against when no account has the name given, so
+/// that refusal takes as long as a wrong password does. Made once, at the cost
+/// every stored hash uses.
+fn stand_in_hash() -> &'static str {
+    static HASH: OnceLock<String> = OnceLock::new();
+    HASH.get_or_init(|| {
+        bcrypt::hash("no account has this name", bcrypt::DEFAULT_COST).unwrap_or_default()
+    })
+}
+
+// ─── Throttling ──────────────────────────────────────────
+//
+// Until 0.14.4 nothing limited how fast passwords could be guessed. Attempts
+// are counted per address, not per account: locking an account would let
+// anyone who knows its name keep the administrator out.
+
+/// Failed sign-ins an address may make within [`WINDOW`].
+const MAX_FAILURES: u32 = 10;
+
+/// How long failures are remembered, counted from the first. An address that
+/// reaches [`MAX_FAILURES`] is refused until the window ends.
+const WINDOW: Duration = Duration::from_secs(15 * 60);
+
+/// Addresses held at most, so a spread of guessing addresses cannot grow the
+/// table without end. Expired entries are dropped when it fills.
+const MAX_TRACKED: usize = 10_000;
+
+struct Failures {
+    count: u32,
+    since: Instant,
+}
+
+fn failures() -> &'static Mutex<HashMap<IpAddr, Failures>> {
+    static FAILURES: OnceLock<Mutex<HashMap<IpAddr, Failures>>> = OnceLock::new();
+    FAILURES.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// How much longer this address must wait, if it has used up its attempts.
+fn throttled(client: IpAddr) -> Option<Duration> {
+    let map = failures().lock().unwrap_or_else(|p| p.into_inner());
+    let f = map.get(&client)?;
+    let elapsed = f.since.elapsed();
+    (f.count >= MAX_FAILURES && elapsed < WINDOW).then(|| WINDOW - elapsed)
+}
+
+/// Count a failed sign-in against this address.
+fn note_failure(client: IpAddr) {
+    let mut map = failures().lock().unwrap_or_else(|p| p.into_inner());
+    if map.len() >= MAX_TRACKED {
+        map.retain(|_, f| f.since.elapsed() < WINDOW);
+    }
+    let f = map.entry(client).or_insert(Failures { count: 0, since: Instant::now() });
+    if f.since.elapsed() >= WINDOW {
+        *f = Failures { count: 0, since: Instant::now() };
+    }
+    f.count += 1;
+}
+
+/// A successful sign-in clears the address's count.
+fn forget_failures(client: IpAddr) {
+    failures().lock().unwrap_or_else(|p| p.into_inner()).remove(&client);
 }
 
 // ─── render_login ────────────────────────────────────────
@@ -179,4 +275,26 @@ async fn render_login(
     ctx.insert("msg", msg);
     let html = state.tera.render("login.html", &ctx)?;
     Ok((jar, Html(html)).into_response())
+}
+
+#[cfg(test)]
+mod throttle_tests {
+    use super::*;
+
+    #[test]
+    fn an_address_is_refused_after_too_many_failures_and_others_are_not() {
+        let guesser: IpAddr = "198.51.100.77".parse().unwrap();
+        let other:   IpAddr = "198.51.100.78".parse().unwrap();
+        for _ in 0..MAX_FAILURES - 1 {
+            note_failure(guesser);
+        }
+        assert!(throttled(guesser).is_none(), "refused before the limit");
+        note_failure(guesser);
+        let wait = throttled(guesser).expect("not refused at the limit");
+        assert!(wait <= WINDOW && wait > WINDOW - Duration::from_secs(5));
+        assert!(throttled(other).is_none(), "another address was refused with it");
+
+        forget_failures(guesser);
+        assert!(throttled(guesser).is_none(), "a successful sign-in did not clear the count");
+    }
 }
