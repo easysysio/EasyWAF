@@ -5,14 +5,10 @@
 //
 // X-Forwarded-For is a header, which means the client can
 // send one. Honouring it unconditionally would let anyone
-// claim any address and walk straight past country rules —
-// and past the IP allow/block lists, which have refused
-// clients outright since 0.10.0 — so it is
-// trusted only when the connection itself came from an
-// address the operator has listed.
-//
-// Empty list means trust nothing, which is the behaviour
-// EasyWAF had before this existed.
+// claim any address and walk straight past country rules
+// and the IP allow/block lists, so it is trusted only when
+// the connection itself came from an address the operator
+// has listed. An empty list trusts nothing.
 // =========================================================
 
 use axum::http::HeaderMap;
@@ -170,10 +166,9 @@ pub async fn reload(db: &SqlitePool) -> usize {
 /// A header sent on several lines means the same as one line with the values
 /// joined by commas, in order, and proxies differ in which they write: nginx
 /// extends the line it received, HAProxy's `option forwardfor` adds a line of
-/// its own. Until 0.14.4 only the first line was read — the one the client
-/// wrote — so behind a proxy of the second kind a forged address was believed
-/// as the client's, and IP lists, country rules and challenge clearance all
-/// went by it.
+/// its own. Reading only the first line — the one the client wrote — would
+/// believe a forged address behind a proxy of the second kind, and IP lists,
+/// country rules and challenge clearance all go by it.
 pub fn forwarded_for(headers: &HeaderMap) -> Option<String> {
     let lines: Vec<&str> = headers
         .get_all("x-forwarded-for")

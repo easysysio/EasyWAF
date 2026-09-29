@@ -35,9 +35,8 @@
                                   placeholder="www.example.com&#10;example.net">{{ site.aliases | default(value='') }}</textarea>
                         <p class="help-block">
                             Every alias is served by this site, with the same upstream,
-                            policy, ports and headers — which is the point: two names for one
-                            application used to mean two sites kept in step by hand, and any
-                            divergence was a bug that appeared on only one of the names.
+                            policy, ports and headers, so two names for one application can
+                            never drift apart.
                             <br>
                             A hostname can belong to one site only. Wildcards are not
                             supported: the Host header is matched exactly, and a wildcard

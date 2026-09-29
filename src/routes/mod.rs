@@ -47,16 +47,11 @@ pub fn who_context(ctx: &mut tera::Context, session: &crate::auth::SessionData) 
 
 /// Redirect to `path`, carrying a one-shot message for the page to render.
 ///
-/// Lived as seven identical private copies until 0.7.1, one per route module,
-/// and every one of them assumed `path` had no query string of its own. The
-/// Traffic Monitor's exclude button broke on exactly that: it returns to
-/// `/traffic?site=…&blocked=…&hours=24` to preserve the filter, the flash was
-/// appended with a second `?`, and `hours` arrived as `24?result=success&…`.
-/// Axum rejected the request before any handler ran — "invalid digit found in
-/// string" — so the exclusion was saved and the page that would have confirmed
-/// it never rendered.
-///
-/// One implementation now, and it picks the separator by looking.
+/// `path` may already carry a query string — the Traffic Monitor's exclude
+/// button returns to `/traffic?site=…&blocked=…&hours=24` to keep the filter —
+/// so the separator is picked by looking. Appended with a second `?`, `hours`
+/// would arrive as `24?result=success&…` and Axum would refuse the request
+/// before any handler ran.
 pub fn flash_redirect(
     path: &str,
     result: &str,

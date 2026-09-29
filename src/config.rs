@@ -29,11 +29,11 @@ pub struct Config {
     /// Accepted but ignored; kept only so a config.toml written before 0.4.2
     /// still parses.
     ///
-    /// The signing key is generated on first run and stored in the database
-    /// now. It was a plain setting shipped with a literal default value, which
-    /// meant every installation that did not edit it signed session and
-    /// CAPTCHA-clearance cookies with a key printed in the public repository.
-    /// A generated key cannot be left at a known value by inaction.
+    /// The signing key is generated on first run and stored in the database. A
+    /// setting here would ship with a default value, and every installation
+    /// that did not edit it would sign its cookies with a key printed in the
+    /// public repository; a generated key cannot be left at a known value by
+    /// inaction.
     #[serde(default)]
     pub secret: Option<String>,
 
@@ -85,9 +85,9 @@ fn default_keep_days() -> u32    { 14 }
 
 #[derive(Deserialize, Clone, Debug)]
 pub struct ProxyConfig {
-    /// Accepted but ignored; each site carries its own `listen_port` now, set
-    /// in the GUI, and a single proxy-wide HTTP port stopped meaning anything
-    /// once one EasyWAF could serve sites on several.
+    /// Accepted but ignored, so an older config.toml still parses: each site
+    /// carries its own `listen_port`, set in the GUI, and a single proxy-wide
+    /// HTTP port means nothing when sites are served on several.
     ///
     /// Port 80 is bound unconditionally regardless of this value, because
     /// HTTP-01 validation always arrives there.

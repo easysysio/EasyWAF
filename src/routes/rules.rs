@@ -4,13 +4,10 @@
 // install from the rule sets in the rules/ directory or the
 // published channel.
 //
-// There was also a "seed defaults" button, which inserted a
-// hardcoded list of rules written in this file. It was a
-// second copy of what the rule sets already carry, and it
-// did not merely drift — a seeded rule and its set
-// counterpart both matched, so the request scored twice and
-// a policy's block threshold was effectively halved for
-// every rule that existed in both. Removed in 0.6.6.
+// The rule sets are the only source of catalogue rules. A
+// second list written here would not merely drift: a rule
+// and its copy would both match, so a request would score
+// twice and halve the policy's block threshold for it.
 //
 // Rule files use TOML format. Each file contains an array of
 // [[rules]] tables with fields: id, name, description, zone,
@@ -1221,9 +1218,8 @@ pub fn read_catalog_categories(held: &Held) -> Result<Vec<CatalogCategory>> {
 
 /// What a policy already holds, as the catalogue needs to know it.
 ///
-/// Three questions about the same policy that used to be asked separately and
-/// passed around as loose sets. A brand-new policy holds nothing, which is
-/// what `default()` is for.
+/// Three questions about the same policy, answered together. A brand-new
+/// policy holds nothing, which is what `default()` is for.
 #[derive(Default)]
 pub struct Held {
     /// External ids of the rules in the policy.
@@ -1727,12 +1723,12 @@ pub async fn get_all_rules(
     // database records as of the last install or update. The rule files on disk
     // are a build-time snapshot and go stale the moment a set is updated from
     // the channel: a rule added in a newer version is not in them, so grouping
-    // by them filed a correctly-installed rule under "Custom / Manual".
+    // by them would file a correctly-installed rule under "Custom / Manual".
     //
-    // The files are still consulted, but only as a fallback for a rule that has
-    // no set recorded — an installation upgraded from before 0.6.0 whose policy
-    // the adoption in 0.6.4 declined to claim. Those keep the old behaviour
-    // rather than all collapsing into Custom.
+    // The files are consulted only as a fallback, for a rule that has no set
+    // recorded — one imported before sets were tracked, whose policy
+    // `backfill_rule_sets` declined to claim — so those do not all collapse
+    // into Custom.
     let set_names = sqlx::query!(
         r#"SELECT DISTINCT set_id as "set_id!", name as "name!" FROM policy_rule_sets"#
     )
@@ -1776,8 +1772,8 @@ pub async fn get_all_rules(
 
     // set_id -> title, so a group can be named without consulting the files.
     let mut titles: HashMap<String, String> = HashMap::new();
-    // Lowest external_id seen in each group, which orders the bands the way
-    // the catalogue used to: 913 before 920 before 930.
+    // Lowest external_id seen in each group, which orders the bands by
+    // number: 913 before 920 before 930.
     let mut lowest: HashMap<String, i64> = HashMap::new();
 
     for r in rows {
@@ -2060,8 +2056,8 @@ pub async fn post_rule_update_global(
     // Back to the list with the rule named and pointed at. A clone is bucketed
     // by external_id, which it does not have, so it leaves the category its
     // original sits in and lands in "Custom / Manual" at the bottom — collapsed,
-    // like every group. Saving used to redirect here with no message and no
-    // indication of that, so a rule someone had just edited appeared to be gone.
+    // like every group. Without the message, a rule someone has just edited
+    // would appear to be gone.
     Ok(Redirect::to(&format!(
         "/rules?focus={}&result=success&msg={}",
         id,
@@ -2261,10 +2257,10 @@ pub async fn post_rule_clone(
 
     let name = format!("{} (custom)", src.name);
     // rule_set is left NULL: a clone is a custom rule, and belongs to no set.
-    // It inherited the origin's set id until 0.6.12, which made it a member of
-    // that set for everything that reads the column — it grouped under the set
-    // in the rule list, and kept pointing at it after the set was uninstalled.
-    // Where it came from is provenance, and lives in cloned_from_set.
+    // Giving it the origin's set id would make it a member of that set for
+    // everything that reads the column — it would group under the set in the
+    // rule list, and keep pointing at it after the set was uninstalled. Where
+    // it came from is provenance, and lives in cloned_from_set.
     let new_id = sqlx::query!(
         "INSERT INTO waf_rules
          (policy_id, name, description, zone, pattern, score, action,

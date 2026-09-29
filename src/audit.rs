@@ -9,9 +9,9 @@
 // function is a trail with holes in it. The holes would be
 // exactly where somebody did something they should not have.
 //
-// This is the same reasoning that made authorisation an
-// extractor in 0.8.0: state the requirement once, where it
-// cannot be forgotten.
+// This is the same reasoning that makes authorisation an
+// extractor: state the requirement once, where it cannot be
+// forgotten.
 //
 // The line records what was done, never what it was done
 // with. Method, path, account, address and outcome — no

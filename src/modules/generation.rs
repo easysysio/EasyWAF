@@ -58,11 +58,10 @@ pub async fn current(db: &SqlitePool) -> u64 {
             Some(at) if at.elapsed() < MAX_AGE => return s.value,
             // Claimed before reading, so this request is the only one that
             // reads; every other goes on with the value it has for one more
-            // second. Until 0.14.2 each request arriving while the read was
-            // in flight made its own, and under load they queued behind the
-            // traffic rows for a database connection — every request stalled
-            // at once, once a second. The very first read is not claimed:
-            // there is no value yet to go on with.
+            // second. Unclaimed, every request arriving while the read is in
+            // flight would make its own, and under load they would all queue
+            // for a database connection at once. The very first read is not
+            // claimed: there is no value yet to go on with.
             Some(_) => s.checked = Some(Instant::now()),
             None => {}
         }

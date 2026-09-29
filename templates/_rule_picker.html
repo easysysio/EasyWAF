@@ -271,10 +271,10 @@ function setCategory(cat, on) {
 
 // ── The recommended starting point ────────────────────────
 //
-// Basic sets used to be ticked when the page loaded. That made every new
-// policy carry them whether or not anybody had decided to, and the only way
-// to a smaller policy was to untick eight things. It is a button now, so
-// taking them is a decision — and so is not taking them.
+// Basic sets are a button, not ticked when the page loads: ticked by default,
+// every new policy would carry them whether or not anybody had decided to, and
+// the only way to a smaller policy would be to untick eight things. As a
+// button, taking them is a decision — and so is not taking them.
 function selectBasic() {
     document.querySelectorAll('.cat-master').forEach(function (m) {
         setCategory(m.dataset.cat, !!m.dataset.set && m.dataset.tier === 'basic');

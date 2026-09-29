@@ -93,8 +93,7 @@ echo
 
 # ── Encoded payloads ─────────────────────────────────────
 # Rules match both the raw and the percent-decoded request, so an encoded
-# payload is caught the same as a plain one. Before 0.2.3 these two were
-# allowed through: the query string was matched raw, and %20 or + defeated
+# payload is caught the same as a plain one. Matched raw, %20 or + would defeat
 # every pattern containing \s.
 echo "Encoded payloads (all should block):"
 for enc in '%20' '+' '%2520'; do

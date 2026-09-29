@@ -80,10 +80,10 @@ pub fn tera() -> Result<tera::Tera, tera::Error> {
 /// `{{ when | utc }}` — a UTC timestamp as a `<time>` element, which the
 /// layout's script rewrites into the viewer's own time zone.
 ///
-/// Everything EasyWAF stores is UTC, and the pages used to print it as it was
-/// stored, some labelled UTC and some not. Somebody reading 09:00 at 12:51 on
-/// their own clock has every reason to think the appliance's time is wrong;
-/// it is not, and the page should not make them work out an offset to see so.
+/// Everything EasyWAF stores is UTC. Printed as stored, a time reads wrong to
+/// anyone elsewhere: somebody reading 09:00 at 12:51 on their own clock has
+/// every reason to think the appliance's time is off, and the page should not
+/// make them work out an offset to see that it is not.
 ///
 /// Converted in the browser rather than on the server because the browser is
 /// the one thing that knows the viewer's zone — the appliance's own zone is
@@ -146,19 +146,17 @@ pub(crate) fn time_element(raw: &str) -> String {
 /// Tera function returning the crate version, usable as `{{ version() }}` in
 /// any template.
 ///
-/// The About modal used to hard-code the version, which meant Cargo.toml and
-/// the template had to be bumped together — they drifted for the 0.2.0 release,
-/// which shipped a modal still reading 0.1.0. Reading it from the binary keeps
-/// one source of truth.
+/// Read from the binary, so the version a page shows cannot differ from the
+/// one running: a version written into a template has to be bumped with
+/// Cargo.toml, and drifts.
 fn app_version(_args: &std::collections::HashMap<String, tera::Value>) -> tera::Result<tera::Value> {
     Ok(tera::Value::String(env!("CARGO_PKG_VERSION").to_string()))
 }
 
 /// GET /static/{*path} — serve an embedded asset.
 ///
-/// `Cache-Control: no-cache` for the same reason the old `ServeDir` layer set
-/// it: the browser revalidates cheaply and a changed stylesheet is never served
-/// from a stale cache.
+/// `Cache-Control: no-cache`, so the browser revalidates cheaply and a changed
+/// stylesheet is never served from a stale cache.
 pub async fn serve_static(Path(path): Path<String>) -> Response {
     // A path that climbs out cannot reach anything — the embedded set is a
     // fixed list of names, not a directory — but it is rejected rather than
@@ -289,8 +287,9 @@ mod tests {
             .unwrap_or_else(|e| panic!("traffic.html failed to render: {e:#?}"));
 
         assert!(html.contains("WOULD BLOCK"),   "a would-block row lost its verdict");
-        // Deliberately not the word "detected": it read as "DetectionOnly", so an
-        // enforcing policy showing these looked like it had stopped enforcing.
+        // Deliberately not the word "detected": it reads as "DetectionOnly", so
+        // an enforcing policy showing it would look as if it had stopped
+        // enforcing.
         assert!(html.contains("SCORED"),        "an observed row lost its verdict");
         assert!(!html.contains("DETECTED"),
                 "the ambiguous label is back — it reads as DetectionOnly");
@@ -565,9 +564,9 @@ mod tests {
     #[test]
     fn creating_a_policy_offers_everything_a_policy_holds() {
         // A policy holds rules, country rules, IP lists, published lists and
-        // exclusions. Until 0.12.2 the create page offered only rules, so a new
-        // policy meant four more pages afterwards — and the parts nobody
-        // remembered were the ones that never got set.
+        // exclusions, and the create page offers all of them: set up on four
+        // more pages afterwards, the parts nobody remembered would never get
+        // set.
         let tera = tera().expect("templates should build");
         let mut ctx = tera::Context::new();
         for (k, v) in [("username", "t"), ("title", "Create Policy"), ("url", "/policy"),
@@ -1103,9 +1102,8 @@ mod tests {
 
     #[test]
     fn the_exclusions_page_is_reachable_from_the_menu() {
-        // The page existed in 0.7.0 and was reachable only from an unlabelled
-        // icon on the policy list. Someone looking for it in the Security
-        // Policy menu, which is where it was asked for, did not find it.
+        // Reachable from the Security Policy menu, which is where someone
+        // looking for it looks — not only from an icon on the policy list.
         let tera = tera().expect("templates should build");
         let mut ctx = tera::Context::new();
         for (k, v) in [("username", "t"), ("title", "Rule Exclusions"),

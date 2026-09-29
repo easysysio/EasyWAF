@@ -3,11 +3,10 @@
 {# The Rule Library: the same picker the create page and a policy's own page
    carry, in a page of its own reached from the policy's Rules tab.
 
-   It was its own implementation until 0.13.4 — its own markup, its own script,
-   and a submit carrying only `ids`. That made it a picker that could add a
-   set's rules without recording the set, and that deleted a rule when it was
-   unticked instead of switching it off. Both are decisions the partial makes,
-   so the page now includes the partial and decides nothing. #}
+   It includes the partial and decides nothing itself. Recording a set when its
+   rules are added, and switching a rule off rather than deleting it when it is
+   unticked, are decisions the partial makes, and a second implementation would
+   make them differently. #}
 
 {% block content %}
 

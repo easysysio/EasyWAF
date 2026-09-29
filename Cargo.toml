@@ -137,9 +137,8 @@ assets = [
     ["rules/*.rules.toml",            "/opt/easywaf/rules/",                     "644"],
     # key.gpg is NOT shipped. The key every update is verified against is
     # compiled into the binary, so an installation cannot be missing its trust
-    # anchor — 0.6.0 and 0.6.1 were, and could not apply a single update. A
-    # file here still wins, so an operator running their own channel can sign
-    # with their own key; because the package no longer writes one, its
+    # anchor. A file here still wins, so an operator running their own channel
+    # can sign with their own key; because the package does not write one, its
     # presence is always somebody's decision, and it is logged on every use.
     ["rules/SOURCE",                  "/opt/easywaf/rules/SOURCE",              "644"],
     # The manifest, seeded beside the sets on a first run with no network.

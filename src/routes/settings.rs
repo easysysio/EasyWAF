@@ -48,8 +48,8 @@ pub const KEY_TRUSTED_PROXIES: &str = "trusted_proxies";
 /// How many KB of each request body the rules inspect.
 pub const KEY_BODY_INSPECT_KB: &str = "request_body_inspect_kb";
 
-/// Largest the field accepts: the old whole-body cap, so an operator can still
-/// choose full inspection for every body up to that size.
+/// Largest the field accepts, 32 MB, so an operator can still choose full
+/// inspection for every body up to that size.
 const MAX_BODY_INSPECT_KB: u64 = 32 * 1024;
 
 /// Whether this node performs ACME renewals. Defaults to yes.
@@ -400,8 +400,8 @@ pub async fn post_settings_update(
     state.logger.set_collector(syslog_target(&state.db).await);
 
     // The update channels and the switches that govern them are owned by the
-    // Updates page since 0.13.1, and are deliberately not touched here: a
-    // setting written from two forms is a setting one of them resets.
+    // Updates page, and are deliberately not touched here: a setting written
+    // from two forms is a setting one of them resets.
 
     crate::settings::set(&state.db, KEY_MANAGEMENT_CERT, &mgmt).await?;
     crate::settings::set(&state.db, KEY_TLS_PROFILE, profile.as_str()).await?;

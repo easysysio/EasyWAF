@@ -6,10 +6,9 @@
 //
 // Consulted on every proxied request, before the pipeline
 // runs, so an allowed address skips the WAF, the country
-// rules and the challenge alike. Since 0.12.1 the lists
-// belong to a policy, like everything else that decides
-// what happens to a request, and a site with no policy has
-// none.
+// rules and the challenge alike. The lists belong to a
+// policy, like everything else that decides what happens to
+// a request, and a site with no policy has none.
 //
 // Kept in memory for the reason the compiled rules are: a
 // database round trip on the request path would be absurd.
@@ -596,7 +595,7 @@ mod tests {
     #[test]
     fn allow_wins_over_block() {
         // The operator's override has to survive a block arriving later, which
-        // is exactly what a published list will do in 0.12.0.
+        // is exactly what a published list does.
         let l = built(&[("10.0.0.5", "allow"), ("10.0.0.0/8", "block")]);
         assert_eq!(l.lookup(ip("10.0.0.5")), Some(ListType::Allow));
         assert_eq!(l.lookup(ip("10.0.0.6")), Some(ListType::Block));

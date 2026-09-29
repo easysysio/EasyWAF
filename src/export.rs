@@ -2,7 +2,7 @@
 // export.rs — EasyWAF
 // The configuration as a readable document.
 //
-// The other half of 0.14.0 from a snapshot, and a different
+// The other half of backup from a snapshot, and a different
 // file for a different job. A snapshot is the database,
 // exactly, for when the host is gone. This is a description
 // of what the appliance is configured to do — for cloning an
@@ -18,7 +18,7 @@
 //
 // A rule from an installed set travels as a reference — the
 // set and its version — because it cannot have been edited:
-// changing one makes a copy (0.6.0). Only what is genuinely
+// changing one makes a copy. Only what is genuinely
 // this installation's own travels in full: rules written
 // here, and catalogue rules taken one at a time.
 //

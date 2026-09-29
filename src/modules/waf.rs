@@ -380,10 +380,9 @@ impl InspectionModule for WafModule {
 /// The forms are matched independently by the caller rather than concatenated
 /// into one string. Concatenation needs a separator, and a separator is
 /// exactly the kind of text a rule can accidentally match — a CRLF-detection
-/// rule once matched the '\n' this function used to join forms with, on any
-/// request carrying a percent-encoded header, which had nothing to do with
-/// what the client sent. Returning the forms separately makes that whole class
-/// of bug impossible rather than relocating it to a different separator.
+/// rule would match a '\n' joining two forms, on a request that contained no
+/// newline at all. Returning the forms separately makes that whole class of
+/// bug impossible rather than relocating it to a different separator.
 ///
 /// The raw form is kept alongside the decoded ones rather than replaced.
 /// Several rules deliberately look for the encoding itself — `%252e%252e`,
@@ -484,15 +483,13 @@ fn push_unique(forms: &mut Vec<String>, form: String) {
 /// Percent-decode one string: byte by byte, then read as UTF-8 with anything
 /// invalid replaced by U+FFFD.
 ///
-/// Until 0.10.2 this used `urlencoding::decode`, which fails outright when the
-/// decoded bytes are not valid UTF-8 — and on failure the raw text was kept. So
-/// one escape that does not decode to UTF-8, anywhere in a field (`%FF`, `%C0`),
-/// switched decoding off for the whole field, and every rule needing the
-/// decoded text stopped seeing the attack beside it. The applications behind
-/// EasyWAF decode the rest of the field regardless, so the attack still arrived.
-///
-/// A lossy decode keeps every ASCII character of a payload visible whatever
-/// else the field contains, and valid input decodes exactly as it did before.
+/// Lossy rather than strict. A strict decode fails outright when the decoded
+/// bytes are not valid UTF-8, so one such escape anywhere in a field (`%FF`,
+/// `%C0`) would leave the whole field undecoded — and every rule needing the
+/// decoded text would miss the attack beside it, while the application behind
+/// EasyWAF decodes the rest of the field regardless and receives it. A lossy
+/// decode keeps every ASCII character of a payload visible whatever else the
+/// field contains, and decodes valid input exactly.
 fn percent_decode(s: &str) -> String {
     String::from_utf8_lossy(&urlencoding::decode_binary(s.as_bytes())).into_owned()
 }
@@ -809,10 +806,9 @@ fn decide(
     findings: Findings,
 ) -> ModuleDecision {
     // DetectionOnly still reports what matched. Seeing which rules would have
-    // fired is the entire point of running a policy in that mode — and until
-    // 0.6.11 the Alert produced here was discarded by the proxy, so the mode
-    // reported nothing at all. What would have happened is recorded on the
-    // findings so the traffic record can say it.
+    // fired is the entire point of running a policy in that mode, so what
+    // would have happened is recorded on the findings for the traffic record
+    // to say.
     if policy.rule_engine == "DetectionOnly" {
         let mut findings = findings;
         findings.detection = Some(match level {
@@ -862,10 +858,8 @@ struct Exclusion {
     external_id: Option<i64>,
     rule_id:     Option<i64>,
     path_prefix: String,
-    /// The clients this covers. `None` is every client, which is what a row
-    /// written before 0.6.13 means and what the engine did before the column
-    /// existed. A block that fails to parse is treated as matching nobody —
-    /// see `get_exclusions`.
+    /// The clients this covers. `None` is every client. A block that fails to
+    /// parse is treated as matching nobody — see `get_exclusions`.
     client:      Option<crate::forwarded::Cidr>,
 }
 
@@ -902,10 +896,7 @@ impl Exclusion {
 
 /// Whether `path` is the prefix or below it, a whole segment at a time: `/dav`
 /// covers `/dav` and `/dav/files`, not `/davx`. An empty prefix covers every
-/// path.
-///
-/// By segment since 0.14.4. A plain string prefix let `/files` switch a rule off
-/// for `/filesystem` too, which nobody writing `/files` meant.
+/// path. By segment, because nobody writing `/files` means `/filesystem`.
 fn under_prefix(path: &str, prefix: &str) -> bool {
     if prefix.is_empty() {
         return true;
@@ -920,11 +911,11 @@ fn under_prefix(path: &str, prefix: &str) -> bool {
 /// resolved, and their percent-encoded forms with them.
 ///
 /// The upstream request is built by parsing a URL, and parsing resolves dot
-/// segments, so `/files/../admin` reaches the backend as `/admin`. Until 0.14.4
-/// exclusions were matched against the path as typed, so a rule excluded for
-/// `/files` was skipped for that request too — and the attack went to `/admin`
-/// with the rule switched off. The rules themselves still see the raw path:
-/// the `../` in it is exactly what the traversal rules look for.
+/// segments, so `/files/../admin` reaches the backend as `/admin`. Matching an
+/// exclusion against the path as typed would count that request as under
+/// `/files` and switch the rule off for an attack on `/admin`. The rules
+/// themselves still see the raw path: the `../` in it is exactly what the
+/// traversal rules look for.
 fn path_as_forwarded(path: &str) -> String {
     match url::Url::parse(&format!("http://upstream{path}")) {
         Ok(u)  => u.path().to_string(),
@@ -934,8 +925,8 @@ fn path_as_forwarded(path: &str) -> String {
 
 /// Exclusions recorded for a policy.
 ///
-/// Per policy since 0.12.1, like every other decision about what a request
-/// meets. Sites that face different things are given different policies, so a
+/// Per policy, like every other decision about what a request meets. Sites
+/// that face different things are given different policies, so a
 /// policy is already the group an exclusion is decided for; a path prefix or a
 /// client block narrows it further where one application needs that.
 async fn get_exclusions(db: &SqlitePool, policy_id: i64) -> Vec<Exclusion> {
@@ -1070,8 +1061,8 @@ mod tests {
         let re = Regex::new(&pattern("920-protocol.rules.toml", 920002)).unwrap();
 
         // Two escapes in a row is ordinary URL encoding, not an attack. Any
-        // character outside ASCII produces several, so this used to score
-        // every request carrying a non-English filename.
+        // character outside ASCII produces several, so matching them would
+        // score every request carrying a non-English filename.
         for benign in [
             "requesttoken=abc%3D%3Adef%3D",
             "/files/%D7%AA%D7%9E%D7%95%D7%A0%D7%94.jpg",
@@ -1090,10 +1081,11 @@ mod tests {
 
     #[test]
     fn one_invalid_escape_does_not_switch_decoding_off() {
-        // Until 0.10.2 a single escape that does not decode to UTF-8 made the
-        // whole field keep its raw, still-encoded form, so every rule needing
-        // the decoded text missed the attack beside it — while the backend
-        // decoded the rest and received it. A junk extra parameter was enough.
+        // A single escape that does not decode to UTF-8 must not leave the
+        // whole field in its raw, still-encoded form: every rule needing the
+        // decoded text would miss the attack beside it, while the backend
+        // decodes the rest and receives it. A junk extra parameter is enough
+        // to try.
         for (field, decoded) in [
             ("%45VILBODY%FF",                          "EVILBODY"),
             ("x=%45VILBODY&y=%C0",                     "EVILBODY"),
@@ -1202,9 +1194,9 @@ mod tests {
     #[test]
     fn shipped_rules_see_through_the_escapes_crs_declares() {
         // The XSS rules are written against text that has been through
-        // htmlEntityDecode, jsDecode and cssDecode. EasyWAF undid none of them
-        // before 0.11.0, so every one of these reached the rule as the escape
-        // text it is, and matched nothing.
+        // htmlEntityDecode, jsDecode and cssDecode. Without those decodes each
+        // of these would reach the rule as the escape text it is, and match
+        // nothing.
         let re = Regex::new(&pattern("941-xss.rules.toml", 941001)).unwrap();
         for field in [
             "q=&#60;script&#62;alert(1)",
@@ -1491,9 +1483,8 @@ mod tests {
 // ─── Measurement harness ─────────────────────────────────
 //
 // Not a test of behaviour: a repeatable measurement of what inspection costs per
-// request, which is the acceptance test for 0.11.0 — see
-// docs/design/proxy-performance.md. Ignored by default because it is slow and
-// its numbers only mean anything from a release build:
+// request — see docs/design/proxy-performance.md. Ignored by default because it
+// is slow and its numbers only mean anything from a release build:
 //
 //     cargo test --release bench_ -- --ignored --nocapture
 //
@@ -1631,8 +1622,8 @@ mod bench {
             let waf = WafModule::new(db.clone());
             let geo = GeoIpModule::new(db.clone());
 
-            // The three reads inspect used to make on every request, timed on
-            // their own for reference. Since 0.11.0 they run once per change.
+            // The three reads inspection makes when the configuration changes,
+            // timed on their own for reference.
             let db_work = per_round!({
                 let p = get_site_policy(&db, site_id).await.expect("policy");
                 let _ = get_rules(&db, p.id).await;

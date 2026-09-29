@@ -140,9 +140,9 @@ impl Default for ChallengeStore {
 ///
 /// A single leading slash is required. `//host/...` is a link to another site
 /// that happens to start with a slash, and browsers read `/\host` the same way;
-/// until 0.14.4 both were accepted, so a crafted link sent whoever solved the
-/// challenge to a site of the attacker's choosing. Control characters are
-/// refused too, since browsers drop them before reading the URL.
+/// accepting either would let a crafted link send whoever solved the challenge
+/// to a site of the attacker's choosing. Control characters are refused too,
+/// since browsers drop them before reading the URL.
 pub fn stays_on_site(dest: &str) -> bool {
     dest.starts_with('/')
         && !dest.starts_with("//")

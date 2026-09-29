@@ -236,8 +236,8 @@ async fn main() {
         .route("/sites/{name}/acme",     post(routes::sites::post_site_acme))
         .route("/sites/{name}/toggle",   post(routes::sites::post_site_toggle))
         .route("/sites/{name}/delete",   post(routes::sites::post_site_delete))
-        // Exclusions were per site until 0.12.1; the old page now redirects to
-        // the policy that holds them.
+        // The per-site exclusions page, which older bookmarks point to,
+        // redirects to the policy that holds them.
         .route("/sites/{name}/exclusions",
                get(routes::exclusions::get_site_exclusions))
         // One click from the traffic row that showed the block.
@@ -466,8 +466,8 @@ async fn main() {
 /// Wait for the signal a service manager stops a process with.
 ///
 /// SIGTERM is what `systemctl stop` and `systemctl restart` send, and Ctrl-C is
-/// what a person running it in a terminal sends. Neither was handled before
-/// 0.13.3: the process was killed where it stood.
+/// what a person running it in a terminal sends. Handling both lets the process
+/// finish cleanly rather than be killed where it stands.
 async fn stop_signal() -> &'static str {
     #[cfg(unix)]
     {
@@ -494,11 +494,11 @@ async fn stop_signal() -> &'static str {
 
 /// Close the pool, which checkpoints the write-ahead log.
 ///
-/// Until 0.13.3 nothing did this, so a stopped EasyWAF left recent writes in
-/// `easywaf.db-wal` and the `.db` file on its own was not the database. That is
-/// safe — SQLite recovers the log on the next open — but it makes the obvious
-/// backup, copying the one file, quietly incomplete. Stopping now leaves a file
-/// that stands on its own.
+/// Without it a stopped EasyWAF would leave recent writes in `easywaf.db-wal`,
+/// and the `.db` file on its own would not be the database. That is safe —
+/// SQLite recovers the log on the next open — but it makes the obvious backup,
+/// copying the one file, quietly incomplete. Stopping leaves a file that stands
+/// on its own.
 async fn close_database(db: &SqlitePool) {
     let _ = sqlx::raw_sql("PRAGMA wal_checkpoint(TRUNCATE)").execute(db).await;
     db.close().await;

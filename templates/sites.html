@@ -67,12 +67,11 @@
                         </td>
                         <td>{{ site.target }}</td>
                         <td>
-                            {# "Protected" used to mean only that a policy was
-                               attached, which is not the same fact and was the
-                               more reassuring of the two. A policy set to Off
-                               inspects nothing, one set to DetectionOnly never
-                               refuses anything, and one with no enabled rules
-                               has nothing to refuse with — three states that
+                            {# "Protected" means the policy can refuse something,
+                               not merely that one is attached. A policy set to
+                               Off inspects nothing, one set to DetectionOnly never
+                               refuses anything, and one with no enabled rules has
+                               nothing to refuse with — three states that would
                                all read as protection and are not. #}
                             {% if site.waf_policy_id %}
                                 {% if site.policy_mode == "Off" %}

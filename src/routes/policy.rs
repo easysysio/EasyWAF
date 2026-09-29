@@ -98,7 +98,7 @@ pub async fn post_apply_rule_update(
 /// POST /policy/{name}/rules/revert/{set_id} — put back the version an update
 /// replaced.
 ///
-/// The way back 0.13.1 said did not exist. It restores the rules as they were,
+/// It restores the rules as they were,
 /// removes what the newer version added, and puts the recorded version back —
 /// leaving alone the two things no version owns: whether a rule is switched on,
 /// and any rule cloned from the set.

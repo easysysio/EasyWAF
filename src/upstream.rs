@@ -2,8 +2,8 @@
 // upstream.rs — EasyWAF
 // Which backend a request goes to.
 //
-// A site had one `target`; since 0.13.0 it has a pool, and
-// something has to choose. Weighted round-robin: enough for
+// A site has a pool of backends, and something has to
+// choose. Weighted round-robin: enough for
 // almost everyone, and the weight covers backends on unequal
 // hardware, which is the common real case.
 //
@@ -11,10 +11,9 @@
 // in-flight accounting per upstream. It is worth having once
 // there is evidence round-robin is losing, and there is not.
 //
-// The pool travels with the site row as one string, so
-// choosing costs no extra query on the request path — where
-// re-reading rows, not matching rules, is what the
-// performance work of 0.11.0 found to be the cost.
+// The pool travels with the site row, so choosing costs no
+// extra query on the request path — where re-reading rows,
+// not matching rules, is what a request costs.
 // =========================================================
 
 use std::collections::HashMap;

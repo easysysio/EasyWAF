@@ -253,11 +253,11 @@
                                reconnaissance lives, and the near-miss that is one
                                point from blocking real traffic.
 
-                               Labelled SCORED, not DETECTED. "Detected" read as
+                               Labelled SCORED, not DETECTED. "Detected" reads as
                                "DetectionOnly", so an enforcing policy showing these
-                               looked like it had stopped enforcing — when what they
-                               mean is the opposite: the rules ran, added score, and
-                               the total did not reach the threshold. #}
+                               would look as if it had stopped enforcing — when what
+                               they mean is the opposite: the rules ran, added score,
+                               and the total did not reach the threshold. #}
                             <span class="label label-info"
                                   title="Rules matched and added score, but the total stayed under this policy's block threshold — so the request was allowed. This is normal on an enforcing policy. {{ e.block_reason | default(value='') }}">
                                 <i class="fa fa-eye"></i> SCORED{% if e.waf_score %} {{ e.waf_score }}{% endif %}

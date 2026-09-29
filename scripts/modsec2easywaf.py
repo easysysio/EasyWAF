@@ -27,8 +27,8 @@ What does not, and why
     t:normalizePath
                      A rule written against a decoded form is evadable by
                      using the encoding it was supposed to decode, so it is
-                     refused rather than shipped looking intact. Since 0.11.0
-                     EasyWAF applies htmlEntityDecode, jsDecode, cssDecode,
+                     refused rather than shipped looking intact. EasyWAF
+                     applies htmlEntityDecode, jsDecode, cssDecode,
                      urlDecodeUni and removeNulls itself, so rules naming
                      those convert.
     lookaround,      Rust's regex crate has no (?=) (?!) (?<=) (?<!),
@@ -87,8 +87,8 @@ ZONE_OF = {
 SAFE_TRANSFORMS = {
     "none", "urldecode", "urldecodeuni", "utf8tounicode",
     "removenulls", "compresswhitespace", "trim", "length_none",
-    # 0.11.0: zone_text applies these in the chains CRS declares, so a rule
-    # naming them is matched against the text it was written against.
+    # zone_text applies these in the chains CRS declares, so a rule naming
+    # them is matched against the text it was written against.
     "htmlentitydecode", "jsdecode", "cssdecode",
 }
 CASE_TRANSFORMS = {"lowercase", "uppercase"}
@@ -554,9 +554,8 @@ SecRule ARGS "@rx foo" \
     "id:100002,phase:2,chain,msg:'Chained',severity:'ERROR'"
     SecRule REQUEST_HEADERS:User-Agent "@rx bar"
 
-# Refused: a transformation EasyWAF does not apply. This was t:htmlEntityDecode
-# until 0.11.0, when zone_text started applying that one — so the case now names
-# a transformation that is still refused, which is what it is here to check.
+# Refused: a transformation EasyWAF does not apply, which is what this case is
+# here to check.
 SecRule ARGS "@rx /bin/sh" \
     "id:100003,phase:2,t:cmdLine,msg:'RCE',severity:'CRITICAL'"
 

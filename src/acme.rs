@@ -312,20 +312,11 @@ pub async fn issue(db: &SqlitePool, domains: &[String]) -> Result<(String, Strin
     Ok((cert_pem, key_pem))
 }
 
-/// What to tell the operator about a validation that did not succeed.
-///
-/// "Timeout" on its own sends people to check DNS, which is usually not it.
-/// EasyWAF already knows the two things that matter and neither needs asking
-/// the CA: whether it served the token, and whether anything of its own is
-/// listening on port 80. Port 80 is bound only when an enabled site has
-/// `listen_port = 80` — there is no listener otherwise — so a certificate can
-/// be requested for a name that nothing on this host will ever answer for.
 /// What the CA itself said about each authorization, if anything.
 ///
 /// Let's Encrypt records a precise reason on the challenge — the address it
-/// connected to, and what it got — and until now EasyWAF discarded all of it
-/// and substituted a guess. Its own words beat any inference made from this
-/// side of the connection, so they go first and the inference goes after.
+/// connected to, and what it got. Its own words beat any inference made from
+/// this side of the connection, so they go first and the inference goes after.
 ///
 /// Best-effort by design: this runs on a path that has already failed, and a
 /// second failure here must not replace the original error with one about
@@ -451,10 +442,10 @@ pub async fn issue_and_store(
     // for all three, and a renewal that quietly dropped the aliases would
     // break them a month later with nothing pointing at why.
     let domain = domains.join(" ");
-    // Logged here rather than left to the caller. A failed request used to
-    // leave no record at all: the error became a flash message, and a page
-    // that did not render one turned the whole attempt into silence. The log
-    // is the one place that survives whatever the browser does next.
+    // Logged here rather than left to the caller. The error also becomes a
+    // flash message, but a page that does not render one would turn the whole
+    // attempt into silence; the log is the one place that survives whatever
+    // the browser does next.
     let (cert_pem, key_pem) = match issue(db, domains).await {
         Ok(pair) => pair,
         Err(e)   => {

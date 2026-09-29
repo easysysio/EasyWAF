@@ -337,13 +337,13 @@ mod status_tests {
     #[test]
     fn the_bundled_database_says_what_it_is_and_when_it_was_built() {
         // Everything the Updates page shows about the country database comes
-        // from the file itself, and none of it was read before 0.13.1.
+        // from the file itself.
         //
-        // Asked of the bundled database directly. Loading "whatever init
-        // picks" made this depend on the working directory: once EasyWAF had
-        // run from the checkout and fetched a database from the channel into
-        // geo/, init preferred that one and the test failed on a fact about
-        // the machine rather than the code.
+        // Asked of the bundled database directly. "Whatever init picks"
+        // depends on the working directory: once EasyWAF has run from the
+        // checkout and fetched a database from the channel into geo/, init
+        // prefers that one, and the test would fail on a fact about the
+        // machine rather than the code.
         let s = describe(&embedded().expect("the bundled database opens"), Source::Bundled);
         assert!(s.source.verified(), "the bundled database ships with the binary");
         assert!(s.database_type.to_lowercase().contains("country"),

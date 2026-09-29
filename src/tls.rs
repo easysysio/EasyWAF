@@ -366,10 +366,9 @@ fn certified_key(cert_pem: &str, key_pem: &str) -> std::result::Result<Certified
 /// spots depending on how the key is wrapped; a name is an OID (tag 0x06), and
 /// spelled out it is a SEQUENCE (tag 0x30).
 ///
-/// Found by walking the structure field by field. In 0.14.1 the SEC1 case
-/// searched for the first 0xA0 byte instead, and the private key before it is
-/// random bytes: about one key in ten has an 0xA0 among them, and got the old
-/// message.
+/// Found by walking the structure field by field, not by searching for a tag
+/// byte: the private key before the curve is random bytes, and about one key in
+/// ten has the byte a search would stop on.
 fn ec_curve_spelled_out(key: &PrivateKeyDer<'_>) -> bool {
     const EC_PUBLIC_KEY: &[u8] = &[0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x02, 0x01];
     let der = key.secret_der();

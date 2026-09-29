@@ -275,9 +275,9 @@ pub async fn post_site_create(
     // second query on a different one.
     .last_insert_rowid();
 
-    // Upstreams are rows of their own since 0.13.0, and the field takes a list:
-    // a site that is served by three backends should not have to be created
-    // with one and corrected twice.
+    // Upstreams are rows of their own, and the field takes a list: a site that
+    // is served by three backends should not have to be created with one and
+    // corrected twice.
     apply_pool(&state.db, site_id, &upstreams).await?;
 
     save_extra_ports(&state.db, site_id, &extra_http, &extra_https).await?;
@@ -1098,7 +1098,7 @@ async fn announce_site(
 /// The split survives only because something has to be primary: the
 /// HTTP-to-HTTPS redirect names one port, and inventing a rule for which of
 /// several would be worse than taking the first. It is a storage detail, and
-/// after this change it is no longer one the form asks anybody about.
+/// not one the form asks anybody about.
 fn split_ports(raw: &str) -> (Option<i64>, Vec<i64>, Vec<String>) {
     let (ports, bad) = parse_port_list(raw);
     let mut it = ports.into_iter();
@@ -1116,11 +1116,11 @@ struct SitePorts {
 
 /// Refuse HTTPS with nothing to serve it with.
 ///
-/// An HTTPS port with no certificate refuses every client, and until 0.14.1 a
-/// site could be saved that way and listed as active — and with "redirect to
-/// HTTPS" on, plain HTTP sent every visitor there, so the site was entirely
-/// unreachable. The import already refused the combination; the form now does
-/// too. `acme_now` is the create form asking Let's Encrypt in the same step,
+/// An HTTPS port with no certificate refuses every client, and with "redirect
+/// to HTTPS" on, plain HTTP would send every visitor there, so the site would
+/// be entirely unreachable while listed as active. The form refuses the
+/// combination, as the import does. `acme_now` is the create form asking Let's
+/// Encrypt in the same step,
 /// which is the one case where the certificate legitimately arrives after the
 /// site. (If that request fails, the proxy still does not redirect to a port
 /// that cannot answer.)
@@ -1175,9 +1175,8 @@ fn validated_ports(
         return Err("At least one HTTP port is required".to_string());
     };
 
-    // Checked across both lists at once, which the old shape could not do: a
-    // port named as both the primary and an extra was two fields agreeing, and
-    // now it is one field repeating itself.
+    // Checked across both lists at once: a port named as both the primary and
+    // an extra is one field repeating itself.
     let mut all: Vec<i64> = vec![listen];
     all.extend(&extra_http);
     if let Some(t) = tls_first { all.push(t); }

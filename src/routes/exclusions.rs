@@ -10,8 +10,8 @@
 // to a path prefix and to a client address or block, with a
 // note saying why.
 //
-// Exclusions belong to a policy since 0.12.1, like every
-// other decision about what a request meets. Sites that face
+// Exclusions belong to a policy, like every other decision
+// about what a request meets. Sites that face
 // different things get different policies — the public
 // websites one, each hosted application its own — so a policy
 // is already the group an exclusion is decided for. Because
@@ -453,8 +453,8 @@ pub async fn post_exclusion_from_traffic(
 
 // ─── get_site_exclusions ─────────────────────────────────
 
-/// The per-site page that existed until 0.12.1, kept as a redirect so a
-/// bookmark lands on the policy that now holds the site's exclusions.
+/// The per-site exclusions page older versions had, kept as a redirect so a
+/// bookmark lands on the policy that holds the site's exclusions.
 pub async fn get_site_exclusions(
     State(state): State<AppState>,
     _: Viewer,

@@ -59,9 +59,9 @@ pub enum ModuleDecision {
 /// One rule that matched, as the Traffic Monitor will show it.
 ///
 /// Carried out of the module rather than only logged. The WAF knows exactly
-/// why it decided what it did; until now that knowledge reached a debug log
-/// and nowhere else, so diagnosing a false positive meant enabling debug
-/// logging on a production proxy and reproducing the request.
+/// why it decided what it did, and a false positive should be diagnosable from
+/// the traffic row — not by enabling debug logging on a production proxy and
+/// reproducing the request.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuleHit {
     /// The OWASP-style catalogue number, when the rule has one.
@@ -73,10 +73,9 @@ pub struct RuleHit {
 /// What a module would have done, when it did not do it.
 ///
 /// A request that matches rules and is still allowed — because it stayed under
-/// the threshold, or because the policy is DetectionOnly — used to leave a
-/// traffic record indistinguishable from clean traffic. That made
-/// DetectionOnly close to useless: the mode exists to show what enforcing
-/// would do, and nothing downstream could tell.
+/// the threshold, or because the policy is DetectionOnly — must not leave a
+/// traffic record indistinguishable from clean traffic: DetectionOnly exists to
+/// show what enforcing would do.
 ///
 /// Ordered by severity so `merge` can keep the strongest across modules.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]

@@ -23,6 +23,7 @@ Version bumps and tags are created only after explicit approval.
 
 ### Changed
 - Code that described things it no longer did was corrected or removed: comments claiming a new port needs a restart, that alerts and blocks were "not yet produced", and a 32 MB body limit; a pipeline module that did nothing; and fields and an error variant nothing used. The proxy's request handler, one function of about 570 lines, is split into its steps — each a function of its own, named for what it does — so it reads top to bottom as the list of what happens to a request.
+- Comments say what the code does and why; how it used to behave is left to this changelog and the git history. A version is still named where code exists to handle what an older release left behind, such as a cookie with no role or a config file with keys since removed.
 
 ---
 

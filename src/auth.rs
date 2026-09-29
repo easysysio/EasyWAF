@@ -84,17 +84,17 @@ pub struct SessionData {
     pub epoch: i64,
     /// When the session began, in Unix seconds. A cookie older than
     /// [`SESSION_LIFETIME_SECS`] is refused, whatever the browser still holds.
-    /// Cookies from before 0.14.4 have none, read as 0, and are refused.
+    /// A cookie issued before sessions carried a start time reads as 0, and is
+    /// refused.
     #[serde(default)]
     pub issued: i64,
 }
 
 /// How long a session lasts from sign-in.
 ///
-/// Enforced by the server since 0.14.4. Before, eight hours was only the
-/// cookie's `Max-Age` — an instruction to the browser — and the signed value
-/// itself never expired, so a copied cookie went on working until the account's
-/// sessions were ended by hand.
+/// Enforced here, not only by the cookie's `Max-Age`: that is an instruction to
+/// the browser, and a copied cookie would otherwise go on working until the
+/// account's sessions were ended by hand.
 pub const SESSION_LIFETIME_SECS: i64 = 8 * 3600;
 
 /// Whether a session issued at `issued` is still within its lifetime at `now`.
@@ -149,9 +149,9 @@ pub fn get_session(jar: &SignedCookieJar) -> Option<SessionData> {
 
 /// The session, checked against the account it names.
 ///
-/// A signed cookie proves only that this server issued it. Until 0.8.0 that
-/// was the whole check, so a session outlived a password change by up to eight
-/// hours, in any browser that held it, and there was no way to end one.
+/// A signed cookie proves only that this server issued it. On its own that
+/// would let a session outlive a password change for as long as the cookie
+/// lasts, in any browser that held it, with no way to end one.
 ///
 /// Four things are verified here, and each corresponds to something an
 /// administrator can do and expects to take effect:
@@ -253,12 +253,11 @@ fn removal_cookie() -> Cookie<'static> {
 // Authorisation as a requirement a handler *declares*, rather than a check it
 // remembers to make.
 //
-// Before 0.8.0 every handler opened with the same four lines, and there were
-// sixty-seven of them. Nothing enforced that a new handler included them —
-// forgetting was not a compile error, it was an unauthenticated page nobody
-// noticed. Taking `Viewer` or `Admin` as an argument makes the requirement
-// part of the signature: a handler that needs an administrator cannot be
-// written without saying so, and one that says so cannot run without one.
+// A check each handler opens with is one forgotten line away from an
+// unauthenticated page nobody notices, and forgetting is not a compile error.
+// Taking `Viewer` or `Admin` as an argument makes the requirement part of the
+// signature: a handler that needs an administrator cannot be written without
+// saying so, and one that says so cannot run without one.
 
 use axum::{
     extract::{FromRef, FromRequestParts},
@@ -405,8 +404,8 @@ mod tests {
 
     #[tokio::test]
     async fn a_cookie_older_than_the_epoch_is_refused() {
-        // What "sign out everywhere" has to mean. Before 0.8.0 a session
-        // outlived a password change by up to eight hours.
+        // What "sign out everywhere" has to mean: no session outlives a
+        // password change.
         let db = db_with(ROLE_ADMIN, 1, 4).await;
         assert!(check(&db, &session(ROLE_ADMIN, 3)).await.is_none());
     }
@@ -512,8 +511,7 @@ mod cookie_tests {
 /// sibling subdomain is the same site. With the interface at waf.example.com,
 /// a script on app.example.com — perhaps an application EasyWAF itself
 /// proxies — could send the administrator's cookie with a POST to
-/// /backup/import/apply. 0.14.0 made the interface's most destructive
-/// actions reachable that way.
+/// /backup/import/apply.
 ///
 /// So the browser is asked where the request came from, in the two ways
 /// browsers say it. `Sec-Fetch-Site` first: the browser sets it and a page's
@@ -521,7 +519,7 @@ mod cookie_tests {
 /// the interface talking to itself. Failing that, `Origin` must name the host
 /// the request arrived at. A request with neither is not from a browser, which
 /// cannot be steered by a page anyway; the session cookie it must carry is the
-/// whole check for it, as before.
+/// whole check for it.
 ///
 /// This is the approach Go adopted in 1.25 for the same problem, and it needs
 /// no token in any form.

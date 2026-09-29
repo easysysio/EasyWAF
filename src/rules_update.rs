@@ -6,8 +6,8 @@
 // caches it, and compares each policy's installed version
 // against what is offered. Applying an update is a separate,
 // deliberate action — an auto-applied bad rule is an outage
-// across every site using that policy, and 0.5.4 is the
-// evidence that a bad rule blocks real traffic.
+// across every site using that policy, and a bad rule does
+// block real traffic.
 //
 // The cached manifest is treated as *unverified*: it says
 // what versions exist, which is enough to raise a notice.
@@ -107,9 +107,7 @@ pub struct CatalogSet {
 ///
 /// This is what makes an optional set installable. `available()` reports only
 /// sets a policy already has, because an update to something nobody installed
-/// is not news — but that same rule meant a set you had never installed could
-/// never be found either, and `tier = "optional"` had nothing that could act
-/// on it.
+/// is not news — so a set nobody has installed is found here or nowhere.
 pub async fn catalog(db: &SqlitePool, policy_id: i64) -> Result<Vec<CatalogSet>> {
     let offered = match cached_manifest(db).await {
         Some(text) => parse_manifest(&text),
@@ -338,11 +336,9 @@ pub fn spawn_check_task(db: SqlitePool) {
 
 /// The pinned signing key, compiled into the binary.
 ///
-/// It was a loose file until 0.6.11, read from `rules/key.gpg` relative to the
-/// working directory. That made the trust anchor something an installation
-/// could be missing — which is not a theoretical worry: 0.6.0 and 0.6.1 shipped
-/// without it and could not apply a single update. A missing anchor is now a
-/// build error rather than a runtime one, which is the right end to find it.
+/// Compiled in rather than read from a file, so the trust anchor is not
+/// something an installation can be missing: a missing anchor is a build error
+/// rather than a runtime one, which is the right end to find it.
 ///
 /// The key arrives with the binary either way, reviewed by whoever cut the
 /// release, rather than over the same connection as the thing it vouches for.
@@ -360,7 +356,7 @@ const KEY_OVERRIDE: &str = "rules/key.gpg";
 /// key, and there would otherwise be no way to say so short of rebuilding.
 ///
 /// The override is logged every time it is used. A substituted trust anchor is
-/// exactly the thing that must not be silent, and the packages no longer ship
+/// exactly the thing that must not be silent, and the packages do not ship
 /// this file, so its presence is always somebody's decision.
 pub(crate) fn trusted_key() -> String {
     key_from(KEY_OVERRIDE)
@@ -379,8 +375,8 @@ fn key_from(override_path: &str) -> String {
             );
             key
         }
-        // Infallible, which is the point: there is no longer a state in which
-        // an installation has nothing to verify against.
+        // Infallible, which is the point: there is no state in which an
+        // installation has nothing to verify against.
         Err(_) => BUNDLED_KEY.to_string(),
     }
 }
@@ -569,8 +565,8 @@ pub fn cache_dir() -> std::path::PathBuf {
 /// are learned by being caught out by them.
 ///
 /// Falls back to the bundle if seeding never managed to run, so a broken or
-/// read-only data directory degrades to the old behaviour instead of leaving
-/// the GUI with no rules to show.
+/// read-only data directory degrades to reading the packaged sets instead of
+/// leaving the GUI with no rules to show.
 pub fn rules_source() -> std::path::PathBuf {
     let cache = cache_dir().join("sets");
     let usable = std::fs::read_dir(&cache)
@@ -923,8 +919,8 @@ tier    = "optional"
 
     #[test]
     fn with_no_key_on_disk_the_pinned_one_is_used() {
-        // The whole point: there is no longer a state in which an installation
-        // has nothing to verify against.
+        // The whole point: there is no state in which an installation has
+        // nothing to verify against.
         let missing = std::env::temp_dir().join("easywaf-no-such-key.gpg");
         let _ = std::fs::remove_file(&missing);
 

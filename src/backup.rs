@@ -2,8 +2,8 @@
 // backup.rs — EasyWAF
 // Snapshots: the whole database, consistent, while it runs.
 //
-// A snapshot is the disaster-recovery half of 0.14.0 and is
-// deliberately stupid about what it holds. It does not know
+// A snapshot is the disaster-recovery half of backup, and
+// is deliberately stupid about what it holds. It does not know
 // what a site or a rule is, so no later release that adds a
 // table has to remember it — it answers "the host is gone"
 // and nothing else. The readable export is the other half,

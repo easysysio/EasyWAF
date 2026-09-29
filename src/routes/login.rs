@@ -43,12 +43,11 @@ pub async fn get_login(
     // Validated against the database, not merely decoded.
     //
     // Deciding "already signed in" from the cookie alone, while every other
-    // page decides it from the database, is what produced a redirect loop in
-    // 0.8.0: this page sent the holder of a stale cookie to the dashboard, and
-    // the dashboard sent them back here. A cookie goes stale whenever a
-    // session is ended — a password change, a role change, a suspension — so
-    // the loop was reachable by ordinary use, and the only escape was clearing
-    // cookies by hand.
+    // page decides it from the database, would loop: this page would send the
+    // holder of a stale cookie to the dashboard, and the dashboard would send
+    // them back here. A cookie goes stale whenever a session is ended — a
+    // password change, a role change, a suspension — so ordinary use reaches
+    // it.
     if crate::auth::authenticate(&state.db, &jar).await.is_some() {
         return Ok(Redirect::to("/").into_response());
     }
@@ -171,9 +170,10 @@ async fn verify_credentials(
     .await
     .ok()?;
 
-    // An unknown name costs the same password check a known one does. Until
-    // 0.14.4 it was refused at once — about 2 ms against 230 — so the time a
-    // refusal took said whether the account existed, whatever the message.
+    // An unknown name costs the same password check a known one does.
+    // Refused at once, it would take about 2 ms against 230, and the time a
+    // refusal took would say whether the account existed, whatever the
+    // message.
     let Some(row) = row else {
         let _ = verify(password, stand_in_hash());
         return None;
@@ -210,9 +210,9 @@ fn stand_in_hash() -> &'static str {
 
 // ─── Throttling ──────────────────────────────────────────
 //
-// Until 0.14.4 nothing limited how fast passwords could be guessed. Attempts
-// are counted per address, not per account: locking an account would let
-// anyone who knows its name keep the administrator out.
+// How fast passwords can be guessed. Attempts are counted per address, not per
+// account: locking an account would let anyone who knows its name keep the
+// administrator out.
 
 /// Failed sign-ins an address may make within [`WINDOW`].
 const MAX_FAILURES: u32 = 10;

@@ -21,8 +21,7 @@ use tokio::sync::mpsc;
 pub struct TrafficRecord {
     pub site_id:      i64,
     /// The site's name, for the flow line. Passed in because the proxy has it
-    /// already; until 0.14.2 it was read back from the database after every
-    /// row, a query per request whether a flow line was being sent or not.
+    /// already, rather than read back from the database for every row.
     pub site_name:    String,
     pub client_ip:    String,
     pub method:       String,
@@ -149,12 +148,12 @@ const BATCH: usize = 1_000;
 
 /// Hands traffic rows to the one task that writes them.
 ///
-/// Until 0.14.2 every request spawned its own insert. Each was a transaction
-/// of its own, and several at once competed for SQLite's single write lock and
-/// mostly slept waiting for it: with a backlog, rows went in at about 2,850 a
-/// second, and the backlog grew for as long as traffic arrived faster than
-/// that, without limit. One writer taking whatever has queued, up to [`BATCH`]
-/// rows in a transaction, never waits on itself.
+/// One writer, not an insert per request: separate inserts are a transaction
+/// each, and several at once compete for SQLite's single write lock and mostly
+/// sleep waiting for it — about 2,850 rows a second with a backlog, which
+/// grows without limit while traffic arrives faster. One writer taking
+/// whatever has queued, up to [`BATCH`] rows in a transaction, never waits on
+/// itself.
 ///
 /// Cheap to clone: a channel sender and a counter.
 #[derive(Clone)]

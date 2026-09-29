@@ -28,8 +28,7 @@ struct TrafficSummary {
     /// the four still sum to `total`.
     detected:   i64,
     /// The subset of `detected` that only got through because the policy is
-    /// not enforcing. This is the number DetectionOnly exists to produce, and
-    /// before 0.6.11 nothing recorded it.
+    /// not enforcing. This is the number DetectionOnly exists to produce.
     would_block: i64,
 }
 
@@ -154,9 +153,9 @@ pub async fn get_dashboard(
     //
     // WafModule and GeoIpModule both return Pass outright when a site has no
     // waf_policy_id, so such a site is proxied without any inspection at all.
-    // Until 0.7.0 nothing in the GUI said so, and the sites list rendered it as
-    // a muted "None" — which reads as a neutral absence rather than as the only
-    // state in which the product does nothing.
+    // Said on the dashboard because a muted "None" in the sites list reads as
+    // a neutral absence rather than as the only state in which the product
+    // does nothing.
     let unprotected = sqlx::query!(
         r#"SELECT name as "name!" FROM sites
            WHERE enabled = 1 AND waf_policy_id IS NULL

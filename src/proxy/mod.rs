@@ -42,11 +42,10 @@ pub const UPSTREAM_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::f
 /// How long an upstream connection may sit with nothing arriving before it is
 /// abandoned. Idle, not total: it resets on every successful read.
 ///
-/// There was a thirty-second *total* timeout here until 0.10.1, and a total
-/// timeout covers the whole response body. Every download and media stream
-/// longer than thirty seconds was cut off mid-transfer — after the upstream's
-/// 200 had already been sent, so the client was left with a truncated file and
-/// a success status. Ten minutes of silence is what Immich's documentation asks
+/// Not a total timeout: a total one covers the whole response body, so it cuts
+/// off every download and media stream that takes longer — after the
+/// upstream's 200 has been sent, leaving the client a truncated file and a
+/// success status. Ten minutes of silence is what Immich's documentation asks
 /// of a reverse proxy, and an idle timeout only ever fires on a connection that
 /// has actually stopped moving.
 pub const UPSTREAM_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(600);
@@ -548,13 +547,9 @@ pub fn is_upgrade(headers: &HeaderMap) -> bool {
 ///
 /// What every other request gets — the client's headers without the hop-by-hop
 /// ones, and the forwarding headers that say who the client is — except that
-/// `Connection` and `Upgrade` are kept, because they are the request.
-///
-/// Until 0.14.4 a handshake was forwarded with the client's headers exactly as
-/// they arrived: an `X-Forwarded-For` the client wrote itself reached the
-/// application unchecked, `X-Real-IP` and `X-Forwarded-Proto` were missing, and
-/// `Host` was replaced with the backend's address — which an application that
-/// compares `Origin` with `Host` refuses.
+/// `Connection` and `Upgrade` are kept, because they are the request. The
+/// browser's `Host` goes too: an application that compares `Origin` with `Host`
+/// refuses a handshake whose `Host` names the backend.
 fn upgrade_headers(
     headers: &HeaderMap,
     peer: std::net::IpAddr,
@@ -727,11 +722,9 @@ fn split_detection(
     }
 }
 
-/// What every traffic row for one request shares.
-///
-/// Until 0.14.2 each of the six ways a request can end built its row by hand,
-/// cloning these fields into a task of its own — about 150 lines that had to
-/// agree, and one field added to the row meant six edits.
+/// What every traffic row for one request shares. Each way a request can end
+/// records this plus an `Outcome`, so the rows cannot disagree about the
+/// request itself.
 struct Visit {
     site_id:    i64,
     site_name:  String,
@@ -836,9 +829,8 @@ async fn handle_request(
 
     // Everything from here is this site's response, whichever step produces it
     // — the upstream's, a block, a challenge, a gateway error — and carries the
-    // headers the site asked for. Until 0.14.1 they were added to the
-    // upstream's response only, so a visitor whose first response was one of
-    // EasyWAF's own pages never received the HSTS the site promised.
+    // headers the site asked for: a visitor whose first response is one of
+    // EasyWAF's own pages must still receive the HSTS the site promises.
     let security = SecurityHeaders::of(&site, state.is_tls);
     let mut response = serve_site(&state, peer, &site, host, req, started_at).await;
     security.apply(response.headers_mut());
@@ -992,11 +984,11 @@ async fn find_site(state: &ProxyState, host: &str) -> Result<Arc<SiteRow>, Respo
 /// being served here either way.
 ///
 /// "Somewhere" includes a certificate. An HTTPS port with none refuses every
-/// handshake, and a redirect to it made the whole site unreachable while its
-/// page said it was active. The form no longer saves a site that way, but one
-/// can still arrive there — a certificate requested from Let's Encrypt while
-/// creating the site, and refused — and serving plain HTTP is never worse than
-/// sending visitors to a port that cannot answer.
+/// handshake, so a redirect to it would make the whole site unreachable. The
+/// form refuses to save a site that way, but one can still arrive there — a
+/// certificate requested from Let's Encrypt while creating the site, and
+/// refused — and serving plain HTTP is never worse than sending visitors to a
+/// port that cannot answer.
 fn https_redirect(
     state: &ProxyState,
     site:  &SiteRow,
@@ -1162,16 +1154,13 @@ struct BodyStart {
 
 /// Step 7. Read as much of the body as the rules inspect.
 ///
-/// Until 0.11.0 every body was read whole, up to 32 MB, before anything was
-/// forwarded, and anything larger was refused. The cost below the cap was worse
-/// than the cap: the rules decode a body several ways, so a 30 MB upload took
-/// EasyWAF from 78 MB to 480 MB, and a few concurrent ones were a way to exhaust
-/// memory.
-///
-/// Now only the first `inspection_limit()` bytes are read before the verdict.
-/// Attacks sit at the start of a body — the tail of a video does not contain SQL
-/// injection. The rest streams to the upstream as it arrives, so an upload of
-/// any size costs about the limit rather than its own size. The trade-off is
+/// Only the first `inspection_limit()` bytes are read before the verdict, never
+/// the whole body: the rules decode a body several ways, so holding an upload
+/// whole costs several times its size, and a few concurrent ones would exhaust
+/// memory. Attacks sit at the start of a body — the tail of a video does not
+/// contain SQL injection. The rest streams to the upstream as it arrives, so an
+/// upload of any size costs about the limit rather than its own size. The
+/// trade-off is
 /// stated in Settings, where the limit is set: bytes past it are forwarded
 /// uninspected, so a payload padded past it is not seen.
 async fn read_body_start(body: BodyStream) -> Result<BodyStart, Response<Body>> {
@@ -1282,10 +1271,8 @@ fn challenge(
 /// What the rules found on a request that is being let through, for its
 /// traffic row: score, rules, detection and the alerts' reasons.
 ///
-/// Until 0.6.11 this was dropped: every allowed request logged a clean record,
-/// whether nothing had matched or a DetectionOnly policy had just decided it
-/// would have blocked. That made DetectionOnly report nothing, and hid every
-/// near-miss in enforcing mode too.
+/// Recorded, not dropped: it is what DetectionOnly exists to report, and in an
+/// enforcing policy it is every near-miss.
 fn detection_of(
     alerts:   &[crate::modules::Alert],
     findings: &crate::modules::Findings,
@@ -1578,14 +1565,12 @@ fn stronger(
 
 /// Every site, by each hostname it answers for.
 ///
-/// Until 0.14.2 each request found its site with a query, and that query was
-/// most of what a request cost: about half the CPU of a blocked request, and a
-/// ceiling of about 8,000 a second where the table allows 35,000. Sites change
-/// when an administrator saves something, so they are read once and read again
-/// when the configuration generation moves — the invalidation the rule caches
-/// already rely on, which the database's own triggers drive (migrations 025 and
-/// 035), so no handler can forget it. A change reaches the proxy within
-/// [`crate::modules::generation::MAX_AGE`].
+/// Held in memory because a query per request would be most of what a request
+/// costs. Sites change when an administrator saves something, so they are read
+/// once and read again when the configuration generation moves — the
+/// invalidation the rule caches rely on, which the database's own triggers
+/// drive (migrations 025 and 035), so no handler can forget it. A change
+/// reaches the proxy within [`crate::modules::generation::MAX_AGE`].
 ///
 /// Held whole rather than filled per hostname, so a hostname nobody configured
 /// costs nothing to refuse, and scanners sending made-up `Host` headers cannot
@@ -1705,9 +1690,8 @@ async fn load_sites(db: &SqlitePool, generation: u64) -> Result<SiteTable, sqlx:
             policy_id:      r.waf_policy_id,
             rule_engine:    r.rule_engine,
         });
-        // The oldest site keeps a name two of them claim, as the lowest id
-        // did when this was a query. The forms refuse that, so it is a
-        // tiebreak for a database edited by hand.
+        // The oldest site keeps a name two of them claim. The forms refuse
+        // that, so it is a tiebreak for a database edited by hand.
         for name in names {
             table.enabled.entry(name).or_insert_with(|| site.clone());
         }
@@ -1896,10 +1880,10 @@ fn handle_verify(state: &ProxyState, client_ip: &str, body: &[u8]) -> Response<B
 
 /// The answer when as many challenges are waiting as the store will hold.
 ///
-/// Every challenge draws an image and is kept for three minutes, so a flood of
-/// requests that each cross the challenge threshold used to cost memory and
-/// CPU without limit. Past the cap a visitor is asked to come back instead,
-/// before any image is drawn.
+/// Every challenge draws an image and is kept for three minutes, so without a
+/// cap a flood of requests that each cross the challenge threshold would cost
+/// memory and CPU without limit. Past the cap a visitor is asked to come back
+/// instead, before any image is drawn.
 fn too_many_challenges() -> Response<Body> {
     Response::builder()
         .status(StatusCode::TOO_MANY_REQUESTS)

@@ -62,10 +62,10 @@ fi
 # server is self-consistent. Pinning it here means a compromised channel can
 # serve whatever it likes and still fail verification.
 #
-# Since 0.6.11 this key is compiled into the binary by include_str!, so it is
-# a BUILD-time input: a release built without it does not compile, which is
-# where a missing trust anchor should be found. It used to be read from disk at
-# run time, and 0.6.0 shipped without it and could verify nothing.
+# This key is compiled into the binary by include_str!, so it is a BUILD-time
+# input: a release built without it does not compile, which is where a missing
+# trust anchor should be found — not at run time, by an installation that can
+# then verify nothing.
 #
 # A built appliance verifies the updates it fetches for itself against that
 # compiled-in copy, so this file is what the release is built from.
