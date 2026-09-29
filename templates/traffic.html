@@ -114,7 +114,11 @@
         <strong><i class="fa fa-bar-chart"></i> Requests per Hour</strong>
     </div>
     <div class="panel-body" style="padding:12px 16px">
-        <canvas id="trafficChart" height="80"></canvas>
+        {# A box of its own with a set height, which the chart fills. Chart.js keeps
+           an aspect ratio by capping a new height at the container's current one,
+           and a panel is only as tall as the chart in it — so a chart sized that
+           way could shrink with the window but never grow back. #}
+        <div style="position:relative; height:220px"><canvas id="trafficChart"></canvas></div>
     </div>
 </div>
 {% endif %}
@@ -391,6 +395,7 @@ $(document).ready(function () {
         },
         options: {
             responsive:        true,
+            maintainAspectRatio: false,
             interaction:       { mode: 'index', intersect: false },
             // Clicking a bar narrows the table to that hour, keeping whatever
             // site and verdict filters are applied. The chart is deliberately

@@ -163,7 +163,11 @@
                 <small class="text-muted">last 24 hours, <span class="tz-name">UTC</span></small>
             </div>
             <div class="panel-body" style="padding:12px 16px">
-                <canvas id="hourlyChart" height="110"></canvas>
+                {# A box of its own with a set height, which the chart fills. Chart.js keeps
+                   an aspect ratio by capping a new height at the container's current one,
+                   and a panel is only as tall as the chart in it — so a chart sized that
+                   way could shrink with the window but never grow back. #}
+                <div style="position:relative; height:240px"><canvas id="hourlyChart"></canvas></div>
             </div>
         </div>
     </div>
@@ -175,7 +179,7 @@
             </div>
             <div class="panel-body" style="padding:12px 16px">
                 {% if traffic.total > 0 %}
-                    <canvas id="verdictChart" height="220"></canvas>
+                    <div style="position:relative; height:240px"><canvas id="verdictChart"></canvas></div>
                 {% else %}
                     <p class="text-muted text-center" style="margin:70px 0">
                         No traffic recorded yet.
@@ -305,6 +309,7 @@ let verdictChart = null;
         },
         options: {
             responsive:  true,
+            maintainAspectRatio: false,
             interaction: { mode: 'index', intersect: false },
             // A bar stands for an hour of traffic; clicking it should show that
             // traffic rather than leaving the reader to reconstruct the filter.
@@ -349,6 +354,7 @@ let verdictChart = null;
         },
         options: {
             responsive: true,
+            maintainAspectRatio: false,
             cutout: '58%',
             // Each slice counts rows the Traffic Monitor can select, so clicking
             // one lands on exactly those rows. The order matches the labels

@@ -6,6 +6,13 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
+## [Unreleased]
+
+### Fixed
+- **The charts on the Dashboard and in Traffic Monitor follow the window when it gets wider, not only narrower.** Each kept its aspect ratio, and Chart.js caps a growing chart at its container's current height — which, in a panel exactly as tall as the chart, meant a chart could shrink and never grow back. Each chart now has a box of its own with a set height, and fills its width at any size.
+
+---
+
 ## [0.14.2] — 2026-09-28
 
 ### Changed
