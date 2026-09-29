@@ -189,12 +189,6 @@ reaches before you confirm it.
 Every rule that is not running anywhere — disabled or excluded — is listed on one
 page, so a temporary exclusion cannot quietly become permanent.
 
-Until 0.12.1 an exclusion belonged to a site. The upgrade moves each one to its
-site's policy, with a note naming the site. One made for a site that shares its
-policy now covers all of that policy's sites, and one on a site with no policy is
-dropped, since no rules ran there; the start-up log names every exclusion in
-either case.
-
 Those three all assume the rule is wrong. When it is the *caller* that is fine —
 a monitoring probe, a partner's integration, your own office — the answer is an
 [allow list entry](ip-lists.md) instead, which skips every check for that

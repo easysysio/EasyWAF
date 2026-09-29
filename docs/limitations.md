@@ -42,8 +42,8 @@ Current as of **0.14.0**.
   scheduled, and it has a real cost: responses stream today, and inspecting them
   means buffering.
 - **Some rule transformations are still not implemented.** HTML entity,
-  JavaScript, CSS and `%uHHHH` decoding arrived in **0.11.0**, so rules assuming
-  those are matched against decoded text. Rules assuming `cmdLine`,
+  JavaScript, CSS and `%uHHHH` decoding are applied, so rules assuming those
+  are matched against decoded text. Rules assuming `cmdLine`,
   `normalizePath`, `replaceComments`, `removeWhitespace` or `escapeSeqDecode`
   are still refused by the converter rather than shipped broken, so an attack
   hidden behind one of *those* encodings is not caught. `base64Decode` is

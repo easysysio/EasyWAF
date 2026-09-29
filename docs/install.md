@@ -147,17 +147,7 @@ sudo apt update && sudo apt install --only-upgrade easywaf   # Debian / Ubuntu
 sudo dnf upgrade easywaf                                     # RHEL / Fedora
 ```
 
-Each release's notes list anything an upgrade needs from you. Two older ones
-still matter:
-
-!!! danger "Upgrading from 0.4.0 or 0.4.1 — check your administrator password"
-    Those versions seeded an `admin` / `admin` account, and an upgrade does not
-    touch existing accounts. If you never changed it, change it now under
-    **Account → Change Password**. Installations from 0.4.2 onwards have no
-    default account at all.
-
-!!! danger "Upgrading from 0.3.x — the interface has moved"
-    It is now on **8443 over HTTPS**, and 8080 does nothing but redirect there.
-    If you firewalled 8080 to keep the interface private and opened nothing
-    else, **open 8443 to the same callers before upgrading** — otherwise 8080
-    will redirect you to a port your own firewall is blocking.
+Anything an upgrade needs from you is in the **Upgrading** section of that
+release's notes, on the [releases page](https://github.com/easysysio/EasyWAF/releases)
+and in `/usr/share/doc/easywaf/CHANGELOG.md` on the host. Read the notes of
+every release you are skipping over, not only the newest.

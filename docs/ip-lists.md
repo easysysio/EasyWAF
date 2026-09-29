@@ -152,11 +152,3 @@ for the next check.
 
 The lists are never merged into one: each keeps the licence and credit line its
 source requires, and the page shows both.
-
-## Upgrading from 0.12.0
-
-Until 0.12.1 the lists applied to the whole installation. The upgrade copies
-every entry, and every published-list choice, into every policy, so each site
-with a policy is treated as before. A site with **no** policy loses its lists;
-the start-up log names each such site. Attach a policy to keep them.
-

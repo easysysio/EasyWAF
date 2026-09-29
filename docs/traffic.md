@@ -7,8 +7,8 @@ hours, and a per-site breakdown of each site's mix.
 
 The charts are filters. Clicking a bar or a slice opens Traffic Monitor already
 narrowed to what the chart was drawn from — the reader's next question after
-seeing a spike is "show me those", and it used to mean rebuilding the filter by
-hand.
+seeing a spike is "show me those", and it should not mean rebuilding the filter
+by hand.
 
 ## Traffic Monitor
 

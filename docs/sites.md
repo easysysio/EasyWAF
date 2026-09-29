@@ -18,9 +18,8 @@ A site answers for its hostname plus any aliases you give it — one per line, o
 comma separated. Every alias shares the site's upstream, policy, ports, headers
 and certificate.
 
-That is the point: two names for one application used to mean two sites carrying
-the same settings, kept in step by hand, and any divergence was a bug that
-appeared on only one of the names.
+That is the point: two names for one application are one site, so their
+settings can never drift apart.
 
 - A hostname belongs to **one site only**. Claiming one another site already has
   is refused, and the message names that site.

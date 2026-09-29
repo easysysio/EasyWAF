@@ -35,7 +35,7 @@ and EasyWAF uses the bundled database until it takes a fresher one from the
 current.
 
 !!! note "`http_port` and `acme_webroot` are ignored"
-    They are placeholders from 0.1.0, left so an old file still parses. The ports
+    They are placeholders, kept so an older file still parses. The ports
     EasyWAF listens on come from the sites you define, and ACME needs no webroot.
 
 ## DATABASE_URL
@@ -100,10 +100,7 @@ sudo systemctl start easywaf
 ```
 
 Stopping checkpoints the log and closes the database, so the file stands on its
-own — **since 0.13.3**. An EasyWAF older than that was killed where it stood
-and left writes in `easywaf.db-wal`, so a copy taken that way could be missing
-whatever happened since the last checkpoint. If you are copying from an older
-version, or copying a file you are not sure was cleanly stopped, take
+own. If you are copying a file you are not sure was cleanly stopped, take
 `easywaf.db-wal` and `easywaf.db-shm` alongside it.
 
 That file contains the private keys of every certificate stored in EasyWAF.

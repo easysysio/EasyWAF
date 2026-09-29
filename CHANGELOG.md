@@ -201,6 +201,9 @@ Version bumps and tags are created only after explicit approval.
 ### Security
 - Upgrading moves each rule exclusion to its site's policy, so one made for a site that shares its policy now applies on all of that policy's sites; the start-up log names every exclusion that widened, and every one dropped because its site had no policy.
 
+### Upgrading
+- A site with no policy loses the IP lists it had; the start-up log names each one. Attach a policy to keep them.
+
 ## [0.12.0] — 2026-09-16
 
 ### Added
@@ -531,6 +534,7 @@ Version bumps and tags are created only after explicit approval.
 
 ### Upgrading
 - Nothing breaks and nothing needs editing. An existing `config.toml` still parses; removed keys are ignored with a warning.
+- An `admin` account that 0.4.0 or 0.4.1 seeded keeps its password `admin` through the upgrade. If you never changed it, change it now under **Account → Change Password**.
 
 ## [0.4.1] — 2026-09-04
 
@@ -555,6 +559,7 @@ Version bumps and tags are created only after explicit approval.
 
 ### Upgrading from 0.3.x
 - The GUI moves to HTTPS on port 8443. The browser will warn about the self-signed certificate on first visit.
+- If you firewalled 8080 to keep the interface private and opened nothing else, open 8443 to the same callers before upgrading: 8080 now only redirects there.
 
 ## [0.3.1] — 2026-09-04
 
