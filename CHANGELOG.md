@@ -6,7 +6,7 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
-## [Unreleased]
+## [0.14.5] — unreleased
 
 ### Removed
 - The **Updates** tab on Settings → General, which held nothing but a note pointing to Settings → Updates; the menu already names that page.
