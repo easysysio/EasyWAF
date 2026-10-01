@@ -33,6 +33,10 @@ Current as of **0.15.0**.
   colon, so `[::1]:8080` does not match. Name-based hosts are unaffected.
 - **No health or metrics endpoint.** Nothing to point a load balancer's health
   check at, and no Prometheus scrape target.
+- **The connection limits are fixed.** A connection has 30 seconds to send a
+  request and one address may hold 1,024 connections at once; neither is a
+  setting. A client behind another proxy is counted as that proxy unless the
+  proxy is listed as trusted, which exempts it.
 
 ## As a WAF
 
@@ -68,21 +72,24 @@ Current as of **0.15.0**.
   Validation always arrives on port 80, so the host must be reachable there from
   the internet.
 - **No high availability.** No configuration sync between nodes. Scheduled for
-  **0.17.0**.
+  **1.2.0**.
 - **No list of proxy, VPN or hosting addresses.** Every credible dataset is
   commercial, and the cloud providers' own address files may not be
   redistributed. The [published lists](ip-lists.md#published-lists) cover
   hijacked netblocks, compromised hosts and Tor exits only.
 - **No feed of your own.** A published list comes from the signed channel; there
   is no way yet to point EasyWAF at another list's URL.
-- **No rate limiting.** Scheduled for **0.18.0**. An address that attacks
+- **No rate limiting.** Scheduled for **1.3.0**. An address that attacks
   repeatedly is handled by [Smart Protect](smart-protect.md), which counts
   refusals, not requests.
 - **Smart Protect blocks are per node and do not survive a restart.** They are
   held in memory, and a repeat offender is blocked for the same length each
   time rather than longer.
 - **No authentication in front of a site.** EasyWAF decides whether a request is
-  an attack, not who is making it. Scheduled for **0.16.0**.
+  an attack, not who is making it. Scheduled for **1.1.0**.
+- **No allowlist of an application's own URLs.** Every rule describes what an
+  attack looks like; nothing yet learns what the application legitimately
+  exposes and refuses the rest. Scheduled for **1.4.0**.
 
 ## Decided, not missing
 

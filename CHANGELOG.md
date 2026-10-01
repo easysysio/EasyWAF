@@ -15,6 +15,7 @@ Version bumps and tags are created only after explicit approval.
 - **The packaged service no longer runs as root.** It runs as its own account, `easywaf`, with the one extra right it needs — binding ports below 1024 — and with `/usr`, `/etc`, home directories and devices out of its reach. The package creates the account and hands it `/opt/easywaf` and `/var/log/easywaf`.
 - **The management interface loads nothing from outside.** Bootstrap, jQuery, DataTables, metisMenu, Chart.js, Font Awesome and the two fonts came from six other hosts, unchecked; they are now compiled into the binary, so the interface works on a host with no internet access and no outside host can change what runs in an administrator's browser.
 - The interface sends a content security policy that allows scripts, styles, fonts and requests only from itself.
+- **A blocked request is no longer told which rule matched.** The 403 named the rule, or the score and the threshold — directions for getting under it next time. It is now a page saying the request was blocked, with the time and the visitor's address as a reference; the rule, score and reason are in Traffic Monitor as before.
 
 ### Added
 - **A site can reach an HTTPS backend that has a self-signed or private-CA certificate.** Tick *Do not verify the backend's certificate* on the site; it is off by default, and other sites are unaffected. Such a backend used to answer 502 with no way round it.
@@ -22,10 +23,16 @@ Version bumps and tags are created only after explicit approval.
 ### Fixed
 - When a backend cannot be reached, the log says why — refused, timed out, or *invalid peer certificate* — rather than only "error sending request".
 - The Traffic Monitor chart no longer asks for a tick at every whole number, which Chart.js had to cap on a busy hour.
+- Deleting a policy lifts its Smart Protect blocks, which stayed on the Smart Protect page until each ran out.
+
+### Changed
+- The versions after this one are renumbered: a sign-in in front of a site is 1.1.0, configuration sync between nodes 1.2.0, rate limiting 1.3.0 and URL allowlisting 1.4.0.
+- The README, the documentation's home page and *What EasyWAF does not do* describe the product as it is: Smart Protect, load balancing, IP lists, backup and export were missing from the first two, and the README's own list of limits had fallen behind the documentation's, which it now points to.
 
 ### Upgrading
 - The package upgrade creates the `easywaf` account and gives it `/opt/easywaf` and `/var/log/easywaf`; nothing needs doing on a standard installation. If your database is somewhere else (`DATABASE_URL`), make that place writable by `easywaf` before upgrading.
 - Commands run by hand against the database should now be run as the account — `sudo -u easywaf sqlite3 /opt/easywaf/easywaf.db` — or the files they create belong to root and the service cannot open them. `sudo chown -hR easywaf:easywaf /opt/easywaf` puts that right.
+- Anything that read the text of a 403 from EasyWAF — a monitoring check matching "WAF block rule matched", say — should look at the status code instead; the body is now HTML and says only that the request was blocked.
 - To go back to running as root, `sudo systemctl edit easywaf` and set `User=root` and `Group=root` under `[Service]`.
 
 ---

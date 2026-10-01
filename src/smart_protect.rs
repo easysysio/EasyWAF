@@ -381,7 +381,8 @@ pub fn unblock(policy: i64, unit: IpAddr) -> bool {
 }
 
 /// Forget everything held for a policy: its counts and its blocks. For when
-/// Smart Protect is switched off on it, so blocks do not outlive the decision.
+/// Smart Protect is switched off on it or the policy is deleted, so blocks do
+/// not outlive the decision.
 pub fn forget_policy(policy: i64) {
     let mut s = lock();
     s.blocks.retain(|k, _| k.policy != policy);

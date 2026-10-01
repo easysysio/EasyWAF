@@ -79,10 +79,13 @@ curl -i "http://your-site/?q=xp_cmdshell"
 
 ```http
 HTTP/1.1 403 Forbidden
-content-type: text/plain; charset=utf-8
-
-WAF block rule matched: SQLi: xp_cmdshell (MSSQL)
+content-type: text/html; charset=utf-8
+cache-control: no-store
 ```
+
+The body is a short page saying the request was blocked, with a reference — the
+time and your address. It does not say which rule matched: that is in **Traffic
+Monitor**, on the row for this request, and nowhere the visitor can read it.
 
 In DetectionOnly the same request reaches your application as usual and appears
 in Traffic Monitor marked as what would have happened — which is the point of

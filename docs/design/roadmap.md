@@ -27,10 +27,19 @@ next minor, so a release's notes stay about its feature.
 | 0.14.3 | The Dashboard and Traffic Monitor charts follow the window as it widens, not only as it narrows — **released 2026-09-29** |
 | 0.14.4 | What a correctness review found: a forged client address behind a proxy, exclusions reaching past their path, WebSocket handshakes forwarded unchecked, an open redirect after a challenge, sign-in without a limit on attempts, sessions the server never expired; and the proxy's handler split into the steps it takes — **released 2026-09-29** |
 | 0.15.0 | Smart Protect: an address a policy's rules keep refusing is blocked for a while — a checkbox on the policy, the numbers under Settings, the blocks listed with a way out, and a preview from recorded traffic (see [smart-protect.md](smart-protect.md)) — **released 2026-10-01** |
-| 0.16.0 | Authentication gateway: a sign-in in front of a site or a path, local accounts then LDAP (see [auth-gateway.md](auth-gateway.md)) |
-| 0.17.0 | Configuration sync between nodes — HA (see [ha-config-sync.md](ha-config-sync.md)) |
-| 0.18.0 | Per-site rate limiting (see [rate-limiting.md](rate-limiting.md)) |
-| 0.19.0 | Learning and hardening modes — URL allowlisting (see [url-learning.md](url-learning.md)) |
+| 1.0.0 | What the review before 1.0 found: slow connections that could hold every descriptor, a service running as root, an interface that loaded its libraries from other hosts, HTTPS backends with a certificate of their own, and a block page that told the visitor which rule matched — **next** |
+| 1.1.0 | Authentication gateway: a sign-in in front of a site or a path, local accounts then LDAP (see [auth-gateway.md](auth-gateway.md)) |
+| 1.2.0 | Configuration sync between nodes — HA (see [ha-config-sync.md](ha-config-sync.md)) |
+| 1.3.0 | Per-site rate limiting (see [rate-limiting.md](rate-limiting.md)) |
+| 1.4.0 | Learning and hardening modes — URL allowlisting (see [url-learning.md](url-learning.md)) |
+
+## 1.0, and the numbers after it
+
+Yariv's decision, 2026-10-01: 1.0.0 is cut once the review of 0.15.0 is fixed,
+and it is a hardening release rather than a feature. The four features that were
+0.16.0 to 0.19.0 keep their order and become 1.1.0 to 1.4.0. Where the sections
+below give one of the old numbers, it is the number the feature had when that
+section was written.
 
 ## Next patch
 
@@ -60,7 +69,7 @@ allowlisting that client outright (0.10.0) reachable in one click from the row
 that prompted them. Two of the four are done; the prediction held, which is why
 the remaining two are expected to reuse the same row.
 
-**Authentication gateway — scheduled for 0.16.0 on 2026-09-22 (see
+**Authentication gateway — scheduled on 2026-09-22, now 1.1.0 (see
 [auth-gateway.md](auth-gateway.md)).** Proposed 2026-09-10. The rules ask what
 a request is and the challenge asks whether there is a person; this asks who
 they are, and puts a sign-in in front of a site — or in front of `/admin` on

@@ -173,7 +173,7 @@ other tool that has had to learn this does.
 
 ## What it shares with rate limiting
 
-Rate limiting (0.17.0) counts events per client in a sliding window, evicts
+Rate limiting (1.3.0) counts events per client in a sliding window, evicts
 what has aged out, and bounds its own memory. So does this. **The counter is
 built here, for the concrete case, and rate limiting uses it** rather than a
 second one being written beside it.

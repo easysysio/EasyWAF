@@ -958,14 +958,17 @@ pub async fn post_policy_delete(
         );
     }
 
-    let deleted = sqlx::query!("DELETE FROM policies WHERE name = ?", name)
-        .execute(&state.db)
-        .await?
-        .rows_affected();
+    let deleted = sqlx::query_scalar!(r#"DELETE FROM policies WHERE name = ? RETURNING id as "id!""#, name)
+        .fetch_optional(&state.db)
+        .await?;
 
-    if deleted == 0 {
+    let Some(id) = deleted else {
         return flash_redirect("/policy", "failed", &format!("No policy named '{name}'"));
-    }
+    };
+    // Its Smart Protect blocks go with it: they are held in memory under the
+    // policy's id, and would otherwise sit on the Smart Protect page, naming a
+    // policy that is gone, until each one ran out.
+    crate::smart_protect::forget_policy(id);
 
     flash_redirect("/policy", "success", &format!("Policy {} deleted successfully", name))
 }

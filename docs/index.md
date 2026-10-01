@@ -102,8 +102,8 @@ Get started
 </div>
 <span class="es-kicker">Reverse proxy</span>
 <h3 class="es-h3">Routes by host, terminates TLS</h3>
-<p class="es-product-text">Each request goes to its site's upstream by its Host header. Ports are bound as sites are saved, with no restart, and each site presents its own certificate by SNI, issued and renewed by Let's Encrypt if you like.</p>
-<div class="es-tags"><span class="es-tag">Host routing</span><span class="es-tag">Aliases</span><span class="es-tag">SNI</span><span class="es-tag">Let's Encrypt</span><span class="es-tag">WebSockets</span></div>
+<p class="es-product-text">Each request goes to its site's backend by its Host header, or round several of them by weight. Ports are bound as sites are saved, with no restart, and each site presents its own certificate by SNI, issued and renewed by Let's Encrypt if you like.</p>
+<div class="es-tags"><span class="es-tag">Host routing</span><span class="es-tag">Aliases</span><span class="es-tag">Load balancing</span><span class="es-tag">SNI</span><span class="es-tag">Let's Encrypt</span><span class="es-tag">WebSockets</span></div>
 </div>
 <div class="es-card ew-type">
 <div class="ew-type-top">
@@ -132,8 +132,8 @@ Get started
 </div>
 <span class="es-kicker">Addresses</span>
 <h3 class="es-h3">Countries and IP lists</h3>
-<p class="es-product-text">Allow or block addresses and ranges before any rule runs, and set country rules per policy from a geolocation database compiled into the binary, with nothing to download.</p>
-<div class="es-tags"><span class="es-tag">IP allow &amp; block lists</span><span class="es-tag">Country rules</span><span class="es-tag">Offline</span></div>
+<p class="es-product-text">Allow or block addresses and ranges before any rule runs, subscribe a policy to published lists of Tor exits and compromised hosts, and set country rules from a geolocation database compiled into the binary.</p>
+<div class="es-tags"><span class="es-tag">IP allow &amp; block lists</span><span class="es-tag">Published lists</span><span class="es-tag">Country rules</span></div>
 </div>
 </div>
 </div>
@@ -160,6 +160,11 @@ Get started
 <p class="ew-feature-text">Record what a policy would have blocked or challenged, and block nothing. Try a policy on live traffic before enforcing it.</p>
 </div>
 <div class="es-card ew-feature">
+<div class="es-icon es-icon--sm"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg></div>
+<h3 class="ew-feature-title">Smart Protect</h3>
+<p class="ew-feature-text">An address a policy keeps refusing is refused outright for a while. Preview the numbers against your own recorded traffic before switching it on.</p>
+</div>
+<div class="es-card ew-feature">
 <div class="es-icon es-icon--sm"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 5h18l-7 8v6l-4-2v-4L3 5z"></path></svg></div>
 <h3 class="ew-feature-title">One-click exclusions</h3>
 <p class="ew-feature-text">Turn a false positive into an exclusion from the traffic row that showed it, on the site's policy, narrowed to a path or a single client.</p>
@@ -178,6 +183,16 @@ Get started
 <div class="es-icon es-icon--sm"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18"></path><path d="M7 15l4-4 3 3 6-6"></path></svg></div>
 <h3 class="ew-feature-title">Flow logs to EasyLog</h3>
 <p class="ew-feature-text">Each request goes out over syslog as one line, to <a href="https://easylog.easysys.io">EasyLog</a> or any collector, for history across many appliances.</p>
+</div>
+<div class="es-card ew-feature">
+<div class="es-icon es-icon--sm"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="6" rx="8" ry="3"></ellipse><path d="M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"></path></svg></div>
+<h3 class="ew-feature-title">Backup and export</h3>
+<p class="ew-feature-text">Snapshots on demand and on a schedule, a restore that can be undone, and a readable export of the configuration that imports with a preview.</p>
+</div>
+<div class="es-card ew-feature">
+<div class="es-icon es-icon--sm"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="10" width="16" height="10" rx="2"></rect><path d="M8 10V7a4 4 0 018 0v3"></path></svg></div>
+<h3 class="ew-feature-title">Hardened as installed</h3>
+<p class="ew-feature-text">The service runs as its own account, not root. Slow connections are timed out, and the console loads nothing from any other host.</p>
 </div>
 </div>
 </div>

@@ -1,6 +1,6 @@
 # Design note — configuration sync between EasyWAF nodes
 
-Status: planned for **0.15.0** — see [roadmap.md](roadmap.md), after flow logs
+Status: planned for **1.2.0** — see [roadmap.md](roadmap.md), after flow logs
 (0.9.0) and backup/export (0.14.0), and deliberately *before* rate limiting and
 learning mode.
 

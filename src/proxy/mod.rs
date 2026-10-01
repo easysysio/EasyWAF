@@ -918,12 +918,12 @@ async fn serve_site(
             visit.record(&state.traffic, Outcome {
                 status:  status.as_u16() as i64,
                 blocked: true,
-                reason:  Some(reason.clone()),
+                reason:  Some(reason),
                 score:   Some(findings.score),
                 hits:    findings.hits_json(),
                 ..Outcome::default()
             });
-            return error_response(status, &reason);
+            return blocked_response(status, &visit.client_ip, Refusal::Rules);
         }
         PipelineVerdict::Challenge { reason, findings } if !cleared => {
             return challenge(state, &visit, &incoming, &reason, &findings);
@@ -1174,10 +1174,10 @@ fn refused_by_lists(state: &ProxyState, visit: &Visit, lists: &ListCheck) -> Opt
     visit.record(&state.traffic, Outcome {
         status:  403,
         blocked: true,
-        reason:  Some(reason.clone()),
+        reason:  Some(reason),
         ..Outcome::default()
     });
-    Some(error_response(StatusCode::FORBIDDEN, &reason))
+    Some(blocked_response(StatusCode::FORBIDDEN, &visit.client_ip, Refusal::Rules))
 }
 
 // ─── Smart Protect ───────────────────────────────────────
@@ -1250,14 +1250,13 @@ impl Watch {
 /// address costs no reads.
 fn refused_by_smart_protect(state: &ProxyState, visit: &Visit, watch: &Watch) -> Option<Response<Body>> {
     let block = watch.block.as_ref().filter(|_| !watch.detection_only)?;
-    let reason = block.refusal();
     visit.record(&state.traffic, Outcome {
         status:  403,
         blocked: true,
-        reason:  Some(reason.clone()),
+        reason:  Some(block.refusal()),
         ..Outcome::default()
     });
-    Some(error_response(StatusCode::FORBIDDEN, &reason))
+    Some(blocked_response(StatusCode::FORBIDDEN, &visit.client_ip, Refusal::Repeated))
 }
 
 // ─── Step 7: the start of the body ───────────────────────
@@ -1979,6 +1978,74 @@ impl SecurityHeaders {
     }
 }
 
+// ─── blocked_response ────────────────────────────────────
+
+/// What a refused visitor is told, which is not why.
+enum Refusal {
+    /// The site's rules, a country rule or an IP list refused the request.
+    Rules,
+    /// Smart Protect has the address blocked for a while.
+    Repeated,
+}
+
+/// The page a refused request is answered with.
+///
+/// It says the request was blocked and gives a reference — the time and the
+/// visitor's address — and nothing else. Which rule matched, the score and the
+/// threshold are in Traffic Monitor for the operator; told to the visitor, they
+/// are instructions for getting under the threshold next time. The reference is
+/// enough to find the row: a visitor wrongly blocked can quote it.
+///
+/// Self-contained, like the maintenance page: nothing fetched from anywhere.
+fn blocked_response(status: StatusCode, client_ip: &str, refusal: Refusal) -> Response<Body> {
+    let (title, message) = match refusal {
+        Refusal::Rules => (
+            "Request blocked",
+            "This request was blocked by the site's security rules.",
+        ),
+        Refusal::Repeated => (
+            "Temporarily blocked",
+            "Too many of your recent requests were blocked, so requests from your \
+             address are being refused for a while. Try again later.",
+        ),
+    };
+    let when = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC");
+    let html = format!(
+        r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{title}</title>
+<style>
+  body {{ margin:0; min-height:100vh; display:flex; align-items:center;
+         justify-content:center; background:#0f172a; color:#e2e8f0;
+         font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }}
+  .card {{ max-width:34rem; padding:2.5rem; text-align:center; }}
+  h1 {{ font-size:1.4rem; font-weight:600; margin:0 0 .75rem; }}
+  p  {{ margin:0 0 1rem; line-height:1.6; color:#94a3b8; }}
+  code {{ color:#e2e8f0; }}
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>{title}</h1>
+    <p>{message}</p>
+    <p>If you think this is a mistake, give the site's administrator this
+       reference: <code>{when} — {ip}</code></p>
+  </div>
+</body>
+</html>"#,
+        ip = escape_html(client_ip),
+    );
+    Response::builder()
+        .status(status)
+        .header("content-type", "text/html; charset=utf-8")
+        .header("cache-control", "no-store")
+        .body(Body::from(html))
+        .unwrap_or_else(|_| error_response(status, title))
+}
+
 // ─── error_response ──────────────────────────────────────
 
 /// Build a plain-text error response with the given status code and message.
@@ -2122,6 +2189,24 @@ fn to_reqwest_headers(headers: &HeaderMap) -> reqwest::header::HeaderMap {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A refused visitor is told that, and given a reference — the rule, the
+    /// score and the threshold stay in Traffic Monitor.
+    #[tokio::test]
+    async fn a_block_page_says_blocked_and_not_why() {
+        for (refusal, title) in [(Refusal::Rules, "Request blocked"), (Refusal::Repeated, "Temporarily blocked")] {
+            let resp = blocked_response(StatusCode::FORBIDDEN, "203.0.113.9", refusal);
+            assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+            assert_eq!(resp.headers()["cache-control"], "no-store");
+            let body = axum::body::to_bytes(resp.into_body(), 1 << 20).await.unwrap();
+            let body = String::from_utf8(body.to_vec()).unwrap();
+            assert!(body.contains(title), "{title}");
+            assert!(body.contains("203.0.113.9"), "the reference names the address");
+            for word in ["score", "threshold", "rule matched", "WAF", "EasyWAF"] {
+                assert!(!body.contains(word), "the page gives away {word:?}");
+            }
+        }
+    }
 
     #[test]
     fn an_upgrade_is_forwarded_with_the_headers_every_request_gets() {

@@ -70,6 +70,18 @@ If a **challenge threshold** is set, a score that reaches it but stays under the
 block threshold gets a [CAPTCHA](#the-captcha-challenge) instead of a hard
 block. Set it to 0 to disable score-based challenges.
 
+### What a blocked visitor sees
+
+A page saying the request was blocked by the site's security rules, and a
+reference: the time and the visitor's address. Nothing about the rule, the score
+or the threshold — told to the person sending the request, those are directions
+for getting under the threshold next time. All of it is on the request's row in
+[Traffic Monitor](traffic.md), which the reference is enough to find when
+someone writes in to say they were blocked by mistake.
+
+An address blocked by [Smart Protect](smart-protect.md), an IP list or a country
+rule gets the same page; Smart Protect's says the block is temporary.
+
 A request that matched something but stayed under both thresholds is recorded as
 **SCORED**, with its score and the rules that produced it. It is not a block and
 not a clean request, and it is usually the first sign of both a real probe and a

@@ -1,6 +1,6 @@
 # Design note — authentication gateway
 
-Status: **scheduled for 0.16.0** — see [roadmap.md](roadmap.md). Proposed
+Status: **scheduled for 1.1.0** — see [roadmap.md](roadmap.md). Proposed
 2026-09-10 and unscheduled for six releases; given a version by Yariv on
 2026-09-22, after Smart Protect and before HA, so that a signed-in session
 exists as per-node state before the sync that has to account for it is
@@ -219,7 +219,7 @@ applications actually read today.
 ## Brute force
 
 A login form on the edge is a credential-stuffing target from the hour it goes
-up, and this cannot wait for rate limiting (0.16.0).
+up, and this cannot wait for rate limiting (1.3.0).
 
 Per-username and per-address counters, in memory and bounded the way the
 challenge store is: N failures in a window, then refuse that username for M

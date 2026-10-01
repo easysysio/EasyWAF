@@ -33,12 +33,13 @@ mkdocs serve          # http://127.0.0.1:8000
 
 ## Status
 
-Working today: reverse proxying, the rule engine, country rules, the CAPTCHA challenge,
-traffic logging and retention, HTTPS for both the management GUI and proxied sites, and the
-management GUI itself.
+Working today: reverse proxying with load balancing, the rule engine with signed rule
+updates, IP lists and country rules, the CAPTCHA challenge, Smart Protect, HTTPS with
+Let's Encrypt, traffic history, accounts with an audit log, flow logs over syslog, and
+backup, restore and configuration export.
 
-Backup, restore and a readable configuration export arrived in 0.14.0, and load balancing
-in 0.13.0. Read
+Still to come, in this order: a sign-in in front of a site (1.1.0), configuration sync
+between nodes (1.2.0), rate limiting (1.3.0) and URL allowlisting (1.4.0). Read
 [What EasyWAF does not do](#what-easywaf-does-not-do) before deploying — it is short, and it
 is the honest half of this page.
 
@@ -73,15 +74,30 @@ and the per-site security headers still apply, but nothing is inspected.
 
 * **Virtual hosts** — route by `Host:` header to any upstream URL, one listener per port,
   bound dynamically as sites are added.
-* **Rule engine** — 99 bundled OWASP-style rules across SQLi, XSS, LFI, RFI, RCE, PHP,
+* **Load balancing** — list several backends for a site and requests go round them in
+  turn, by weight. A backend that stops answering is taken out and tried again, and
+  session affinity keeps a client on the backend that first served it.
+* **Rule engine** — 111 bundled OWASP-style rules across SQLi, XSS, LFI, RFI, RCE, PHP,
   protocol and scanner categories. Rules match a request zone (`URL`, `ARGS`, `BODY`,
   `HEADERS`, or `ANY`) and either add to a score or block outright.
+* **Signed rule updates** — corrected rule sets are published to a signed channel. EasyWAF
+  says which policies are behind; applying an update is your decision, and the version it
+  replaced is kept so it can be put back.
+* **One-click exclusions** — a false positive becomes an exclusion from the traffic row
+  that showed it, narrowed to a path or to a single client.
 * **Three enforcement modes per policy** — `Off`, `DetectionOnly` (log what would happen,
   block nothing) and `On`.
 * **Country rules** — block listed countries, or allow only listed ones, per policy. Uses the
   DB-IP Lite database compiled into the binary, so lookups are offline and there is nothing to
   download. Addresses with no country are never matched, so an allow list cannot lock out
   private-network traffic.
+* **IP lists** — allow or block addresses and ranges, per policy or everywhere, before any
+  rule runs; and published lists of Tor exits, hijacked netblocks and compromised hosts,
+  synced from the signed channel.
+* **Smart Protect** — an address a policy's rules keep refusing is refused outright for a
+  while: three refusals within a minute block it for ten minutes by default. The page that
+  holds the numbers lists every address blocked right now, and previews what other numbers
+  would have done to your own recorded traffic.
 * **CAPTCHA challenge** — a middle ground between allow and block: suspicious-but-plausible
   traffic gets a self-hosted image CAPTCHA. Solving it sets a short-lived, IP-bound,
   HMAC-signed clearance cookie. No third-party service.
@@ -117,6 +133,14 @@ and the per-site security headers still apply, but nothing is inspected.
   key is never shown.
 * **Per-site security headers** — HSTS, `X-Frame-Options`, `X-Content-Type-Options`,
   `X-XSS-Protection`, toggled individually.
+* **Accounts and an audit log** — administrators change things and viewers see them; every
+  change made through the interface is recorded with who made it, when and from where.
+* **Flow logs over syslog** — each request as one line, to
+  [EasyLog](https://easysys.io) or any collector.
+* **Backup, restore and export** — snapshots on demand and on a schedule, a restore that
+  can be undone, and a readable export of the configuration that imports with a preview.
+* **Nothing loaded from outside** — the interface's scripts, styles and fonts are compiled
+  into the binary, so it works on a host with no internet access.
 * **Light / dark / auto theme.**
 * **Packaged** — `.deb` and `.rpm` for x86_64 and arm64, with a systemd unit, and a
   multi-arch container image.
@@ -166,7 +190,8 @@ Or download a `.deb`/`.rpm` from the [releases page](https://github.com/easysysi
 The package installs the binary to `/usr/bin/easywaf` and its runtime files — templates,
 static assets, bundled rule sets and `config.toml` — under `/opt/easywaf`, plus a systemd
 unit. The database is created at `/opt/easywaf/easywaf.db` on first start. The service runs as
-root so a site can bind a privileged port such as 80.
+its own account, `easywaf`, with the one extra right it needs: binding a privileged port
+such as 80.
 
 ### Docker
 
@@ -250,8 +275,10 @@ Verify enforcement with a signature that always blocks:
 ```bash
 curl -i "http://your-site/?q=xp_cmdshell"
 # HTTP/1.1 403 Forbidden
-# WAF block rule matched: SQLi: xp_cmdshell (MSSQL)
 ```
+
+The page that comes back says the request was blocked and gives a reference — the time and
+your address. Which rule matched is in **Traffic Monitor**, not in the response.
 
 ---
 
@@ -310,10 +337,6 @@ selected. Restricting the line is for policies that go further, such as AES-only
 `geoip_db` optionally points at a MaxMind-format `.mmdb` to use instead of the bundled DB-IP
 Lite database — a fresher DB-IP file, or MaxMind GeoLite2. Leave it empty for the bundled one.
 
-The shipped file also carries `http_port` and `acme_webroot`. These are placeholders for
-features that are not wired up and are ignored; the ports EasyWAF listens on come from the
-sites you define.
-
 ---
 
 ## Build from source
@@ -362,90 +385,40 @@ src/
   modules/          inspection pipeline
     waf.rs          rule evaluation, scoring, compiled-pattern cache
     traffic.rs      request logging and retention pruning
+  smart_protect.rs  counting refusals per address, and the blocks that follow
+  slow_clients.rs   connection timeouts and the per-address connection cap
   routes/           GUI pages (dashboard, sites, policy, rules, traffic, certs, settings)
 migrations/         schema, applied in order at startup
 rules/              bundled OWASP-style rule sets (TOML), and key.gpg
 templates/          Tera templates      — compiled into the binary
-static/             CSS and JS          — compiled into the binary
-packaging/          systemd unit
+static/             CSS, JS and fonts   — compiled into the binary
+packaging/          systemd unit and package scripts
 ```
 
 ---
 
 ## What EasyWAF does not do
 
-Called out so nothing here is a surprise in production. Split by whether it is
-scheduled or decided — the roadmap lives in [docs/design/roadmap.md](docs/design/roadmap.md).
-
-### As a reverse proxy
-
-* **A WebSocket tunnel is not inspected.** The handshake is a normal request and goes
-  through the rule engine like any other, but once the connection is upgraded EasyWAF
-  relays opaque frames — the payload is no longer HTTP, so there is nothing for HTTP rules
-  to match. The connection is recorded in Traffic Monitor as its handshake.
-* **Upgrades to an `https://` upstream are refused.** Plain-HTTP upstreams tunnel fine;
-  a TLS upstream would need a TLS client on the tunnelling path, which is not built.
-* **No HTTP/2 to clients.** No ALPN is advertised, so connections are HTTP/1.1. Not scheduled.
-* **Routing is by `Host:` only, matched exactly.** No path prefixes, no wildcard hostnames
-  like `*.example.com`. Two applications behind one hostname cannot be split. Not scheduled.
-* **Upstream health is observed, not probed.** A backend is taken out of the rotation
-  after three failed requests and let back in by one request thirty seconds later, so a
-  backend that has recovered is not noticed until then. No active prober, and the
-  thresholds are not configurable.
-* **Session affinity needs a client that keeps cookies.** The pin is a signed cookie,
-  because many clients share one address behind NAT. A client that discards cookies —
-  most API clients — goes round the pool in turn. There is no address-based affinity.
-* **IPv6 literal hostnames do not route.** Host matching truncates at the first colon, so
-  `[::1]:8080` does not match. Name-based hosts are unaffected.
-* **No health or metrics endpoint.** Nothing to point a load balancer's health check at, and
-  no Prometheus scrape target.
-
-### As a WAF
+The full list is [docs/limitations.md](docs/limitations.md) — one copy, kept current with
+each release. The ones most likely to matter:
 
 * **Requests only — responses are not inspected.** Nothing detects what leaks *out*: stack
-  traces, SQL errors, directory listings, card numbers. This is the half of a WAF that CRS
-  reserves its 950xxx band for. Not scheduled, and it has a real cost: responses stream
-  today, and inspecting them means buffering.
-* **Traffic history holds no request detail beyond the verdict.** Traffic Monitor names
-  every rule that matched and the score they added — that arrived in 0.5.5 — but the row
-  carries method, host, path, country and verdict only, so the request itself cannot be
-  reconstructed from it.
-* **Traffic history holds no headers or bodies** — method, host, path, country and verdict
-  only. So a new rule cannot be replayed against past traffic to see what it would have
-  matched.
-* **Request bodies are inspected up to a limit** — 128 KB by default, under Settings → Proxy;
-  the rest is forwarded uninspected as it arrives, so a payload padded past it is not seen.
+  traces, SQL errors, card numbers. Not scheduled.
+* **No authentication in front of a site.** Scheduled for **1.1.0**.
+* **No high availability.** No configuration sync between nodes. Scheduled for **1.2.0**.
+* **No rate limiting.** Scheduled for **1.3.0**. An address that attacks repeatedly is
+  handled by Smart Protect, which counts refusals, not requests.
+* **No HTTP/2 to clients**, and routing is by `Host:` only — no path prefixes, no wildcard
+  hostnames. Not scheduled.
+* **A WebSocket tunnel is not inspected** once it is upgraded; the handshake is.
+* **ACME is HTTP-01 only**, so no wildcard certificates from Let's Encrypt — upload one
+  instead.
+* **Request bodies are inspected up to a limit** — 128 KB by default; the rest is forwarded
+  uninspected.
 
-### Managing it
+The roadmap is [docs/design/roadmap.md](docs/design/roadmap.md).
 
-* **ACME is HTTP-01 only.** No wildcards — those need DNS-01, which needs credentials for a
-  DNS provider's API. Upload a wildcard certificate instead. Validation always arrives on
-  port 80, so the host must be reachable there from the internet.
-* **Accounts have two roles only** — administrator and viewer. There is no finer
-  permission than "may change things", so an operator who should only manage one site
-  can manage all of them.
-* **Sessions cannot be revoked.** They are stateless signed cookies, so changing a password
-  does not invalidate one already issued — it expires on its own within 8 hours.
-* **The audit log is a file, not a page.** Every change is recorded with who made it, in
-  `/var/log/easywaf/audit-*.log`; nothing in the interface shows it, so reading it means
-  reaching the host.
-* **No high availability.** No configuration sync between nodes. Scheduled for **0.17.0**.
-* **No rate limiting** (**0.18.0**), and nothing yet blocks an address for attacking
-  repeatedly — that is Smart Protect, scheduled for **0.15.0**. IP allow and block lists
-  arrived in 0.10.0; curated lists synced from a signed channel in 0.12.0.
-* **`http_port` and `acme_webroot` in `config.toml` are ignored.** They are placeholders from
-  0.1.0; listening ports come from the sites you define.
-
-### Decided, not missing
-
-* **TLS version and cipher suites are appliance-wide, not per site.** rustls fixes both when a
-  listener binds its port, before the client has said which site it wants, so sites sharing a
-  port necessarily share them. Certificates *are* per site, chosen by SNI. Per-site and
-  per-port policies were both considered and declined.
-* **There is no password recovery.** No mailer, no second account to reset from. A lost
-  administrator password means editing the `users` table directly.
-* **Traffic is not replicated and is not intended to be.** When node sync arrives, each node
-  will keep its own traffic history and [EasyLog](https://easysys.io) aggregates it.
+---
 
 ## Releasing
 
