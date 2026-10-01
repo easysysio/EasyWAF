@@ -6,7 +6,7 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
-## [0.15.0] — unreleased
+## [0.15.0] — 2026-10-01
 
 ### Added
 - **Smart Protect: an address a policy's rules keep refusing is refused outright for a while.** Every request was judged alone, so a scanner firing two hundred probes got two hundred separate refusals and carried on. By default, three refusals within a minute block the address for ten minutes.
@@ -20,6 +20,9 @@ Version bumps and tags are created only after explicit approval.
 
 ### Removed
 - The **Updates** tab on Settings → General, which held nothing but a note pointing to Settings → Updates; the menu already names that page.
+
+### Upgrading
+- Nothing changes until you tick **Enable Smart Protect** on a policy: it is off for every existing one. Try the preview on **Settings → Smart Protect** against your own traffic first.
 
 ---
 

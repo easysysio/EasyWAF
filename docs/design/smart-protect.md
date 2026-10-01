@@ -1,6 +1,6 @@
 # Design note — Smart Protect
 
-Status: **built for 0.15.0** — see [roadmap.md](roadmap.md). Yariv's idea,
+Status: **released in 0.15.0** (2026-10-01) — see [roadmap.md](roadmap.md). Yariv's idea,
 2026-09-22: *"if a specific IP has been attacking 3 times in 1 minute, the IP
 will be blocked for 10 minutes."*
 
