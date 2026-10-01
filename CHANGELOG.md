@@ -6,6 +6,17 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
+## [1.0.0] — unreleased
+
+### Security
+- **The management interface loads nothing from outside.** Bootstrap, jQuery, DataTables, metisMenu, Chart.js, Font Awesome and the two fonts came from six other hosts, unchecked; they are now compiled into the binary, so the interface works on a host with no internet access and no outside host can change what runs in an administrator's browser.
+- The interface sends a content security policy that allows scripts, styles, fonts and requests only from itself.
+
+### Fixed
+- The Traffic Monitor chart no longer asks for a tick at every whole number, which Chart.js had to cap on a busy hour.
+
+---
+
 ## [0.15.0] — 2026-10-01
 
 ### Added

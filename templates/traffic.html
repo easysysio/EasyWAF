@@ -325,7 +325,7 @@
 
 {% block scripts %}
 <!-- Chart.js -->
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="/static/vendor/chartjs/chart.umd.min.js"></script>
 <script>
 // ── Live-refresh toggle ───────────────────────────────────
 var liveTimer = null;
@@ -419,7 +419,7 @@ $(document).ready(function () {
             },
             scales: {
                 x: { stacked: true },
-                y: { stacked: true, beginAtZero: true, ticks: { stepSize: 1 } }
+                y: { stacked: true, beginAtZero: true, ticks: { precision: 0 } }
             }
         }
     });

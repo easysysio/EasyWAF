@@ -361,14 +361,17 @@ async fn main() {
         // in the trail — an attempt is exactly what an audit should show.
         .layer(axum::middleware::from_fn(auth::same_origin_only))
         // The interface is never framed by another page: framing is how a
-        // click meant for something harmless lands on Restore or Import. Not a
-        // script policy — the pages load their libraries from CDNs — just
-        // who may frame them, which is nobody. And its URLs, which carry the
-        // messages a change leaves behind, are not sent to those CDNs.
+        // click meant for something harmless lands on Restore or Import.
         .layer(SetResponseHeaderLayer::if_not_present(
             header::X_FRAME_OPTIONS, HeaderValue::from_static("DENY")))
+        // And it loads nothing from anywhere but itself: every script, style
+        // and font it uses is compiled in (static/vendor), so the browser is
+        // told to refuse anything else. An injected tag pointing at another
+        // host would not load, and nothing an administrator does is sent
+        // outside. Inline scripts and styles are allowed because the pages
+        // carry their own.
         .layer(SetResponseHeaderLayer::if_not_present(
-            header::CONTENT_SECURITY_POLICY, HeaderValue::from_static("frame-ancestors 'none'")))
+            header::CONTENT_SECURITY_POLICY, HeaderValue::from_static(INTERFACE_CSP)))
         .layer(SetResponseHeaderLayer::if_not_present(
             header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff")))
         .layer(SetResponseHeaderLayer::if_not_present(
@@ -468,6 +471,17 @@ async fn main() {
 }
 
 // ─── Stopping ────────────────────────────────────────────
+
+/// What the management interface's pages may load, and from where: itself.
+const INTERFACE_CSP: &str = "default-src 'self'; \
+     script-src 'self' 'unsafe-inline'; \
+     style-src 'self' 'unsafe-inline'; \
+     img-src 'self' data:; \
+     font-src 'self'; \
+     connect-src 'self'; \
+     form-action 'self'; \
+     base-uri 'self'; \
+     frame-ancestors 'none'";
 
 /// Wait for the signal a service manager stops a process with.
 ///

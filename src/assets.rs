@@ -155,8 +155,8 @@ fn app_version(_args: &std::collections::HashMap<String, tera::Value>) -> tera::
 
 /// GET /static/{*path} — serve an embedded asset.
 ///
-/// `Cache-Control: no-cache`, so the browser revalidates cheaply and a changed
-/// stylesheet is never served from a stale cache.
+/// Everything the interface's pages load comes from here, including the
+/// libraries under `vendor/`: it depends on no other host.
 pub async fn serve_static(Path(path): Path<String>) -> Response {
     // A path that climbs out cannot reach anything — the embedded set is a
     // fixed list of names, not a directory — but it is rejected rather than
@@ -165,11 +165,17 @@ pub async fn serve_static(Path(path): Path<String>) -> Response {
         return StatusCode::NOT_FOUND.into_response();
     }
 
+    // The libraries under vendor/ are fixed releases that only change with the
+    // binary, so a browser may keep them for a day without asking; a megabyte
+    // re-sent on every page would be the alternative. EasyWAF's own files are
+    // revalidated each time, so a changed stylesheet is never served stale.
+    let cache = if path.starts_with("vendor/") { "public, max-age=86400" } else { "no-cache" };
+
     match Static::get(&path) {
         Some(file) => (
             [
                 (header::CONTENT_TYPE, file.metadata.mimetype().to_string()),
-                (header::CACHE_CONTROL, "no-cache".to_string()),
+                (header::CACHE_CONTROL, cache.to_string()),
             ],
             file.data.into_owned(),
         )
@@ -181,6 +187,34 @@ pub async fn serve_static(Path(path): Path<String>) -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_interface_loads_nothing_from_another_host() {
+        // An appliance with no internet access must still have a working
+        // interface, and no outside host may be able to change what runs in an
+        // administrator's browser. A link the reader may click is fine; a
+        // script, stylesheet, font or image fetched to render the page is not.
+        for name in Templates::iter() {
+            let text = String::from_utf8(Templates::get(&name).unwrap().data.into_owned()).unwrap();
+            for tag in ["<script", "<link", "<img", "<iframe"] {
+                for (at, _) in text.match_indices(tag) {
+                    let end = text[at..].find('>').map_or(text.len(), |e| at + e);
+                    let element = &text[at..end];
+                    assert!(
+                        !element.contains("http://") && !element.contains("https://") && !element.contains("\"//"),
+                        "{name} loads something from another host: {element}"
+                    );
+                }
+            }
+        }
+        // And what they do load is in the binary.
+        for needed in ["vendor/bootstrap/css/bootstrap.min.css", "vendor/jquery/jquery-3.6.0.min.js",
+                       "vendor/font-awesome/fonts/fontawesome-webfont.woff2", "vendor/chartjs/chart.umd.min.js",
+                       "vendor/datatables/jquery.dataTables.min.js", "vendor/metismenu/metisMenu.min.js",
+                       "vendor/fonts/fonts.css", "vendor/fonts/inter-latin.woff2"] {
+            assert!(Static::get(needed).is_some(), "{needed} is not embedded");
+        }
+    }
 
     #[test]
     fn every_template_is_embedded_and_compiles() {
