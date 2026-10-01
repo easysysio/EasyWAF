@@ -389,6 +389,210 @@ pub fn forget_policy(policy: i64) {
     BLOCK_COUNT.store(s.blocks.len(), Ordering::Relaxed);
 }
 
+// ─── The preview ─────────────────────────────────────────
+//
+// What these numbers would have done to traffic that already happened. It is
+// the same counting the live path does, run over traffic history instead of
+// arrivals, so the numbers can be chosen from evidence rather than guessed.
+//
+// It previews and does not act, and it cannot know what a blocked address
+// would have done next — only what it did do when nothing was blocking it. A
+// block that prevents an attack looks identical here to one that prevented
+// nothing. What it can show is the other mistake: a request that was served
+// successfully and would have been refused instead.
+
+/// What one recorded request was, as far as the preview is concerned.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Past {
+    /// The rules refused it, or would have: what Smart Protect counts.
+    Refused,
+    /// It was served, and answered with a 2xx or 3xx.
+    Served,
+    /// Anything else — a challenge, a list or country refusal, an error.
+    Other,
+}
+
+/// One address the numbers would have blocked.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct PreviewAddress {
+    /// The address, or the IPv6 /64.
+    pub unit:           String,
+    /// How many separate times it would have been blocked.
+    pub blocks:         usize,
+    /// Requests it made while it would have been blocked.
+    pub refused:        usize,
+    /// How many of those were in fact served successfully.
+    pub served_refused: usize,
+}
+
+/// What the numbers would have done over a stretch of recorded traffic.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
+pub struct Preview {
+    /// Requests read.
+    pub requests:         usize,
+    /// Distinct addresses that would have been blocked at least once.
+    pub addresses:        usize,
+    /// Blocks in total; an address can earn more than one.
+    pub blocks:           usize,
+    /// Requests that would have been refused for being made during a block.
+    pub refused:          usize,
+    /// Of those, the ones that were in fact served successfully — what a
+    /// false positive looks like here.
+    pub served_refused:   usize,
+    /// Addresses with at least one such request.
+    pub served_addresses: usize,
+    /// The addresses to look at first: those with served requests that would
+    /// have been refused, then those blocked most often.
+    pub top:              Vec<PreviewAddress>,
+}
+
+/// How many addresses a preview lists.
+const PREVIEW_TOP: usize = 20;
+
+#[derive(Default)]
+struct Replay {
+    recent:        VecDeque<i64>,
+    blocked_until: i64,
+    blocks:        usize,
+    refused:       usize,
+    served:        usize,
+}
+
+/// Recorded requests replayed through the numbers, one at a time, oldest
+/// first. Holds a small state per client and nothing per request.
+struct Replayer {
+    numbers:  Numbers,
+    clients:  HashMap<IpAddr, Replay>,
+    requests: usize,
+}
+
+impl Replayer {
+    fn new(numbers: Numbers) -> Self {
+        Self { numbers, clients: HashMap::new(), requests: 0 }
+    }
+
+    /// One recorded request: the client, the second it was recorded at, and
+    /// what it was.
+    fn feed(&mut self, ip: IpAddr, at: i64, what: Past) {
+        let (window, block) = (self.numbers.window.as_secs() as i64, self.numbers.block.as_secs() as i64);
+        self.requests += 1;
+        let c = self.clients.entry(unit(ip)).or_default();
+
+        // Made during a block: it would have been refused, whatever it was,
+        // and it does not count towards the next one.
+        if at < c.blocked_until {
+            c.refused += 1;
+            if what == Past::Served {
+                c.served += 1;
+            }
+            return;
+        }
+        if what != Past::Refused {
+            return;
+        }
+        while c.recent.front().is_some_and(|t| at - *t >= window) {
+            c.recent.pop_front();
+        }
+        c.recent.push_back(at);
+        if c.recent.len() >= self.numbers.refusals {
+            c.recent.clear();
+            c.blocked_until = at + block;
+            c.blocks += 1;
+        }
+    }
+
+    fn finish(self) -> Preview {
+        let mut blocked: Vec<PreviewAddress> = self
+            .clients
+            .into_iter()
+            .filter(|(_, c)| c.blocks > 0)
+            .map(|(u, c)| PreviewAddress {
+                unit: unit_label(u),
+                blocks: c.blocks,
+                refused: c.refused,
+                served_refused: c.served,
+            })
+            .collect();
+        blocked.sort_by(|a, b| {
+            (b.served_refused, b.blocks, b.refused, &a.unit)
+                .cmp(&(a.served_refused, a.blocks, a.refused, &b.unit))
+        });
+
+        Preview {
+            requests:         self.requests,
+            addresses:        blocked.len(),
+            blocks:           blocked.iter().map(|a| a.blocks).sum(),
+            refused:          blocked.iter().map(|a| a.refused).sum(),
+            served_refused:   blocked.iter().map(|a| a.served_refused).sum(),
+            served_addresses: blocked.iter().filter(|a| a.served_refused > 0).count(),
+            top:              blocked.into_iter().take(PREVIEW_TOP).collect(),
+        }
+    }
+}
+
+/// Replay recorded requests, oldest first, through the numbers.
+#[cfg(test)]
+pub fn simulate(rows: impl IntoIterator<Item = (IpAddr, i64, Past)>, n: Numbers) -> Preview {
+    let mut replay = Replayer::new(n);
+    for (ip, at, what) in rows {
+        replay.feed(ip, at, what);
+    }
+    replay.finish()
+}
+
+/// Replay the recorded traffic of one policy's sites over the last `hours`.
+///
+/// Read as a stream, so a history of millions of rows costs the table of
+/// clients rather than the rows themselves.
+pub async fn preview(db: &SqlitePool, policy_id: i64, hours: i64, n: Numbers) -> Result<Preview, sqlx::Error> {
+    use futures::TryStreamExt;
+    use sqlx::Row;
+
+    // What counted: the rules refused the request, or would have. A row the
+    // rules touched carries the rules that matched; a list refusal, a country
+    // refusal and a Smart Protect refusal carry none.
+    let since = format!("-{} hours", hours.max(1));
+    let mut rows = sqlx::query(
+        "SELECT e.client_ip,
+                CAST(strftime('%s', e.timestamp) AS INTEGER) AS at,
+                CASE
+                  WHEN e.matched_rules IS NOT NULL
+                       AND (e.blocked = 1 OR e.detection = 'would_block') THEN 1
+                  WHEN e.blocked = 0 AND e.status_code < 400
+                       AND COALESCE(e.detection, '') <> 'would_block'
+                       AND COALESCE(e.block_reason, '') NOT LIKE 'challenge:%' THEN 2
+                  ELSE 0
+                END AS what
+           FROM traffic_events e
+           JOIN sites s ON s.id = e.site_id
+          WHERE s.waf_policy_id = ? AND e.timestamp >= datetime('now', ?)
+          ORDER BY e.timestamp, e.id",
+    )
+    .bind(policy_id)
+    .bind(since)
+    .fetch(db);
+
+    let mut replay = Replayer::new(n);
+    while let Some(r) = rows.try_next().await? {
+        let Some(ip) = r.get::<Option<String>, _>("client_ip").and_then(|s| s.parse::<IpAddr>().ok()) else {
+            continue;
+        };
+        // A trusted proxy is never blocked live, so it is not here either. An
+        // allow-listed address needs no such check: it never enters the
+        // pipeline, so history holds no refusal for it.
+        if crate::forwarded::is_trusted_proxy(ip) {
+            continue;
+        }
+        let what = match r.get::<i64, _>("what") {
+            1 => Past::Refused,
+            2 => Past::Served,
+            _ => Past::Other,
+        };
+        replay.feed(ip, r.get::<Option<i64>, _>("at").unwrap_or(0), what);
+    }
+    Ok(replay.finish())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -497,5 +701,55 @@ mod tests {
         assert_eq!(hold(0, &REFUSALS_RANGE), 2, "one refusal must never be enough");
         assert_eq!(hold(1_000_000, &BLOCK_SECS_RANGE), 86_400);
         assert_eq!(hold(DEFAULT_WINDOW_SECS, &WINDOW_SECS_RANGE), DEFAULT_WINDOW_SECS);
+    }
+
+    // ── The preview ──
+
+    fn rows(spec: &[(&str, i64, Past)]) -> Vec<(IpAddr, i64, Past)> {
+        spec.iter().map(|(a, t, w)| (ip(a), *t, *w)).collect()
+    }
+
+    #[test]
+    fn the_preview_counts_as_the_live_path_does() {
+        use Past::*;
+        let p = simulate(rows(&[
+            // A scanner: three refusals in 40 seconds, then more while blocked.
+            ("203.0.113.1", 0, Refused), ("203.0.113.1", 20, Refused), ("203.0.113.1", 40, Refused),
+            ("203.0.113.1", 50, Refused), ("203.0.113.1", 60, Other),
+            // Someone who tripped a rule three times and then used the site.
+            ("203.0.113.2", 0, Refused), ("203.0.113.2", 5, Refused), ("203.0.113.2", 9, Refused),
+            ("203.0.113.2", 30, Served), ("203.0.113.2", 31, Served),
+            // Two refusals: never blocked, and its served requests are nobody's business.
+            ("203.0.113.3", 0, Refused), ("203.0.113.3", 5, Refused), ("203.0.113.3", 6, Served),
+            // Three refusals too far apart.
+            ("203.0.113.4", 0, Refused), ("203.0.113.4", 70, Refused), ("203.0.113.4", 140, Refused),
+        ]), N);
+        assert_eq!(p.requests, 16);
+        assert_eq!(p.addresses, 2);
+        assert_eq!(p.blocks, 2);
+        assert_eq!(p.refused, 4, "two from the scanner, two from the customer");
+        assert_eq!(p.served_refused, 2);
+        assert_eq!(p.served_addresses, 1);
+        // The one with served requests refused is listed first.
+        assert_eq!(p.top[0].unit, "203.0.113.2");
+        assert_eq!(p.top[0].served_refused, 2);
+        assert_eq!(p.top[1].unit, "203.0.113.1");
+    }
+
+    #[test]
+    fn a_block_in_the_preview_ends_and_can_be_earned_again() {
+        use Past::*;
+        let mut spec = vec![("203.0.113.1", 0, Refused), ("203.0.113.1", 1, Refused), ("203.0.113.1", 2, Refused)];
+        // After the ten minutes: a served request is served, and three more
+        // refusals earn a second block.
+        spec.push(("203.0.113.1", 700, Served));
+        spec.extend([("203.0.113.1", 701, Refused), ("203.0.113.1", 702, Refused), ("203.0.113.1", 703, Refused)]);
+        let p = simulate(rows(&spec), N);
+        assert_eq!((p.addresses, p.blocks, p.refused, p.served_refused), (1, 2, 0, 0));
+    }
+
+    #[test]
+    fn nothing_recorded_previews_as_nothing() {
+        assert_eq!(simulate(Vec::new(), N), Preview::default());
     }
 }

@@ -37,7 +37,7 @@ same tabs the create page uses:
 
 | Tab | What is there |
 |---|---|
-| **Policy** | Mode and thresholds. The heading names the sites the policy applies on |
+| **Policy** | Mode and thresholds, and the [Smart Protect](smart-protect.md) checkbox. The heading names the sites the policy applies on |
 | **Rules** | What it holds and the catalogue to change it — tick to add a rule or a whole set, untick to switch one off |
 | **Countries** | The country mode and list |
 | **IP Lists** | Its own blocked and allowed addresses, its published lists, and what reaches it from [All policies](ip-lists.md#all-policies) |

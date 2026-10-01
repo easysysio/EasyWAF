@@ -35,6 +35,7 @@ nav:
           - TLS and certificates: tls.md
           - Policies and rules: policies.md
           - IP lists: ip-lists.md
+          - Smart Protect: smart-protect.md
           - Updates: updates.md
           - Backup and restore: backup.md
           - Traffic: traffic.md

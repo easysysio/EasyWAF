@@ -12,6 +12,11 @@
 // made it and how long is left, and a button to lift it: a
 // block nobody can see or lift is what operators dislike
 // most about tools of this kind.
+//
+// And it previews: the same counting, replayed over a
+// policy's recorded traffic, so the numbers can be chosen
+// from what happened rather than guessed. The preview
+// changes nothing.
 // =========================================================
 
 use crate::routes::flash_redirect;
@@ -31,7 +36,17 @@ use tera::Context;
 pub struct PageQuery {
     pub result: Option<String>,
     pub msg:    Option<String>,
+    /// The policy to preview, by name. Absent until Preview is pressed.
+    pub preview:     Option<String>,
+    /// The numbers to try, and how far back to look.
+    pub refusals:    Option<String>,
+    pub window_secs: Option<String>,
+    pub block_mins:  Option<String>,
+    pub hours:       Option<String>,
 }
+
+/// How far back a preview may be asked to look, in hours.
+const PERIODS: &[(i64, &str)] = &[(24, "the last 24 hours"), (168, "the last 7 days"), (720, "the last 30 days")];
 
 /// One block, as the page shows it.
 #[derive(Serialize)]
@@ -120,6 +135,55 @@ pub async fn get_smart_protect(
         .collect();
     ctx.insert("blocks", &blocks);
 
+    // ── The preview ──
+    // Offered for every policy, not only those with it on: seeing what it
+    // would do is how somebody decides whether to switch it on.
+    let all: Vec<&str> = policies.iter().map(|p| p.name.as_str()).collect();
+    ctx.insert("policies", &all);
+    ctx.insert("periods", PERIODS);
+    let retention = crate::routes::settings::get_retention_days(&state.db).await;
+    ctx.insert("retention_days", &retention);
+
+    // The form starts from the numbers in force, and keeps what was tried.
+    let tried = (
+        q.refusals.clone().unwrap_or_else(|| n.refusals.to_string()),
+        q.window_secs.clone().unwrap_or_else(|| n.window.as_secs().to_string()),
+        q.block_mins.clone().unwrap_or_else(|| (n.block.as_secs() / 60).to_string()),
+    );
+    let hours = q.hours.as_deref().and_then(|h| h.parse::<i64>().ok())
+        .filter(|h| PERIODS.iter().any(|(p, _)| p == h))
+        .unwrap_or(168);
+    ctx.insert("p_refusals",    &tried.0);
+    ctx.insert("p_window_secs", &tried.1);
+    ctx.insert("p_block_mins",  &tried.2);
+    ctx.insert("p_hours",       &hours);
+    ctx.insert("p_policy",      &q.preview.clone().unwrap_or_default());
+
+    if let Some(name) = q.preview.as_deref().filter(|s| !s.is_empty()) {
+        let mins = *BLOCK_SECS_RANGE.start() / 60..=*BLOCK_SECS_RANGE.end() / 60;
+        let numbers = field(&tried.0, "Refusals", "", REFUSALS_RANGE)
+            .and_then(|r| Ok((r, field(&tried.1, "The window", "seconds", WINDOW_SECS_RANGE)?)))
+            .and_then(|(r, w)| Ok((r, w, field(&tried.2, "The block", "minutes", mins)?)));
+        match (policies.iter().find(|p| p.name == name), numbers) {
+            (None, _) => ctx.insert("preview_error", &format!("There is no policy called {name}")),
+            (_, Err(e)) => ctx.insert("preview_error", e.trim()),
+            (Some(policy), Ok((refusals, window_secs, block_mins))) => {
+                let tried = smart_protect::Numbers {
+                    refusals: refusals as usize,
+                    window:   std::time::Duration::from_secs(window_secs),
+                    block:    std::time::Duration::from_secs(block_mins * 60),
+                };
+                let started = std::time::Instant::now();
+                let preview = smart_protect::preview(&state.db, policy.id, hours, tried).await?;
+                tracing::debug!(policy = %name, hours, requests = preview.requests,
+                                ms = started.elapsed().as_millis() as u64, "Smart Protect preview");
+                ctx.insert("preview", &preview);
+                ctx.insert("preview_period",
+                           PERIODS.iter().find(|(p, _)| *p == hours).map(|(_, l)| *l).unwrap_or(""));
+            }
+        }
+    }
+
     Ok((jar, Html(state.tera.render("smart_protect.html", &ctx)?)).into_response())
 }
 
@@ -203,5 +267,66 @@ pub async fn post_unblock(
     } else {
         flash_redirect("/smart-protect", "failed",
                        &format!("{label} was not blocked — the block may have just ended"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_page_renders_with_blocks_and_a_preview() {
+        let tera = crate::assets::tera().expect("templates");
+        let mut ctx = Context::new();
+        for (k, v) in [("title", "Smart Protect"), ("url", "/smart-protect"), ("username", "admin"),
+                       ("result", ""), ("msg", ""), ("rule", "An address refused 3 times…"),
+                       ("p_refusals", "3"), ("p_window_secs", "60"), ("p_block_mins", "10"),
+                       ("p_policy", "websites"), ("preview_period", "the last 7 days")] {
+            ctx.insert(k, v);
+        }
+        ctx.insert("is_admin", &true);
+        for (k, v) in [("refusals", 3u64), ("window_secs", 60), ("block_mins", 10), ("refusals_min", 2),
+                       ("refusals_max", 100), ("window_min", 10), ("window_max", 3600), ("block_min", 1),
+                       ("block_max", 1440), ("policy_count", 1), ("retention_days", 14), ("p_hours", 168)] {
+            ctx.insert(k, &v);
+        }
+        ctx.insert("watched", &vec![WatchedPolicy { name: "websites".into(), mode: "Enforcing".into() }]);
+        ctx.insert("policies", &vec!["websites"]);
+        ctx.insert("periods", PERIODS);
+        ctx.insert("blocks", &vec![BlockView {
+            policy_id: 1, policy_name: "websites".into(), unit: "2001:db8:1:2::/64".into(),
+            unit_raw: "2001:db8:1:2::".into(), address: "2001:db8:1:2::9".into(),
+            reason: "WAF score 12 ≥ block threshold 10".into(),
+            since: "2026-10-01 12:00:00".into(), remaining: "7 minutes".into(),
+        }]);
+        ctx.insert("preview", &smart_protect::Preview {
+            requests: 5000, addresses: 2, blocks: 3, refused: 40, served_refused: 2, served_addresses: 1,
+            top: vec![smart_protect::PreviewAddress {
+                unit: "203.0.113.51".into(), blocks: 1, refused: 4, served_refused: 2,
+            }],
+        });
+
+        let html = tera.render("smart_protect.html", &ctx)
+            .unwrap_or_else(|e| panic!("smart_protect.html failed to render: {e:#?}"));
+        for (what, why) in [
+            // The slash is escaped in the page, as any value is.
+            ("2001:db8:1:2::&#x2F;64",        "a block is not listed"),
+            ("last seen as 2001:db8:1:2::9",  "the address behind a /64 is not shown"),
+            ("/smart-protect/unblock",        "a block cannot be lifted"),
+            ("/smart-protect/settings",       "the numbers cannot be saved"),
+            ("203.0.113.51",                  "the preview does not list who it would have blocked"),
+            ("in fact served successfully",   "the preview does not say what it would have got wrong"),
+            ("kept for",                      "the preview does not say how far back it can see"),
+        ] {
+            assert!(html.contains(what), "{why}: {what:?} is missing");
+        }
+    }
+
+    #[test]
+    fn a_number_outside_its_range_is_refused_not_adjusted() {
+        assert_eq!(field("3", "Refusals", "", REFUSALS_RANGE), Ok(3));
+        assert!(field("1", "Refusals", "", REFUSALS_RANGE).is_err());
+        assert!(field("many", "Refusals", "", REFUSALS_RANGE).is_err());
+        assert!(field("", "The window", "seconds", WINDOW_SECS_RANGE).unwrap_err().contains("10 to 3600 seconds"));
     }
 }

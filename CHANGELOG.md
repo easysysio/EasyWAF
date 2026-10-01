@@ -13,6 +13,7 @@ Version bumps and tags are created only after explicit approval.
 - **Enable Smart Protect** is a checkbox on each security policy, off by default. In DetectionOnly it records what it would have refused and refuses nothing; with the policy Off it does nothing.
 - **Settings → Smart Protect** holds the numbers — how many refusals, within how many seconds, for how many minutes — set once for every policy, and in force as soon as they are saved.
 - The same page lists every address blocked right now, with the policy, the refusal that completed the count and the time left, and an **Unblock** button.
+- **A preview from your own traffic.** The same page replays a policy's recorded traffic through any numbers you try and says how many addresses they would have blocked — and how many of the requests refused that way had in fact been served successfully, which is what a false positive looks like. It changes nothing, and is offered for every policy, on or off.
 - Only refusals by the rules count: not a rule that matched on a request that was served, a CAPTCHA, or a country refusal. A block lasts exactly as long as it says; requests made while blocked do not extend it.
 - An address on a policy's allow list is never blocked, and neither is a trusted proxy. An IPv6 client is counted and blocked by its /64.
 - Blocks are kept in memory on the node that made them, never written to an IP list, and cleared by a restart. The switch and the numbers travel in a configuration export.

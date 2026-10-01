@@ -1,8 +1,29 @@
 # Design note — Smart Protect
 
-Status: planned for **0.15.0** — see [roadmap.md](roadmap.md). Yariv's idea,
+Status: **built for 0.15.0** — see [roadmap.md](roadmap.md). Yariv's idea,
 2026-09-22: *"if a specific IP has been attacking 3 times in 1 minute, the IP
 will be blocked for 10 minutes."*
+
+## As built
+
+Four things were settled while building it, and where they differ from the text
+below, this is what the code does:
+
+* **Only refusals by the rules count** — not country refusals. The note below
+  says "refused, or would have been"; a country refusal is not an attack, and
+  that address is refused every time anyway, so counting it would only fill the
+  page of blocks with addresses nobody needs to look at. (Yariv, 2026-10-01.)
+* **A block is a fixed length.** Requests made while blocked neither extend it
+  nor count towards the next. A person who tripped it is back when it says.
+  (Yariv, 2026-10-01.)
+* **The switch is a checkbox on the policy, "Enable Smart Protect"; the numbers
+  and the list of blocks are one page under the Settings menu.** (Yariv,
+  2026-10-01.)
+* **The preview's false-positive signal is narrower than "later made a request
+  that was served".** It counts requests made *during* a would-be block that
+  were answered with a 2xx or 3xx. A scanner also gets the odd 200 for `/`
+  hours later; a request that would have been refused and was in fact served
+  successfully is the thing the block would have got wrong.
 
 ## The gap
 

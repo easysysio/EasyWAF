@@ -3,7 +3,7 @@
 Called out so nothing here is a surprise in production. Split by whether it is
 scheduled or decided.
 
-Current as of **0.14.4**.
+Current as of **0.15.0**.
 
 ## As a reverse proxy
 
@@ -76,7 +76,11 @@ Current as of **0.14.4**.
 - **No feed of your own.** A published list comes from the signed channel; there
   is no way yet to point EasyWAF at another list's URL.
 - **No rate limiting.** Scheduled for **0.18.0**. An address that attacks
-  repeatedly is a separate feature, Smart Protect, scheduled for **0.15.0**.
+  repeatedly is handled by [Smart Protect](smart-protect.md), which counts
+  refusals, not requests.
+- **Smart Protect blocks are per node and do not survive a restart.** They are
+  held in memory, and a repeat offender is blocked for the same length each
+  time rather than longer.
 - **No authentication in front of a site.** EasyWAF decides whether a request is
   an attack, not who is making it. Scheduled for **0.16.0**.
 

@@ -96,6 +96,128 @@
             </div>
         </div>
 
+        <!-- ── What the numbers would have done ────────────── -->
+        <div class="panel panel-default" id="preview">
+            <div class="panel-heading"><strong><i class="fa fa-history"></i> What it would have done</strong>
+                <small class="text-muted">— the same counting, replayed over traffic that already happened. Nothing is changed.</small></div>
+            <div class="panel-body">
+                {% if policies %}
+                <form class="form-inline" method="get" action="/smart-protect#preview">
+                    <div class="form-group" style="margin:0 10px 8px 0">
+                        <label for="pv-policy">On policy</label>
+                        <select class="form-control" id="pv-policy" name="preview">
+                            {% for p in policies %}
+                            <option value="{{ p }}" {% if p == p_policy %}selected{% endif %}>{{ p }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="form-group" style="margin:0 10px 8px 0">
+                        <label for="pv-hours">over</label>
+                        <select class="form-control" id="pv-hours" name="hours">
+                            {% for per in periods %}
+                            <option value="{{ per.0 }}" {% if per.0 == p_hours %}selected{% endif %}>{{ per.1 }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="form-group" style="margin:0 10px 8px 0">
+                        <label for="pv-refusals">refused</label>
+                        <input type="number" class="form-control" id="pv-refusals" name="refusals"
+                               value="{{ p_refusals }}" min="{{ refusals_min }}" max="{{ refusals_max }}" required style="width:75px">
+                        <span>times within</span>
+                        <input type="number" class="form-control" name="window_secs" aria-label="seconds"
+                               value="{{ p_window_secs }}" min="{{ window_min }}" max="{{ window_max }}" required style="width:85px">
+                        <span>seconds, refused for</span>
+                        <input type="number" class="form-control" name="block_mins" aria-label="minutes"
+                               value="{{ p_block_mins }}" min="{{ block_min }}" max="{{ block_max }}" required style="width:85px">
+                        <span>minutes</span>
+                    </div>
+                    <button type="submit" class="btn btn-primary" style="margin-bottom:8px">
+                        <i class="fa fa-play"></i> Preview
+                    </button>
+                </form>
+                {% else %}
+                <p class="text-muted" style="margin:0">There are no policies to preview yet.</p>
+                {% endif %}
+
+                {% if preview_error %}
+                <div class="alert alert-danger" style="margin:10px 0 0">
+                    <i class="fa fa-exclamation-triangle"></i> {{ preview_error }}
+                </div>
+                {% endif %}
+
+                {% if preview %}
+                <hr style="margin:10px 0 14px">
+                {% if preview.requests == 0 %}
+                <p class="text-muted" style="margin:0">
+                    <i class="fa fa-info-circle"></i>
+                    No traffic is recorded for <strong>{{ p_policy }}</strong>'s sites over {{ preview_period }},
+                    so there is nothing to replay.
+                </p>
+                {% else %}
+                <p style="font-size:15px; margin-bottom:6px">
+                    Over {{ preview_period }}, on <strong>{{ p_policy }}</strong>, these numbers would have blocked
+                    <strong>{{ preview.addresses }}</strong> address{% if preview.addresses != 1 %}es{% endif %}
+                    {% if preview.blocks != preview.addresses %}({{ preview.blocks }} blocks in all){% endif %}
+                    and refused <strong>{{ preview.refused }}</strong> further
+                    request{% if preview.refused != 1 %}s{% endif %} from them.
+                </p>
+                {% if preview.served_refused > 0 %}
+                <div class="alert alert-warning" style="margin:8px 0">
+                    <i class="fa fa-exclamation-triangle"></i>
+                    <strong>{{ preview.served_refused }} of those request{% if preview.served_refused != 1 %}s were{% else %} was{% endif %}
+                    in fact served successfully</strong>, from {{ preview.served_addresses }}
+                    address{% if preview.served_addresses != 1 %}es{% endif %} — the ones listed first below.
+                    That is what a false positive looks like here: somebody who tripped the rules and
+                    then went on using the site. Look at them in Traffic Monitor before switching this on,
+                    or try a higher count.
+                </div>
+                {% elif preview.addresses > 0 %}
+                <div class="alert alert-success" style="margin:8px 0">
+                    <i class="fa fa-check"></i>
+                    None of the requests it would have refused had been served successfully: every blocked
+                    address was only ever refused or answered with an error while blocked.
+                </div>
+                {% endif %}
+
+                {% if preview.top %}
+                <div class="table-responsive">
+                    <table class="table table-condensed" style="margin:8px 0 0">
+                        <thead>
+                            <tr>
+                                <th>Address</th>
+                                <th class="text-right">Times blocked</th>
+                                <th class="text-right">Requests it would have refused</th>
+                                <th class="text-right">Of which were served</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                        {% for a in preview.top %}
+                            <tr {% if a.served_refused > 0 %}class="warning"{% endif %}>
+                                <td><code>{{ a.unit }}</code></td>
+                                <td class="text-right">{{ a.blocks }}</td>
+                                <td class="text-right">{{ a.refused }}</td>
+                                <td class="text-right">{{ a.served_refused }}</td>
+                            </tr>
+                        {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% if preview.addresses > preview.top | length %}
+                <p class="help-block">The first {{ preview.top | length }} of {{ preview.addresses }} addresses.</p>
+                {% endif %}
+                {% endif %}
+
+                <p class="help-block" style="margin:10px 0 0">
+                    {{ preview.requests }} recorded request{% if preview.requests != 1 %}s{% endif %} replayed.
+                    It sees only what was recorded{% if retention_days > 0 %}, and traffic history is kept for
+                    {{ retention_days }} day{% if retention_days != 1 %}s{% endif %}{% endif %}. It cannot know what a
+                    blocked address would have done next — only what it did when nothing was blocking it.
+                </p>
+                {% endif %}
+                {% endif %}
+            </div>
+        </div>
+
         <!-- ── Blocked right now ───────────────────────────── -->
         <div class="panel panel-default">
             <div class="panel-heading">
