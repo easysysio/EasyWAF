@@ -117,6 +117,21 @@
                                        value="{{ policy.challenge_threshold }}" min="0" max="1000">
                             </div>
 
+                            <div class="checkbox">
+                                <label>
+                                    <input type="checkbox" name="smart_protect" value="1"
+                                           {% if policy.smart_protect %}checked{% endif %}>
+                                    <strong>Enable Smart Protect</strong>
+                                </label>
+                                <p class="help-block">
+                                    {{ smart_protect_rule | default(value="") }}
+                                    Only requests the rules refuse are counted, and an address on
+                                    this policy's allow list is never blocked. The numbers are set
+                                    once for every policy, under
+                                    <a href="/smart-protect"><strong>Settings &rarr; Smart Protect</strong></a>.
+                                </p>
+                            </div>
+
                             <button type="submit" class="btn btn-success admin-only">
                                 <i class="fa fa-save"></i> Save
                             </button>

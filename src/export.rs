@@ -110,6 +110,11 @@ pub struct Policy {
     pub countries_mode: String,
     #[serde(default)]
     pub countries: Vec<String>,
+    /// Whether Smart Protect is on for this policy. Written only when it is, so
+    /// a file from an installation that does not use it reads the same as one
+    /// from before the switch existed.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub smart_protect: bool,
     /// Catalogue numbers of rules from installed sets that are switched off.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub rules_off: Vec<i64>,
@@ -310,6 +315,9 @@ pub const EXPORTED_SETTINGS: &[&str] = &[
     "request_body_inspect_kb",
     "rule_update_check",
     "rule_update_url",
+    "smart_protect_block_secs",
+    "smart_protect_refusals",
+    "smart_protect_window_secs",
     "syslog_enabled",
     "syslog_host",
     "syslog_port",
@@ -426,7 +434,8 @@ pub async fn build(db: &SqlitePool, opts: Options) -> Result<Document, sqlx::Err
     let mut policies = Vec::new();
     for p in sqlx::query(
         "SELECT id, name, rule_engine, score_threshold, challenge_threshold,
-                COALESCE(geoip_mode, 'off') AS geoip_mode, COALESCE(geoip_countries, '') AS geoip_countries
+                COALESCE(geoip_mode, 'off') AS geoip_mode, COALESCE(geoip_countries, '') AS geoip_countries,
+                smart_protect
            FROM policies ORDER BY name")
         .fetch_all(db).await?
     {
@@ -525,6 +534,7 @@ pub async fn build(db: &SqlitePool, opts: Options) -> Result<Document, sqlx::Err
             challenge_threshold: p.get("challenge_threshold"),
             countries_mode: p.get("geoip_mode"),
             countries: split_countries(&p.get::<String, _>("geoip_countries")),
+            smart_protect: p.get::<bool, _>("smart_protect"),
             rules_off,
             rule_sets,
             rules,

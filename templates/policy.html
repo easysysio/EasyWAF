@@ -91,6 +91,10 @@
                             {% else %}
                                 <span class="label label-default">Off</span>
                             {% endif %}
+                            {% if pol.smart_protect and pol.rule_engine != "Off" %}
+                                <span class="label label-info"
+                                      title="An address this policy's rules keep refusing is refused outright for a while">Smart Protect</span>
+                            {% endif %}
                         </td>
                         <td>
                             {% if pol.rule_count > 0 %}

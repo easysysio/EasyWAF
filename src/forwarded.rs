@@ -198,6 +198,18 @@ pub fn client_ip(peer: IpAddr, headers: &HeaderMap) -> IpAddr {
     }
 }
 
+/// Whether an address is one of the configured trusted proxies.
+///
+/// Smart Protect never blocks one. If forwarded headers are misconfigured,
+/// every request appears to come from the proxy's address, and blocking it
+/// would refuse every client behind it at once.
+pub fn is_trusted_proxy(ip: IpAddr) -> bool {
+    match trusted().read() {
+        Ok(t)  => t.iter().any(|c| c.contains(ip)),
+        Err(_) => false,
+    }
+}
+
 /// The decision itself, against an explicit list.
 ///
 /// Separate from `client_ip` so the security-critical part is a pure function:

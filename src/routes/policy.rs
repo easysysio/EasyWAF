@@ -33,6 +33,9 @@ pub struct Policy {
     pub geoip_mode:          String,
     /// Comma-separated ISO 3166-1 alpha-2 codes the mode applies to.
     pub geoip_countries:     String,
+    /// Whether an address the rules keep refusing is refused outright for a
+    /// while — see `smart_protect`.
+    pub smart_protect:       bool,
     /// Total rules attached to this policy (0 if none yet).
     pub rule_count:      i64,
     /// How many of those rules are enabled.
@@ -318,6 +321,8 @@ pub async fn get_policy_new(
     ctx.insert("lists_fetched",    &fetched.map(|t| crate::routes::settings::format_utc(&t)).unwrap_or_default());
     ctx.insert("lists_fetch_error", &fetch_error.unwrap_or_default());
 
+    ctx.insert("smart_protect_rule", &crate::smart_protect::rule_text());
+
     Ok((jar, Html(state.tera.render("policy_create.html", &ctx)?)).into_response())
 }
 
@@ -351,12 +356,15 @@ pub async fn post_policy_create(
     let geoip_countries =
         normalize_countries(raw.get("geoip_countries").map(String::as_str).unwrap_or(""));
 
+    // A checkbox: sent when ticked, absent when not.
+    let smart_protect = raw.contains_key("smart_protect");
+
     let insert = sqlx::query!(
         "INSERT INTO policies (name, rule_engine, score_threshold, challenge_threshold,
-                               geoip_mode, geoip_countries)
-         VALUES (?, ?, ?, ?, ?, ?)",
+                               geoip_mode, geoip_countries, smart_protect)
+         VALUES (?, ?, ?, ?, ?, ?, ?)",
         name, rule_engine, score_threshold, challenge_threshold,
-        geoip_mode, geoip_countries,
+        geoip_mode, geoip_countries, smart_protect,
     )
     .execute(&state.db)
     .await?;
@@ -765,6 +773,8 @@ pub async fn get_policy_edit(
     ctx.insert("result", &flash.result.unwrap_or_default());
     ctx.insert("msg",    &flash.msg.unwrap_or_default());
 
+    ctx.insert("smart_protect_rule", &crate::smart_protect::rule_text());
+
     Ok((jar, Html(state.tera.render("policy_settings.html", &ctx)?)).into_response())
 }
 
@@ -861,13 +871,29 @@ pub async fn post_policy_update(
         let challenge_threshold: i64 = raw.get("challenge_threshold")
             .and_then(|s| s.parse().ok())
             .unwrap_or(0);
+        // The checkbox is on the same tab, and an unticked one sends nothing,
+        // so its absence from this form is the answer.
+        let smart_protect = raw.contains_key("smart_protect");
         sqlx::query!(
-            "UPDATE policies SET rule_engine=?, score_threshold=?, challenge_threshold=?
+            "UPDATE policies SET rule_engine=?, score_threshold=?, challenge_threshold=?,
+                                 smart_protect=?
              WHERE name=?",
-            rule_engine, score_threshold, challenge_threshold, name,
+            rule_engine, score_threshold, challenge_threshold, smart_protect, name,
         )
         .execute(&state.db)
         .await?;
+
+        // Switched off, or the policy switched Off: what it was holding goes
+        // with the decision, rather than refusing addresses for up to the rest
+        // of their block on a policy that no longer asks for it.
+        if (!smart_protect || rule_engine == "Off")
+            && let Some(id) = sqlx::query_scalar!("SELECT id FROM policies WHERE name = ?", name)
+                .fetch_optional(&state.db)
+                .await?
+                .flatten()
+        {
+            crate::smart_protect::forget_policy(id);
+        }
     }
 
     if raw.contains_key("geoip_mode") {
@@ -981,6 +1007,7 @@ async fn fetch_policies(state: &AppState) -> Result<Vec<Policy>> {
                 p.challenge_threshold as \"challenge_threshold!\",
                 p.geoip_mode          as \"geoip_mode!\",
                 p.geoip_countries     as \"geoip_countries!\",
+                p.smart_protect       as \"smart_protect!: bool\",
                 COUNT(wr.id)   as \"rule_count!\",
                 COALESCE(SUM(wr.enabled), 0) as \"enabled_count!\"
          FROM   policies p
@@ -999,6 +1026,7 @@ async fn fetch_policies(state: &AppState) -> Result<Vec<Policy>> {
         challenge_threshold: r.challenge_threshold,
         geoip_mode:          r.geoip_mode,
         geoip_countries:     r.geoip_countries,
+        smart_protect:       r.smart_protect,
         rule_count:          r.rule_count,
         enabled_count:       r.enabled_count,
     }).collect())
@@ -1010,7 +1038,8 @@ async fn fetch_policy(state: &AppState, name: &str) -> Result<Policy> {
                 score_threshold     as \"score_threshold!\",
                 challenge_threshold as \"challenge_threshold!\",
                 geoip_mode          as \"geoip_mode!\",
-                geoip_countries     as \"geoip_countries!\"
+                geoip_countries     as \"geoip_countries!\",
+                smart_protect       as \"smart_protect!: bool\"
          FROM policies WHERE name = ?",
         name
     )
@@ -1026,6 +1055,7 @@ async fn fetch_policy(state: &AppState, name: &str) -> Result<Policy> {
         challenge_threshold: r.challenge_threshold,
         geoip_mode:          r.geoip_mode,
         geoip_countries:     r.geoip_countries,
+        smart_protect:       r.smart_protect,
         // Counts are not shown on the single-policy edit page.
         rule_count:          0,
         enabled_count:       0,

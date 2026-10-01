@@ -110,6 +110,10 @@ pub struct Findings {
     /// request that was actually blocked or challenged — the verdict says so
     /// already — and on one where nothing matched.
     pub detection: Option<Detection>,
+    /// Whether this counts towards Smart Protect: the rules refused the
+    /// request, or would have in a policy that is only watching. A country
+    /// refusal does not — that address is refused every time anyway.
+    pub offence: bool,
 }
 
 impl Findings {
@@ -121,6 +125,7 @@ impl Findings {
         // The strongest wins: if one module would only have observed and
         // another would have blocked, the request would have been blocked.
         self.detection = self.detection.max(other.detection);
+        self.offence |= other.offence;
     }
 
     /// The hits as JSON for storage, or None when nothing matched — so an
@@ -260,11 +265,13 @@ mod tests {
             score: 6,
             hits: vec![RuleHit { id: Some(920002), name: "double encoding".into(), score: 6 }],
             detection: Some(Detection::Observed),
+            offence: false,
         };
         a.merge(Findings {
             score: 8,
             hits: vec![RuleHit { id: Some(932012), name: "chaining".into(), score: 8 }],
             detection: Some(Detection::WouldBlock),
+            offence: false,
         });
         assert_eq!(a.score, 14, "the threshold is a sum, so scores add");
         assert_eq!(a.hits.len(), 2);
@@ -314,6 +321,7 @@ mod tests {
                 RuleHit { id: None, name: "a custom rule".into(), score: 3 },
             ],
             detection: None,
+            offence: false,
         };
         let json = f.hits_json().expect("some hits");
         let back: Vec<RuleHit> = serde_json::from_str(&json).unwrap();

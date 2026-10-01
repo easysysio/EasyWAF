@@ -33,6 +33,7 @@ mod proxy;
 mod routes;
 mod rules_update;
 mod settings;
+mod smart_protect;
 mod tls;
 mod upstream;
 
@@ -142,6 +143,8 @@ async fn main() {
     iplist_feeds::reload();
     // How much of each request body the rules inspect; the rest streams on.
     proxy::set_inspection_limit(routes::settings::get_body_inspect_kb(&db).await as usize * 1024);
+    // How many refusals, in what window, block an address, and for how long.
+    smart_protect::load(&db).await;
 
     // ── Build module pipeline ─────────────────────────────
     // Modules run in order for every proxied request. Every request is
@@ -311,6 +314,9 @@ async fn main() {
                post(routes::rules::post_share_custom_rules))
         .route("/rules/{id}/toggle",     post(routes::rules::post_rule_toggle_global))
         .route("/rules/{id}/delete",     post(routes::rules::post_rule_delete_global))
+        .route("/smart-protect",          get(routes::smart_protect::get_smart_protect))
+        .route("/smart-protect/settings", post(routes::smart_protect::post_settings))
+        .route("/smart-protect/unblock",  post(routes::smart_protect::post_unblock))
         .route("/backup",                get(routes::backup::get_backup))
         .route("/backup/snapshot",       post(routes::backup::post_snapshot))
         .route("/backup/schedule",       post(routes::backup::post_schedule))

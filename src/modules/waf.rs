@@ -302,7 +302,7 @@ impl InspectionModule for WafModule {
                         policy,
                         Level::Block,
                         format!("WAF block rule matched: {}", rule.name),
-                        Findings { score, hits, detection: None },
+                        Findings { score, hits, detection: None, offence: false },
                     );
                 }
                 // Direct challenge request — remember it but keep scanning, so
@@ -324,13 +324,13 @@ impl InspectionModule for WafModule {
                 policy,
                 Level::Block,
                 format!("WAF score {} ≥ block threshold {}", total_score, policy.score_threshold),
-                Findings { score: total_score, hits, detection: None },
+                Findings { score: total_score, hits, detection: None, offence: false },
             );
         }
 
         if let Some(reason) = challenge_reason {
             return decide(policy, Level::Challenge, reason,
-                          Findings { score: total_score, hits, detection: None });
+                          Findings { score: total_score, hits, detection: None, offence: false });
         }
 
         if policy.challenge_threshold > 0 && total_score >= policy.challenge_threshold {
@@ -338,7 +338,7 @@ impl InspectionModule for WafModule {
                 policy,
                 Level::Challenge,
                 format!("WAF score {} ≥ challenge threshold {}", total_score, policy.challenge_threshold),
-                Findings { score: total_score, hits, detection: None },
+                Findings { score: total_score, hits, detection: None, offence: false },
             );
         }
 
@@ -358,6 +358,7 @@ impl InspectionModule for WafModule {
                     score: total_score,
                     hits,
                     detection: Some(Detection::Observed),
+                    offence: false,
                 },
             };
         }
@@ -809,8 +810,12 @@ fn decide(
     // fired is the entire point of running a policy in that mode, so what
     // would have happened is recorded on the findings for the traffic record
     // to say.
+    // A refusal by the rules is what Smart Protect counts — made, or one this
+    // policy would have made while only watching. A challenge is not.
+    let mut findings = findings;
+    findings.offence = matches!(level, Level::Block);
+
     if policy.rule_engine == "DetectionOnly" {
-        let mut findings = findings;
         findings.detection = Some(match level {
             Level::Block     => Detection::WouldBlock,
             Level::Challenge => Detection::WouldChallenge,

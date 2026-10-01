@@ -204,6 +204,8 @@ struct SiteRow {
     /// The site's policy and its mode, which decide whether its IP lists apply.
     policy_id:      Option<i64>,
     rule_engine:    Option<String>,
+    /// Whether the site's policy has Smart Protect switched on.
+    smart_protect:  bool,
 }
 
 // ─── start ───────────────────────────────────────────────
@@ -800,7 +802,8 @@ impl Visit {
 ///   3. `find_site`        — the site, from the site table.
 ///   4. `https_redirect`   — the redirect to HTTPS, when the site asks for one.
 ///   5. `Incoming::take`   — the request taken apart, and who the client is.
-///   6. `refused_by_lists` — the site's IP lists.
+///   6. `refused_by_lists` — the site's IP lists, then
+///      `refused_by_smart_protect` — an address its rules keep refusing.
 ///   7. `read_body_start`  — as much of the body as the rules inspect.
 ///   8. `handle_verify`    — a CAPTCHA answer, handled before the rules.
 ///   9. `judge`            — the module pipeline, and what the lists add to it.
@@ -858,6 +861,11 @@ async fn serve_site(
         return refusal;
     }
 
+    let watch = Watch::of(site, &lists, incoming.client_ip);
+    if let Some(refusal) = refused_by_smart_protect(state, &visit, &watch) {
+        return refusal;
+    }
+
     let body = match read_body_start(body).await {
         Ok(body)  => body,
         Err(resp) => return resp,
@@ -876,10 +884,13 @@ async fn serve_site(
     // Whether the visitor already holds a valid challenge clearance cookie.
     let cleared = clearance_ok(state, &incoming.headers, &incoming.client_ip.to_string());
 
-    let verdict = judge(state, site, &incoming, body.inspected, &lists, cleared).await;
+    let verdict = judge(state, site, &incoming, body.inspected, &lists, &watch, cleared).await;
 
     let findings = match verdict {
         PipelineVerdict::Block { reason, status, findings } => {
+            if findings.offence {
+                watch.count(incoming.client_ip, &reason);
+            }
             // The request was refused; `blocked` says so. `detection` is for
             // what would have happened and did not.
             visit.record(&state.traffic, Outcome {
@@ -899,7 +910,14 @@ async fn serve_site(
         // challenged, and they answered; that is not a detection to report
         // again.
         PipelineVerdict::Challenge { .. } => None,
-        PipelineVerdict::Allow { alerts, findings } => detection_of(&alerts, &findings),
+        PipelineVerdict::Allow { alerts, findings } => {
+            // What a DetectionOnly policy would have refused counts as well, so
+            // Smart Protect can be trialled with the policy.
+            if findings.offence {
+                watch.count(incoming.client_ip, alerts.first().map_or("", |a| a.reason.as_str()));
+            }
+            detection_of(&alerts, &findings)
+        }
     };
 
     forward(state, site, &incoming, &visit, &findings, body.start, on_upgrade).await
@@ -1140,6 +1158,86 @@ fn refused_by_lists(state: &ProxyState, visit: &Visit, lists: &ListCheck) -> Opt
     Some(error_response(StatusCode::FORBIDDEN, &reason))
 }
 
+// ─── Smart Protect ───────────────────────────────────────
+
+/// What Smart Protect has to do with this request.
+struct Watch {
+    /// The policy whose refusals are being counted, when Smart Protect applies
+    /// to this request at all.
+    policy:         Option<i64>,
+    /// The block in force on this client, if there is one.
+    block:          Option<crate::smart_protect::Block>,
+    /// The policy records what it would do rather than doing it.
+    detection_only: bool,
+}
+
+impl Watch {
+    /// Whether Smart Protect applies to this request, and the block on its
+    /// client if so.
+    ///
+    /// It follows the policy: switched on there, and not while the policy is
+    /// Off. Two clients are never counted or blocked whatever they do:
+    ///
+    ///   * one on the policy's allow list — otherwise the first thing Smart
+    ///     Protect does in an incident is refuse the monitoring, the office,
+    ///     and whoever is trying to fix it;
+    ///   * a trusted proxy — if forwarded headers are misconfigured, every
+    ///     request appears to come from its address, and blocking that would
+    ///     refuse every client behind it at once.
+    fn of(site: &SiteRow, lists: &ListCheck, client_ip: std::net::IpAddr) -> Self {
+        let applies = site.smart_protect
+            && site.rule_engine.as_deref().is_some_and(|mode| mode != "Off")
+            && lists.listed != Some(crate::iplist::Listed::Allowed)
+            && !crate::forwarded::is_trusted_proxy(client_ip);
+        let policy = site.policy_id.filter(|_| applies);
+        Watch {
+            policy,
+            block: policy.and_then(|p| crate::smart_protect::blocked(p, client_ip)),
+            detection_only: lists.detection_only,
+        }
+    }
+
+    /// Why this request would be refused, when the policy is only watching.
+    fn would_refuse(&self) -> Option<String> {
+        self.block.as_ref().filter(|_| self.detection_only).map(|b| b.refusal())
+    }
+
+    /// Count a refusal by the rules against this client. One made while the
+    /// client is already blocked is not counted, so a block lasts as long as it
+    /// says and no longer.
+    fn count(&self, client_ip: std::net::IpAddr, reason: &str) {
+        let Some(policy) = self.policy else { return };
+        if self.block.is_some() {
+            return;
+        }
+        if let Some(b) = crate::smart_protect::offence(policy, client_ip, reason) {
+            tracing::info!(
+                client = %crate::smart_protect::unit_label(b.unit),
+                policy,
+                "Smart Protect: blocked for {} after {} refusals within {}",
+                crate::smart_protect::span(b.until.saturating_duration_since(std::time::Instant::now())),
+                b.refusals,
+                crate::smart_protect::span(b.window),
+            );
+        }
+    }
+}
+
+/// The refusal, when Smart Protect has this client blocked and the policy
+/// enforces. Before the body is read, like a list refusal, so a blocked
+/// address costs no reads.
+fn refused_by_smart_protect(state: &ProxyState, visit: &Visit, watch: &Watch) -> Option<Response<Body>> {
+    let block = watch.block.as_ref().filter(|_| !watch.detection_only)?;
+    let reason = block.refusal();
+    visit.record(&state.traffic, Outcome {
+        status:  403,
+        blocked: true,
+        reason:  Some(reason.clone()),
+        ..Outcome::default()
+    });
+    Some(error_response(StatusCode::FORBIDDEN, &reason))
+}
+
 // ─── Step 7: the start of the body ───────────────────────
 
 /// The start of the body, and the part of it the rules see.
@@ -1185,6 +1283,7 @@ async fn judge(
     incoming:  &Incoming,
     inspected: bytes::Bytes,
     lists:     &ListCheck,
+    watch:     &Watch,
     cleared:   bool,
 ) -> PipelineVerdict {
     // An allowed address skips the pipeline rather than being waved through
@@ -1232,9 +1331,21 @@ async fn judge(
     // In DetectionOnly a list refuses and challenges nobody. It records what it
     // would have done, beside whatever the rules found, the way the rules
     // record theirs — so a policy can be trialled with its lists as well.
-    match (verdict, list_verdict(&lists.listed).filter(|_| lists.detection_only)) {
+    let verdict = match (verdict, list_verdict(&lists.listed).filter(|_| lists.detection_only)) {
         (PipelineVerdict::Allow { mut alerts, mut findings }, Some((why, would))) => {
             findings.detection = Some(stronger(findings.detection, would));
+            alerts.push(crate::modules::Alert { reason: why });
+            PipelineVerdict::Allow { alerts, findings }
+        }
+        (verdict, _) => verdict,
+    };
+
+    // The same for a Smart Protect block the policy is only watching: the
+    // request is served, and its row says it would have been refused.
+    match (verdict, watch.would_refuse()) {
+        (PipelineVerdict::Allow { mut alerts, mut findings }, Some(why)) => {
+            findings.detection =
+                Some(stronger(findings.detection, crate::modules::Detection::WouldBlock));
             alerts.push(crate::modules::Alert { reason: why });
             PipelineVerdict::Allow { alerts, findings }
         }
@@ -1650,7 +1761,9 @@ async fn load_sites(db: &SqlitePool, generation: u64) -> Result<SiteTable, sqlx:
                 affinity       as \"affinity!: bool\",
                 waf_policy_id,
                 (SELECT rule_engine FROM policies p WHERE p.id = sites.waf_policy_id)
-                               as \"rule_engine?: String\"
+                               as \"rule_engine?: String\",
+                (SELECT smart_protect FROM policies p WHERE p.id = sites.waf_policy_id)
+                               as \"smart_protect?: bool\"
          FROM sites
          ORDER BY id"
     )
@@ -1689,6 +1802,7 @@ async fn load_sites(db: &SqlitePool, generation: u64) -> Result<SiteTable, sqlx:
             affinity:       r.affinity,
             policy_id:      r.waf_policy_id,
             rule_engine:    r.rule_engine,
+            smart_protect:  r.smart_protect.unwrap_or(false),
         });
         // The oldest site keeps a name two of them claim. The forms refuse
         // that, so it is a tiebreak for a database edited by hand.

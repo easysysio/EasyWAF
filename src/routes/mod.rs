@@ -17,6 +17,7 @@ pub mod rules;
 pub mod settings;
 pub mod setup;
 pub mod sites;
+pub mod smart_protect;
 pub mod traffic;
 pub mod updates;
 

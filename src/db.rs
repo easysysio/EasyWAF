@@ -84,6 +84,7 @@ pub async fn init(database_url: &str) -> SqlitePool {
     run_migration_033(&pool).await;
     run_migration_034(&pool).await;
     run_migration_035(&pool).await;
+    run_migration_036(&pool).await;
 
     // After the migrations, so the version recorded is the one whose schema
     // this now is. A snapshot carries it, and a restore reads it.
@@ -91,6 +92,30 @@ pub async fn init(database_url: &str) -> SqlitePool {
 
     info!("Database ready: {}", database_url);
     pool
+}
+
+// ─── run_migration_036 ───────────────────────────────────
+
+/// Smart Protect, per policy. Added when the column is missing, since
+/// `ALTER TABLE ADD COLUMN` fails on a database that already has it.
+async fn run_migration_036(pool: &SqlitePool) {
+    let done: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM pragma_table_info('policies') WHERE name = 'smart_protect'",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0);
+    if done > 0 {
+        return;
+    }
+
+    let sql = include_str!("../migrations/036_smart_protect.sql");
+    sqlx::raw_sql(sql)
+        .execute(pool)
+        .await
+        .unwrap_or_else(|e| panic!("Migration 036 failed: {}", e));
+
+    info!("Migration 036 applied: a policy can refuse an address its rules keep refusing");
 }
 
 // ─── run_migration_035 ───────────────────────────────────

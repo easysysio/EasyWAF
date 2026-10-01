@@ -464,6 +464,8 @@ fn diff_policies(current: &Document, doc: &Document) -> Vec<Item> {
         field(&mut d, "challenge threshold", a.challenge_threshold, b.challenge_threshold);
         field(&mut d, "country mode", a.countries_mode.as_str(), b.countries_mode.as_str());
         field(&mut d, "countries", countries(&a.countries).as_str(), countries(&b.countries).as_str());
+        let on_off = |on: bool| if on { "on" } else { "off" };
+        field(&mut d, "Smart Protect", on_off(a.smart_protect), on_off(b.smart_protect));
         let sets = |p: &export::Policy| p.rule_sets.iter().map(|s| (s.id.clone(), s.version)).collect::<Vec<_>>();
         set_change(&mut d, "rule sets", &sets(a), &sets(b), |(id, v)| format!("{id} v{v}"));
         set_change(&mut d, "rules switched off", &a.rules_off, &b.rules_off, |n| n.to_string());
@@ -608,13 +610,15 @@ pub async fn apply(work: &SqlitePool, doc: &Document, importer: &str) -> Result<
     let defs = crate::routes::rules::catalogue_sets();
     for p in &doc.policies {
         sqlx::query(
-            "INSERT INTO policies (name, rule_engine, score_threshold, challenge_threshold, geoip_mode, geoip_countries)
-             VALUES (?, ?, ?, ?, ?, ?)
+            "INSERT INTO policies (name, rule_engine, score_threshold, challenge_threshold, geoip_mode, geoip_countries,
+                                   smart_protect)
+             VALUES (?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(name) DO UPDATE SET rule_engine = excluded.rule_engine,
                  score_threshold = excluded.score_threshold, challenge_threshold = excluded.challenge_threshold,
-                 geoip_mode = excluded.geoip_mode, geoip_countries = excluded.geoip_countries")
+                 geoip_mode = excluded.geoip_mode, geoip_countries = excluded.geoip_countries,
+                 smart_protect = excluded.smart_protect")
             .bind(&p.name).bind(&p.mode).bind(p.score_threshold).bind(p.challenge_threshold)
-            .bind(&p.countries_mode).bind(p.countries.join(","))
+            .bind(&p.countries_mode).bind(p.countries.join(",")).bind(p.smart_protect)
             .execute(work).await.map_err(err)?;
         let id: i64 = sqlx::query_scalar("SELECT id FROM policies WHERE name = ?")
             .bind(&p.name).fetch_one(work).await.map_err(err)?;
@@ -868,9 +872,21 @@ mod tests {
     }
 
     #[test]
+    fn smart_protect_travels_with_its_policy() {
+        let on = "[easywaf]\nformat = 1\nversion = \"0.15.0\"\nexported = \"x\"\n\
+                  [[policy]]\nname = \"p\"\nmode = \"On\"\nscore_threshold = 10\nsmart_protect = true\n";
+        assert!(parse(on).unwrap().policies[0].smart_protect);
+        // A file that does not mention it — from before the switch existed, or
+        // from an installation that does not use it — leaves it off.
+        let silent = "[easywaf]\nformat = 1\nversion = \"0.14.4\"\nexported = \"x\"\n\
+                      [[policy]]\nname = \"p\"\nmode = \"On\"\nscore_threshold = 10\n";
+        assert!(!parse(silent).unwrap().policies[0].smart_protect);
+    }
+
+    #[test]
     fn a_file_from_a_newer_easywaf_says_to_upgrade() {
         let newer_field = "[easywaf]\nformat = 1\nversion = \"99.0.0\"\nexported = \"x\"\n\
-                           [[policy]]\nname = \"p\"\nmode = \"On\"\nscore_threshold = 10\nsmart_protect = true\n";
+                           [[policy]]\nname = \"p\"\nmode = \"On\"\nscore_threshold = 10\nnot_invented_yet = true\n";
         let e = parse(newer_field).unwrap_err();
         assert!(e.contains("99.0.0") && e.contains("Upgrade"), "{e}");
 
