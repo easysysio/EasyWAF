@@ -174,6 +174,10 @@ pub struct ProxyState {
     pub db:         SqlitePool,
     pub pipeline:   Arc<Pipeline>,
     pub client:     Client,
+    /// The same client without certificate verification, for a site whose
+    /// HTTPS backend has a certificate of its own and whose operator has said
+    /// to reach it anyway.
+    pub client_unverified: Client,
     /// Secret used to sign CAPTCHA clearance cookies.
     pub secret:     String,
     /// In-memory store of in-flight CAPTCHA challenges.
@@ -214,6 +218,8 @@ struct SiteRow {
     rule_engine:    Option<String>,
     /// Whether the site's policy has Smart Protect switched on.
     smart_protect:  bool,
+    /// Whether an HTTPS backend's certificate goes unverified.
+    backend_tls_insecure: bool,
 }
 
 // ─── start ───────────────────────────────────────────────
@@ -1467,7 +1473,7 @@ async fn forward(
             stream_back(state, upstream_resp, result.upstream.id, repin)
         }
         Err(e) => {
-            tracing::warn!(upstream = %result.upstream.url, error = %e, "upstream unreachable");
+            tracing::warn!(upstream = %result.upstream.url, error = %error_chain(&e), "upstream unreachable");
             visit.record(&state.traffic, Outcome::forwarded(detected, 502, &result.upstream.url));
             // Two different problems with two different next steps, so they
             // are not given the same sentence: one backend is unreachable, or
@@ -1573,8 +1579,8 @@ async fn send_upstream<'a>(
             Some(b) => b,
             None    => reqwest::Body::from(head.clone()),
         };
-        let response = state
-            .client
+        let client = if site.backend_tls_insecure { &state.client_unverified } else { &state.client };
+        let response = client
             .request(to_reqwest_method(&incoming.method), &url)
             .headers(headers.clone())
             .body(request_body)
@@ -1595,10 +1601,29 @@ async fn send_upstream<'a>(
         let Some(next) = crate::upstream::choose_except(site.id, &site.upstreams, &tried) else {
             return Sent { response, upstream, tried: tried.len() };
         };
-        tracing::warn!(upstream = %url, error = %e, next = %next.upstream.url,
+        tracing::warn!(upstream = %url, error = %error_chain(e), next = %next.upstream.url,
                        "upstream unreachable, trying another backend");
         upstream = next.upstream;
     }
+}
+
+/// An error with every cause behind it, joined by colons.
+///
+/// reqwest's own message stops at "error sending request": whether the backend
+/// refused the connection, timed out or presented a certificate that did not
+/// verify is in the causes, and that is the part an operator needs.
+fn error_chain(e: &dyn std::error::Error) -> String {
+    let mut out = e.to_string();
+    let mut cause = e.source();
+    while let Some(c) = cause {
+        let text = c.to_string();
+        if !out.contains(&text) {
+            out.push_str(": ");
+            out.push_str(&text);
+        }
+        cause = c.source();
+    }
+    out
 }
 
 /// Turn the upstream's response into the client's, streaming the body without
@@ -1781,7 +1806,8 @@ async fn load_sites(db: &SqlitePool, generation: u64) -> Result<SiteTable, sqlx:
                 (SELECT rule_engine FROM policies p WHERE p.id = sites.waf_policy_id)
                                as \"rule_engine?: String\",
                 (SELECT smart_protect FROM policies p WHERE p.id = sites.waf_policy_id)
-                               as \"smart_protect?: bool\"
+                               as \"smart_protect?: bool\",
+                backend_tls_insecure as \"backend_tls_insecure!: bool\"
          FROM sites
          ORDER BY id"
     )
@@ -1821,6 +1847,7 @@ async fn load_sites(db: &SqlitePool, generation: u64) -> Result<SiteTable, sqlx:
             policy_id:      r.waf_policy_id,
             rule_engine:    r.rule_engine,
             smart_protect:  r.smart_protect.unwrap_or(false),
+            backend_tls_insecure: r.backend_tls_insecure,
         });
         // The oldest site keeps a name two of them claim. The forms refuse
         // that, so it is a tiebreak for a database edited by hand.

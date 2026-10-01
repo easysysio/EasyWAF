@@ -106,6 +106,22 @@
 
                     <div class="checkbox">
                         <label>
+                            <input type="checkbox" name="backend_tls_insecure" value="1"
+                                   {% if site.backend_tls_insecure | default(value=false) %}checked{% endif %}>
+                            <strong>Do not verify the backend's certificate</strong> — for an
+                            <code>https://</code> backend with a self-signed or private-CA certificate
+                        </label>
+                        <p class="help-block" style="margin:0 0 10px 20px">
+                            Leave this off unless the site answers <em>502</em> and the log says the
+                            backend's certificate could not be verified. With it on, the connection
+                            to the backend is still encrypted but its identity is not checked, so
+                            use it only for a backend on a network you trust. It has no effect on an
+                            <code>http://</code> backend, or on the certificate visitors see.
+                        </p>
+                    </div>
+
+                    <div class="checkbox">
+                        <label>
                             <input type="checkbox" name="affinity" value="1"
                                    {% if site.affinity | default(value=false) %}checked{% endif %}>
                             <strong>Session affinity</strong> — keep a client on the backend

@@ -16,7 +16,11 @@ Version bumps and tags are created only after explicit approval.
 - **The management interface loads nothing from outside.** Bootstrap, jQuery, DataTables, metisMenu, Chart.js, Font Awesome and the two fonts came from six other hosts, unchecked; they are now compiled into the binary, so the interface works on a host with no internet access and no outside host can change what runs in an administrator's browser.
 - The interface sends a content security policy that allows scripts, styles, fonts and requests only from itself.
 
+### Added
+- **A site can reach an HTTPS backend that has a self-signed or private-CA certificate.** Tick *Do not verify the backend's certificate* on the site; it is off by default, and other sites are unaffected. Such a backend used to answer 502 with no way round it.
+
 ### Fixed
+- When a backend cannot be reached, the log says why — refused, timed out, or *invalid peer certificate* — rather than only "error sending request".
 - The Traffic Monitor chart no longer asks for a tick at every whole number, which Chart.js had to cap on a busy hour.
 
 ### Upgrading

@@ -119,6 +119,19 @@ client that will never think to. It stays on the new backend afterwards.
 A client that keeps no cookies — most API clients — cannot be pinned, and goes
 round the pool in turn as usual.
 
+### HTTPS backends
+
+A backend can be `https://`. Its certificate is verified against the public
+certificate authorities, as a browser would verify it.
+
+A backend with a **self-signed certificate, or one from a private CA**, fails
+that check: the site answers 502, and the log says *invalid peer certificate*.
+For such a backend, tick **Do not verify the backend's certificate** on the
+site. The connection to it is still encrypted, but its identity is no longer
+checked — whoever can answer on that address can be the backend — so use it for
+a backend on a network you trust, and leave it off everywhere else. It is a
+setting of the one site, and changes nothing about the certificate visitors see.
+
 ## Ports
 
 One or more HTTP ports, and optionally one or more HTTPS ports, comma separated.

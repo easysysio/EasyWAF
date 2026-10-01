@@ -521,6 +521,8 @@ fn diff_sites(current: &Document, doc: &Document) -> Vec<Item> {
         field(&mut d, "redirect to HTTPS", a.tls_redirect, b.tls_redirect);
         field(&mut d, "ACME", a.acme, b.acme);
         field(&mut d, "session affinity", a.affinity, b.affinity);
+        field(&mut d, "backend certificate unverified",
+              a.backend_certificate_unverified, b.backend_certificate_unverified);
         field(&mut d, "HSTS", a.hsts, b.hsts);
         field(&mut d, "X-Frame-Options", a.x_frame, b.x_frame);
         field(&mut d, "X-Frame-Options value", a.x_frame_value.as_str(), b.x_frame_value.as_str());
@@ -704,19 +706,20 @@ pub async fn apply(work: &SqlitePool, doc: &Document, importer: &str) -> Result<
         sqlx::query(
             "INSERT INTO sites (name, server_name, enabled, cert_id, acme_enabled, waf_policy_id, hsts,
                                 x_frame, x_frame_value, x_content_type, xss_protection, listen_port,
-                                tls_port, tls_redirect, affinity)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                tls_port, tls_redirect, affinity, backend_tls_insecure)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(name) DO UPDATE SET server_name = excluded.server_name, enabled = excluded.enabled,
                  cert_id = excluded.cert_id, acme_enabled = excluded.acme_enabled,
                  waf_policy_id = excluded.waf_policy_id, hsts = excluded.hsts, x_frame = excluded.x_frame,
                  x_frame_value = excluded.x_frame_value, x_content_type = excluded.x_content_type,
                  xss_protection = excluded.xss_protection, listen_port = excluded.listen_port,
                  tls_port = excluded.tls_port, tls_redirect = excluded.tls_redirect,
-                 affinity = excluded.affinity, updated_at = datetime('now')")
+                 affinity = excluded.affinity, backend_tls_insecure = excluded.backend_tls_insecure,
+                 updated_at = datetime('now')")
             .bind(&s.name).bind(&host).bind(s.enabled).bind(cert).bind(s.acme).bind(policy)
             .bind(s.hsts).bind(s.x_frame).bind(&s.x_frame_value).bind(s.x_content_type)
             .bind(s.xss_protection).bind(s.listen_port).bind(s.tls_port).bind(s.tls_redirect)
-            .bind(s.affinity)
+            .bind(s.affinity).bind(s.backend_certificate_unverified)
             .execute(work).await.map_err(err)?;
         let id: i64 = sqlx::query_scalar("SELECT id FROM sites WHERE name = ?")
             .bind(&s.name).fetch_one(work).await.map_err(err)?;

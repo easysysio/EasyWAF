@@ -243,6 +243,10 @@ pub struct Site {
     pub acme: bool,
     #[serde(default)]
     pub affinity: bool,
+    /// Whether an HTTPS backend's certificate goes unverified. Written only
+    /// when it does.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub backend_certificate_unverified: bool,
     #[serde(default)]
     pub hsts: bool,
     #[serde(default)]
@@ -577,7 +581,7 @@ pub async fn build(db: &SqlitePool, opts: Options) -> Result<Document, sqlx::Err
     for s in sqlx::query(
         "SELECT id, name, server_name, enabled, cert_id, acme_enabled, waf_policy_id, hsts,
                 x_frame, x_frame_value, x_content_type, xss_protection, listen_port, tls_port,
-                tls_redirect, affinity
+                tls_redirect, affinity, backend_tls_insecure
            FROM sites ORDER BY name")
         .fetch_all(db).await?
     {
@@ -612,6 +616,7 @@ pub async fn build(db: &SqlitePool, opts: Options) -> Result<Document, sqlx::Err
             tls_redirect: flag("tls_redirect"),
             acme: flag("acme_enabled"),
             affinity: flag("affinity"),
+            backend_certificate_unverified: flag("backend_tls_insecure"),
             hsts: flag("hsts"),
             x_frame: flag("x_frame"),
             x_frame_value: s.get("x_frame_value"),

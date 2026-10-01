@@ -160,12 +160,18 @@ async fn main() {
     // ── Build reqwest client ──────────────────────────────
     // Connect and idle timeouts, never a total one — see UPSTREAM_IDLE_TIMEOUT
     // for the truncated downloads a total timeout produced.
-    let client = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .connect_timeout(proxy::UPSTREAM_CONNECT_TIMEOUT)
-        .read_timeout(proxy::UPSTREAM_IDLE_TIMEOUT)
-        .build()
-        .expect("reqwest client");
+    let upstream_client = |verify: bool| {
+        reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .connect_timeout(proxy::UPSTREAM_CONNECT_TIMEOUT)
+            .read_timeout(proxy::UPSTREAM_IDLE_TIMEOUT)
+            .danger_accept_invalid_certs(!verify)
+            .build()
+            .expect("reqwest client")
+    };
+    let client = upstream_client(true);
+    // For the sites that have said their backend's certificate is its own.
+    let client_unverified = upstream_client(false);
 
     // ── Channel: GUI → proxy for dynamic port binding ─────
     // Buffer of 32 is plenty — port changes are infrequent.
@@ -190,6 +196,7 @@ async fn main() {
         db:         db.clone(),
         pipeline:   pipeline.clone(),
         client,
+        client_unverified,
         secret:     secret.clone(),
         challenges: challenge::ChallengeStore::new(),
         is_tls:     false,
