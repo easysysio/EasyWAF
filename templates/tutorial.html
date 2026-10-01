@@ -1,22 +1,35 @@
 {% extends "layout_default.html" %}
 
-{# One step of the tutorial.
+{# The quick setup: one step at a time, each a short form that does the thing.
 
-     n      its number
-     done   true or false where the appliance can tell; "" where it cannot,
-            which shows the number and no tick
-     title  what the step is
+     step     which of the six is open
+     done     which of the first five the newest site already has
+     site     that site, or nothing before the first step is done
 #}
-{% macro step_head(n, done, title) %}
-<div class="panel-heading">
-    {% if done == true %}
-    <span class="label label-success" style="margin-right:8px"><i class="fa fa-check"></i> done</span>
-    {% else %}
-    <span class="label label-default" style="margin-right:8px">step {{ n }}</span>
-    {% endif %}
-    <strong>{{ title }}</strong>
-</div>
-{% endmacro step_head %}
+
+{# One entry in the row of steps across the top. #}
+{% macro pill(n, label, done, step) %}
+<li {% if step == n %}class="active"{% endif %}>
+    <a href="/tutorial?step={{ n }}">
+        {% if done %}<i class="fa fa-check text-success"></i>{% else %}{{ n }}.{% endif %}
+        {{ label }}
+    </a>
+</li>
+{% endmacro pill %}
+
+{# Back and forward, under every step. `skip` words the forward button for a
+   step that has not been done. #}
+{% macro nav(step, done) %}
+<hr>
+{% if step > 1 %}
+<a href="/tutorial?step={{ step - 1 }}" class="btn btn-default"><i class="fa fa-chevron-left"></i> Back</a>
+{% endif %}
+{% if step < 6 %}
+<a href="/tutorial?step={{ step + 1 }}" class="btn {% if done %}btn-primary{% else %}btn-default{% endif %} pull-right">
+    {% if done %}Next{% else %}Skip for now{% endif %} <i class="fa fa-chevron-right"></i>
+</a>
+{% endif %}
+{% endmacro nav %}
 
 {% block content %}
 {% if result == "failed" %}
@@ -31,249 +44,367 @@
 {% endif %}
 
 <div class="row">
-    <div class="col-lg-9">
+    <div class="col-lg-8">
 
-        <div class="alert alert-info">
-            <i class="fa fa-graduation-cap fa-fw"></i>
-            <strong>From nothing to a protected site, in the order you would really do it.</strong>
-            Put a site behind EasyWAF, give it HTTPS, watch what a policy would do to
-            its traffic, deal with the first false positive, and only then enforce.
-            <br>
-            A step is marked <span class="label label-success"><i class="fa fa-check"></i> done</span>
-            when this appliance already has what it describes, so you can leave and
-            come back. The
-            <a href="https://easywaf.easysys.io/tutorial/" target="_blank" rel="noopener">documentation's tutorial</a>
-            walks through the same steps at more length.
+        <p class="text-muted">
+            A quick setup, one step at a time: put a site behind EasyWAF and have a
+            policy watching it in a few minutes. Every step can be skipped and come
+            back to.
+        </p>
+
+        <ul class="nav nav-pills" style="margin-bottom:15px">
+            {{ self::pill(n=1, label="Site",        done=done.site,    step=step) }}
+            {{ self::pill(n=2, label="Check it",    done=done.traffic, step=step) }}
+            {{ self::pill(n=3, label="HTTPS",       done=done.https,   step=step) }}
+            {{ self::pill(n=4, label="Protection",  done=done.policy,  step=step) }}
+            {{ self::pill(n=5, label="Backup",      done=done.backup,  step=step) }}
+            {{ self::pill(n=6, label="What's next", done=false,        step=step) }}
+        </ul>
+
+        {% if not is_admin | default(value=false) %}
+        <div class="alert alert-warning">
+            <i class="fa fa-lock"></i>
+            These steps change the configuration, which takes an administrator. You can
+            read them; the buttons that do things are not offered to a viewer.
         </div>
+        {% endif %}
 
-        <!-- ── 1 ───────────────────────────────────────────── -->
         <div class="panel panel-default">
-            {{ self::step_head(n=1, done=done.site, title="Put a site behind EasyWAF") }}
+
+        {# ── 1: the site ─────────────────────────────────────────── #}
+        {% if step == 1 %}
+            <div class="panel-heading"><strong>Step 1 of 6 — Put a site behind EasyWAF</strong></div>
             <div class="panel-body">
+                {% if site and not another %}
                 <p>
-                    A site is a hostname and where its requests go. Give it a name, the
-                    hostname visitors use, the address of your application as the
-                    <strong>Upstream</strong>, and HTTP port <code>80</code>. Leave HTTPS and
-                    the policy empty for now.
+                    <i class="fa fa-check text-success"></i>
+                    <strong>{{ site.name }}</strong> answers for
+                    <code>{{ site.server_name }}</code> on port {{ site.http_port }}.
+                    The rest of these steps work on it.
                 </p>
                 <p class="text-muted">
-                    The port is bound as soon as you save. With no policy the site is a
-                    plain reverse proxy: forwarded and recorded, not inspected.
-                </p>
-                <a href="/sites/new" class="btn btn-primary btn-sm admin-only">
-                    <i class="fa fa-plus"></i> Create Site</a>
-                <a href="/sites" class="btn btn-default btn-sm">Site Management</a>
-            </div>
-        </div>
-
-        <!-- ── 2 ───────────────────────────────────────────── -->
-        <div class="panel panel-default">
-            {{ self::step_head(n=2, done=done.traffic, title="Send a request through it") }}
-            <div class="panel-body">
-                <p>
-                    Before changing DNS, ask EasyWAF for the site by name and check that
-                    your application answers:
-                </p>
-                <pre>curl -i --resolve shop.example.com:80:&lt;this host's address&gt; http://shop.example.com/</pre>
-                <p>
-                    The request appears in Traffic Monitor marked <code>PASSED</code>.
-                    A <em>404</em> from EasyWAF means the hostname on the site is not the
-                    one you asked for; a <em>502</em> means it cannot reach the upstream.
-                </p>
-                <p>
-                    Then point the hostname at this host, so every visitor arrives through
-                    EasyWAF.
-                </p>
-                <a href="/traffic" class="btn btn-default btn-sm">
-                    <i class="fa fa-bar-chart"></i> Traffic Monitor</a>
-            </div>
-        </div>
-
-        <!-- ── 3 ───────────────────────────────────────────── -->
-        <div class="panel panel-default">
-            {{ self::step_head(n=3, done=done.https, title="Turn on HTTPS") }}
-            <div class="panel-body">
-                <p>
-                    Let's Encrypt validates over port 80, which is why the hostname has to
-                    point here first.
-                </p>
-                <ol>
-                    <li>Set the ACME contact address under Settings, on the TLS tab.</li>
-                    <li>Open the site and press <strong>Request Certificate</strong>.
-                        EasyWAF answers the challenge itself; nothing changes on your
-                        application.</li>
-                    <li>Set the site's HTTPS port to <code>443</code> and choose the
-                        certificate.</li>
-                    <li>Check the site over <code>https://</code>, and only then tick
-                        <strong>Redirect HTTP to HTTPS</strong>.</li>
-                </ol>
-                <p class="text-muted">
-                    Renewal is automatic. A certificate you already have can be uploaded
-                    in the Certificate Manager instead.
-                </p>
-                <a href="/settings" class="btn btn-default btn-sm admin-only">
-                    <i class="fa fa-sliders"></i> Settings</a>
-                <a href="/sites" class="btn btn-default btn-sm">Site Management</a>
-                <a href="/certs" class="btn btn-default btn-sm">Certificate Manager</a>
-            </div>
-        </div>
-
-        <!-- ── 4 ───────────────────────────────────────────── -->
-        <div class="panel panel-default">
-            {{ self::step_head(n=4, done=done.policy, title="Create a policy that only watches") }}
-            <div class="panel-body">
-                <p>
-                    Create a policy, leave its mode at <strong>DetectionOnly</strong> and
-                    the basic rule sets ticked, then choose it as the site's
-                    <strong>WAF Policy</strong>.
-                </p>
-                <p>
-                    In DetectionOnly the rules run on every request and nothing is refused.
-                    You are about to find out what the policy <em>would</em> do before it
-                    does it. Prove it is looking:
-                </p>
-                <pre>curl -i "https://shop.example.com/?q=xp_cmdshell"</pre>
-                <p class="text-muted">
-                    The request reaches your application as usual, and its row in Traffic
-                    Monitor says <code>WOULD BLOCK</code>, with the rule that matched.
-                </p>
-                <a href="/policy/new" class="btn btn-primary btn-sm admin-only">
-                    <i class="fa fa-plus"></i> Create Policy</a>
-                <a href="/policy" class="btn btn-default btn-sm">Policy Manager</a>
-            </div>
-        </div>
-
-        <!-- ── 5 ───────────────────────────────────────────── -->
-        <div class="panel panel-default">
-            {{ self::step_head(n=5, done="", title="Leave it a few days, then deal with the false positives") }}
-            <div class="panel-body">
-                <p>
-                    Give it long enough to see whatever your site does weekly. Then filter
-                    Traffic Monitor to what would have been blocked. Every row is either an
-                    attack — which you want refused — or your own traffic tripping a rule,
-                    which would have been an outage for that user.
-                </p>
-                <p>For a false positive, take the narrowest answer that fixes it:</p>
-                <ol>
-                    <li><strong>For that caller</strong> — <em>exclude for this IP</em> on
-                        the row. Everyone else is still checked by the rule.</li>
-                    <li><strong>For that path</strong> — an exclusion narrowed to a path
-                        prefix, under Rule Exclusions.</li>
-                    <li><strong>For the whole policy</strong> — untick the rule on the
-                        policy's Rules tab.</li>
-                </ol>
-                <p class="text-muted">
-                    When it is the caller that is trustworthy — your monitoring, a
-                    partner's integration — use <em>Allow</em> on the row instead, which
-                    skips every check for that address.
-                </p>
-                <a href="/traffic" class="btn btn-default btn-sm">
-                    <i class="fa fa-bar-chart"></i> Traffic Monitor</a>
-                <a href="/exclusions" class="btn btn-default btn-sm">Rule Exclusions</a>
-            </div>
-        </div>
-
-        <!-- ── 6 ───────────────────────────────────────────── -->
-        <div class="panel panel-default">
-            {{ self::step_head(n=6, done=done.enforcing, title="Enforce") }}
-            <div class="panel-body">
-                <p>
-                    When the only rows that would have been blocked are ones you are happy
-                    to block, set the policy's mode to <strong>On</strong>. The same
-                    request as in step 4 now gets a <em>403</em>.
-                </p>
-                <p class="text-muted">
-                    A blocked visitor sees a page with a reference — the time and their
-                    address — and nothing about which rule matched. That is on the row in
-                    Traffic Monitor, and the reference is how you find it when someone
-                    says they were blocked by mistake.
-                </p>
-                <a href="/policy" class="btn btn-default btn-sm">
-                    <i class="fa fa-shield"></i> Policy Manager</a>
-            </div>
-        </div>
-
-        <!-- ── 7 ───────────────────────────────────────────── -->
-        <div class="panel panel-default">
-            {{ self::step_head(n=7, done=done.smart, title="Stop the ones that keep trying") }}
-            <div class="panel-body">
-                <p>
-                    A scanner refused once tries again, two hundred times. Smart Protect
-                    refuses an address outright for a while once the rules have refused it
-                    a few times.
-                </p>
-                <p>
-                    Before switching it on, use the preview on the Smart Protect page: it
-                    replays your recorded traffic and says how many of the requests it would
-                    have refused were in fact served successfully. Those are real users.
-                    Then tick <strong>Enable Smart Protect</strong> on the policy.
-                </p>
-                <a href="/smart-protect" class="btn btn-default btn-sm">
-                    <i class="fa fa-shield"></i> Smart Protect</a>
-            </div>
-        </div>
-
-        <!-- ── 8 ───────────────────────────────────────────── -->
-        <div class="panel panel-default">
-            {{ self::step_head(n=8, done=done.lists, title="Refuse known-bad addresses") }}
-            <div class="panel-body">
-                <p>
-                    The published lists update themselves daily and do nothing until a
-                    policy switches one on. A reasonable start: <strong>Block</strong>
-                    hijacked netblocks, <strong>Challenge</strong> compromised hosts, and
-                    leave Tor exit nodes off unless you have a reason.
-                </p>
-                <p class="text-muted">
-                    Challenge shows a CAPTCHA, so a wrongly listed address is slowed down
-                    rather than shut out.
-                </p>
-                <a href="/iplists" class="btn btn-default btn-sm">
-                    <i class="fa fa-hand-stop-o"></i> IP Lists</a>
-            </div>
-        </div>
-
-        <!-- ── 9 ───────────────────────────────────────────── -->
-        <div class="panel panel-default">
-            {{ self::step_head(n=9, done=done.backup, title="Make sure you can get it back") }}
-            <div class="panel-body">
-                <p>
-                    Everything you have set up is in one database. Switch on scheduled
-                    snapshots and press <strong>Take one now</strong> to see it work, and
-                    have your host's own backup copy the <code>backups</code> directory
-                    somewhere else.
-                </p>
-                <p class="text-muted">
-                    A snapshot holds every private key and password hash; treat it as one.
-                </p>
-                <a href="/backup" class="btn btn-default btn-sm admin-only">
-                    <i class="fa fa-hdd-o"></i> Backup</a>
-            </div>
-        </div>
-
-        <!-- ── Showing it again ────────────────────────────── -->
-        {% if is_admin | default(value=false) %}
-        <div class="panel panel-default">
-            <div class="panel-body">
-                {% if opens_at_sign_in %}
-                <form method="post" action="/tutorial/hide" style="display:inline">
-                    <button type="submit" class="btn btn-default">
-                        <i class="fa fa-eye-slash"></i> Don't show this again
-                    </button>
-                </form>
-                <a href="/" class="btn btn-link">Go to the Dashboard</a>
-                <p class="help-block" style="margin:10px 0 0">
-                    This page opens each time an administrator signs in, until one of you
-                    presses the button. It stays under <strong>Tutorial</strong> in the menu
-                    either way.
+                    <a href="/tutorial?step=1&another=1">Set up another site</a> — the
+                    steps then work on the new one.
                 </p>
                 {% else %}
-                <span class="text-muted">
-                    <i class="fa fa-eye-slash"></i>
-                    This page does not open at sign-in. It is here, under
-                    <strong>Tutorial</strong> in the menu, whenever you want it.
-                </span>
+                <p>
+                    A site is a hostname and where its requests go. Three things are
+                    enough; everything else can be changed later on the site's own page.
+                </p>
+                {% if is_admin | default(value=false) %}
+                <form method="post" action="/sites/create">
+                    <input type="hidden" name="back" value="/tutorial?step=1">
+                    <div class="form-group">
+                        <label>Site name <small class="text-muted">— a label for you</small></label>
+                        <input type="text" class="form-control" name="name" placeholder="shop" required autofocus>
+                    </div>
+                    <div class="form-group">
+                        <label>Hostname <small class="text-muted">— what visitors type, with no http:// and no port</small></label>
+                        <input type="text" class="form-control" name="server_name" placeholder="shop.example.com" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Your application <small class="text-muted">— where EasyWAF forwards to, as a full URL</small></label>
+                        <input type="text" class="form-control" name="target" placeholder="http://10.0.0.20:3000" required
+                               spellcheck="false" style="font-family:monospace">
+                    </div>
+                    <div class="form-group">
+                        <label>HTTP port</label>
+                        <input type="text" class="form-control" name="listen_port" value="80" style="max-width:120px" required>
+                        <p class="help-block">Bound as soon as you save. HTTPS comes in step 3.</p>
+                    </div>
+                    <button type="submit" class="btn btn-success">
+                        <i class="fa fa-plus"></i> Create the site
+                    </button>
+                </form>
+                {% endif %}
+                {% endif %}
+                {{ self::nav(step=step, done=done.site) }}
+            </div>
+
+        {# ── 2: check it ─────────────────────────────────────────── #}
+        {% elif step == 2 %}
+            <div class="panel-heading"><strong>Step 2 of 6 — Check it, then send your visitors through</strong></div>
+            <div class="panel-body">
+                <p>
+                    Ask EasyWAF for <strong>{{ site.server_name }}</strong> before changing
+                    DNS. Your application's own page should come back:
+                </p>
+                <pre>curl -i -H "Host: {{ site.server_name }}" http://{{ this_host }}{% if site.http_port != 80 %}:{{ site.http_port }}{% endif %}/</pre>
+                {% if done.traffic %}
+                <p>
+                    <i class="fa fa-check text-success"></i>
+                    <strong>A request has come through.</strong> It is in
+                    <a href="/traffic">Traffic Monitor</a>.
+                </p>
+                {% else %}
+                <p>
+                    <i class="fa fa-circle-o text-muted"></i>
+                    Nothing has come through yet.
+                    <a href="/tutorial?step=2" class="btn btn-default btn-xs"><i class="fa fa-refresh"></i> Check again</a>
+                </p>
+                <p class="text-muted">
+                    A <em>404</em> from EasyWAF means the hostname on the site is not the one
+                    asked for; a <em>502</em> means EasyWAF cannot reach your application.
+                </p>
+                {% endif %}
+                <p>
+                    Then point <code>{{ site.server_name }}</code> at this host — the DNS
+                    record, or the port forward on your router — so every visitor arrives
+                    through EasyWAF. With no policy yet the site is a plain reverse proxy:
+                    forwarded and recorded, not inspected.
+                </p>
+                {{ self::nav(step=step, done=done.traffic) }}
+            </div>
+
+        {# ── 3: HTTPS ────────────────────────────────────────────── #}
+        {% elif step == 3 %}
+            <div class="panel-heading"><strong>Step 3 of 6 — Turn on HTTPS</strong></div>
+            <div class="panel-body">
+                {% if done.https %}
+                <p>
+                    <i class="fa fa-check text-success"></i>
+                    <strong>{{ site.name }}</strong> serves HTTPS on port {{ site.https_port }}.
+                </p>
+                <p class="text-muted">
+                    Plain HTTP still works beside it. When you have seen
+                    <code>https://{{ site.server_name }}/</code> work, tick
+                    <em>Redirect HTTP to HTTPS</em> on
+                    <a href="/sites/{{ site.name | urlencode }}/edit">the site's page</a>.
+                </p>
+                {% else %}
+                <p>
+                    One press gets <strong>{{ site.server_name }}</strong> a certificate from
+                    Let's Encrypt and serves it on port {{ site.https_port | default(value=443) }}.
+                    EasyWAF answers the validation itself; nothing changes on your
+                    application, and the certificate renews by itself.
+                </p>
+                <div class="alert alert-warning" style="margin-bottom:15px">
+                    <i class="fa fa-info-circle"></i>
+                    This works only once <code>{{ site.server_name }}</code> resolves to
+                    this host from the internet and port <strong>80</strong> is open to it —
+                    which is why step 2 came first.
+                </div>
+                {% if is_admin | default(value=false) %}
+                <form method="post" action="/tutorial/https">
+                    <input type="hidden" name="site" value="{{ site.name }}">
+                    <div class="form-group">
+                        <label>Contact email <small class="text-muted">— Let's Encrypt sends notices about the certificate here</small></label>
+                        <input type="email" class="form-control" name="email" value="{{ acme_email }}"
+                               placeholder="you@example.com" required>
+                    </div>
+                    <button type="submit" class="btn btn-success">
+                        <i class="fa fa-lock"></i> Get a certificate and turn on HTTPS
+                    </button>
+                    <span class="text-muted" style="margin-left:8px">This can take up to a minute.</span>
+                </form>
+                <p class="text-muted" style="margin-top:12px">
+                    Have a certificate already? Upload it in the
+                    <a href="/certs">Certificate Manager</a> and choose it on
+                    <a href="/sites/{{ site.name | urlencode }}/edit">the site's page</a>.
+                </p>
+                {% endif %}
+                {% endif %}
+                {{ self::nav(step=step, done=done.https) }}
+            </div>
+
+        {# ── 4: protection ───────────────────────────────────────── #}
+        {% elif step == 4 %}
+            <div class="panel-heading"><strong>Step 4 of 6 — Start watching</strong></div>
+            <div class="panel-body">
+                {% if done.policy %}
+                <p>
+                    <i class="fa fa-check text-success"></i>
+                    The policy <strong>{{ site.policy }}</strong> is on
+                    <strong>{{ site.name }}</strong>, in <code>{{ site.mode }}</code>.
+                </p>
+                {% if site.mode == "DetectionOnly" %}
+                <p>
+                    Its rules run on every request and nothing is refused. See it looking —
+                    this request reaches your application as usual, and its row in
+                    <a href="/traffic">Traffic Monitor</a> says <code>WOULD BLOCK</code>:
+                </p>
+                <pre>curl -i -H "Host: {{ site.server_name }}" "http://{{ this_host }}{% if site.http_port != 80 %}:{{ site.http_port }}{% endif %}/?q=xp_cmdshell"</pre>
+                {% endif %}
+                {% else %}
+                <p>
+                    This creates a policy in <strong>DetectionOnly</strong> and puts it on
+                    <strong>{{ site.name }}</strong>. Its rules run on every request and
+                    <strong>nothing is refused</strong>: you find out what it <em>would</em>
+                    do to your traffic before it does it.
+                </p>
+                {% if is_admin | default(value=false) %}
+                <form method="post" action="/policy/create">
+                    <input type="hidden" name="back"                value="/tutorial?step=4">
+                    <input type="hidden" name="attach_site"         value="{{ site.name }}">
+                    <input type="hidden" name="rule_engine"         value="DetectionOnly">
+                    <input type="hidden" name="score_threshold"     value="10">
+                    <input type="hidden" name="challenge_threshold" value="0">
+                    <input type="hidden" name="geoip_mode"          value="off">
+                    <input type="hidden" name="set_ids"             value="{{ set_ids }}">
+                    <div class="form-group">
+                        <label>Policy name <small class="text-muted">— sites that face the same traffic can share it</small></label>
+                        <input type="text" class="form-control" name="name" value="{{ policy_name }}" required style="max-width:320px">
+                    </div>
+                    <p>
+                        <i class="fa fa-check text-success"></i>
+                        The {{ basic_sets }} basic rule sets: SQL injection, cross-site scripting,
+                        file inclusion, command injection, PHP, protocol and scanners.
+                    </p>
+                    <div class="checkbox">
+                        <label>
+                            <input type="checkbox" name="smart_protect" value="1" checked>
+                            <strong>Smart Protect</strong> — an address the rules keep refusing
+                            is refused outright for a while. In DetectionOnly it only records.
+                        </label>
+                    </div>
+                    {% if lists %}
+                    <label style="margin-top:8px">Published lists of known-bad addresses</label>
+                    <table class="table table-condensed" style="max-width:520px">
+                        {% for l in lists %}
+                        <tr>
+                            <td style="vertical-align:middle">{{ l.name }}</td>
+                            <td style="width:1%">
+                                <select class="form-control input-sm" name="list:{{ l.id }}" style="min-width:130px">
+                                    <option value="off">Off</option>
+                                    <option value="challenge" {% if l.choice == "challenge" %}selected{% endif %}>Challenge</option>
+                                    <option value="block" {% if l.choice == "block" %}selected{% endif %}>Block</option>
+                                </select>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </table>
+                    <p class="help-block">
+                        A reasonable start. <em>Challenge</em> shows a CAPTCHA, so a wrongly
+                        listed address is slowed down rather than shut out. In DetectionOnly a
+                        list only records, like the rules.
+                    </p>
+                    {% endif %}
+                    <button type="submit" class="btn btn-success">
+                        <i class="fa fa-shield"></i> Create the policy and start watching
+                    </button>
+                </form>
+                <p class="text-muted" style="margin-top:12px">
+                    Have a policy already? Choose it as the <em>WAF Policy</em> on
+                    <a href="/sites/{{ site.name | urlencode }}/edit">the site's page</a>.
+                </p>
+                {% endif %}
+                {% endif %}
+                {{ self::nav(step=step, done=done.policy) }}
+            </div>
+
+        {# ── 5: backup ───────────────────────────────────────────── #}
+        {% elif step == 5 %}
+            <div class="panel-heading"><strong>Step 5 of 6 — Make sure you can get it back</strong></div>
+            <div class="panel-body">
+                {% if done.backup %}
+                <p>
+                    <i class="fa fa-check text-success"></i>
+                    <strong>A snapshot is taken every day.</strong> The newest are kept in
+                    <code>backups</code> beside the database, and listed under
+                    <a href="/backup">Backup</a>.
+                </p>
+                {% else %}
+                <p>
+                    Everything you have set up is in one database. A daily snapshot guards
+                    against a bad change or a damaged file.
+                </p>
+                {% if is_admin | default(value=false) %}
+                <form method="post" action="/backup/schedule">
+                    <input type="hidden" name="back"      value="/tutorial?step=5">
+                    <input type="hidden" name="scheduled" value="1">
+                    <input type="hidden" name="keep"      value="7">
+                    <button type="submit" class="btn btn-success">
+                        <i class="fa fa-camera"></i> Take a snapshot every day, and keep seven
+                    </button>
+                </form>
+                {% endif %}
+                {% endif %}
+                <p class="text-muted" style="margin-top:12px">
+                    A snapshot on the same disk does not survive losing the host: have your
+                    host's own backup copy that directory somewhere else. It holds every
+                    private key and password hash, so treat it as one.
+                </p>
+                {{ self::nav(step=step, done=done.backup) }}
+            </div>
+
+        {# ── 6: what is next ─────────────────────────────────────── #}
+        {% else %}
+            <div class="panel-heading"><strong>Step 6 of 6 — What happens next</strong></div>
+            <div class="panel-body">
+                <p>
+                    {% if done.policy and site.mode == "DetectionOnly" %}
+                    <strong>{{ site.name }}</strong> is being watched, and nothing is being
+                    refused yet. The rest takes days rather than minutes, and it is yours
+                    to do:
+                    {% elif done.policy and site.mode == "On" %}
+                    <strong>{{ site.name }}</strong> is protected: its policy is enforcing.
+                    What is left is keeping it right:
+                    {% else %}
+                    The setup is not finished — <a href="/tutorial?step=4">step 4</a> puts a
+                    policy on the site. Once one is watching:
+                    {% endif %}
+                </p>
+                <ol>
+                    <li style="margin-bottom:8px">
+                        <strong>Leave it a few days</strong>, long enough to see whatever your
+                        site does weekly.
+                    </li>
+                    <li style="margin-bottom:8px">
+                        <strong>Read what it would have blocked</strong> in
+                        <a href="/traffic">Traffic Monitor</a>. Each row is an attack, which
+                        you want refused, or your own traffic tripping a rule.
+                    </li>
+                    <li style="margin-bottom:8px">
+                        <strong>Fix the false positives</strong>, narrowest first:
+                        <em>exclude for this IP</em> on the row, an exclusion for a path under
+                        <a href="/exclusions">Rule Exclusions</a>, or the rule switched off on
+                        the policy. For a caller you trust, <em>Allow</em> on the row.
+                    </li>
+                    <li style="margin-bottom:8px">
+                        <strong>Enforce.</strong> When the only rows that would have been
+                        blocked are ones you are happy to block, set the policy's mode to
+                        <code>On</code>{% if site.policy %} on
+                        <a href="/policy/{{ site.policy | urlencode }}/edit">its page</a>{% endif %}.
+                        {% if site.mode == "On" %}<i class="fa fa-check text-success"></i> done{% endif %}
+                    </li>
+                </ol>
+                <p class="text-muted">
+                    The <a href="https://easywaf.easysys.io/tutorial/" target="_blank" rel="noopener">documentation's tutorial</a>
+                    goes through each of these at more length.
+                </p>
+                <hr>
+                <a href="/tutorial?step=5" class="btn btn-default"><i class="fa fa-chevron-left"></i> Back</a>
+                {% if is_admin | default(value=false) and opens_at_sign_in %}
+                <form method="post" action="/tutorial/hide" class="pull-right" style="display:inline">
+                    <input type="hidden" name="back" value="/">
+                    <button type="submit" class="btn btn-primary">
+                        <i class="fa fa-flag-checkered"></i> Finish
+                    </button>
+                </form>
+                {% else %}
+                <a href="/" class="btn btn-primary pull-right">Go to the Dashboard</a>
                 {% endif %}
             </div>
+        {% endif %}
+
+        </div>
+
+        {# ── Showing it at sign-in ───────────────────────────────── #}
+        {% if is_admin | default(value=false) %}
+        <div class="text-muted" style="font-size:12px">
+            {% if opens_at_sign_in %}
+            This opens each time an administrator signs in, until one of you finishes it.
+            <form method="post" action="/tutorial/hide" style="display:inline">
+                <button type="submit" class="btn btn-link btn-xs" style="padding:0">
+                    Don't show this again
+                </button>
+            </form>
+            — it stays under <strong>Tutorial</strong> in the menu.
+            {% else %}
+            <i class="fa fa-eye-slash"></i>
+            This does not open at sign-in. It is here, under <strong>Tutorial</strong> in
+            the menu, whenever you want it.
+            {% endif %}
         </div>
         {% endif %}
 

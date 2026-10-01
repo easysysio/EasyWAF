@@ -163,9 +163,10 @@ pub async fn post_schedule(
     Admin(_session): Admin,
     Form(form): Form<HashMap<String, String>>,
 ) -> Result<Response> {
+    let back = crate::routes::safe_back(form.get("back").map(String::as_str), "/backup");
     let keep = match form.get("keep").map(|v| v.trim().parse::<usize>()) {
         Some(Ok(n)) if (1..=365).contains(&n) => n,
-        _ => return flash_redirect("/backup", "failed",
+        _ => return flash_redirect(&back, "failed",
                  "Keep between 1 and 365 snapshots"),
     };
     let on = form.contains_key("scheduled");
@@ -184,7 +185,7 @@ pub async fn post_schedule(
     } else {
         "Saved. No snapshots are taken on a schedule; the ones already here are kept".to_string()
     };
-    flash_redirect("/backup", "success", &msg)
+    flash_redirect(&back, "success", &msg)
 }
 
 // ─── post_take ───────────────────────────────────────────

@@ -21,15 +21,26 @@ to clear the warning.
 
 ## The tutorial
 
-After you sign in for the first time, EasyWAF opens its **Tutorial**: nine steps
-from here to a site with an enforced policy, each marked *done* once the
-appliance has what it describes. It opens at every administrator's sign-in until
-one of you presses **Don't show this again**, and stays under **Tutorial** in the
-menu after that. The [documentation's tutorial](tutorial.md) is the same route
-at more length; the rest of this page is the short version.
+After you sign in for the first time, EasyWAF opens its **Tutorial**: a quick
+setup, one step at a time, where each step is a short form that does the thing.
 
-An installation that already had an account when it was upgraded is not shown it
-at sign-in — it is in the menu.
+| Step | What it does |
+|---|---|
+| Site | Creates the site from a name, a hostname and your application's address |
+| Check it | Gives you the command that sends a request through, and says when one has arrived |
+| HTTPS | Gets a Let's Encrypt certificate and serves it on port 443, in one press |
+| Protection | Creates a policy in DetectionOnly with the basic rule sets and puts it on the site |
+| Backup | Switches on a daily snapshot |
+| What's next | The part that takes days: reading what it found, false positives, enforcing |
+
+Any step can be skipped and come back to; each says whether the site already
+has it. The tutorial opens at every administrator's sign-in until one of you
+finishes it or presses **Don't show this again**, and stays under **Tutorial**
+in the menu after that. An installation that already had an account when it was
+upgraded is not shown it at sign-in.
+
+The rest of this page does the same by hand, on the full pages, and the
+[documentation's tutorial](tutorial.md) is the same route with the reasons.
 
 ## Add a site
 

@@ -326,6 +326,7 @@ async fn main() {
         .route("/smart-protect/settings", post(routes::smart_protect::post_settings))
         .route("/smart-protect/unblock",  post(routes::smart_protect::post_unblock))
         .route("/tutorial",               get(routes::tutorial::get_tutorial))
+        .route("/tutorial/https",         post(routes::tutorial::post_https))
         .route("/tutorial/hide",          post(routes::tutorial::post_hide))
         .route("/backup",                get(routes::backup::get_backup))
         .route("/backup/snapshot",       post(routes::backup::post_snapshot))

@@ -19,14 +19,15 @@ Version bumps and tags are created only after explicit approval.
 
 ### Added
 - **A site can reach an HTTPS backend that has a self-signed or private-CA certificate.** Tick *Do not verify the backend's certificate* on the site; it is off by default, and other sites are unaffected. Such a backend used to answer 502 with no way round it.
-- **A tutorial, in the interface.** Nine steps from a new installation to a site with an enforced policy — HTTPS, watching in DetectionOnly, the first false positive, Smart Protect, published lists and backup — each marked done when the appliance already has what it describes.
-- On a new installation the tutorial opens when an administrator signs in, until one presses **Don't show this again**; it stays under **Tutorial** in the menu. An installation that is upgraded is not shown it at sign-in.
-- The documentation has the same tutorial at more length.
+- **A tutorial that sets a site up, one step at a time.** Six steps, each a short form that does the thing: the site, a check that it answers, HTTPS from Let's Encrypt in one press, a policy in DetectionOnly put on the site, daily snapshots, and what to do over the following days.
+- On a new installation the tutorial opens when an administrator signs in, until one finishes it or presses **Don't show this again**; it stays under **Tutorial** in the menu. An installation that is upgraded is not shown it at sign-in.
+- The documentation has the same route at more length, as a tutorial page.
 
 ### Fixed
 - When a backend cannot be reached, the log says why — refused, timed out, or *invalid peer certificate* — rather than only "error sending request".
 - The Traffic Monitor chart no longer asks for a tick at every whole number, which Chart.js had to cap on a busy hour.
 - Deleting a policy lifts its Smart Protect blocks, which stayed on the Smart Protect page until each ran out.
+- Creating a policy under a name already in use says so, where it answered with an error page.
 
 ### Changed
 - The versions after this one are renumbered: a sign-in in front of a site is 1.1.0, configuration sync between nodes 1.2.0, rate limiting 1.3.0 and URL allowlisting 1.4.0.

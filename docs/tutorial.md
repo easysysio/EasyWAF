@@ -11,9 +11,11 @@ The example is a shop at `shop.example.com`, whose application listens on
 Each step links to the page that covers it properly. This page is the route;
 those are the map.
 
-The same steps are in the interface, under **Tutorial** in the menu, where each
-is marked *done* once your appliance has what it describes. On a new
-installation that page opens when you sign in, until you tell it not to.
+The interface has a quick version of this under **Tutorial** in the menu: six
+steps, each a short form that does the thing, which gets a site as far as step 5
+here in a few minutes. On a new installation it opens when you sign in, until
+you finish it or tell it not to. This page is the same route by hand, on the
+full pages, with the reasons.
 
 ## Before you start
 

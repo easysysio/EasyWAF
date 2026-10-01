@@ -122,6 +122,9 @@ pub struct SiteForm {
     pub backend_tls_insecure: Option<String>,
     /// Create-form only: request a certificate as part of creating the site.
     pub acme:           Option<String>,
+    /// Create-form only: the page to return to, when the site is created from
+    /// somewhere other than the sites list.
+    pub back:           Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -194,12 +197,13 @@ pub async fn post_site_create(
 
     let name        = form.name.as_deref().unwrap_or("").trim().to_string();
     let server_name = normalize_server_name(&form.server_name);
+    let back        = crate::routes::safe_back(form.back.as_deref(), "/sites");
 
     if name.is_empty() {
-        return flash_redirect("/sites", "failed", "Site name is required");
+        return flash_redirect(&back, "failed", "Site name is required");
     }
     if server_name.is_empty() {
-        return flash_redirect("/sites", "failed", "Hostname is required");
+        return flash_redirect(&back, "failed", "Hostname is required");
     }
 
     // Reject duplicate name or hostname.
@@ -211,16 +215,16 @@ pub async fn post_site_create(
     .await?;
 
     if exists > 0 {
-        return flash_redirect("/sites", "failed", "Site name or hostname already exists");
+        return flash_redirect(&back, "failed", "Site name or hostname already exists");
     }
 
     // Checked before the site exists, so a rejected alias leaves nothing behind.
     let aliases = match parse_aliases(form.aliases.as_deref().unwrap_or(""), &server_name) {
         Ok(a)  => a,
-        Err(e) => return flash_redirect("/sites", "failed", &e),
+        Err(e) => return flash_redirect(&back, "failed", &e),
     };
     if let Some(e) = alias_conflict(&state.db, None, &aliases).await? {
-        return flash_redirect("/sites", "failed", &e);
+        return flash_redirect(&back, "failed", &e);
     }
 
     let hsts           = form.hsts.is_some();
@@ -243,24 +247,24 @@ pub async fn post_site_create(
     // behind to tidy up.
     let ports = match validated_ports(&form, &state.config) {
         Ok(v)  => v,
-        Err(e) => return flash_redirect("/sites", "failed", &e),
+        Err(e) => return flash_redirect(&back, "failed", &e),
     };
     let (listen_port, tls_port) = (ports.listen, ports.tls);
     let (extra_http, extra_https) = (ports.extra_http, ports.extra_https);
     if let Some(e) = https_without_certificate(
         &state.db, tls_port, &extra_https, cert_id, form.acme.is_some()).await
     {
-        return flash_redirect("/sites", "failed", &e);
+        return flash_redirect(&back, "failed", &e);
     }
 
     // Checked here for the same reason the ports are: a rejected backend
     // should leave no half-made site behind.
     let (upstreams, bad) = parse_upstreams(&form.target);
     if let Some(why) = bad.first() {
-        return flash_redirect("/sites", "failed", why);
+        return flash_redirect(&back, "failed", why);
     }
     if upstreams.is_empty() {
-        return flash_redirect("/sites", "failed",
+        return flash_redirect(&back, "failed",
                               "A site needs somewhere to forward requests to");
     }
 
@@ -294,7 +298,7 @@ pub async fn post_site_create(
     announce_site(&state, listen_port, tls_port, &extra_http, &extra_https).await;
 
     if form.acme.is_none() {
-        return flash_redirect("/sites", "success", &format!("Site {} created successfully", name));
+        return flash_redirect(&back, "success", &format!("Site {} created successfully", name));
     }
 
     // The site is created either way. Issuing talks to a CA over the network
@@ -304,7 +308,7 @@ pub async fn post_site_create(
     // own page already offers a button for.
     if let Err(e) = request_cert_for_new_site(&state, site_id, &server_name, &aliases).await {
         return flash_redirect(
-            "/sites",
+            &back,
             "failed",
             &format!("Site {name} was created, but no certificate was issued: {e}"),
         );
@@ -320,7 +324,7 @@ pub async fn post_site_create(
              set an HTTPS port on the site to serve it"
         ),
     };
-    flash_redirect("/sites", "success", &msg)
+    flash_redirect(&back, "success", &msg)
 }
 
 /// Issue a certificate for a site that has just been created, and assign it.
@@ -1066,7 +1070,7 @@ pub async fn post_site_acme(
 /// rebuilt too, since it is resolved synchronously during a TLS handshake and
 /// cannot query the database itself — a new or re-pointed site would otherwise
 /// fail every handshake until the next restart.
-async fn announce_site(
+pub(crate) async fn announce_site(
     state: &AppState,
     listen_port: i64,
     tls_port: Option<i64>,
@@ -1416,7 +1420,7 @@ async fn save_aliases(db: &SqlitePool, site_id: i64, aliases: &[String]) -> Resu
 /// The order matters for certificates — the first name is the one the
 /// certificate is filed under — so `server_name` leads and the aliases follow
 /// in the order they were given.
-async fn site_names(db: &SqlitePool, site_id: i64, server_name: &str) -> Vec<String> {
+pub(crate) async fn site_names(db: &SqlitePool, site_id: i64, server_name: &str) -> Vec<String> {
     let mut names = vec![server_name.to_string()];
     names.extend(
         sqlx::query_scalar!(

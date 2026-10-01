@@ -336,8 +336,15 @@ pub async fn post_policy_create(
 ) -> Result<Response> {
 
     let name = raw.get("name").map(|s| s.trim().to_string()).unwrap_or_default();
+    let back = crate::routes::safe_back(raw.get("back").map(String::as_str), "/policy");
     if name.is_empty() {
-        return flash_redirect("/policy", "failed", "Policy name is required");
+        return flash_redirect(&back, "failed", "Policy name is required");
+    }
+    let taken: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM policies WHERE name = ?", name)
+        .fetch_one(&state.db)
+        .await?;
+    if taken > 0 {
+        return flash_redirect(&back, "failed", &format!("There is already a policy named {name}"));
     }
 
     let rule_engine     = raw.get("rule_engine").cloned().unwrap_or_else(|| "DetectionOnly".into());
@@ -395,6 +402,24 @@ pub async fn post_policy_create(
                 }
             }
         }
+    }
+
+    // A site to put it on, when the form names one: creating a policy and
+    // then opening the site to choose it is two steps for one intention.
+    let attach = raw.get("attach_site").map(|s| s.trim()).unwrap_or("");
+    let mut on_site = false;
+    if !attach.is_empty() {
+        let attached = sqlx::query!(
+            "UPDATE sites SET waf_policy_id = ?, updated_at = datetime('now') WHERE name = ?",
+            policy_id, attach
+        )
+        .execute(&state.db)
+        .await?
+        .rows_affected();
+        if attached == 0 {
+            refused.push(format!("there is no site named {attach} to put it on"));
+        }
+        on_site = attached > 0;
     }
 
     // IP lists, as typed: one address or block per line.
@@ -479,6 +504,9 @@ pub async fn post_policy_create(
     if !extras.is_empty() {
         tail.push_str(&format!(", with {}", extras.join(", ")));
     }
+    if on_site {
+        tail.push_str(&format!(". It is now the policy on the site {attach}"));
+    }
     for note in &refused {
         tail.push_str(&format!(". Note: {note}"));
     }
@@ -491,7 +519,7 @@ pub async fn post_policy_create(
     // Success even with a note: the policy was created, and colouring that red
     // would say it was not. What was refused is named in the same message.
     flash_redirect(
-        "/policy",
+        &back,
         "success",
         &format!("{}{tail}", match (installed, applied.total()) {
             // Nothing chosen is a legitimate thing to do and a bad thing to do
