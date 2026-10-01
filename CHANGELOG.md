@@ -12,11 +12,17 @@ Version bumps and tags are created only after explicit approval.
 - **A few hundred slow connections could take every site down.** A connection that never finished its headers, or never sent anything, was held open for ever, each holding a file descriptor; at the limit, every site and the management interface stopped answering. A connection now has 30 seconds to send a request, a kept-alive one 30 seconds between requests, and the start of a body a minute — on the sites' ports and the interface's alike.
 - One address may hold at most 1,024 connections at once, so a single machine cannot use up the descriptors by opening them faster than they time out. A trusted proxy is exempt.
 - The service's descriptor limit is raised from the default 1,024 to 65,536.
+- **The packaged service no longer runs as root.** It runs as its own account, `easywaf`, with the one extra right it needs — binding ports below 1024 — and with `/usr`, `/etc`, home directories and devices out of its reach. The package creates the account and hands it `/opt/easywaf` and `/var/log/easywaf`.
 - **The management interface loads nothing from outside.** Bootstrap, jQuery, DataTables, metisMenu, Chart.js, Font Awesome and the two fonts came from six other hosts, unchecked; they are now compiled into the binary, so the interface works on a host with no internet access and no outside host can change what runs in an administrator's browser.
 - The interface sends a content security policy that allows scripts, styles, fonts and requests only from itself.
 
 ### Fixed
 - The Traffic Monitor chart no longer asks for a tick at every whole number, which Chart.js had to cap on a busy hour.
+
+### Upgrading
+- The package upgrade creates the `easywaf` account and gives it `/opt/easywaf` and `/var/log/easywaf`; nothing needs doing on a standard installation. If your database is somewhere else (`DATABASE_URL`), make that place writable by `easywaf` before upgrading.
+- Commands run by hand against the database should now be run as the account — `sudo -u easywaf sqlite3 /opt/easywaf/easywaf.db` — or the files they create belong to root and the service cannot open them. `sudo chown -hR easywaf:easywaf /opt/easywaf` puts that right.
+- To go back to running as root, `sudo systemctl edit easywaf` and set `User=root` and `Group=root` under `[Service]`.
 
 ---
 

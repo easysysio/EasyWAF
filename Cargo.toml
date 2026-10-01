@@ -151,11 +151,21 @@ assets = [
 # ─── RPM package (.rpm) — cargo-generate-rpm ────────────────
 [package.metadata.generate-rpm]
 summary = "Self-contained Web Application Firewall and reverse proxy"
-# Same as the Debian postinst: an upgrade replaces the binary and the unit file
+# Same as the Debian postinst. First the account the service runs as, and its
+# files: an installation upgraded from before 1.0, when the service ran as
+# root, has a database owned by root. chown -h, so a symbolic link is itself
+# re-owned and never what it points at. Then: an upgrade replaces the binary
+# and the unit file
 # on disk, but the running service keeps the old image until it is restarted,
 # so the GUI would go on reporting the previous version.
 # try-restart leaves a stopped service stopped, so a first install is unaffected.
 post_install_script = """
+getent group easywaf >/dev/null 2>&1 || groupadd --system easywaf
+getent passwd easywaf >/dev/null 2>&1 || \\
+    useradd --system --gid easywaf --home-dir /opt/easywaf --no-create-home \\
+            --shell /sbin/nologin --comment "EasyWAF" easywaf
+chown -hR easywaf:easywaf /opt/easywaf
+[ -d /var/log/easywaf ] && chown -hR easywaf:easywaf /var/log/easywaf || :
 systemctl daemon-reload >/dev/null 2>&1 || :
 systemctl try-restart easywaf.service >/dev/null 2>&1 || :
 """

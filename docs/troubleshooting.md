@@ -124,6 +124,20 @@ If no administrator can sign in, the password has to be changed in the database
 directly, with the service stopped. This is the reason to keep a second
 administrator account.
 
+## The service will not start after I touched the database by hand
+
+The service runs as the `easywaf` account, and can only open files that account
+owns. A file copied into `/opt/easywaf` with `sudo`, or one `sqlite3` created
+while run as root, belongs to root. Give it back, and start the service:
+
+```bash
+sudo chown -hR easywaf:easywaf /opt/easywaf
+sudo systemctl start easywaf
+```
+
+To avoid it, run such commands as the account itself: `sudo -u easywaf sqlite3
+/opt/easywaf/easywaf.db`.
+
 ## A build from source fails with `no such column`
 
 The development database is behind the code. Migrations are applied by the

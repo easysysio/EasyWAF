@@ -70,7 +70,11 @@ EasyWAF ships as a single binary with a systemd unit. Packages are published for
 Templates and static assets are compiled into the binary, so there is nothing to
 serve from disk and nothing to keep in step with an upgrade.
 
-The service runs as root, so a site can bind a privileged port such as 80.
+The service runs as its own account, `easywaf`, which the package creates. It
+is not root: the unit gives it the one extra right it needs, to bind a
+privileged port such as 80, and nothing else. It owns `/opt/easywaf` and
+`/var/log/easywaf`. If you keep the database somewhere else (`DATABASE_URL`),
+that place must be writable by `easywaf`.
 
 ## Container
 
