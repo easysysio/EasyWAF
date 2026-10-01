@@ -33,6 +33,7 @@ mod proxy;
 mod routes;
 mod rules_update;
 mod settings;
+mod slow_clients;
 mod smart_protect;
 mod tls;
 mod upstream;
@@ -430,7 +431,7 @@ async fn main() {
     };
 
     let server = match axum_server::from_tcp_rustls(listener, tls) {
-        Ok(s) => s,
+        Ok(s) => slow_clients::limit(s),
         Err(e) => {
             tracing::error!("Cannot serve the management GUI on {}: {}", tls_addr, e);
             std::process::exit(1);
@@ -538,10 +539,11 @@ fn spawn_https_redirect(addr: SocketAddr, tls_port: u16) {
     });
 
     tokio::spawn(async move {
-        match tokio::net::TcpListener::bind(addr).await {
-            Ok(listener) => {
+        match tls::bind_listener(addr).and_then(axum_server::from_tcp) {
+            Ok(server) => {
                 info!("Management HTTP redirect listening on http://{}", addr);
-                if let Err(e) = axum::serve(listener, app).await {
+                let server = slow_clients::limit(server);
+                if let Err(e) = server.serve(app.into_make_service()).await {
                     tracing::error!("Management redirect server error: {}", e);
                 }
             }

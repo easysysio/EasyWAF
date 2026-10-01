@@ -12,6 +12,10 @@ WorkingDirectory=/opt/easywaf
 ExecStart=/usr/bin/easywaf
 Restart=on-failure
 RestartSec=3
+# Every connection holds a file descriptor, and so does every backend
+# connection behind it. The default soft limit of 1024 is a ceiling a busy
+# site, or a flood of connections, reaches quickly.
+LimitNOFILE=65536
 # Allow binding privileged ports (e.g. a site on port 80) without full root.
 AmbientCapabilities=CAP_NET_BIND_SERVICE
 # Creates and owns /var/log/easywaf, where the audit log is written. systemd

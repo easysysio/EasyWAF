@@ -32,7 +32,7 @@ use reqwest::Client;
 use sqlx::SqlitePool;
 use std::{collections::{HashMap, HashSet}, net::SocketAddr, sync::Arc, sync::OnceLock, sync::RwLock, time::Instant};
 use axum_server::tls_rustls::RustlsConfig;
-use tokio::{net::TcpListener, sync::mpsc};
+use tokio::sync::mpsc;
 
 // ─── Timeouts and limits ─────────────────────────────────
 
@@ -49,6 +49,14 @@ pub const UPSTREAM_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::f
 /// of a reverse proxy, and an idle timeout only ever fires on a connection that
 /// has actually stopped moving.
 pub const UPSTREAM_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(600);
+
+/// How long the start of a request body — the part the rules inspect — may take
+/// to arrive. A client that sends its headers and then trickles the body holds
+/// a connection just as one that never finishes its headers does (see
+/// `slow_clients`). A minute for
+/// the first 128 KB is slower than any real upload; the rest of a long upload
+/// streams with no such limit.
+pub const BODY_START_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// How much of a request body the rules see unless Settings says otherwise.
 /// Everything past it is forwarded to the upstream as it arrives, uninspected.
@@ -358,7 +366,7 @@ fn valid_port(port: i64) -> Option<u16> {
 async fn start_on_port(state: ProxyState, port: u16) {
     let addr = format!("0.0.0.0:{}", port);
 
-    let listener = match TcpListener::bind(&addr).await {
+    let listener = match addr.parse::<SocketAddr>().map_err(std::io::Error::other).and_then(crate::tls::bind_listener) {
         Ok(l)  => l,
         Err(e) => {
             // Port 80 is bound for everyone now, so failing to get it is a
@@ -391,9 +399,17 @@ async fn start_on_port(state: ProxyState, port: u16) {
         .with_state(state)
         .into_make_service_with_connect_info::<SocketAddr>();
 
-    axum::serve(listener, app)
-        .await
-        .expect("proxy server error");
+    let server = match axum_server::from_tcp(listener) {
+        Ok(s) => crate::slow_clients::limit(s),
+        Err(e) => {
+            tracing::error!(port, "Cannot serve on the bound port: {}", e);
+            return;
+        }
+    };
+
+    if let Err(e) = server.serve(app).await {
+        tracing::error!(port, "Proxy server error: {}", e);
+    }
 }
 
 // ─── start_tls_on_port ───────────────────────────────────
@@ -446,7 +462,7 @@ async fn start_tls_on_port(state: ProxyState, port: u16) {
     // adopt. Reported and returned from, since this task owns one port and
     // the other listeners are unaffected.
     let server = match axum_server::from_tcp_rustls(listener, config) {
-        Ok(s) => s,
+        Ok(s) => crate::slow_clients::limit(s),
         Err(e) => {
             tracing::error!(port, "Cannot serve TLS on the bound port: {}", e);
             return;
@@ -1263,9 +1279,11 @@ struct BodyStart {
 /// uninspected, so a payload padded past it is not seen.
 async fn read_body_start(body: BodyStream) -> Result<BodyStart, Response<Body>> {
     let limit = inspection_limit();
-    let start = read_prefix(body, limit)
-        .await
-        .map_err(|_| error_response(StatusCode::BAD_REQUEST, "Failed to read request body"))?;
+    let start = match tokio::time::timeout(BODY_START_TIMEOUT, read_prefix(body, limit)).await {
+        Ok(Ok(start)) => start,
+        Ok(Err(_))    => return Err(error_response(StatusCode::BAD_REQUEST, "Failed to read request body")),
+        Err(_)        => return Err(error_response(StatusCode::REQUEST_TIMEOUT, "The request body arrived too slowly")),
+    };
     let inspected = if start.head.len() > limit {
         start.head.slice(..limit)
     } else {

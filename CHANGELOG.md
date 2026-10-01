@@ -9,6 +9,9 @@ Version bumps and tags are created only after explicit approval.
 ## [1.0.0] — unreleased
 
 ### Security
+- **A few hundred slow connections could take every site down.** A connection that never finished its headers, or never sent anything, was held open for ever, each holding a file descriptor; at the limit, every site and the management interface stopped answering. A connection now has 30 seconds to send a request, a kept-alive one 30 seconds between requests, and the start of a body a minute — on the sites' ports and the interface's alike.
+- One address may hold at most 1,024 connections at once, so a single machine cannot use up the descriptors by opening them faster than they time out. A trusted proxy is exempt.
+- The service's descriptor limit is raised from the default 1,024 to 65,536.
 - **The management interface loads nothing from outside.** Bootstrap, jQuery, DataTables, metisMenu, Chart.js, Font Awesome and the two fonts came from six other hosts, unchecked; they are now compiled into the binary, so the interface works on a host with no internet access and no outside host can change what runs in an administrator's browser.
 - The interface sends a content security policy that allows scripts, styles, fonts and requests only from itself.
 
