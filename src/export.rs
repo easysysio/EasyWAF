@@ -340,6 +340,9 @@ pub const LOCAL_SETTINGS: &[&str] = &[
     // whether this node is the one that renews certificates.
     "management_cert",
     "acme_renew_here",
+    // This host's own too: whether its administrators still want the
+    // tutorial opened at sign-in.
+    "tutorial_hidden",
     // State.
     "backup_error",
     "backup_last",

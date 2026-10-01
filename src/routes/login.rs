@@ -116,7 +116,16 @@ pub async fn post_login(
             tracing::info!(user = %session.username, role = %session.role, "Signed in");
             forget_failures(client);
             let jar = set_session(jar, &session);
-            let mut res = (jar, Redirect::to("/")).into_response();
+            // An administrator lands on the tutorial until one of them says
+            // not to show it again; a viewer could not follow its steps.
+            let landing = if session.is_admin()
+                && crate::routes::tutorial::opens_at_sign_in(&state.db).await
+            {
+                "/tutorial"
+            } else {
+                "/"
+            };
+            let mut res = (jar, Redirect::to(landing)).into_response();
             res.extensions_mut().insert(audit::Note::sign_in(&form.user, true));
             Ok(res)
         }

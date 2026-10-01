@@ -19,6 +19,18 @@ there so the management interface is never served over plain HTTP, not because
 it is trustworthy. [Replace it](tls.md#the-management-certificate) with your own
 to clear the warning.
 
+## The tutorial
+
+After you sign in for the first time, EasyWAF opens its **Tutorial**: nine steps
+from here to a site with an enforced policy, each marked *done* once the
+appliance has what it describes. It opens at every administrator's sign-in until
+one of you presses **Don't show this again**, and stays under **Tutorial** in the
+menu after that. The [documentation's tutorial](tutorial.md) is the same route
+at more length; the rest of this page is the short version.
+
+An installation that already had an account when it was upgraded is not shown it
+at sign-in — it is in the menu.
+
 ## Add a site
 
 **Sites → Add site**:
@@ -93,6 +105,8 @@ the mode.
 
 ## What to do next
 
+- Follow the [tutorial](tutorial.md), which takes one site from here to an
+  enforced policy, including the first false positive.
 - [Get a real certificate](tls.md#lets-encrypt) — EasyWAF answers the Let's
   Encrypt challenge itself, so there is nothing to configure on the backend.
 - [Send flow logs to a collector](logging.md) if you want history beyond what

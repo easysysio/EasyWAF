@@ -30,6 +30,7 @@ nav:
       - Getting started:
           - Installation: install.md
           - First run: first-run.md
+          - Tutorial: tutorial.md
       - Using EasyWAF:
           - Sites: sites.md
           - TLS and certificates: tls.md

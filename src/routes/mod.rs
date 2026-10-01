@@ -19,6 +19,7 @@ pub mod setup;
 pub mod sites;
 pub mod smart_protect;
 pub mod traffic;
+pub mod tutorial;
 pub mod updates;
 
 // ─── who_context ─────────────────────────────────────────
