@@ -205,6 +205,9 @@ pub async fn post_site_create(
     if server_name.is_empty() {
         return flash_redirect(&back, "failed", "Hostname is required");
     }
+    if !is_hostname(&server_name) {
+        return flash_redirect(&back, "failed", &not_a_hostname(&server_name));
+    }
 
     // Reject duplicate name or hostname.
     let exists: i64 = sqlx::query_scalar!(
@@ -457,10 +460,17 @@ pub async fn post_site_update(
     let cert_id      = parse_policy_id(&form.cert_id);
     let tls_redirect = form.tls_redirect.is_some();
 
-    let site_id: i64 =
-        sqlx::query_scalar!(r#"SELECT id as "id!" FROM sites WHERE name = ?"#, name)
-            .fetch_one(&state.db)
-            .await?;
+    let current = sqlx::query!(
+        r#"SELECT id as "id!", server_name as "server_name!" FROM sites WHERE name = ?"#, name)
+        .fetch_one(&state.db)
+        .await?;
+    let site_id = current.id;
+
+    // Only a hostname being changed: a site saved under a name this would
+    // refuse can still have its other settings changed.
+    if server_name != current.server_name && !is_hostname(&server_name) {
+        return flash_redirect("/sites", "failed", &not_a_hostname(&server_name));
+    }
 
     // Before the UPDATE, for the same reason the ports are: a rejected alias
     // should leave the site exactly as it was.
@@ -1337,8 +1347,14 @@ fn parse_aliases(raw: &str, server_name: &str) -> std::result::Result<Vec<String
     Ok(out)
 }
 
+/// What a hostname that is not one is answered with.
+fn not_a_hostname(host: &str) -> String {
+    format!("'{host}' is not a valid hostname — letters, digits, hyphens and dots only, \
+             such as shop.example.com")
+}
+
 /// Whether this is a syntactically valid hostname.
-fn is_hostname(host: &str) -> bool {
+pub(crate) fn is_hostname(host: &str) -> bool {
     if host.is_empty() || host.len() > 253 {
         return false;
     }
@@ -1638,6 +1654,18 @@ mod tests {
     fn an_empty_field_is_no_aliases_not_an_error() {
         assert_eq!(parse_aliases("", "example.com").unwrap(), Vec::<String>::new());
         assert_eq!(parse_aliases("  \n , \n ", "example.com").unwrap(), Vec::<String>::new());
+    }
+
+    /// A site's own hostname is held to what its aliases are. What a form can
+    /// send that is not one: spaces, quotes, and the characters a shell acts on.
+    #[test]
+    fn what_is_typed_as_a_hostname_must_be_one() {
+        for typed in ["shop.example.com", "HTTP://Shop.Example.com/", "shop.example.com:8080", "10.0.0.5"] {
+            assert!(is_hostname(&normalize_server_name(typed)), "{typed:?} was refused");
+        }
+        for typed in ["a b.test", "a\"b.test", "$(id).test", "shop.example.com;ls", "shop_1.test", "*.example.com"] {
+            assert!(!is_hostname(&normalize_server_name(typed)), "{typed:?} was accepted");
+        }
     }
 
     #[test]

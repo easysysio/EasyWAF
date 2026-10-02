@@ -19,6 +19,12 @@
 // first read the same deadline. That holds after a TLS
 // handshake too: the wrapper is around the decrypted stream.
 //
+// Neither timer exists for HTTP/2, and the server would speak
+// it to any client that opened with its preface — advertised
+// or not — and then wait on that connection for ever. EasyWAF
+// serves HTTP/1.1 only, so the same wrapper ends a connection
+// that opens that way.
+//
 // The timers bound how long one connection can be held, not
 // how many. So one address may hold only so many connections
 // at once: without that, a single machine opening them faster
@@ -44,7 +50,8 @@ use tokio::net::TcpStream;
 pub const HEADER_READ_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// How many connections one address may hold open at once, across every
-/// listener.
+/// listener. An IPv6 client is counted by its /64, as Smart Protect counts it:
+/// one address there costs nothing, so a limit on one limits nobody.
 ///
 /// A browser opens about six to a site, so this is far above one person, an
 /// office behind one address, or a busy API client — and far below the 65,536
@@ -110,8 +117,9 @@ fn open_connections() -> &'static Mutex<HashMap<IpAddr, u32>> {
 
 /// One of an address's connections. Dropping it gives the place back.
 pub struct Slot {
+    /// What the connection is counted against: the address, or its /64.
     /// `None` for an address that is not counted.
-    address: Option<IpAddr>,
+    counted: Option<IpAddr>,
 }
 
 impl Slot {
@@ -122,29 +130,36 @@ impl Slot {
     }
 
     fn take_within(address: IpAddr, limit: u32) -> Option<Slot> {
+        // A v4 address written as v6 is the v4 address it is, for the trusted
+        // list as much as for the count.
+        let address = match address {
+            IpAddr::V6(v6) => v6.to_ipv4_mapped().map_or(address, IpAddr::V4),
+            v4 => v4,
+        };
         if crate::forwarded::is_trusted_proxy(address) {
-            return Some(Slot { address: None });
+            return Some(Slot { counted: None });
         }
+        let unit = crate::smart_protect::unit(address);
         let mut open = open_connections().lock().unwrap_or_else(|p| p.into_inner());
-        let held = open.entry(address).or_insert(0);
+        let held = open.entry(unit).or_insert(0);
         if *held >= limit {
             drop(open);
-            refused(address);
+            refused(unit);
             return None;
         }
         *held += 1;
-        Some(Slot { address: Some(address) })
+        Some(Slot { counted: Some(unit) })
     }
 }
 
 impl Drop for Slot {
     fn drop(&mut self) {
-        let Some(address) = self.address else { return };
+        let Some(unit) = self.counted else { return };
         let mut open = open_connections().lock().unwrap_or_else(|p| p.into_inner());
-        if let Some(held) = open.get_mut(&address) {
+        if let Some(held) = open.get_mut(&unit) {
             *held = held.saturating_sub(1);
             if *held == 0 {
-                open.remove(&address);
+                open.remove(&unit);
             }
         }
     }
@@ -152,7 +167,7 @@ impl Drop for Slot {
 
 /// Say that an address was refused a connection — at most once a minute, since
 /// the address doing it is by definition doing it a great deal.
-fn refused(address: IpAddr) {
+fn refused(unit: IpAddr) {
     static LAST: AtomicU64 = AtomicU64::new(0);
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -162,18 +177,26 @@ fn refused(address: IpAddr) {
         && LAST.compare_exchange(last, now, Ordering::Relaxed, Ordering::Relaxed).is_ok()
     {
         tracing::warn!(
-            %address,
+            address = %crate::smart_protect::unit_label(unit),
             "Refusing connections: this address already holds {MAX_CONNECTIONS_PER_ADDRESS}, the most one address may"
         );
     }
 }
 
-/// A connection whose first read must complete before a deadline. After that
-/// it is the connection it wraps, and hyper's own timer takes over.
+/// How every HTTP/2 connection begins (RFC 9113, section 3.4). No HTTP/1
+/// request can: `PRI` is a method reserved so that it never will.
+const HTTP2_OPENING: &[u8; 4] = b"PRI ";
+
+/// A connection whose first read must complete before a deadline, and which
+/// must not open as HTTP/2. After that it is the connection it wraps, and
+/// hyper's own timer takes over.
 pub struct FirstRead<S> {
     inner:    S,
     /// Present until the first read completes.
     deadline: Option<Pin<Box<tokio::time::Sleep>>>,
+    /// The connection's first bytes, kept until there are enough to tell
+    /// whether it opened as HTTP/2 — they need not arrive in one read.
+    opening:  Option<Vec<u8>>,
     /// The connection's place among its address's connections, held for as
     /// long as the connection lives.
     _slot:    Option<Slot>,
@@ -181,16 +204,43 @@ pub struct FirstRead<S> {
 
 impl<S> FirstRead<S> {
     fn new(inner: S, within: Duration, slot: Option<Slot>) -> Self {
-        Self { inner, deadline: Some(Box::pin(tokio::time::sleep(within))), _slot: slot }
+        Self {
+            inner,
+            deadline: Some(Box::pin(tokio::time::sleep(within))),
+            opening:  Some(Vec::with_capacity(HTTP2_OPENING.len())),
+            _slot:    slot,
+        }
+    }
+
+    /// Look at bytes just read. `false` once the connection is known to have
+    /// opened as HTTP/2; `true` while that is undecided or ruled out.
+    fn may_continue(&mut self, read: &[u8]) -> bool {
+        let Some(seen) = self.opening.as_mut() else { return true };
+        let wanted = HTTP2_OPENING.len() - seen.len();
+        seen.extend_from_slice(&read[..read.len().min(wanted)]);
+
+        if !HTTP2_OPENING.starts_with(seen) {
+            // Ruled out: nothing more to watch for on this connection.
+            self.opening = None;
+            return true;
+        }
+        seen.len() < HTTP2_OPENING.len()
     }
 }
 
 impl<S: AsyncRead + Unpin> AsyncRead for FirstRead<S> {
     fn poll_read(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<io::Result<()>> {
         let this = self.get_mut();
+        let before = buf.filled().len();
         match Pin::new(&mut this.inner).poll_read(cx, buf) {
             Poll::Ready(read) => {
                 this.deadline = None;
+                if read.is_ok() && this.opening.is_some() && !this.may_continue(&buf.filled()[before..]) {
+                    return Poll::Ready(Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "the connection opened as HTTP/2, which is not served",
+                    )));
+                }
                 Poll::Ready(read)
             }
             Poll::Pending => {
@@ -263,6 +313,58 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(120)).await;
         client.write_all(b" /").await.unwrap();
         assert_eq!(guarded.read(&mut buf).await.unwrap(), 2);
+    }
+
+    #[tokio::test]
+    async fn a_connection_that_opens_as_http2_is_ended() {
+        let (mut client, server) = tokio::io::duplex(64);
+        let mut guarded = FirstRead::new(server, Duration::from_secs(5), None);
+        client.write_all(b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n").await.unwrap();
+        let mut buf = [0u8; 64];
+        let err = guarded.read(&mut buf).await.expect_err("an HTTP/2 connection was served");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    /// The opening need not arrive in one piece, and a client that wanted to
+    /// get past a check on the first read would see to it that it did not.
+    #[tokio::test]
+    async fn an_http2_opening_sent_a_byte_at_a_time_is_still_ended() {
+        let (mut client, server) = tokio::io::duplex(64);
+        let mut guarded = FirstRead::new(server, Duration::from_secs(5), None);
+        let mut buf = [0u8; 1];
+        for (i, byte) in b"PRI ".iter().enumerate() {
+            client.write_all(&[*byte]).await.unwrap();
+            let read = guarded.read(&mut buf).await;
+            if i < 3 {
+                assert_eq!(read.unwrap(), 1, "byte {i} was refused before the opening was complete");
+            } else {
+                assert_eq!(read.expect_err("served").kind(), io::ErrorKind::InvalidData);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn http1_requests_are_read_untouched_whatever_they_start_with() {
+        for request in [&b"GET / HTTP/1.1\r\n"[..], b"POST /x HTTP/1.1\r\n", b"PATCH /p HTTP/1.1\r\n",
+                        b"PROPFIND / HTTP/1.1\r\n", b"PRI", b"P"] {
+            let (mut client, server) = tokio::io::duplex(64);
+            let mut guarded = FirstRead::new(server, Duration::from_secs(5), None);
+            client.write_all(request).await.unwrap();
+            drop(client);
+            let mut got = Vec::new();
+            guarded.read_to_end(&mut got).await.unwrap();
+            assert_eq!(got, request, "{:?}", String::from_utf8_lossy(request));
+        }
+    }
+
+    #[test]
+    fn an_ipv6_client_is_counted_by_its_64() {
+        let one:   IpAddr = "2001:db8:61:1::1".parse().unwrap();
+        let other: IpAddr = "2001:db8:61:1:ffff::2".parse().unwrap();
+        let away:  IpAddr = "2001:db8:61:2::1".parse().unwrap();
+        let _held: Vec<Slot> = (0..2).map(|_| Slot::take_within(one, 2).expect("under the limit")).collect();
+        assert!(Slot::take_within(other, 2).is_none(), "another address in the same /64 got a place");
+        assert!(Slot::take_within(away, 2).is_some(), "a different /64 was refused with it");
     }
 
     #[test]

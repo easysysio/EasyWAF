@@ -129,7 +129,16 @@
                     Ask EasyWAF for <strong>{{ site.server_name }}</strong> before changing
                     DNS. Your application's own page should come back:
                 </p>
+                {% if site.plain_name %}
                 <pre>curl -i -H "Host: {{ site.server_name }}" http://{{ this_host }}{% if site.http_port != 80 %}:{{ site.http_port }}{% endif %}/</pre>
+                {% else %}
+                <div class="alert alert-warning">
+                    <i class="fa fa-exclamation-triangle"></i>
+                    <code>{{ site.server_name }}</code> is not a valid hostname, so no request
+                    can match it. Correct it on
+                    <a href="/sites/{{ site.name | urlencode }}/edit">the site's page</a>.
+                </div>
+                {% endif %}
                 {% if done.traffic %}
                 <p>
                     <i class="fa fa-check text-success"></i>
@@ -223,7 +232,9 @@
                     this request reaches your application as usual, and its row in
                     <a href="/traffic">Traffic Monitor</a> says <code>WOULD BLOCK</code>:
                 </p>
+                {% if site.plain_name %}
                 <pre>curl -i -H "Host: {{ site.server_name }}" "http://{{ this_host }}{% if site.http_port != 80 %}:{{ site.http_port }}{% endif %}/?q=xp_cmdshell"</pre>
+                {% endif %}
                 {% endif %}
                 {% else %}
                 <p>

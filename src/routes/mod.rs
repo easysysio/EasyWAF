@@ -69,13 +69,12 @@ pub fn flash_redirect(
 /// A page that manages one thing from two places — IP lists on their own page
 /// and on a policy's — has to send the operator back where they were. The
 /// value arrives in a form field, so it is a path this application serves or
-/// it is the fallback: anything with a scheme, a host, or a leading `//`
-/// would turn a button into an open redirect.
+/// it is the fallback: anything with a scheme or a host would turn a button
+/// into an open redirect. What counts as staying here is the rule a solved
+/// challenge returns by, so there is one of it.
 pub fn safe_back(raw: Option<&str>, fallback: &str) -> String {
     match raw.map(str::trim) {
-        Some(p) if p.starts_with('/') && !p.starts_with("//") && !p.contains("://") => {
-            p.to_string()
-        }
+        Some(p) if crate::challenge::stays_on_site(p) && !p.contains("://") => p.to_string(),
         _ => fallback.to_string(),
     }
 }
@@ -96,7 +95,10 @@ mod tests {
         assert_eq!(safe_back(Some("/policy/web/edit"), "/iplists"), "/policy/web/edit");
         assert_eq!(safe_back(Some("/iplists?policy=a"), "/iplists"), "/iplists?policy=a");
         // Anything that could leave this server falls back instead.
+        // `/\host` is `//host` to a browser, and a line break would be dropped
+        // by one before it read the rest.
         for away in ["https://elsewhere.example/x", "//elsewhere.example/x",
+                     "/\\elsewhere.example/x", "/x\r\nSet-Cookie: a=b",
                      "javascript:alert(1)", "elsewhere.example", "", "   "] {
             assert_eq!(safe_back(Some(away), "/iplists"), "/iplists", "{away:?}");
         }

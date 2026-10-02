@@ -50,13 +50,15 @@ pub const UPSTREAM_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::f
 /// has actually stopped moving.
 pub const UPSTREAM_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(600);
 
-/// How long the start of a request body — the part the rules inspect — may take
-/// to arrive. A client that sends its headers and then trickles the body holds
-/// a connection just as one that never finishes its headers does (see
-/// `slow_clients`). A minute for
-/// the first 128 KB is slower than any real upload; the rest of a long upload
-/// streams with no such limit.
-pub const BODY_START_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+/// How long the start of a request body — the part the rules inspect — may go
+/// without another byte arriving. A client that sends its headers and then
+/// stops holds a connection just as one that never finishes its headers does
+/// (see `slow_clients`), so it is given the same time.
+///
+/// A limit on stalling, not on the whole read: how much is inspected is a
+/// setting that can be megabytes, and a slow link sending steadily is not a
+/// stalled one. The rest of a long upload streams with no such limit.
+pub const BODY_STALL_TIMEOUT: std::time::Duration = crate::slow_clients::HEADER_READ_TIMEOUT;
 
 /// How much of a request body the rules see unless Settings says otherwise.
 /// Everything past it is forwarded to the upstream as it arrives, uninspected.
@@ -93,21 +95,37 @@ pub(crate) struct Prefix<S> {
     pub rest:     S,
 }
 
-/// Read a body until at least `limit` bytes are in hand or it ends.
+/// Why the start of a body could not be read.
+#[derive(Debug)]
+pub(crate) enum PrefixError<E> {
+    /// The body itself failed: the client went away, or sent something invalid.
+    Read(E),
+    /// Nothing arrived for as long as a body may stall.
+    Stalled,
+}
+
+/// Read a body until at least `limit` bytes are in hand or it ends, giving up
+/// if it goes `stall` without a chunk arriving.
 ///
 /// Reads whole chunks and never splits one, so `head` followed by `rest` is
 /// always the body exactly as it arrived — nothing is dropped, duplicated or
 /// reordered on its way to the upstream.
-pub(crate) async fn read_prefix<S, E>(mut body: S, limit: usize) -> Result<Prefix<S>, E>
+pub(crate) async fn read_prefix<S, E>(
+    mut body: S,
+    limit: usize,
+    stall: std::time::Duration,
+) -> Result<Prefix<S>, PrefixError<E>>
 where
     S: futures::Stream<Item = Result<bytes::Bytes, E>> + Unpin,
 {
     use futures::StreamExt;
     let mut head = bytes::BytesMut::new();
     while head.len() < limit {
-        match body.next().await {
-            Some(chunk) => head.extend_from_slice(&chunk?),
-            None        => return Ok(Prefix { head: head.freeze(), complete: true, rest: body }),
+        match tokio::time::timeout(stall, body.next()).await {
+            Ok(Some(Ok(chunk))) => head.extend_from_slice(&chunk),
+            Ok(Some(Err(e)))    => return Err(PrefixError::Read(e)),
+            Ok(None)            => return Ok(Prefix { head: head.freeze(), complete: true, rest: body }),
+            Err(_)              => return Err(PrefixError::Stalled),
         }
     }
     Ok(Prefix { head: head.freeze(), complete: false, rest: body })
@@ -1284,10 +1302,12 @@ struct BodyStart {
 /// uninspected, so a payload padded past it is not seen.
 async fn read_body_start(body: BodyStream) -> Result<BodyStart, Response<Body>> {
     let limit = inspection_limit();
-    let start = match tokio::time::timeout(BODY_START_TIMEOUT, read_prefix(body, limit)).await {
-        Ok(Ok(start)) => start,
-        Ok(Err(_))    => return Err(error_response(StatusCode::BAD_REQUEST, "Failed to read request body")),
-        Err(_)        => return Err(error_response(StatusCode::REQUEST_TIMEOUT, "The request body arrived too slowly")),
+    let start = match read_prefix(body, limit, BODY_STALL_TIMEOUT).await {
+        Ok(start) => start,
+        Err(PrefixError::Read(_)) =>
+            return Err(error_response(StatusCode::BAD_REQUEST, "Failed to read request body")),
+        Err(PrefixError::Stalled) =>
+            return Err(error_response(StatusCode::REQUEST_TIMEOUT, "The request body stopped arriving")),
     };
     let inspected = if start.head.len() > limit {
         start.head.slice(..limit)
@@ -2411,11 +2431,15 @@ mod list_verdict_tests {
 
 #[cfg(test)]
 mod prefix_tests {
-    use super::read_prefix;
+    use super::{read_prefix, PrefixError};
+    use std::time::Duration;
     use bytes::Bytes;
     use futures::{stream, StreamExt};
 
     type Chunk = Result<Bytes, std::io::Error>;
+
+    /// Longer than any test here takes: these bodies do not stall.
+    const PATIENT: Duration = Duration::from_secs(30);
 
     fn body(chunks: &[&'static [u8]]) -> impl futures::Stream<Item = Chunk> + Unpin {
         stream::iter(chunks.iter().map(|c| Ok(Bytes::from_static(c))).collect::<Vec<_>>())
@@ -2431,7 +2455,7 @@ mod prefix_tests {
 
     #[tokio::test]
     async fn a_body_under_the_limit_is_read_whole() {
-        let p = read_prefix(body(&[b"small", b" form"]), 1024).await.unwrap();
+        let p = read_prefix(body(&[b"small", b" form"]), 1024, PATIENT).await.unwrap();
         assert!(p.complete, "a body that ends within the limit is complete");
         assert_eq!(&p.head[..], b"small form");
         assert!(drain(p.rest).await.is_empty());
@@ -2441,7 +2465,7 @@ mod prefix_tests {
     async fn a_body_over_the_limit_stops_reading_and_keeps_the_rest() {
         // Chunks are never split, so the head may run past the limit by part
         // of one; reading stops as soon as the limit is reached.
-        let p = read_prefix(body(&[b"aaaa", b"bbbb", b"cccc", b"dddd"]), 6).await.unwrap();
+        let p = read_prefix(body(&[b"aaaa", b"bbbb", b"cccc", b"dddd"]), 6, PATIENT).await.unwrap();
         assert!(!p.complete);
         assert_eq!(&p.head[..], b"aaaabbbb");
         assert_eq!(drain(p.rest).await, b"ccccdddd");
@@ -2453,7 +2477,7 @@ mod prefix_tests {
         let chunks: &[&'static [u8]] = &[b"GET", b" the ", b"whole", b" body", b" back"];
         let whole: Vec<u8> = chunks.concat();
         for limit in 1..=whole.len() + 2 {
-            let p = read_prefix(body(chunks), limit).await.unwrap();
+            let p = read_prefix(body(chunks), limit, PATIENT).await.unwrap();
             let mut got = p.head.to_vec();
             got.extend(drain(p.rest).await);
             assert_eq!(got, whole, "limit {limit} changed the body");
@@ -2469,12 +2493,42 @@ mod prefix_tests {
             Ok(Bytes::from_static(b"partial")),
             Err(std::io::Error::other("client went away")),
         ]);
-        assert!(read_prefix(broken, 1024).await.is_err());
+        assert!(matches!(read_prefix(broken, 1024, PATIENT).await, Err(PrefixError::Read(_))));
+    }
+
+    /// One chunk and then nothing, with the body still open.
+    fn stalls_after(first: &'static [u8]) -> impl futures::Stream<Item = Chunk> + Unpin {
+        Box::pin(stream::iter(vec![Ok(Bytes::from_static(first))]).chain(stream::pending()))
+    }
+
+    #[tokio::test]
+    async fn a_body_that_stops_arriving_is_given_up_on() {
+        let stalled = read_prefix(stalls_after(b"partial"), 1024, Duration::from_millis(40)).await;
+        assert!(matches!(stalled, Err(PrefixError::Stalled)));
+    }
+
+    /// The limit is on stalling, not on how long the whole start takes: a slow
+    /// link sending steadily takes far longer than one stall allows in total.
+    #[tokio::test]
+    async fn a_slow_body_that_keeps_arriving_is_read_however_long_it_takes() {
+        let stall = Duration::from_millis(80);
+        let slow = Box::pin(stream::unfold(0u8, |sent| async move {
+            if sent == 8 {
+                return None;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+            Some((Ok::<_, std::io::Error>(Bytes::from_static(b"chunk")), sent + 1))
+        }));
+        let started = std::time::Instant::now();
+        let p = read_prefix(slow, 1024, stall).await.expect("a steady body was given up on");
+        assert!(started.elapsed() > stall, "the test did not outlast one stall");
+        assert_eq!(p.head.len(), 40);
+        assert!(p.complete);
     }
 
     #[tokio::test]
     async fn an_empty_body_is_complete_and_empty() {
-        let p = read_prefix(body(&[]), 1024).await.unwrap();
+        let p = read_prefix(body(&[]), 1024, PATIENT).await.unwrap();
         assert!(p.complete);
         assert!(p.head.is_empty());
     }

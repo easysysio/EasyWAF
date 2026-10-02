@@ -15,8 +15,8 @@ Current as of **0.15.0**.
 - **Upgrades to an `https://` upstream are refused.** Plain-HTTP upstreams tunnel
   fine; a TLS upstream would need a TLS client on the tunnelling path, which is
   not built.
-- **No HTTP/2 to clients.** No ALPN is advertised, so connections are HTTP/1.1.
-  Not scheduled.
+- **No HTTP/2 to clients.** No ALPN is advertised, so connections are HTTP/1.1,
+  and a client that opens with HTTP/2 anyway is disconnected. Not scheduled.
 - **Routing is by `Host:` only, matched exactly.** A site can answer for several
   hostnames, but there are no path prefixes and no wildcard hostnames like
   `*.example.com`. Two applications behind one hostname cannot be split. Not
@@ -29,13 +29,17 @@ Current as of **0.15.0**.
     signed cookie, since many clients share one address behind NAT; a client
     that discards cookies goes round the pool in turn. There is no
     address-based affinity.
+- **Listens on IPv4 only.** Every port — the sites' and the management
+  interface's — is bound on the host's IPv4 addresses. A client with only IPv6
+  cannot connect unless something in front of EasyWAF accepts it.
 - **IPv6 literal hostnames do not route.** Host matching truncates at the first
   colon, so `[::1]:8080` does not match. Name-based hosts are unaffected.
 - **No health or metrics endpoint.** Nothing to point a load balancer's health
   check at, and no Prometheus scrape target.
 - **The connection limits are fixed.** A connection has 30 seconds to send a
-  request and one address may hold 1,024 connections at once; neither is a
-  setting. A client behind another proxy is counted as that proxy unless the
+  request, the inspected start of a body may not stall for longer than that,
+  and one address — or one IPv6 /64 — may hold 1,024 connections at once. None
+  of them is a setting. A client behind another proxy is counted as that proxy unless the
   proxy is listed as trusted, which exempts it.
 
 ## As a WAF

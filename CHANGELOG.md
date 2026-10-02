@@ -9,13 +9,15 @@ Version bumps and tags are created only after explicit approval.
 ## [1.0.0] — unreleased
 
 ### Security
-- **A few hundred slow connections could take every site down.** A connection that never finished its headers, or never sent anything, was held open for ever, each holding a file descriptor; at the limit, every site and the management interface stopped answering. A connection now has 30 seconds to send a request, a kept-alive one 30 seconds between requests, and the start of a body a minute — on the sites' ports and the interface's alike.
-- One address may hold at most 1,024 connections at once, so a single machine cannot use up the descriptors by opening them faster than they time out. A trusted proxy is exempt.
+- **A few hundred slow connections could take every site down.** A connection that never finished its headers, or never sent anything, was held open for ever, each holding a file descriptor; at the limit, every site and the management interface stopped answering. A connection now has 30 seconds to send a request, a kept-alive one 30 seconds between requests, and the inspected start of a body may not go 30 seconds without a byte arriving — on the sites' ports and the interface's alike.
+- One address — or one IPv6 /64 — may hold at most 1,024 connections at once, so a single machine cannot use up the descriptors by opening them faster than they time out. A trusted proxy is exempt.
+- **A connection that opens as HTTP/2 is disconnected.** None is advertised, but one opened that way was served anyway, without any of the limits above — it could be held open for ever — and without being routable, since such a request carries no `Host` header.
 - The service's descriptor limit is raised from the default 1,024 to 65,536.
 - **The packaged service no longer runs as root.** It runs as its own account, `easywaf`, with the one extra right it needs — binding ports below 1024 — and with `/usr`, `/etc`, home directories and devices out of its reach. The package creates the account and hands it `/opt/easywaf` and `/var/log/easywaf`.
 - **The management interface loads nothing from outside.** Bootstrap, jQuery, DataTables, metisMenu, Chart.js, Font Awesome and the two fonts came from six other hosts, unchecked; they are now compiled into the binary, so the interface works on a host with no internet access and no outside host can change what runs in an administrator's browser.
 - The interface sends a content security policy that allows scripts, styles, fonts and requests only from itself.
 - **A blocked request is no longer told which rule matched.** The 403 named the rule, or the score and the threshold — directions for getting under it next time. It is now a page saying the request was blocked, with the time and the visitor's address as a reference; the rule, score and reason are in Traffic Monitor as before.
+- A form's return path cannot lead off the appliance: `/\host`, which a browser reads as another site, was accepted from a signed-in administrator's own form.
 
 ### Added
 - **A site can reach an HTTPS backend that has a self-signed or private-CA certificate.** Tick *Do not verify the backend's certificate* on the site; it is off by default, and other sites are unaffected. Such a backend used to answer 502 with no way round it.
@@ -28,6 +30,7 @@ Version bumps and tags are created only after explicit approval.
 - The Traffic Monitor chart no longer asks for a tick at every whole number, which Chart.js had to cap on a busy hour.
 - Deleting a policy lifts its Smart Protect blocks, which stayed on the Smart Protect page until each ran out.
 - Creating a policy under a name already in use says so, where it answered with an error page.
+- A site's hostname must be a hostname, as its aliases already had to be. One containing a space or a quote was saved, and could never match a request.
 
 ### Changed
 - The versions after this one are renumbered: a sign-in in front of a site is 1.1.0, configuration sync between nodes 1.2.0, rate limiting 1.3.0 and URL allowlisting 1.4.0.

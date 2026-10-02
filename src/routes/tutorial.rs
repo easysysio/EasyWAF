@@ -77,6 +77,9 @@ struct SiteNow {
     id:          i64,
     name:        String,
     server_name: String,
+    /// Whether the hostname can be put in a command to copy. One saved before
+    /// hostnames were checked may hold anything.
+    plain_name:  bool,
     http_port:   i64,
     https_port:  Option<i64>,
     has_cert:    bool,
@@ -108,6 +111,7 @@ impl SiteNow {
         Ok(row.map(|r| Self {
             id:          r.id,
             name:        r.name,
+            plain_name:  crate::routes::sites::is_hostname(&r.server_name),
             server_name: r.server_name,
             http_port:   r.http_port,
             https_port:  r.https_port,
@@ -233,6 +237,9 @@ impl From<crate::iplist_feeds::ListView> for ListChoice {
 }
 
 /// The host part of the address this page was asked for, without its port.
+///
+/// It goes into a command to copy, so it is a hostname or an address or it is
+/// a placeholder: a `Host` header can hold anything.
 fn this_host(headers: &HeaderMap) -> String {
     let host = headers.get(HOST).and_then(|v| v.to_str().ok()).unwrap_or("");
     // An IPv6 literal keeps its brackets; anything else loses `:port`.
@@ -240,7 +247,13 @@ fn this_host(headers: &HeaderMap) -> String {
         Some(i) if !host.ends_with(']') => &host[..i],
         _ => host,
     };
-    if bare.is_empty() { "this-host".to_string() } else { bare.to_string() }
+    let ipv6 = bare.strip_prefix('[').and_then(|b| b.strip_suffix(']'))
+        .is_some_and(|inner| inner.parse::<std::net::Ipv6Addr>().is_ok());
+    if ipv6 || crate::routes::sites::is_hostname(bare) {
+        bare.to_string()
+    } else {
+        "this-host".to_string()
+    }
 }
 
 /// A name to offer for the new policy: `websites`, or the site's own name
@@ -305,6 +318,12 @@ pub async fn post_https(
             "Port {https_port} is the management interface on this host, so the site cannot \
              serve HTTPS there. Give the site a different HTTPS port on its own page."));
     }
+    // A port serves plain HTTP or HTTPS, not both, whichever site it is on.
+    if let Some(holder) = serves_plain_http(&state.db, https_port).await? {
+        return flash_redirect(HERE, "failed", &format!(
+            "Port {https_port} already serves plain HTTP for the site {holder}, so it cannot \
+             serve HTTPS as well. Give this site a different HTTPS port on its own page."));
+    }
 
     // A contact already set keeps its directory — somebody chose it. A first
     // one gets certificates browsers trust.
@@ -336,6 +355,20 @@ pub async fn post_https(
     flash_redirect(HERE, "success", &format!(
         "A certificate was issued for {} and the site now serves HTTPS on port {https_port}. \
          It renews by itself.", names.join(", ")))
+}
+
+/// The site, if any, that serves plain HTTP on a port.
+async fn serves_plain_http(db: &SqlitePool, port: i64) -> Result<Option<String>> {
+    Ok(sqlx::query_scalar!(
+        r#"SELECT s.name AS "name!" FROM sites s WHERE s.listen_port = ?1
+           UNION
+           SELECT s.name FROM sites s JOIN site_ports p ON p.site_id = s.id
+            WHERE p.port = ?1 AND p.tls = 0
+           LIMIT 1"#,
+        port
+    )
+    .fetch_optional(db)
+    .await?)
 }
 
 // ─── post_hide ───────────────────────────────────────────
@@ -446,5 +479,8 @@ mod tests {
         assert_eq!(host("waf.example.com"), "waf.example.com");
         assert_eq!(host("[2001:db8::1]:8443"), "[2001:db8::1]");
         assert_eq!(this_host(&HeaderMap::new()), "this-host");
+        // Not something to paste into a shell.
+        assert_eq!(host("waf$(id).example.com:8443"), "this-host");
+        assert_eq!(host("[not-an-address]:8443"), "this-host");
     }
 }
