@@ -6,7 +6,7 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
-## [1.0.0] — unreleased
+## [1.0.0] — 2026-10-02
 
 ### Security
 - **A few hundred slow connections could take every site down.** A connection that never finished its headers, or never sent anything, was held open for ever, each holding a file descriptor; at the limit, every site and the management interface stopped answering. A connection now has 30 seconds to send a request, a kept-alive one 30 seconds between requests, and the inspected start of a body may not go 30 seconds without a byte arriving — on the sites' ports and the interface's alike.

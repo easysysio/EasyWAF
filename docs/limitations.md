@@ -3,7 +3,7 @@
 Called out so nothing here is a surprise in production. Split by whether it is
 scheduled or decided.
 
-Current as of **0.15.0**.
+Current as of **1.0.0**.
 
 ## As a reverse proxy
 
