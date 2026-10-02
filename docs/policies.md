@@ -118,6 +118,21 @@ with both on a scanner is refused outright a few requests into its list. The
 one place not to install it is in front of a device it names: a site that *is*
 a router's own interface.
 
+**AI crawlers** and **AI assistants and agents** are two optional sets that are a
+policy rather than a protection — nothing they match is an attack.
+
+| Set | Rule | What it refuses | What refusing it costs |
+|---|---|---|---|
+| AI crawlers | Model training crawlers | GPTBot, ClaudeBot, Common Crawl, Bytespider and others collecting content to train on | Nothing a visitor would notice |
+| AI crawlers | Search and answer indexers | OAI-SearchBot, PerplexityBot and others indexing for AI search | The site drops out of those products' answers. Untick the rule to stay in |
+| AI assistants and agents | Assistants fetching for a user | ChatGPT-User, Claude-User, Perplexity-User — a page fetched because a person asked | A reader: somebody was waiting for that answer |
+| AI assistants and agents | Agents acting for a user | Agents that browse on someone's behalf | The same |
+
+They are separate sets so that ticking *AI crawlers* does not also turn away
+people who ask an assistant about you. Both match what a crawler calls itself in
+its `User-Agent`, so they stop the ones that announce themselves — the large
+operators do — and do nothing about one pretending to be a browser.
+
 Take a whole set by ticking its heading: it is recorded as a set and offered an
 update when the channel publishes a newer version. Open the heading and tick
 rules individually to take only those — single rules are copies, and nothing will
