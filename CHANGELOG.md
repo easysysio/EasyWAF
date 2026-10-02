@@ -6,6 +6,15 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
+## [1.0.1] — unreleased
+
+### Added
+- **A new optional rule set on the channel, *Exploit probes*:** the exact requests scanners send to every address for one known hole each — PHPUnit, Laravel Ignition, ThinkPHP, PHP-CGI, Drupalgeddon, Shellshock, Exchange ProxyShell, router and VPN-appliance firmware. Every rule blocks, so Smart Protect refuses a scanner a few requests into its list. It needs no upgrade: tick it on a policy's Rules tab once it is published.
+- The *Java and Tomcat* set (version 4) blocks the Spring Boot actuator endpoints that return the environment or a heap dump.
+- A rule set that is not bundled can be tested through the engine itself: `cargo test a_set_does_what_its_cases_say`, given a set file and a file of cases.
+
+---
+
 ## [1.0.0] — 2026-10-02
 
 ### Security

@@ -110,6 +110,14 @@ of the thing they name — WordPress, Apache httpd, Java and Tomcat, protocol
 attacks, and credential and secret file exposure. A set for a stack you do not
 run cannot detect anything, and can only match something legitimate.
 
+**Exploit probes** is the optional set that suits almost any site. It names the
+exact requests scanners send to every address for one known hole each — PHPUnit's
+`eval-stdin.php`, Laravel's debug console, a router's firmware endpoint — and
+blocks each one. A refusal is what [Smart Protect](smart-protect.md) counts, so
+with both on a scanner is refused outright a few requests into its list. The
+one place not to install it is in front of a device it names: a site that *is*
+a router's own interface.
+
 Take a whole set by ticking its heading: it is recorded as a set and offered an
 update when the channel publishes a newer version. Open the heading and tick
 rules individually to take only those — single rules are copies, and nothing will

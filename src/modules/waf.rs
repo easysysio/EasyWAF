@@ -1675,3 +1675,116 @@ mod exclusion_path_tests {
         assert_eq!(path_as_forwarded("/files/caf%C3%A9"), "/files/caf%C3%A9");
     }
 }
+
+// ─── A set against its cases ─────────────────────────────
+//
+// A set that is not bundled has no rules/ file for the tests above to read,
+// and a pattern checked with some other regular-expression engine has not been
+// checked. This runs any set file against a file of cases through the forms
+// the engine itself builds:
+//
+//   EASYWAF_SET=../EasyWAF-rules/sets/1050-exploit-probes.rules.toml \
+//   EASYWAF_CASES=../EasyWAF-rules/cases/1050-exploit-probes.cases \
+//   cargo test a_set_does_what_its_cases_say -- --nocapture
+//
+// Without both variables it does nothing. A case is one line:
+//
+//   <rule id | pass> <TAB> <URL | BODY | HEADERS> <TAB> <text>
+//
+// A rule id says that rule must match; `pass` says no rule of the set may.
+// The middle column is where the text arrives, and a rule sees it when its own
+// zone covers that: a URL arrives in URL, in ARGS (its query) and in ANY.
+#[cfg(test)]
+mod set_cases {
+    use super::zone_text;
+    use regex::Regex;
+
+    struct Rule {
+        id:      i64,
+        zone:    String,
+        pattern: Regex,
+    }
+
+    fn rules(path: &str) -> Vec<Rule> {
+        let table: toml::Table = std::fs::read_to_string(path)
+            .unwrap_or_else(|e| panic!("{path}: {e}"))
+            .parse()
+            .unwrap_or_else(|e| panic!("{path}: {e}"));
+        table.get("rules").and_then(|r| r.as_array()).into_iter().flatten()
+            .map(|r| {
+                let id = r.get("id").and_then(|v| v.as_integer()).expect("a rule without an id");
+                let pattern = r.get("pattern").and_then(|v| v.as_str()).expect("a rule without a pattern");
+                Rule {
+                    id,
+                    zone:    r.get("zone").and_then(|v| v.as_str()).unwrap_or("ANY").to_string(),
+                    pattern: Regex::new(pattern).unwrap_or_else(|e| panic!("rule {id} does not compile: {e}")),
+                }
+            })
+            .collect()
+    }
+
+    /// The forms a rule in `zone` is matched against when `text` arrives in
+    /// `arrives`, built as `inspect` builds them.
+    fn forms(zone: &str, arrives: &str, text: &str) -> Vec<String> {
+        match (arrives, zone) {
+            ("URL", "URL" | "ANY") => {
+                let mut all = zone_text(text, true);
+                if zone == "ANY" {
+                    all.extend(zone_text(text.split_once('?').map_or("", |(_, q)| q), true));
+                }
+                all
+            }
+            ("URL", "ARGS")               => zone_text(text.split_once('?').map_or("", |(_, q)| q), true),
+            ("BODY", "BODY" | "ANY")      => zone_text(text, true),
+            ("HEADERS", "HEADERS" | "ANY") => zone_text(text, false),
+            _ => Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_set_does_what_its_cases_say() {
+        let (Ok(set), Ok(cases)) = (std::env::var("EASYWAF_SET"), std::env::var("EASYWAF_CASES")) else {
+            return;
+        };
+        let rules = rules(&set);
+        let text = std::fs::read_to_string(&cases).unwrap_or_else(|e| panic!("{cases}: {e}"));
+
+        let mut wrong = Vec::new();
+        let mut exercised = std::collections::BTreeSet::new();
+        let mut checked = 0;
+        for (n, line) in text.lines().enumerate() {
+            if line.trim().is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let parts: Vec<&str> = line.splitn(3, '\t').collect();
+            let [expect, arrives, sample] = parts[..] else {
+                panic!("{cases}:{}: expected three tab-separated columns", n + 1);
+            };
+            assert!(matches!(arrives, "URL" | "BODY" | "HEADERS"), "{cases}:{}: {arrives:?}", n + 1);
+            checked += 1;
+
+            let matched: Vec<i64> = rules.iter()
+                .filter(|r| forms(&r.zone, arrives, sample).iter().any(|f| r.pattern.is_match(f)))
+                .map(|r| r.id)
+                .collect();
+
+            if expect == "pass" {
+                if !matched.is_empty() {
+                    wrong.push(format!("line {}: {matched:?} matched, and nothing should: {sample}", n + 1));
+                }
+            } else {
+                let id: i64 = expect.parse()
+                    .unwrap_or_else(|_| panic!("{cases}:{}: {expect:?} is neither a rule id nor `pass`", n + 1));
+                exercised.insert(id);
+                if !matched.contains(&id) {
+                    wrong.push(format!("line {}: rule {id} did not match (matched: {matched:?}): {sample}", n + 1));
+                }
+            }
+        }
+
+        let untested: Vec<i64> = rules.iter().map(|r| r.id).filter(|id| !exercised.contains(id)).collect();
+        println!("{checked} cases against {} rules", rules.len());
+        assert!(wrong.is_empty(), "\n{}", wrong.join("\n"));
+        assert!(untested.is_empty(), "no case shows these rules matching anything: {untested:?}");
+    }
+}
