@@ -66,6 +66,7 @@ EasyWAF ships as a single binary with a systemd unit. Packages are published for
 | `/opt/easywaf/easywaf.db` | the database, created on first start |
 | `/var/log/easywaf/` | the audit log, created and owned by the systemd unit |
 | `/etc/systemd/system/easywaf.service` (or the packaged unit path) | the service |
+| `/usr/lib/easywaf/service-account` | run by the package after every install and upgrade: the service's account and the ownership of its files |
 
 Templates and static assets are compiled into the binary, so there is nothing to
 serve from disk and nothing to keep in step with an upgrade.
@@ -75,6 +76,12 @@ is not root: the unit gives it the one extra right it needs, to bind a
 privileged port such as 80, and nothing else. It owns `/opt/easywaf` and
 `/var/log/easywaf`. If you keep the database somewhere else (`DATABASE_URL`),
 that place must be writable by `easywaf`.
+
+The account is created only when it is not already there, so an upgrade finds
+it and a first install makes it; one you created yourself beforehand is used as
+it is. On an upgrade a running service is stopped, its files are handed to the
+account, and it is started again. A service that was not running is left
+stopped.
 
 ## Container
 

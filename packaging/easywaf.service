@@ -15,8 +15,8 @@ RestartSec=3
 
 # An account of its own, not root. EasyWAF reads hostile traffic all day, and
 # the one thing it needs beyond an ordinary user is to bind ports below 1024.
-# The package creates the account and hands it /opt/easywaf (packaging/deb/
-# postinst, and the RPM's post-install script in Cargo.toml).
+# The package creates the account and hands it /opt/easywaf
+# (packaging/service-account.sh, run after every install and upgrade).
 User=easywaf
 Group=easywaf
 AmbientCapabilities=CAP_NET_BIND_SERVICE

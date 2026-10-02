@@ -38,6 +38,9 @@ mod smart_protect;
 mod tls;
 mod upstream;
 
+#[cfg(all(test, unix))]
+mod packaging_tests;
+
 use auth::make_key;
 use axum::{
     extract::FromRef,

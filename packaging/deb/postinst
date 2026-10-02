@@ -1,50 +1,24 @@
 #!/bin/sh
 # =========================================================
 # postinst — EasyWAF (Debian/Ubuntu)
-# Runs after the package is unpacked and configured.
+# Runs after the package is unpacked and configured, on a
+# first install and on every upgrade.
 #
-# Creates the account the service runs as and gives it its
-# files, then restarts a running service.
+# Everything it does is in /usr/lib/easywaf/service-account,
+# which the RPM runs too: the account the service runs as,
+# its files, and bringing a running service onto the new
+# binary.
 #
-# Without the restart, an upgrade replaces /usr/bin/easywaf and
-# /lib/systemd/system/easywaf.service on disk but leaves the
-# running service on the old binary, so the GUI keeps
-# reporting the previous version and the new unit file is
-# ignored until someone notices.
+# Without that last part, an upgrade replaces /usr/bin/easywaf
+# and the unit file on disk but leaves the running service on
+# the old binary, so the GUI keeps reporting the previous
+# version until someone notices.
 # =========================================================
 set -e
 
 case "$1" in
     configure)
-        # The account the service runs as. A system account with no login and
-        # no home of its own: /opt/easywaf is where it lives.
-        if ! getent group easywaf >/dev/null 2>&1; then
-            groupadd --system easywaf
-        fi
-        if ! getent passwd easywaf >/dev/null 2>&1; then
-            useradd --system --gid easywaf --home-dir /opt/easywaf --no-create-home \
-                    --shell /usr/sbin/nologin --comment "EasyWAF" easywaf
-        fi
-
-        # Hand over what it writes. An installation upgraded from before 1.0,
-        # when the service ran as root, has a database, caches and logs owned
-        # by root that the account cannot open. Done on every configure: it is
-        # cheap, and it repairs a file somebody created as root by hand.
-        #
-        # -h: a symbolic link is itself re-owned, never what it points at.
-        # This runs as root in a directory the account can write to, and
-        # following a link from there would hand it a file of root's.
-        chown -hR easywaf:easywaf /opt/easywaf
-        if [ -d /var/log/easywaf ]; then
-            chown -hR easywaf:easywaf /var/log/easywaf
-        fi
-
-        # The unit file ships with the package and may have changed.
-        systemctl daemon-reload >/dev/null 2>&1 || true
-
-        # try-restart restarts the service only if it is already running, so a
-        # first install does not start a service before any site is configured.
-        systemctl try-restart easywaf.service >/dev/null 2>&1 || true
+        /usr/lib/easywaf/service-account
         ;;
 esac
 

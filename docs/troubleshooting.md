@@ -131,9 +131,12 @@ owns. A file copied into `/opt/easywaf` with `sudo`, or one `sqlite3` created
 while run as root, belongs to root. Give it back, and start the service:
 
 ```bash
-sudo chown -hR easywaf:easywaf /opt/easywaf
+sudo /usr/lib/easywaf/service-account
 sudo systemctl start easywaf
 ```
+
+That is the script the package runs after every install and upgrade. It creates
+the account if it is missing and hands it `/opt/easywaf` and `/var/log/easywaf`.
 
 To avoid it, run such commands as the account itself: `sudo -u easywaf sqlite3
 /opt/easywaf/easywaf.db`.

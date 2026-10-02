@@ -145,29 +145,19 @@ assets = [
     ["rules/sets.toml",               "/opt/easywaf/rules/sets.toml",           "644"],
     ["config.toml",                   "/opt/easywaf/config.toml",               "644"],
     ["packaging/easywaf.service",     "/lib/systemd/system/easywaf.service",    "644"],
+    # Run by the postinst; see the script for what it does and in what order.
+    ["packaging/service-account.sh",  "/usr/lib/easywaf/service-account",       "755"],
     ["CHANGELOG.md",                  "/usr/share/doc/easywaf/CHANGELOG.md",    "644"],
 ]
 
 # ─── RPM package (.rpm) — cargo-generate-rpm ────────────────
 [package.metadata.generate-rpm]
 summary = "Self-contained Web Application Firewall and reverse proxy"
-# Same as the Debian postinst. First the account the service runs as, and its
-# files: an installation upgraded from before 1.0, when the service ran as
-# root, has a database owned by root. chown -h, so a symbolic link is itself
-# re-owned and never what it points at. Then: an upgrade replaces the binary
-# and the unit file
-# on disk, but the running service keeps the old image until it is restarted,
-# so the GUI would go on reporting the previous version.
-# try-restart leaves a stopped service stopped, so a first install is unaffected.
+# The same script the Debian postinst runs, on a first install and on every
+# upgrade: the account the service runs as, its files, and bringing a running
+# service onto the new binary. See packaging/service-account.sh.
 post_install_script = """
-getent group easywaf >/dev/null 2>&1 || groupadd --system easywaf
-getent passwd easywaf >/dev/null 2>&1 || \\
-    useradd --system --gid easywaf --home-dir /opt/easywaf --no-create-home \\
-            --shell /sbin/nologin --comment "EasyWAF" easywaf
-chown -hR easywaf:easywaf /opt/easywaf
-[ -d /var/log/easywaf ] && chown -hR easywaf:easywaf /var/log/easywaf || :
-systemctl daemon-reload >/dev/null 2>&1 || :
-systemctl try-restart easywaf.service >/dev/null 2>&1 || :
+/usr/lib/easywaf/service-account
 """
 # Mirrors packaging/deb/prerm. rpm passes the number of remaining copies of the
 # package: 0 on a real removal, 1 during an upgrade — so the guard is what keeps
@@ -190,5 +180,6 @@ assets = [
     # Where RPM-based distributions keep licence texts.
     { source = "LICENSE",                    dest = "/usr/share/licenses/easywaf/LICENSE",  mode = "644" },
     { source = "packaging/easywaf.service",  dest = "/usr/lib/systemd/system/easywaf.service", mode = "644" },
+    { source = "packaging/service-account.sh", dest = "/usr/lib/easywaf/service-account",    mode = "755" },
     { source = "CHANGELOG.md",               dest = "/usr/share/doc/easywaf/CHANGELOG.md", mode = "644" },
 ]

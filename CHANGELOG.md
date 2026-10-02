@@ -34,8 +34,9 @@ Version bumps and tags are created only after explicit approval.
 - The README, the documentation's home page and *What EasyWAF does not do* describe the product as it is: Smart Protect, load balancing, IP lists, backup and export were missing from the first two, and the README's own list of limits had fallen behind the documentation's, which it now points to.
 
 ### Upgrading
-- The package upgrade creates the `easywaf` account and gives it `/opt/easywaf` and `/var/log/easywaf`; nothing needs doing on a standard installation. If your database is somewhere else (`DATABASE_URL`), make that place writable by `easywaf` before upgrading.
-- Commands run by hand against the database should now be run as the account — `sudo -u easywaf sqlite3 /opt/easywaf/easywaf.db` — or the files they create belong to root and the service cannot open them. `sudo chown -hR easywaf:easywaf /opt/easywaf` puts that right.
+- The package creates the `easywaf` account if it is not already there — on a first install and on an upgrade alike — and gives it `/opt/easywaf` and `/var/log/easywaf`; nothing needs doing on a standard installation. If your database is somewhere else (`DATABASE_URL`), make that place writable by `easywaf` before upgrading.
+- During the upgrade a running service is stopped, its files are handed to the account, and it is started again — in that order, so the old service, still running as root, cannot create a file the account then cannot open. If the account cannot be created the upgrade says so and leaves the service running as it was.
+- Commands run by hand against the database should now be run as the account — `sudo -u easywaf sqlite3 /opt/easywaf/easywaf.db` — or the files they create belong to root and the service cannot open them. `sudo /usr/lib/easywaf/service-account` puts that right: it is what the package runs, and can be run by hand.
 - Anything that read the text of a 403 from EasyWAF — a monitoring check matching "WAF block rule matched", say — should look at the status code instead; the body is now HTML and says only that the request was blocked.
 - To go back to running as root, `sudo systemctl edit easywaf` and set `User=root` and `Group=root` under `[Service]`.
 
