@@ -118,6 +118,16 @@ with both on a scanner is refused outright a few requests into its list. The
 one place not to install it is in front of a device it names: a site that *is*
 a router's own interface.
 
+**Node.js and NoSQL** is for an application on Node.js or a document database
+such as MongoDB. It refuses a query operator where a password or a token was
+expected — `password[$ne]=x`, which a bracket-parsing framework hands to the
+database as "any password but x" — along with `$where`, prototype pollution
+through a key named `__proto__`, and the constructor tricks that reach
+`child_process` from a template. Operators on ordinary fields are left alone:
+Strapi, Feathers and similar frameworks use `?price[$gt]=10` as their query
+language. On a site where people post JavaScript, expect to add an exclusion for
+the path that takes it.
+
 **AI crawlers** and **AI assistants and agents** are two optional sets that are a
 policy rather than a protection — nothing they match is an attack.
 
