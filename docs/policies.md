@@ -118,6 +118,25 @@ with both on a scanner is refused outright a few requests into its list. The
 one place not to install it is in front of a device it names: a site that *is*
 a router's own interface.
 
+**Web shells** matches the request an attacker makes *after* getting in: for a
+shell by its known name (c99, r57, WSO, b374k), for a script where only data
+belongs — under `/.well-known/` or an `uploads` directory — and in the dialect of
+the shell itself, whatever its file has been renamed to. It suits any site that
+runs PHP, ASP.NET or JSP. An application that runs its own scripts from an
+`uploads` directory needs an exclusion on that path.
+
+**IIS and ASP.NET** is the counterpart of the Apache set, for sites served by
+Microsoft's web server: `web.config` and its backups, `trace.axd` and
+`elmah.axd`, short-file-name enumeration, `::$DATA`, .NET deserialization
+gadgets and SharePoint's ToolShell.
+
+**Bad bots** refuses automated clients by what they call themselves, in four
+rules to take or leave separately: SEO and marketing-data crawlers such as
+Ahrefs and Semrush (untick this one if you use those tools), site copiers such
+as HTTrack, address harvesters, and internet scanners such as Nuclei, Censys and
+Shodan. Like the AI sets below, the first three are a policy rather than a
+protection, and none of it stops a bot that pretends to be a browser.
+
 **Node.js and NoSQL** is for an application on Node.js or a document database
 such as MongoDB. It refuses a query operator where a password or a token was
 expected — `password[$ne]=x`, which a bracket-parsing framework hands to the
