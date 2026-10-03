@@ -1919,6 +1919,12 @@ mod set_cases {
         match (arrives, zone) {
             ("URL", "URL" | "ANY") => {
                 let mut all = zone_text(text, true);
+                // And the path as a backend reads it, as `inspect` adds.
+                let (path, query) = text.split_once('?').map_or((text, None), |(p, q)| (p, Some(q)));
+                for read in super::normalised_paths(path) {
+                    let whole = query.map_or(read.clone(), |q| format!("{read}?{q}"));
+                    all.extend(zone_text(&whole, true));
+                }
                 if zone == "ANY" {
                     all.extend(zone_text(text.split_once('?').map_or("", |(_, q)| q), true));
                 }
