@@ -6,7 +6,7 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
-## [1.0.1] — unreleased
+## [1.0.1] — 2026-10-03
 
 ### Security
 - **A header with one byte that is not ASCII was not inspected at all.** Its whole value was left out of what the rules read, and still forwarded: Shellshock in a `User-Agent` was refused, and the same with one stray byte appended was served. Every rule that reads headers was affected — scanners, Log4Shell, the bot sets. Header values are now read whatever bytes they hold.
