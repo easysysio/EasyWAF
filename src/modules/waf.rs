@@ -217,13 +217,37 @@ impl InspectionModule for WafModule {
             Some(q) if !q.is_empty() => format!("{}?{}", ctx.path, q),
             _                        => ctx.path.clone(),
         };
-        let url     = zone_text(&raw_url, true);
+        let mut url = zone_text(&raw_url, true);
+        // And the path as a backend will read it. A rule anchored to the path
+        // root is otherwise walked past by writing the path another way —
+        // `//.env`, `/a/b/../../.env` — which this proxy or the server behind
+        // it turns back into `/.env`. See `normalised_paths`.
+        for path in normalised_paths(&ctx.path) {
+            let whole = match ctx.query.as_deref() {
+                Some(q) if !q.is_empty() => format!("{path}?{q}"),
+                _                        => path,
+            };
+            for form in zone_text(&whole, true) {
+                push_unique(&mut url, form);
+            }
+        }
         let args    = zone_text(ctx.query.as_deref().unwrap_or(""), true);
-        let body    = zone_text(&String::from_utf8_lossy(&ctx.body), true);
+        // A body sent compressed is read as what it holds. Matched as it
+        // arrived, it is a run of bytes no pattern recognises, while a backend
+        // that inflates request bodies — Express does unless told not to —
+        // receives the payload whole.
+        let body = match inflated(&ctx.headers, &ctx.body) {
+            Some(plain) => zone_text(&String::from_utf8_lossy(&plain), true),
+            None        => zone_text(&String::from_utf8_lossy(&ctx.body), true),
+        };
+        // Every header value, whatever bytes it holds. A value is not required
+        // to be ASCII, and one that is not is still forwarded: read strictly,
+        // a single stray byte would take the whole value out of inspection
+        // while the backend received all of it.
         let headers = zone_text(
             &ctx.headers
                 .values()
-                .filter_map(|v| v.to_str().ok())
+                .map(|v| String::from_utf8_lossy(v.as_bytes()))
                 .collect::<Vec<_>>()
                 .join(" "),
             false,
@@ -468,6 +492,90 @@ fn zone_text(raw: &str, plus_is_space: bool) -> Vec<String> {
     }
 
     forms
+}
+
+/// The ways a backend may read this path that differ from how it was written.
+///
+/// Two things happen to a path between the client and the application. This
+/// proxy builds the upstream request by parsing a URL, which resolves `.` and
+/// `..` segments and turns `\` into `/`. And most servers then merge repeated
+/// slashes. So `/a/b/../../.env` and `//.env` both arrive as `/.env`, and a
+/// rule anchored to the path root has to be shown that form or it never sees
+/// the request it was written for.
+///
+/// Worked out from the path as written and as percent-decoded once, since
+/// `%2e%2e` and `%2f` are resolved by one server or another too. Empty for the
+/// ordinary path, which is already what a backend reads — so ordinary traffic
+/// pays for the check and nothing else.
+fn normalised_paths(path: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for written in [path.to_string(), percent_decode(path)] {
+        // In both orders: a server that merges slashes before resolving `..`
+        // reads `/a//../x` as `/x`, and one that resolves first as `/a/x`.
+        for read in [
+            merge_slashes(&path_as_forwarded(&written)),
+            merge_slashes(&path_as_forwarded(&merge_slashes(&written))),
+        ] {
+            if read != path && !out.contains(&read) {
+                out.push(read);
+            }
+        }
+    }
+    out
+}
+
+/// A path with each run of slashes made one.
+fn merge_slashes(path: &str) -> String {
+    let mut out = String::with_capacity(path.len());
+    for c in path.chars() {
+        if c != '/' || !out.ends_with('/') {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// How much of a compressed body is inflated for the rules to read.
+///
+/// The same number of bytes as are read from an uncompressed one: the limit is
+/// on what is inspected, and a body is inspected as what it holds. It also
+/// bounds what a body made to expand without end can cost.
+fn inflate_limit() -> u64 {
+    crate::proxy::inspection_limit() as u64
+}
+
+/// The start of a body as it reads once inflated, when its `Content-Encoding`
+/// says it is gzip or deflate. `None` for a body sent as it is, in an encoding
+/// this cannot read, or that does not inflate at all.
+///
+/// The body in hand is only its start, so the stream usually ends early. What
+/// was inflated up to that point is kept: it is the start of the payload, which
+/// is what the rules read of any body.
+fn inflated(headers: &axum::http::HeaderMap, body: &[u8]) -> Option<Vec<u8>> {
+    use std::io::Read;
+
+    let encoding = headers
+        .get(axum::http::header::CONTENT_ENCODING)
+        .map(|v| String::from_utf8_lossy(v.as_bytes()).trim().to_ascii_lowercase())?;
+    let limit = inflate_limit();
+    let mut plain = Vec::new();
+    // An error part-way is the stream ending early, or not being what the
+    // header said. Either way what was read before it stands.
+    let _ = match encoding.as_str() {
+        "gzip" | "x-gzip" => flate2::read::MultiGzDecoder::new(body).take(limit).read_to_end(&mut plain),
+        // "deflate" is zlib-wrapped by the standard and raw in practice: some
+        // clients send one and some the other, and servers accept both.
+        "deflate" => {
+            let wrapped = flate2::read::ZlibDecoder::new(body).take(limit).read_to_end(&mut plain);
+            if plain.is_empty() {
+                flate2::read::DeflateDecoder::new(body).take(limit).read_to_end(&mut plain)
+            } else {
+                wrapped
+            }
+        }
+        _ => return None,
+    };
+    (!plain.is_empty()).then_some(plain)
 }
 
 /// Add a form unless an identical one is already present.
@@ -1007,6 +1115,88 @@ async fn get_rules(db: &SqlitePool, policy_id: i64) -> Vec<RuleRow> {
 mod tests {
     use super::{Exclusion, RuleRow};
     use regex::Regex;
+
+    /// A rule anchored to the path root has to be shown the path as a backend
+    /// reads it, or writing the path another way walks past it.
+    #[test]
+    fn a_path_written_another_way_is_also_read_the_way_a_backend_reads_it() {
+        use super::normalised_paths;
+        for written in ["//.env", "/a/b/../../.env", "/./.env", "///.env", "/a//../.env",
+                        "/a/%2e%2e/.env", "/%2e/.env", "/a/..%2f.env", "\\.env"] {
+            assert!(normalised_paths(written).iter().any(|p| p == "/.env"),
+                    "{written:?} was not read as /.env: {:?}", normalised_paths(written));
+        }
+        // An ordinary path is already what a backend reads: nothing is added,
+        // so ordinary traffic is matched once.
+        for plain in ["/", "/index.php", "/a/b/c.html", "/caf%C3%A9/menu", "/files/a%20b.txt", "/.env"] {
+            assert!(normalised_paths(plain).is_empty(), "{plain:?} gained {:?}", normalised_paths(plain));
+        }
+    }
+
+    #[test]
+    fn the_env_rule_sees_through_a_path_written_to_avoid_it() {
+        let re = Regex::new(&pattern("930-lfi.rules.toml", 930011)).unwrap();
+        for written in ["//.env", "/a/b/../../.env", "/x/y/z/../../../.env"] {
+            assert!(!re.is_match(written), "{written:?} needs no help — pick a harder case");
+            assert!(super::normalised_paths(written).iter().any(|p| re.is_match(p)), "{written:?} got past");
+        }
+    }
+
+    fn gzip(data: &[u8]) -> Vec<u8> {
+        use std::io::Write;
+        let mut e = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        e.write_all(data).unwrap();
+        e.finish().unwrap()
+    }
+
+    fn encoded_as(encoding: &str) -> axum::http::HeaderMap {
+        let mut h = axum::http::HeaderMap::new();
+        h.insert(axum::http::header::CONTENT_ENCODING, encoding.parse().unwrap());
+        h
+    }
+
+    #[test]
+    fn a_compressed_body_is_read_as_what_it_holds() {
+        use super::inflated;
+        use std::io::Write;
+        let payload = b"q=1 union select password from users";
+
+        assert_eq!(inflated(&encoded_as("gzip"), &gzip(payload)).as_deref(), Some(&payload[..]));
+        assert_eq!(inflated(&encoded_as("GZIP"), &gzip(payload)).as_deref(), Some(&payload[..]));
+
+        // deflate, as the standard has it and as clients send it.
+        let mut z = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+        z.write_all(payload).unwrap();
+        assert_eq!(inflated(&encoded_as("deflate"), &z.finish().unwrap()).as_deref(), Some(&payload[..]));
+        let mut d = flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
+        d.write_all(payload).unwrap();
+        assert_eq!(inflated(&encoded_as("deflate"), &d.finish().unwrap()).as_deref(), Some(&payload[..]));
+
+        // Not compressed, or not in a way this reads: matched as it arrived.
+        assert_eq!(inflated(&axum::http::HeaderMap::new(), payload), None);
+        assert_eq!(inflated(&encoded_as("br"), payload), None);
+        assert_eq!(inflated(&encoded_as("gzip"), b"this is not gzip"), None);
+    }
+
+    /// Only the start of a body is in hand, so the compressed stream ends
+    /// early. What it held up to there is still read.
+    #[test]
+    fn a_compressed_body_cut_short_is_read_as_far_as_it_goes() {
+        let mut payload = b"cmd=xp_cmdshell&pad=".to_vec();
+        payload.extend(std::iter::repeat_n(b"0123456789abcdef".iter().copied(), 4000).flatten());
+        let whole = gzip(&payload);
+        let start = &whole[..whole.len() / 2];
+        let read = super::inflated(&encoded_as("gzip"), start).expect("nothing was read of a truncated body");
+        assert!(read.starts_with(b"cmd=xp_cmdshell"));
+    }
+
+    /// A body made to expand without end costs no more than any other.
+    #[test]
+    fn a_compressed_body_is_inflated_only_as_far_as_bodies_are_inspected() {
+        let bomb = gzip(&vec![b'a'; 64 * 1024 * 1024]);
+        let read = super::inflated(&encoded_as("gzip"), &bomb).unwrap();
+        assert_eq!(read.len() as u64, super::inflate_limit());
+    }
 
     /// Pull one rule's pattern out of the shipped catalog, so the test checks
     /// what actually loads rather than a copy that can drift from it.

@@ -8,6 +8,21 @@ Version bumps and tags are created only after explicit approval.
 
 ## [1.0.1] — unreleased
 
+### Security
+- **A header with one byte that is not ASCII was not inspected at all.** Its whole value was left out of what the rules read, and still forwarded: Shellshock in a `User-Agent` was refused, and the same with one stray byte appended was served. Every rule that reads headers was affected — scanners, Log4Shell, the bot sets. Header values are now read whatever bytes they hold.
+- **A rule anchored to the start of the path could be walked past by writing the path another way.** `/.env` was refused; `//.env` and `/a/b/../../.env` were served — the second rewritten to `/.env` by EasyWAF itself on its way to the backend. The rules now also read the path as a backend will: dot segments resolved and repeated slashes merged.
+- **A compressed request body was not inspected.** With `Content-Encoding: gzip` the rules were matched against the compressed bytes, while a backend that inflates request bodies — Express does by default — received the payload. Bodies sent as gzip or deflate are inflated before they are read, as far as bodies are inspected.
+- A client's own `Forwarded`, `X-Original-URL`, `X-Rewrite-URL`, `True-Client-IP` and similar headers are no longer passed to the backend, where a framework that honours them would take the client's word for its address or serve a different path than the rules read. A trusted proxy's are passed on.
+- A CAPTCHA can be answered once: a wrong answer uses the image up, where the same one could be guessed at for three minutes. And one address can hold 50 waiting challenges, not all 10,000 — which let a single client have every other visitor told to come back later.
+
+### Fixed
+- **A request could be carried out twice on a site with several backends.** Any failure was retried on another backend, whatever the request: a POST that reached a backend which then died was sent again to the next. Now only a request that never left — the connection was not made — or one that is safe to repeat (GET, HEAD, PUT, DELETE) is retried.
+- **A visitor abandoning an upload counted against the backend.** Three cancelled uploads in a row took a working backend out of the rotation, logged it as unreachable and recorded 502s. It is recorded as the 400 it is, and the backend's standing is untouched.
+- **Behind a proxy that terminates TLS, the site did not know its visitors used HTTPS.** `X-Forwarded-Proto` was overwritten with `http`, HSTS was not sent, cookies were not marked Secure, and *Redirect HTTP to HTTPS* redirected for ever. A trusted proxy's `X-Forwarded-Proto` is now believed.
+- A visitor whose browser sends a cookie that is not ASCII could never get past a CAPTCHA, and lost session affinity: the whole `Cookie` header was unreadable.
+- A WebSocket handshake the backend refuses reaches the client with the backend's explanation, where it arrived with a length and no body. The upgrade path also gives up on a backend that does not answer.
+- A `Host` header written with its trailing dot — `example.com.` — reaches the site, where it got a 404.
+
 ### Added
 - **A new optional rule set on the channel, *Exploit probes*:** the exact requests scanners send to every address for one known hole each — PHPUnit, Laravel Ignition, ThinkPHP, PHP-CGI, Drupalgeddon, Shellshock, Exchange ProxyShell, router and VPN-appliance firmware. Every rule blocks, so Smart Protect refuses a scanner a few requests into its list. It needs no upgrade: tick it on a policy's Rules tab once it is published.
 - The *Java and Tomcat* set (version 4) blocks the Spring Boot actuator endpoints that return the environment or a heap dump.

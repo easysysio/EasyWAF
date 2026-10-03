@@ -38,6 +38,11 @@ const CHALLENGE_TTL: Duration = Duration::from_secs(180); // 3 minutes
 /// cross a challenge threshold.
 const MAX_PENDING: usize = 10_000;
 
+/// How many of those one address may hold. A visitor has one or two — a page
+/// and something it loaded; a household or an office behind one address has a
+/// few more.
+const MAX_PENDING_PER_CLIENT: usize = 50;
+
 /// Internal path prefix the proxy intercepts for challenge handling.
 pub const VERIFY_PATH: &str = "/__easywaf/verify";
 
@@ -66,6 +71,10 @@ impl ChallengeStore {
     /// Returns (challenge_id, captcha_png_data_uri), or `None` when
     /// [`MAX_PENDING`] challenges are already waiting — checked before the
     /// image is drawn, since drawing it is the expensive part.
+    ///
+    /// One address holds at most [`MAX_PENDING_PER_CLIENT`]: a further one
+    /// replaces its oldest. Without that a single client asking for challenges
+    /// fills the store, and every other visitor is told to come back later.
     pub fn issue(&self, dest: &str, client_ip: &str) -> Option<(String, String)> {
         {
             let mut map = self.inner.lock().unwrap();
@@ -74,6 +83,16 @@ impl ChallengeStore {
                 map.retain(|_, p| p.expires > now);
                 if map.len() >= MAX_PENDING {
                     return None;
+                }
+            }
+            let mut own: Vec<(Instant, String)> = map.iter()
+                .filter(|(_, p)| p.client_ip == client_ip)
+                .map(|(id, p)| (p.expires, id.clone()))
+                .collect();
+            if own.len() >= MAX_PENDING_PER_CLIENT {
+                own.sort();
+                for (_, id) in &own[..=own.len() - MAX_PENDING_PER_CLIENT] {
+                    map.remove(id);
                 }
             }
         }
@@ -88,7 +107,6 @@ impl ChallengeStore {
         );
 
         let id = random_id();
-
         let mut map = self.inner.lock().unwrap();
         map.insert(id.clone(), Pending {
             answer,
@@ -96,37 +114,42 @@ impl ChallengeStore {
             client_ip: client_ip.to_string(),
             expires: Instant::now() + CHALLENGE_TTL,
         });
-
         Some((id, data_uri))
     }
 
-    /// Look up the intended destination for a challenge id without consuming
-    /// it — used to re-challenge to the same place after a wrong answer.
-    pub fn dest_of(&self, id: &str) -> Option<String> {
-        let map = self.inner.lock().unwrap();
-        map.get(id)
-            .filter(|p| p.expires > Instant::now())
-            .map(|p| p.dest.clone())
-    }
-
-    /// Verify a submitted answer. On success the challenge is consumed and the
-    /// intended destination is returned. On failure returns None.
-    pub fn verify(&self, id: &str, answer: &str, client_ip: &str) -> Option<String> {
+    /// Check a submitted answer. A challenge is used up by being answered,
+    /// right or wrong: one image, one attempt, so an answer cannot be found by
+    /// trying them all against the same image.
+    ///
+    /// A challenge issued to another address is left alone and reported as
+    /// unknown, so it cannot be used up for the visitor it belongs to.
+    pub fn verify(&self, id: &str, answer: &str, client_ip: &str) -> Answer {
         let mut map = self.inner.lock().unwrap();
-        let pending = map.get(id)?;
-
-        let ok = pending.expires > Instant::now()
-            && pending.client_ip == client_ip
-            && pending.answer == answer.trim().to_uppercase();
-
-        if ok {
-            let dest = pending.dest.clone();
-            map.remove(id);
-            Some(dest)
+        if map.get(id).is_none_or(|p| p.client_ip != client_ip) {
+            return Answer::Unknown;
+        }
+        let Some(pending) = map.remove(id) else { return Answer::Unknown };
+        if pending.expires <= Instant::now() {
+            return Answer::Unknown;
+        }
+        if pending.answer == answer.trim().to_uppercase() {
+            Answer::Right(pending.dest)
         } else {
-            None
+            Answer::Wrong(pending.dest)
         }
     }
+}
+
+/// What a submitted answer turned out to be.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Answer {
+    /// Correct. Holds where the visitor was going.
+    Right(String),
+    /// Incorrect. Holds where the visitor was going, for the next challenge.
+    Wrong(String),
+    /// No such challenge for this client: expired, already answered, or never
+    /// issued.
+    Unknown,
 }
 
 impl Default for ChallengeStore {
@@ -296,22 +319,55 @@ mod tests {
         }
     }
 
+    fn waiting(store: &ChallengeStore, id: &str, client: &str, answer: &str) {
+        store.inner.lock().unwrap().insert(id.to_string(), Pending {
+            answer: answer.into(), dest: "/cart".into(), client_ip: client.into(),
+            expires: Instant::now() + CHALLENGE_TTL,
+        });
+    }
+
     #[test]
     fn the_store_stops_issuing_at_its_cap() {
         let store = ChallengeStore::new();
-        {
-            let mut map = store.inner.lock().unwrap();
-            for i in 0..MAX_PENDING {
-                map.insert(i.to_string(), Pending {
-                    answer: "X".into(), dest: "/".into(), client_ip: "203.0.113.9".into(),
-                    expires: Instant::now() + CHALLENGE_TTL,
-                });
-            }
+        for i in 0..MAX_PENDING {
+            waiting(&store, &i.to_string(), &format!("198.51.100.{i}"), "X");
         }
         assert!(store.issue("/", "203.0.113.9").is_none(), "a full store drew another image");
 
         // Expired ones make room again.
         store.inner.lock().unwrap().values_mut().for_each(|p| p.expires = Instant::now());
         assert!(store.issue("/", "203.0.113.9").is_some());
+    }
+
+    #[test]
+    fn one_address_cannot_fill_the_store() {
+        let store = ChallengeStore::new();
+        for _ in 0..MAX_PENDING_PER_CLIENT + 20 {
+            assert!(store.issue("/", "203.0.113.9").is_some());
+        }
+        let held = store.inner.lock().unwrap().len();
+        assert_eq!(held, MAX_PENDING_PER_CLIENT, "one address holds {held}");
+        // And somebody else is still served.
+        assert!(store.issue("/", "203.0.113.10").is_some());
+    }
+
+    #[test]
+    fn a_challenge_is_used_up_by_one_answer_right_or_wrong() {
+        let store = ChallengeStore::new();
+        waiting(&store, "a", "203.0.113.9", "ABCD");
+        assert_eq!(store.verify("a", "WRONG", "203.0.113.9"), Answer::Wrong("/cart".into()));
+        assert_eq!(store.verify("a", "ABCD", "203.0.113.9"), Answer::Unknown, "a second guess was taken");
+
+        waiting(&store, "b", "203.0.113.9", "ABCD");
+        assert_eq!(store.verify("b", " abcd ", "203.0.113.9"), Answer::Right("/cart".into()));
+        assert_eq!(store.verify("b", "ABCD", "203.0.113.9"), Answer::Unknown, "a solved challenge was reused");
+    }
+
+    #[test]
+    fn another_address_cannot_use_up_somebody_elses_challenge() {
+        let store = ChallengeStore::new();
+        waiting(&store, "a", "203.0.113.9", "ABCD");
+        assert_eq!(store.verify("a", "WRONG", "198.51.100.7"), Answer::Unknown);
+        assert_eq!(store.verify("a", "ABCD", "203.0.113.9"), Answer::Right("/cart".into()));
     }
 }

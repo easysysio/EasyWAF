@@ -77,9 +77,15 @@ application answering, and a missing page is no reason to stop using a working
 backend.
 
 **A request that can safely be sent again is retried on another backend**, so
-one backend failing costs nothing. A request whose body is still arriving cannot
-be retried — the body is a stream, and the first attempt consumes it — so a
-large upload to a backend that dies mid-request gets a 502.
+one backend failing costs nothing. Safely means two things. The request cannot
+be carried out twice: either it never left — the connection was refused — or it
+is one HTTP defines as repeatable, a `GET`, `HEAD`, `PUT` or `DELETE`. A `POST`
+that reached a backend which then died is not sent to another, because the first
+may have acted on it; it gets a 502. And the body can be sent again: one that is
+still arriving cannot, since it is a stream and the first attempt consumed it.
+
+A visitor who abandons an upload part-way is not the backend's failure, and is
+not counted as one.
 
 Two things the pool will not do:
 
@@ -186,6 +192,13 @@ X-Forwarded-Proto   http or https, as the client connected
 X-Forwarded-Host    the hostname the client asked for
 ```
 
+A client's own versions of these are replaced, not passed on, and so are the
+other headers by which a request describes itself — `Forwarded`,
+`True-Client-IP`, `X-Original-URL` and their kind — since a framework that reads
+one would be taking the client's word for it. From a
+[trusted proxy](#behind-another-proxy) they are that proxy's report, and are
+kept.
+
 Hop-by-hop headers are stripped, as a proxy must. WebSocket upgrades are
 tunnelled: the handshake is inspected like any other request, and the connection
 that follows is relayed as opaque frames.
@@ -193,7 +206,9 @@ that follows is relayed as opaque frames.
 Request bodies are inspected up to a limit — 128 KB by default, under
 **Settings → Proxy** — and the rest streams to the site as it arrives. There is
 no upload size limit, and a large upload is not held in memory first. Bytes
-past the limit are not inspected.
+past the limit are not inspected. A body sent compressed, as gzip or deflate, is
+inflated for the rules to read, to the same limit; it is forwarded as it
+arrived.
 
 ## Disabling a site
 
@@ -214,6 +229,12 @@ cannot claim to be someone else.
 
 The list is empty by default, which means the header is ignored entirely and the
 client is whoever connected.
+
+A trusted proxy's `X-Forwarded-Proto` is believed as well. If the proxy in front
+terminates TLS and speaks plain HTTP to EasyWAF, that header is how EasyWAF knows
+the visitor used HTTPS: it tells the application so, sends HSTS, marks its own
+cookies Secure, and does not apply *Redirect HTTP to HTTPS* to a visitor who is
+already on it.
 
 !!! warning "Only list proxies you control"
     `X-Forwarded-For` is a header; anyone can send one. If EasyWAF believed it

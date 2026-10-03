@@ -60,6 +60,12 @@ pub const UPSTREAM_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from
 /// stalled one. The rest of a long upload streams with no such limit.
 pub const BODY_STALL_TIMEOUT: std::time::Duration = crate::slow_clients::HEADER_READ_TIMEOUT;
 
+/// How long a backend has to answer an upgrade handshake.
+const UPGRADE_ANSWER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// How much of a backend's refusal of an upgrade is relayed.
+const UPGRADE_REFUSAL_BODY: usize = 64 * 1024;
+
 /// How much of a request body the rules see unless Settings says otherwise.
 /// Everything past it is forwarded to the upstream as it arrives, uninspected.
 pub const DEFAULT_INSPECTION_LIMIT: usize = 128 * 1024;
@@ -516,6 +522,20 @@ fn copy_response_headers(dst: &mut HeaderMap, src: &HeaderMap) {
 
 // ─── Forwarding headers ──────────────────────────────────
 
+/// Headers by which a request describes its own origin, removed unless a
+/// trusted proxy sent them. See `apply_forwarded_headers`.
+const CLIENT_CLAIMS: &[&str] = &[
+    "forwarded",
+    "x-forwarded-port",
+    "x-forwarded-scheme",
+    "x-forwarded-ssl",
+    "x-client-ip",
+    "true-client-ip",
+    "cf-connecting-ip",
+    "x-original-url",
+    "x-rewrite-url",
+];
+
 /// Tell the upstream what the original request looked like.
 ///
 /// Without these an application behind EasyWAF cannot know it is behind
@@ -530,8 +550,20 @@ fn apply_forwarded_headers(
     peer: std::net::IpAddr,
     client: std::net::IpAddr,
     original_host: Option<&HeaderValue>,
-    is_tls: bool,
+    https: bool,
 ) {
+    // The other ways of saying who the client is or what it asked for, which
+    // some application or framework reads in preference to the headers set
+    // below. From a trusted proxy they are that proxy's report. From anyone
+    // else they are a client describing itself — or, with X-Original-URL,
+    // asking the application for a different path than the one the rules
+    // read — and are not passed on.
+    if !crate::forwarded::is_trusted_proxy(peer) {
+        for claim in CLIENT_CLAIMS {
+            headers.remove(*claim);
+        }
+    }
+
     // `client` differs from `peer` only when the peer is a proxy we trust and
     // its X-Forwarded-For was honoured. In that case the chain it sent is
     // worth passing on, with this hop appended.
@@ -556,7 +588,7 @@ fn apply_forwarded_headers(
 
     // The scheme the *client* used, which is what an application needs to build
     // links back to itself — not the scheme of this hop to the upstream.
-    set(headers, "x-forwarded-proto", if is_tls { "https".into() } else { "http".into() });
+    set(headers, "x-forwarded-proto", if https { "https".into() } else { "http".into() });
 
     // Forwarded verbatim, port included: an application on a non-standard port
     // needs it to build a URL that works.
@@ -596,7 +628,7 @@ fn upgrade_headers(
     headers: &HeaderMap,
     peer: std::net::IpAddr,
     client: std::net::IpAddr,
-    is_tls: bool,
+    https: bool,
 ) -> HeaderMap {
     let mut out = headers.clone();
     for h in HOP_HEADERS {
@@ -604,7 +636,7 @@ fn upgrade_headers(
             out.remove(*h);
         }
     }
-    apply_forwarded_headers(&mut out, peer, client, headers.get(axum::http::header::HOST), is_tls);
+    apply_forwarded_headers(&mut out, peer, client, headers.get(axum::http::header::HOST), https);
     out
 }
 
@@ -641,8 +673,9 @@ async fn proxy_upgrade(
         return Err("upgrades to an https:// upstream are not supported yet".into());
     }
 
-    let stream = tokio::net::TcpStream::connect((host, port))
+    let stream = tokio::time::timeout(UPSTREAM_CONNECT_TIMEOUT, tokio::net::TcpStream::connect((host, port)))
         .await
+        .map_err(|_| format!("connecting to {host}:{port}: timed out"))?
         .map_err(|e| format!("connecting to {host}:{port}: {e}"))?;
 
     let (mut sender, conn) = hyper::client::conn::http1::handshake(
@@ -678,24 +711,37 @@ async fn proxy_upgrade(
         .body(http_body_util::Empty::<bytes::Bytes>::new())
         .map_err(|e| format!("building upstream request: {e}"))?;
 
-    let upstream_resp = sender
-        .send_request(req)
+    // A handshake is answered at once or not at all, so it is given the time
+    // a connection is, not the time a slow page is.
+    let upstream_resp = tokio::time::timeout(UPGRADE_ANSWER_TIMEOUT, sender.send_request(req))
         .await
+        .map_err(|_| "upstream request: no answer to the handshake".to_string())?
         .map_err(|e| format!("upstream request: {e}"))?;
 
     let status = upstream_resp.status();
     let resp_headers = upstream_resp.headers().clone();
 
     if status != StatusCode::SWITCHING_PROTOCOLS {
-        // The upstream declined to upgrade. Pass its answer back unchanged;
-        // it is a normal response and the client will deal with it.
+        // The upstream declined to upgrade. Pass its answer back, body and
+        // all: it is a normal response — usually a 401 or 403 saying why — and
+        // the client will deal with it. The body is read before the connection
+        // is let go, and only so much of it: a refusal is a line or two.
+        let body = http_body_util::BodyExt::collect(
+            http_body_util::Limited::new(upstream_resp.into_body(), UPGRADE_REFUSAL_BODY),
+        )
+        .await
+        .map(|b| b.to_bytes())
+        .unwrap_or_default();
         conn_task.abort();
         let mut resp = Response::builder().status(status);
         if let Some(hs) = resp.headers_mut() {
             copy_response_headers(hs, &resp_headers);
+            // The length is set from what is sent. The upstream's own would
+            // promise bytes this response may not carry.
+            hs.remove(axum::http::header::CONTENT_LENGTH);
         }
         return resp
-            .body(Body::empty())
+            .body(Body::from(body))
             .map_err(|e| format!("response: {e}"));
     }
 
@@ -874,8 +920,11 @@ async fn handle_request(
     // — the upstream's, a block, a challenge, a gateway error — and carries the
     // headers the site asked for: a visitor whose first response is one of
     // EasyWAF's own pages must still receive the HSTS the site promises.
-    let security = SecurityHeaders::of(&site, state.is_tls);
-    let mut response = serve_site(&state, peer, &site, host, req, started_at).await;
+    // The scheme the client used, which is this listener's unless a trusted
+    // proxy in front terminated TLS and said so.
+    let https = crate::forwarded::client_used_https(peer.ip(), req.headers(), state.is_tls);
+    let security = SecurityHeaders::of(&site, https);
+    let mut response = serve_site(&state, peer, &site, host, req, started_at, https).await;
     security.apply(response.headers_mut());
     response
 }
@@ -888,12 +937,13 @@ async fn serve_site(
     host:       String,
     req:        axum::extract::Request,
     started_at: Instant,
+    https:      bool,
 ) -> Response<Body> {
-    if let Some(redirect) = https_redirect(state, site, &host, &req) {
+    if let Some(redirect) = https_redirect(site, &host, &req, https) {
         return redirect;
     }
 
-    let (incoming, body, on_upgrade) = Incoming::take(req, peer);
+    let (incoming, body, on_upgrade) = Incoming::take(req, peer, https);
     let visit = Visit::of(site, &incoming, host, started_at);
 
     let lists = ListCheck::of(state, site, incoming.client_ip).await;
@@ -918,7 +968,7 @@ async fn serve_site(
         if !body.start.complete {
             return error_response(StatusCode::PAYLOAD_TOO_LARGE, "Verification submission too large");
         }
-        return handle_verify(state, &incoming.client_ip.to_string(), &body.start.head);
+        return handle_verify(state, &incoming.client_ip.to_string(), &body.start.head, incoming.https);
     }
 
     // Whether the visitor already holds a valid challenge clearance cookie.
@@ -977,6 +1027,9 @@ fn request_host(req: &axum::extract::Request) -> Option<String> {
         .split(':')
         .next()
         .unwrap_or("")
+        // "example.com." is the same name written in full, and a site is
+        // stored without the dot.
+        .trim_end_matches('.')
         .to_lowercase();
     (!host.is_empty()).then_some(host)
 }
@@ -1036,7 +1089,9 @@ async fn find_site(state: &ProxyState, host: &str) -> Result<Arc<SiteRow>, Respo
 
 /// Step 4. The redirect to HTTPS, when the site asks for one and it can work.
 ///
-/// Only from a plain listener, and only when there is somewhere to send them:
+/// Only for a client that came over plain HTTP — which one behind a proxy that
+/// terminates TLS did not, though it arrives on a plain listener, and
+/// redirecting it would loop — and only when there is somewhere to send them:
 /// redirecting to a TLS port that is not bound would take the site off the air
 /// instead of securing it. Done before any inspection, since the request is not
 /// being served here either way.
@@ -1048,12 +1103,12 @@ async fn find_site(state: &ProxyState, host: &str) -> Result<Arc<SiteRow>, Respo
 /// refused — and serving plain HTTP is never worse than sending visitors to a
 /// port that cannot answer.
 fn https_redirect(
-    state: &ProxyState,
     site:  &SiteRow,
     host:  &str,
     req:   &axum::extract::Request,
+    https: bool,
 ) -> Option<Response<Body>> {
-    if state.is_tls || !site.tls_redirect || !site.has_cert {
+    if https || !site.tls_redirect || !site.has_cert {
         return None;
     }
     let tls_port = site.tls_port?;
@@ -1087,6 +1142,10 @@ struct Incoming {
     path:      String,
     query:     Option<String>,
     headers:   HeaderMap,
+    /// Whether the client used HTTPS, on this listener or at a trusted proxy
+    /// in front of it. What the backend is told, and whether cookies set here
+    /// are marked Secure.
+    https:     bool,
 }
 
 /// The request body, before any of it is read.
@@ -1099,6 +1158,7 @@ impl Incoming {
     fn take(
         mut req: axum::extract::Request,
         peer: SocketAddr,
+        https: bool,
     ) -> (Self, BodyStream, Option<hyper::upgrade::OnUpgrade>) {
         let on_upgrade = req.extensions_mut().remove::<hyper::upgrade::OnUpgrade>();
         let (parts, body) = req.into_parts();
@@ -1110,6 +1170,7 @@ impl Incoming {
             path: parts.uri.path().to_string(),
             query: parts.uri.query().map(str::to_string),
             headers: parts.headers,
+            https,
         };
         (incoming, Box::pin(body.into_data_stream()), on_upgrade)
     }
@@ -1489,7 +1550,15 @@ async fn forward(
         Ok(upstream_resp) => {
             visit.record(&state.traffic,
                          Outcome::forwarded(detected, upstream_resp.status().as_u16() as i64, &result.upstream.url));
-            stream_back(state, upstream_resp, result.upstream.id, repin)
+            stream_back(state, upstream_resp, result.upstream.id, repin, incoming.https)
+        }
+        // The client stopped sending its body. Not the backend's failure and
+        // not a gateway error: the request never finished arriving.
+        Err(e) if result.client_gave_up => {
+            tracing::debug!(upstream = %result.upstream.url, error = %error_chain(&e),
+                            "the client stopped sending its request body");
+            visit.record(&state.traffic, Outcome::forwarded(detected, 400, &result.upstream.url));
+            error_response(StatusCode::BAD_REQUEST, "The request body did not finish arriving")
         }
         Err(e) => {
             tracing::warn!(upstream = %result.upstream.url, error = %error_chain(&e), "upstream unreachable");
@@ -1517,7 +1586,7 @@ async fn forward_upgrade(
 ) -> Response<Body> {
     let url = format!("{}{}", upstream.trim_end_matches('/'), incoming.path_and_query());
     tracing::debug!(path = %incoming.path, "proxying a protocol upgrade");
-    let headers = upgrade_headers(&incoming.headers, incoming.peer, incoming.client_ip, state.is_tls);
+    let headers = upgrade_headers(&incoming.headers, incoming.peer, incoming.client_ip, incoming.https);
     let resp = match proxy_upgrade(&url, &incoming.method, &headers, on_upgrade).await {
         Ok(resp) => resp,
         Err(e) => {
@@ -1543,17 +1612,28 @@ struct Sent<'a> {
     upstream: &'a crate::upstream::Upstream,
     /// How many backends were tried.
     tried:    usize,
+    /// The request failed because the client stopped sending its body, which
+    /// says nothing about the backend.
+    client_gave_up: bool,
 }
 
-/// Send the request to `first`, and to another backend if it cannot be reached
-/// and the body can be sent again.
+/// Send the request to `first`, and to another backend if that is safe.
 ///
-/// A body that ended within the inspected start is held whole, so it can be
-/// sent again to a second backend. One that is still arriving cannot: it is a
-/// stream, the first attempt consumes it, and there is nothing left to replay.
-/// So a large upload gets one attempt and an honest 502, rather than a retry
-/// that would send half a body. It is sent with the client's own
-/// Content-Length, which still matches, since not one byte is altered.
+/// Two things have to hold for a second attempt.
+///
+/// The body can be sent again. One that ended within the inspected start is
+/// held whole. One that is still arriving cannot be replayed: it is a stream,
+/// the first attempt consumes it, and there is nothing left. So a large upload
+/// gets one attempt and an honest 502, rather than a retry that would send
+/// half a body. It is sent with the client's own Content-Length, which still
+/// matches, since not one byte is altered.
+///
+/// And sending it again cannot do the thing twice — see `may_send_again`.
+///
+/// A failure is counted against the backend unless it was the client's: a
+/// client that abandons an upload breaks the request just as a dead backend
+/// does, and three cancelled uploads must not take a working backend out of
+/// the rotation.
 async fn send_upstream<'a>(
     state:    &ProxyState,
     site:     &'a SiteRow,
@@ -1574,19 +1654,26 @@ async fn send_upstream<'a>(
         incoming.peer,
         incoming.client_ip,
         incoming.headers.get(axum::http::header::HOST),
-        state.is_tls,
+        incoming.https,
     );
     let headers = to_reqwest_headers(&headers);
 
     let replayable = body.complete;
     let head = body.head.clone();
+    // Set when the rest of the client's body fails to arrive, so the error
+    // that follows can be told from one that is the backend's.
+    let client_failed = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let mut streamed = if body.complete {
         None
     } else {
         let first_chunk = futures::stream::once(std::future::ready(
             Ok::<bytes::Bytes, axum::Error>(body.head),
         ));
-        Some(reqwest::Body::wrap_stream(futures::StreamExt::chain(first_chunk, body.rest)))
+        let failed = client_failed.clone();
+        let rest = futures::TryStreamExt::inspect_err(body.rest, move |_| {
+            failed.store(true, std::sync::atomic::Ordering::Relaxed);
+        });
+        Some(reqwest::Body::wrap_stream(futures::StreamExt::chain(first_chunk, rest)))
     };
 
     let path_and_query = incoming.path_and_query();
@@ -1607,23 +1694,45 @@ async fn send_upstream<'a>(
             .await;
 
         let Err(e) = &response else {
-            return Sent { response, upstream, tried: tried.len() + 1 };
+            return Sent { response, upstream, tried: tried.len() + 1, client_gave_up: false };
         };
+
+        if client_failed.load(std::sync::atomic::Ordering::Relaxed) {
+            return Sent { response, upstream, tried: tried.len() + 1, client_gave_up: true };
+        }
 
         // Could not be reached: that is the backend's fault, whatever the
         // application would have said.
         crate::upstream::failed(upstream.id);
         tried.push(upstream.id);
-        if !replayable || tried.len() >= ATTEMPTS {
-            return Sent { response, upstream, tried: tried.len() };
+        if !replayable || !may_send_again(&incoming.method, e) || tried.len() >= ATTEMPTS {
+            return Sent { response, upstream, tried: tried.len(), client_gave_up: false };
         }
         let Some(next) = crate::upstream::choose_except(site.id, &site.upstreams, &tried) else {
-            return Sent { response, upstream, tried: tried.len() };
+            return Sent { response, upstream, tried: tried.len(), client_gave_up: false };
         };
         tracing::warn!(upstream = %url, error = %error_chain(e), next = %next.upstream.url,
                        "upstream unreachable, trying another backend");
         upstream = next.upstream;
     }
+}
+
+/// Whether a request that failed on one backend may be sent to another without
+/// risking that it is carried out twice.
+///
+/// A connection that was never made sent nothing, so anything may be tried
+/// elsewhere. After that the request may have arrived: a backend that received
+/// an order and died before answering has still taken the order. Then only a
+/// request that is safe to repeat is repeated — the methods HTTP defines as
+/// idempotent — and a POST gets the 502 it would get from a single backend.
+fn may_send_again(method: &Method, error: &reqwest::Error) -> bool {
+    error.is_connect() || is_idempotent(method)
+}
+
+/// The methods RFC 9110 defines as idempotent: repeating one leaves the server
+/// as one request would have.
+fn is_idempotent(method: &Method) -> bool {
+    matches!(*method, Method::GET | Method::HEAD | Method::OPTIONS | Method::TRACE | Method::PUT | Method::DELETE)
 }
 
 /// An error with every cause behind it, joined by colons.
@@ -1653,6 +1762,7 @@ fn stream_back(
     upstream_resp: reqwest::Response,
     served:        i64,
     repin:         bool,
+    secure:        bool,
 ) -> Response<Body> {
     let status = upstream_resp.status();
     // A 5xx is the backend saying it cannot answer, and counts against it. A
@@ -1674,14 +1784,14 @@ fn stream_back(
         // Pin the client to the backend that served it. A session cookie:
         // affinity that outlives the browser session would hold a client to a
         // backend long after anything it was keeping in memory had gone.
-        // HttpOnly because no page has any business reading it, and Secure over
-        // TLS so it is not sent back in clear.
+        // HttpOnly because no page has any business reading it, and Secure for
+        // a client on HTTPS so it is not sent back in clear.
         if repin
             && let Ok(v) = axum::http::HeaderValue::from_str(&format!(
                 "{}={}; Path=/; HttpOnly; SameSite=Lax{}",
                 crate::upstream::AFFINITY_COOKIE,
                 crate::upstream::make_pin(&state.secret, served),
-                if state.is_tls { "; Secure" } else { "" }))
+                if secure { "; Secure" } else { "" }))
         {
             headers.append(axum::http::header::SET_COOKIE, v);
         }
@@ -2093,18 +2203,19 @@ fn challenge_response(id: &str, data_uri: &str, error: bool) -> Response<Body> {
 
 /// Handle a POST to the verify path: check the answer, set the clearance
 /// cookie and redirect on success, or re-serve the challenge on failure.
-fn handle_verify(state: &ProxyState, client_ip: &str, body: &[u8]) -> Response<Body> {
+fn handle_verify(state: &ProxyState, client_ip: &str, body: &[u8], secure: bool) -> Response<Body> {
     let form = parse_form(body);
     let id     = form.get("id").map(String::as_str).unwrap_or("");
     let answer = form.get("answer").map(String::as_str).unwrap_or("");
 
-    if let Some(dest) = state.challenges.verify(id, answer, client_ip) {
+    let outcome = state.challenges.verify(id, answer, client_ip);
+    if let challenge::Answer::Right(dest) = outcome {
         let cookie = challenge::make_clearance(&state.secret, client_ip);
         // Secure over HTTPS, like the affinity cookie: a clearance sent back
         // in clear on a plain port could be lifted and replayed.
         let set_cookie = format!(
             "{}={}; Path=/; Max-Age=1800; HttpOnly; SameSite=Lax{}",
-            CLEARANCE_COOKIE, cookie, if state.is_tls { "; Secure" } else { "" }
+            CLEARANCE_COOKIE, cookie, if secure { "; Secure" } else { "" }
         );
         let location = if challenge::stays_on_site(&dest) { dest } else { "/".to_string() };
         return Response::builder()
@@ -2116,8 +2227,12 @@ fn handle_verify(state: &ProxyState, client_ip: &str, body: &[u8]) -> Response<B
             .unwrap();
     }
 
-    // Wrong or expired answer — re-issue a challenge to the same destination.
-    let dest = state.challenges.dest_of(id).unwrap_or_else(|| "/".to_string());
+    // Wrong or expired — a new challenge, to the same place when the old one
+    // said where. The old one is gone: an image is answered once.
+    let dest = match outcome {
+        challenge::Answer::Wrong(dest) => dest,
+        _ => "/".to_string(),
+    };
     match state.challenges.issue(&dest, client_ip) {
         Some((new_id, data_uri)) => challenge_response(&new_id, &data_uri, true),
         None                     => too_many_challenges(),
@@ -2150,7 +2265,9 @@ fn clearance_ok(state: &ProxyState, headers: &HeaderMap, client_ip: &str) -> boo
 
 /// Extract a single cookie value from the Cookie request header.
 fn cookie_value(headers: &HeaderMap, name: &str) -> Option<String> {
-    let raw = headers.get("cookie")?.to_str().ok()?;
+    // Read whatever bytes it holds: applications do set cookies that are not
+    // ASCII, and one of those beside ours must not hide ours.
+    let raw = String::from_utf8_lossy(headers.get("cookie")?.as_bytes()).into_owned();
     for pair in raw.split(';') {
         if let Some((k, v)) = pair.trim().split_once('=')
             && k == name
@@ -2276,6 +2393,68 @@ mod tests {
 
     fn got<'a>(h: &'a HeaderMap, k: &str) -> &'a str {
         h.get(k).and_then(|v| v.to_str().ok()).unwrap_or("")
+    }
+
+    /// A client describing its own origin, or asking the application for a
+    /// path other than the one the rules read, is not passed on.
+    #[test]
+    fn a_clients_claims_about_itself_are_not_forwarded() {
+        let mut h = HeaderMap::new();
+        for (name, value) in [
+            ("forwarded", "for=10.0.0.1;proto=https"),
+            ("x-original-url", "/admin"),
+            ("x-rewrite-url", "/admin"),
+            ("x-client-ip", "10.0.0.1"),
+            ("true-client-ip", "10.0.0.1"),
+            ("cf-connecting-ip", "10.0.0.1"),
+            ("x-forwarded-ssl", "on"),
+            ("x-forwarded-proto", "https"),
+            ("accept", "text/html"),
+        ] {
+            h.insert(HeaderName::from_static(name), HeaderValue::from_static(value));
+        }
+        let peer: std::net::IpAddr = "203.0.113.9".parse().unwrap();
+        apply_forwarded_headers(&mut h, peer, peer, None, false);
+
+        for claim in CLIENT_CLAIMS {
+            assert!(!h.contains_key(*claim), "{claim} reached the backend");
+        }
+        assert_eq!(got(&h, "x-forwarded-proto"), "http", "the client's own word for the scheme was kept");
+        assert_eq!(got(&h, "accept"), "text/html");
+    }
+
+    #[test]
+    fn only_requests_that_are_safe_to_repeat_are_repeated() {
+        for m in [Method::GET, Method::HEAD, Method::OPTIONS, Method::PUT, Method::DELETE] {
+            assert!(is_idempotent(&m), "{m}");
+        }
+        for m in [Method::POST, Method::PATCH, Method::CONNECT] {
+            assert!(!is_idempotent(&m), "{m} would be sent twice");
+        }
+    }
+
+    #[test]
+    fn a_hostname_written_in_full_is_the_same_hostname() {
+        let host = |v: &'static str| {
+            let req = axum::http::Request::builder().header("host", v).body(Body::empty()).unwrap();
+            request_host(&req)
+        };
+        assert_eq!(host("Example.com.").as_deref(), Some("example.com"));
+        assert_eq!(host("example.com.:8080").as_deref(), Some("example.com"));
+        assert_eq!(host("example.com").as_deref(), Some("example.com"));
+        assert_eq!(host("."), None);
+    }
+
+    /// Applications set cookies that are not ASCII. One of those beside ours
+    /// must not hide ours, or a visitor could never get past a challenge.
+    #[test]
+    fn our_cookie_is_found_beside_one_that_is_not_ascii() {
+        let mut h = HeaderMap::new();
+        h.insert("cookie", HeaderValue::from_bytes("name=caf\u{e9}; easywaf_clearance=123.abc; x=1".as_bytes()).unwrap());
+        assert_eq!(cookie_value(&h, "easywaf_clearance").as_deref(), Some("123.abc"));
+        let mut h = HeaderMap::new();
+        h.insert("cookie", HeaderValue::from_bytes(b"name=\xff\xfe; easywaf_clearance=123.abc").unwrap());
+        assert_eq!(cookie_value(&h, "easywaf_clearance").as_deref(), Some("123.abc"));
     }
 
     #[test]

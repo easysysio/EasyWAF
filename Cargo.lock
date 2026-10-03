@@ -1076,6 +1076,7 @@ dependencies = [
  "bytes",
  "captcha",
  "chrono",
+ "flate2",
  "futures",
  "hmac",
  "http-body-util",

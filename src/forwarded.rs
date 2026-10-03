@@ -210,6 +210,27 @@ pub fn is_trusted_proxy(ip: IpAddr) -> bool {
     }
 }
 
+/// Whether the client reached the site over HTTPS.
+///
+/// On a TLS listener it did. On a plain one it still may have: a proxy in
+/// front that terminates TLS speaks plain HTTP to EasyWAF and says so in
+/// `X-Forwarded-Proto`. That header is believed from a trusted proxy and from
+/// nobody else — a client that could claim HTTPS would be sent HSTS and Secure
+/// cookies over a connection that is not.
+pub fn client_used_https(peer: IpAddr, headers: &HeaderMap, listener_is_tls: bool) -> bool {
+    listener_is_tls || (is_trusted_proxy(peer) && says_https(headers))
+}
+
+/// Whether `X-Forwarded-Proto` names https. The first value, which is the hop
+/// nearest the client.
+fn says_https(headers: &HeaderMap) -> bool {
+    headers
+        .get("x-forwarded-proto")
+        .map(|v| String::from_utf8_lossy(v.as_bytes()).into_owned())
+        .and_then(|v| v.split(',').next().map(|first| first.trim().eq_ignore_ascii_case("https")))
+        .unwrap_or(false)
+}
+
 /// The decision itself, against an explicit list.
 ///
 /// Separate from `client_ip` so the security-critical part is a pure function:
@@ -273,6 +294,32 @@ fn normalise(s: &str) -> Option<IpAddr> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_scheme_a_proxy_reports_is_read_from_its_first_value() {
+        let proto = |v: &str| {
+            let mut h = HeaderMap::new();
+            h.insert("x-forwarded-proto", v.parse().unwrap());
+            says_https(&h)
+        };
+        assert!(proto("https"));
+        assert!(proto("HTTPS"));
+        assert!(proto("https, http"), "the hop nearest the client is the first");
+        assert!(!proto("http"));
+        assert!(!proto("http, https"));
+        assert!(!says_https(&HeaderMap::new()));
+    }
+
+    #[test]
+    fn only_a_trusted_proxy_can_say_the_client_used_https() {
+        // Nothing is trusted in a test process, so the header alone changes
+        // nothing: a client cannot talk its way into HSTS and Secure cookies.
+        let peer: IpAddr = "203.0.113.200".parse().unwrap();
+        let mut h = HeaderMap::new();
+        h.insert("x-forwarded-proto", "https".parse().unwrap());
+        assert!(!client_used_https(peer, &h, false));
+        assert!(client_used_https(peer, &HeaderMap::new(), true), "a TLS listener needs no header");
+    }
     use std::net::{Ipv4Addr, Ipv6Addr};
 
     #[test]

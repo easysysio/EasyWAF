@@ -293,6 +293,11 @@ involved.
 Solving it sets a short-lived, HMAC-signed clearance cookie bound to the client
 address, and requests carrying a valid one skip the challenge for 30 minutes.
 
+Each image can be answered once. A wrong answer brings a new image, not another
+try at the same one, and one address can have fifty waiting at a time — so a
+client cannot guess its way through, or ask for so many that other visitors are
+told to come back later.
+
 !!! warning "Clearance is per client address"
     Behind a NAT — including hairpin NAT on your own network, where internal
     clients arrive as the router's address — one visitor solving a challenge

@@ -68,6 +68,10 @@ Current as of **1.0.0**.
 - **Request bodies are inspected up to a limit** — 128 KB by default, under
   **Settings → Proxy**. The rest of a body is forwarded uninspected as it
   arrives, so a payload padded past the limit is not seen.
+- **A body compressed with Brotli or Zstandard is not inspected.** gzip and
+  deflate are inflated and read; the others are matched as the bytes they
+  arrive as, which no rule recognises. Browsers do not compress request bodies,
+  and few servers accept those two.
 
 ## Managing it
 
