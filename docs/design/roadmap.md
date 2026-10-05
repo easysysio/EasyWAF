@@ -64,6 +64,32 @@ later with nothing pointing at why.
 Recorded so they are not lost. No version assigned — these are worth doing,
 not yet ordered against each other.
 
+**Private keys encrypted in the database — after the authentication gateway
+(Yariv, 2026-10-05).** Raised when he asked how to export a certificate with its
+key: the answer was one `sqlite3` command, which is the problem. Certificate
+keys, the ACME account key and the session-signing secret sit in the database in
+the clear, so a snapshot or any copy of the file is all of them.
+
+What encryption buys is that the database alone stops being a secret. It does
+not protect against whoever can act as the service on a running host — the
+service has to decrypt the keys to serve TLS — and the design should say so
+rather than imply otherwise.
+
+The decision that matters is where the decrypting key lives. In the database:
+nothing gained. A passphrase typed at start: the service cannot restart
+unattended, which breaks upgrades and the restart after a restore. Recommended:
+a key file beside the database, readable by the service account only, with
+sealing by systemd credentials (TPM where there is one) as an option.
+
+Known costs, to be designed for and not discovered: a snapshot no longer
+restores on a new host without the key file, so backup documentation changes;
+losing the file loses every key; and HA has to share the key between nodes,
+which is the argument for building this before HA and not after. No download of
+a key from the interface, before or after — declined the same day.
+
+No version yet. After 1.1.0; whether it takes 1.2.0 and moves HA down is not
+decided.
+
 **Rule attribution — done in 0.5.5.** Traffic Monitor shows the score and
 every rule that contributed to it. It is what makes disabling a rule, cloning
 it to tune (0.6.0), excluding it for the client it wrongly blocked (0.7.0) and
