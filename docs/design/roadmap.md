@@ -64,8 +64,7 @@ later with nothing pointing at why.
 Recorded so they are not lost. No version assigned — these are worth doing,
 not yet ordered against each other.
 
-**Private keys encrypted in the database — after the authentication gateway
-(Yariv, 2026-10-05).** Raised when he asked how to export a certificate with its
+**Private keys encrypted in the database — after HA (Yariv, 2026-10-05).** Raised when he asked how to export a certificate with its
 key: the answer was one `sqlite3` command, which is the problem. Certificate
 keys, the ACME account key and the session-signing secret sit in the database in
 the clear, so a snapshot or any copy of the file is all of them.
@@ -87,8 +86,34 @@ losing the file loses every key; and HA has to share the key between nodes,
 which is the argument for building this before HA and not after. No download of
 a key from the interface, before or after — declined the same day.
 
-No version yet. After 1.1.0; whether it takes 1.2.0 and moves HA down is not
-decided.
+**After HA, which keeps 1.2.0** — Yariv's choice over putting it first. The cost
+is the one named above and is accepted knowingly: HA is built on keys held in
+the clear, and the sync has to be revisited when they are not. Whether this then
+takes 1.3.0, moving rate limiting and URL learning down, or follows all four, is
+not decided.
+
+**A Vault integration, raised the same day as a thought, not a decision.** Three
+different things go by that name, and they are not the same size:
+
+  * *Vault holds the decrypting key* (its transit engine). The database holds
+    ciphertext and EasyWAF asks Vault to decrypt at start. The key never rests
+    on the host, and several nodes share it without copying a file between
+    them — which is the HA problem above, solved elsewhere.
+  * *Vault holds the keys themselves* (its key-value store). The database holds
+    a reference. More to go wrong for the same protection.
+  * *Vault issues the certificates* (its PKI engine), as Let's Encrypt does now.
+    A different feature: a certificate source, not a place to keep a key.
+
+What any of them costs: EasyWAF stops being self-contained. It cannot bring up
+HTTPS without reaching Vault unless it keeps a decrypted copy somewhere, which
+is the thing being avoided; and it has to prove who it is to Vault, with a token
+or a role credential that is itself a secret on the host. That is a fair trade
+where Vault is already run, and a poor one for a single appliance.
+
+So the shape to build towards: encryption with a *key source* that can be
+changed — a file by default, a systemd credential, Vault's transit engine —
+so Vault is something an installation can choose and nothing an installation
+needs. OpenBao, the open-source fork, speaks the same API.
 
 **Rule attribution — done in 0.5.5.** Traffic Monitor shows the score and
 every rule that contributed to it. It is what makes disabling a rule, cloning
