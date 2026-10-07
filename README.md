@@ -35,11 +35,11 @@ mkdocs serve          # http://127.0.0.1:8000
 
 Working today: reverse proxying with load balancing, the rule engine with signed rule
 updates, IP lists and country rules, the CAPTCHA challenge, Smart Protect, HTTPS with
-Let's Encrypt, traffic history, accounts with an audit log, flow logs over syslog, and
-backup, restore and configuration export.
+Let's Encrypt, a sign-in in front of a site, traffic history, accounts with an audit log,
+flow logs over syslog, and backup, restore and configuration export.
 
-Still to come, in this order: a sign-in in front of a site (1.1.0), configuration sync
-between nodes (1.2.0), rate limiting (1.3.0) and URL allowlisting (1.4.0). Read
+Still to come, in this order: configuration sync between nodes (1.2.0), rate limiting
+(1.3.0) and URL allowlisting (1.4.0). Read
 [What EasyWAF does not do](#what-easywaf-does-not-do) before deploying — it is short, and it
 is the honest half of this page.
 
@@ -83,6 +83,9 @@ and the per-site security headers still apply, but nothing is inspected.
 * **Signed rule updates** — corrected rule sets are published to a signed channel. EasyWAF
   says which policies are behind; applying an update is your decision, and the version it
   replaced is kept so it can be put back.
+* **Sign-in** — ask visitors to sign in before they reach a site, or only `/admin` on it,
+  with accounts kept in EasyWAF or in an LDAP directory. The application is told who the
+  visitor is in a header and needs no change.
 * **One-click exclusions** — a false positive becomes an exclusion from the traffic row
   that showed it, narrowed to a path or to a single client.
 * **Three enforcement modes per policy** — `Off`, `DetectionOnly` (log what would happen,
@@ -404,7 +407,8 @@ each release. The ones most likely to matter:
 
 * **Requests only — responses are not inspected.** Nothing detects what leaks *out*: stack
   traces, SQL errors, card numbers. Not scheduled.
-* **No authentication in front of a site.** Scheduled for **1.1.0**.
+* **A sign-in is a name and a password** — local accounts or LDAP. No OIDC, SAML or second
+  factor. Not scheduled.
 * **No high availability.** No configuration sync between nodes. Scheduled for **1.2.0**.
 * **No rate limiting.** Scheduled for **1.3.0**. An address that attacks repeatedly is
   handled by Smart Protect, which counts refusals, not requests.

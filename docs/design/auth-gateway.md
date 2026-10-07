@@ -1,6 +1,8 @@
 # Design note — authentication gateway
 
-Status: **scheduled for 1.1.0** — see [roadmap.md](roadmap.md). Proposed
+Status: **built for 1.1.0** — see [roadmap.md](roadmap.md), and
+[As built](#as-built) at the end for where the result differs from this note.
+The operator's page is [sign-in.md](../sign-in.md). Proposed
 2026-09-10 and unscheduled for six releases; given a version by Yariv on
 2026-09-22, after Smart Protect and before HA, so that a signed-in session
 exists as per-node state before the sync that has to account for it is
@@ -303,3 +305,42 @@ TOTP, no passkeys, no per-user or per-path authorization beyond an LDAP group
 filter, no session list, no "remember me", no API tokens, and no re-prompt for
 sensitive paths. It authenticates, once, for a time, and tells the application
 who it was.
+
+## As built
+
+Where 1.1.0 differs from the sections above, or settles something they left
+open:
+
+* **Named "Sign-in", not "Authentication".** The menu entry is **Settings →
+  Sign-in Realms** and the site's section is **Sign-in**: the interface's own
+  accounts are already under *Accounts*, and two things called authentication
+  would be read as one.
+* **The session's lifetime belongs to the realm**, not the site. Revocation is
+  by epoch — one on the realm, one on each local account — carried in the
+  cookie, so nothing about a session is stored and *Sign everyone out* is one
+  increment.
+* **The cookie is bound to the site** by putting the site in what is signed. A
+  session from one site is not a session on another that uses the same realm;
+  single sign-on across sites was not attempted.
+* **The path is judged in every reading of it** for what needs a sign-in —
+  dot segments resolved, slashes merged, percent-decoded, case folded — and
+  exactly as written for what is left open. The asymmetry is deliberate: a
+  mistake in the first direction asks somebody to sign in who need not have,
+  and in the second serves `/admin` to anybody.
+* **HTTPS only**, by redirect when the site can and by refusal when it cannot.
+  The note did not say; a sign-in form over HTTP is not something to offer.
+* **Basic's check is remembered for sixty seconds**, keyed by a keyed hash of
+  the credential, since a client that sends Basic sends it on every request and
+  bcrypt or a directory round trip on each would be the slowest thing in the
+  request path.
+* **The throttle counts two ways**: ten failures from an address and fifty for
+  a name, in ten minutes. A success clears the address and not the name.
+* **The sign-in form's POST is not inspected**, and its body is not forwarded.
+* **A directory is asked at sign-in only.** A session outlives its account's
+  removal from the directory by at most the session's lifetime. Asking again
+  on a timer was left out as the first thing to add if that bound proves too
+  long.
+* **Export and import carry realms**, with a directory's search password under
+  *private keys* and local accounts under *accounts*.
+* **Not tested against a real directory over LDAPS or StartTLS**, only over
+  plain LDAP against OpenLDAP. The TLS paths are ldap3's and rustls's own.

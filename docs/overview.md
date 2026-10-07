@@ -72,6 +72,8 @@ inspected.
   happened, block nothing) and `On`.
 - A CAPTCHA challenge as the middle ground between allow and block, self-hosted,
   with no third-party service.
+- A sign-in in front of a site or chosen paths, with accounts kept in EasyWAF or
+  in an LDAP directory, and the visitor's name passed to the application.
 - Country rules per policy, using a geolocation database compiled into the
   binary — offline, with nothing to download.
 - Rule exclusions per policy, narrowed to a path or a single client, added in one

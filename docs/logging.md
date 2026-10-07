@@ -27,6 +27,10 @@ path="/etc/passwd?evil=%27+OR+1%3D1" status=403 ms=0 verdict=blocked score=10
 rules=930001 reason="WAF score 10 ≥ block threshold 10"
 ```
 
+On a site that asks visitors to [sign in](sign-in.md), a line carries `user=`
+with the signed-in name, and a request sent to the sign-in page has
+`verdict=unauthenticated`.
+
 The format is [logfmt](https://brandur.org/logfmt): `key=value`, quoted only when
 a value could otherwise split the line. Values that arrive from the wire — the
 path, the host — are escaped, so nothing a client sends can forge a field.

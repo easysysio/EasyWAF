@@ -75,7 +75,8 @@ to upgrade to first.
 **Export** writes a TOML file of what the appliance is configured to do:
 policies, the rule sets they hold and the rules they switched off, rules
 written here, exclusions, sites with their upstreams, aliases and ports,
-certificates, IP entries, published-list choices, country rules and settings.
+certificates, sign-in realms and what each site asks, IP entries,
+published-list choices, country rules and settings.
 
 - **Objects are named, never numbered.** A site names its policy and its
   certificate; nothing in the file is a database id, which would mean nothing
@@ -93,7 +94,9 @@ this appliance's own management certificate (unless a site serves with it),
 and anything the appliance keeps about itself rather than configuration you
 chose.
 
-**Private keys** and **accounts** are each in only when you tick their box.
+**Private keys** and **accounts** are each in only when you tick their box. A
+directory realm's search password travels with private keys, and a local
+realm's accounts with accounts.
 A file that carries either says so in its first lines and in its header, and
 the page asks you to confirm before the download.
 
@@ -103,7 +106,9 @@ the page asks you to confirm before the download.
 created or changed; what only this installation has is removed. Two
 exceptions: accounts are only ever added or updated — never deleted, and never
 the account running the import — and this appliance's own management
-certificate stays.
+certificate stays. A realm's accounts are merged the same way, and a
+directory's search password that the file does not carry is kept from the
+realm of that name already here.
 
 Upload the `.toml` file and a **preview** lists every addition, change and
 removal, and every reason the import cannot go ahead. Nothing changes until
@@ -117,7 +122,8 @@ you press **Import it**. Among the reasons it will refuse:
   as *any*, inspecting more than was meant;
 - a site whose policy is not in the file, whose certificate the file carries
   without its key and this installation does not have, that has no upstream
-  switched on, or that would take the management interface's own port.
+  switched on, that asks for a sign-in with a realm the file does not have, or
+  that would take the management interface's own port.
 
 Rule sets are installed from **this** installation's rule channel, verified as
 any installation is. If the file was exported at a different version of a set,

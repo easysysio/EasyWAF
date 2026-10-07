@@ -97,6 +97,7 @@ Present only when meaningful:
 | `score` | integer | Any rule matched. Absent means no rule matched at all, which is different from a score of 0. |
 | `rules` | comma-separated integers | Any rule with a catalogue number matched. Custom rules have no number and are omitted, so `rules` may be absent while `score` is present. |
 | `reason` | string | The verdict has an explanation. Quoted. |
+| `user` | string | The site asks visitors to sign in and this one had. The name they signed in with; **typed by the visitor**, so escaped and quoted like `path`. Since 1.1.0. |
 
 ### `verdict`
 
@@ -110,6 +111,10 @@ Exactly one of:
 | `blocked` | Refused. `status` is 403. |
 | `would_block` | Served, but an enforcing policy would have refused it. Only from a policy in DetectionOnly. |
 | `would_challenge` | Served, but an enforcing policy would have challenged it. DetectionOnly only. |
+| `unauthenticated` | The site asks for a sign-in and the request had none: it was answered with the sign-in page, a redirect to it, or a 401. Not an attack and not served. `reason` begins `sign-in:` and says which — `refused` is a wrong password, `too many attempts` a throttled one. Since 1.1.0. |
+
+A parser written before 1.1.0 meets `unauthenticated` as an unknown verdict. It
+should store the line under the value it was given rather than reject it.
 
 **The distinction that matters for dashboards:** `blocked` is an attack stopped.
 `would_block` is an attack **served** because the policy is not enforcing.

@@ -3,7 +3,7 @@
 Called out so nothing here is a surprise in production. Split by whether it is
 scheduled or decided.
 
-Current as of **1.0.1**.
+Current as of **1.1.0**.
 
 ## As a reverse proxy
 
@@ -93,8 +93,14 @@ Current as of **1.0.1**.
 - **Smart Protect blocks are per node and do not survive a restart.** They are
   held in memory, and a repeat offender is blocked for the same length each
   time rather than longer.
-- **No authentication in front of a site.** EasyWAF decides whether a request is
-  an attack, not who is making it. Scheduled for **1.1.0**.
+- **A sign-in is a name and a password, from EasyWAF's own accounts or LDAP.**
+  No single sign-on from an identity provider (OIDC, SAML), no second factor
+  and no passkeys. Not scheduled.
+- **Somebody removed from a directory keeps a session they already have** until
+  it runs out — an hour unused, eight at most, by default. The directory is
+  asked at sign-in and not again; *Sign everyone out* ends it sooner.
+- **Failed sign-ins are counted per node and forgotten on a restart**, as Smart
+  Protect's blocks are.
 - **No allowlist of an application's own URLs.** Every rule describes what an
   attack looks like; nothing yet learns what the application legitimately
   exposes and refuses the rest. Scheduled for **1.4.0**.
