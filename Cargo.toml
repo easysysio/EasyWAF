@@ -80,6 +80,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 urlencoding = "2.1"
 # Request bodies sent compressed are inflated before the rules read them.
 flate2 = "1"
+# The sign-in gateway can check a password against a directory. rustls with
+# ring, as everything else here uses: no second TLS stack, and no OpenSSL.
+ldap3 = { version = "0.12", default-features = false, features = ["tls-rustls-ring"] }
 async-trait = "0.1"
 futures = "0.3"
 bytes = "1.6"

@@ -192,6 +192,13 @@ impl<K: Hash + Eq + Clone> SlidingCounter<K> {
         times.len()
     }
 
+    /// How many of `key`'s events fall within `window`, without recording one.
+    pub fn count(&self, key: &K, now: Instant, window: Duration) -> usize {
+        self.events
+            .get(key)
+            .map_or(0, |times| times.iter().filter(|t| now.duration_since(**t) < window).count())
+    }
+
     /// Forget a key's events.
     pub fn forget(&mut self, key: &K) {
         self.events.remove(key);

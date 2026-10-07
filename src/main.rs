@@ -21,6 +21,7 @@ mod db;
 mod error;
 mod export;
 mod forwarded;
+mod gateway;
 mod geo;
 mod geo_update;
 mod import;
@@ -204,6 +205,7 @@ async fn main() {
         challenges: challenge::ChallengeStore::new(),
         is_tls:     false,
         traffic:    modules::traffic::TrafficWriter::start(db.clone(), logger.clone()),
+        logger:     logger.clone(),
     };
     tokio::spawn(async move {
         proxy::start(proxy_state, port_rx).await;

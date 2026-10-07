@@ -507,7 +507,7 @@ fn zone_text(raw: &str, plus_is_space: bool) -> Vec<String> {
 /// `%2e%2e` and `%2f` are resolved by one server or another too. Empty for the
 /// ordinary path, which is already what a backend reads — so ordinary traffic
 /// pays for the check and nothing else.
-fn normalised_paths(path: &str) -> Vec<String> {
+pub(crate) fn normalised_paths(path: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for written in [path.to_string(), percent_decode(path)] {
         // In both orders: a server that merges slashes before resolving `..`
@@ -1010,7 +1010,7 @@ impl Exclusion {
 /// Whether `path` is the prefix or below it, a whole segment at a time: `/dav`
 /// covers `/dav` and `/dav/files`, not `/davx`. An empty prefix covers every
 /// path. By segment, because nobody writing `/files` means `/filesystem`.
-fn under_prefix(path: &str, prefix: &str) -> bool {
+pub(crate) fn under_prefix(path: &str, prefix: &str) -> bool {
     if prefix.is_empty() {
         return true;
     }
@@ -1029,7 +1029,7 @@ fn under_prefix(path: &str, prefix: &str) -> bool {
 /// `/files` and switch the rule off for an attack on `/admin`. The rules
 /// themselves still see the raw path: the `../` in it is exactly what the
 /// traversal rules look for.
-fn path_as_forwarded(path: &str) -> String {
+pub(crate) fn path_as_forwarded(path: &str) -> String {
     match url::Url::parse(&format!("http://upstream{path}")) {
         Ok(u)  => u.path().to_string(),
         Err(_) => path.to_string(),

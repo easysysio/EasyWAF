@@ -87,6 +87,7 @@ pub async fn init(database_url: &str) -> SqlitePool {
     run_migration_036(&pool).await;
     run_migration_037(&pool).await;
     run_migration_038(&pool).await;
+    run_migration_039(&pool).await;
 
     // After the migrations, so the version recorded is the one whose schema
     // this now is. A snapshot carries it, and a restore reads it.
@@ -94,6 +95,31 @@ pub async fn init(database_url: &str) -> SqlitePool {
 
     info!("Database ready: {}", database_url);
     pool
+}
+
+// ─── run_migration_039 ───────────────────────────────────
+
+/// The sign-in gateway's tables, and the column a traffic row names a
+/// signed-in visitor in. Applied while that column is missing, since
+/// `ALTER TABLE ADD COLUMN` fails on a database that already has it.
+async fn run_migration_039(pool: &SqlitePool) {
+    let done: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM pragma_table_info('traffic_events') WHERE name = 'user'",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0);
+    if done > 0 {
+        return;
+    }
+
+    let sql = include_str!("../migrations/039_auth_gateway.sql");
+    sqlx::raw_sql(sql)
+        .execute(pool)
+        .await
+        .unwrap_or_else(|e| panic!("Migration 039 failed: {}", e));
+
+    info!("Migration 039 applied: a site can ask its visitors to sign in");
 }
 
 // ─── run_migration_038 ───────────────────────────────────

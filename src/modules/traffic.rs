@@ -50,6 +50,9 @@ pub struct TrafficRecord {
     /// bad backend, which is the most common thing load balancing is asked to
     /// help diagnose.
     pub upstream:     Option<String>,
+    /// Who the sign-in gateway identified the visitor as. None on a site that
+    /// asks nobody, and for a visitor who had not signed in.
+    pub user:         Option<String>,
 }
 
 // ─── flow_line ───────────────────────────────────────────
@@ -73,10 +76,16 @@ fn flow_line(r: &TrafficRecord) -> String {
         .block_reason
         .as_deref()
         .is_some_and(|s| s.starts_with("challenge:"));
+    // Sent to the sign-in page: the gateway's own verdict, for a visitor it
+    // could not name.
+    let unauthenticated = r.user.is_none()
+        && r.block_reason.as_deref().is_some_and(|s| s.starts_with("sign-in:"));
     let verdict = if r.blocked {
         "blocked"
     } else if challenged {
         "challenged"
+    } else if unauthenticated {
+        "unauthenticated"
     } else {
         match r.detection.as_deref() {
             Some("would_block")     => "would_block",
@@ -111,6 +120,11 @@ fn flow_line(r: &TrafficRecord) -> String {
         && !c.is_empty()
     {
         out.push_str(&format!(" country={}", field(c)));
+    }
+    if let Some(user) = &r.user
+        && !user.is_empty()
+    {
+        out.push_str(&format!(" user={}", field(user)));
     }
     if let Some(s) = r.waf_score {
         out.push_str(&format!(" score={s}"));
@@ -245,7 +259,7 @@ async fn insert_rows(db: &SqlitePool, rows: &[TrafficRecord]) -> Result<(), sqlx
             "INSERT INTO traffic_events
              (site_id, client_ip, method, host, path, status_code,
               response_ms, blocked, block_reason, waf_score, country, matched_rules,
-              detection, upstream) ",
+              detection, upstream, user) ",
         );
         insert.push_values(chunk, |mut row, r| {
             row.push_bind(r.site_id)
@@ -261,7 +275,8 @@ async fn insert_rows(db: &SqlitePool, rows: &[TrafficRecord]) -> Result<(), sqlx
                 .push_bind(&r.country)
                 .push_bind(&r.matched_rules)
                 .push_bind(&r.detection)
-                .push_bind(&r.upstream);
+                .push_bind(&r.upstream)
+                .push_bind(&r.user);
         });
         insert.build().execute(&mut *tx).await?;
     }
@@ -351,7 +366,39 @@ mod writer_tests {
             country:       Some("NL".into()),
             detection:     None,
             upstream:      (!blocked).then(|| "http://10.0.0.1:8080".into()),
+            user:          None,
         }
+    }
+
+    /// The two things the sign-in gateway adds to a line: who the visitor
+    /// was, and a verdict for a visitor it sent to the form.
+    #[test]
+    fn a_line_names_a_signed_in_visitor_and_says_when_one_was_asked_to_sign_in() {
+        let mut signed_in = row(0);
+        signed_in.user = Some("alice".into());
+        let line = flow_line(&signed_in);
+        assert!(line.contains(" user=alice"), "{line}");
+        assert!(line.contains(" verdict=passed"), "{line}");
+
+        let mut asked = row(0);
+        asked.status_code = 401;
+        asked.block_reason = Some("sign-in: required".into());
+        let line = flow_line(&asked);
+        assert!(line.contains(" verdict=unauthenticated"), "{line}");
+        assert!(!line.contains(" user="), "nobody was identified: {line}");
+
+        // Signing in is itself a `sign-in:` row, and by then there is a name.
+        let mut arrived = row(0);
+        arrived.status_code = 303;
+        arrived.block_reason = Some("sign-in: signed in".into());
+        arrived.user = Some("alice".into());
+        assert!(flow_line(&arrived).contains(" verdict=passed"));
+
+        // A name is a field like any other: it cannot add fields of its own.
+        let mut hostile = row(0);
+        hostile.user = Some("x verdict=blocked".into());
+        let line = flow_line(&hostile);
+        assert!(line.ends_with(r#" user="x verdict=blocked""#), "the name was not quoted whole: {line}");
     }
 
     #[tokio::test]

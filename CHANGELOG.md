@@ -6,6 +6,24 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
+## [1.1.0] — unreleased
+
+### Added
+- **A site can ask its visitors to sign in.** The whole site or chosen paths, with paths that are never asked, so `/admin` can need a sign-in while an API and a sync client's WebDAV do not. The application behind needs no change, and is told who the visitor is in a header.
+- Names and passwords come from a **realm**: accounts kept in EasyWAF, or a directory over LDAP, LDAPS or StartTLS. These are not the accounts that open EasyWAF's own interface, and cannot be.
+- A sign-in lasts eight hours, or one hour unused, unless the realm says otherwise. Disabling an account, changing its password or signing everyone out ends sessions at once.
+- **HTTP Basic** can be accepted as well, for clients that cannot fill in a form.
+- A visitor who has signed in is not also shown a CAPTCHA. Signing in never raises what the rules allow: a signed-in request is inspected and blocked like any other.
+- Sign-ins, refusals and sign-outs are in the audit log. Traffic Monitor and the flow line name a signed-in visitor (`user=`), and the flow line has a new verdict, `unauthenticated`, for a request sent to the sign-in page.
+
+### Security
+- The headers that name a visitor to the application are removed from every request to a site that uses the gateway, before the gateway sets them. A client cannot name itself.
+- What needs a sign-in is decided on the path as the application will read it. `//admin`, `/public/../admin` and `/ADMIN` are all `/admin`.
+- A sign-in is only asked for, and a session only accepted, over HTTPS.
+- Ten failed sign-ins from an address, or fifty for one name from anywhere, and further attempts wait ten minutes.
+
+---
+
 ## [1.0.1] — 2026-10-03
 
 ### Security

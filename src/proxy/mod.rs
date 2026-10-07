@@ -213,6 +213,9 @@ pub struct ProxyState {
     /// Where each request's traffic row is queued. Never awaited on the
     /// request path.
     pub traffic:    TrafficWriter,
+    /// Where sign-ins to a site are recorded, with the management interface's
+    /// own: they are authentication events, and belong in one trail.
+    pub logger:     crate::logging::Logger,
 }
 
 // ─── SiteRow ─────────────────────────────────────────────
@@ -244,6 +247,8 @@ struct SiteRow {
     smart_protect:  bool,
     /// Whether an HTTPS backend's certificate goes unverified.
     backend_tls_insecure: bool,
+    /// What the site asks of its visitors, when it asks them to sign in.
+    auth:           Option<crate::gateway::SiteAuth>,
 }
 
 // ─── start ───────────────────────────────────────────────
@@ -823,6 +828,8 @@ struct Visit {
     query:      Option<String>,
     country:    Option<String>,
     started_at: Instant,
+    /// Who the sign-in gateway found the visitor to be, once it has.
+    user:       Option<String>,
 }
 
 /// How a request ended, which is the rest of its row. `Default` is an allowed
@@ -840,6 +847,18 @@ struct Outcome {
 }
 
 impl Outcome {
+    /// A request the rules let through and EasyWAF then answered itself — the
+    /// sign-in page, a redirect after signing in — with whatever the WAF found
+    /// on it. `why` is the row's reason, and begins `sign-in:`.
+    fn answered_here(
+        found: &Option<(i64, Option<String>, String, String)>,
+        status: i64,
+        why: &str,
+    ) -> Self {
+        let (score, hits, detection, _) = split_detection(found.clone());
+        Outcome { status, reason: Some(why.to_string()), score, hits, detection, ..Outcome::default() }
+    }
+
     /// A request let through to a backend, with whatever the WAF found on it.
     fn forwarded(
         found: &Option<(i64, Option<String>, String, String)>,
@@ -872,6 +891,7 @@ impl Visit {
             country:       self.country.clone(),
             detection:     o.detection,
             upstream:      o.upstream,
+            user:          self.user.clone(),
         });
     }
 }
@@ -943,8 +963,8 @@ async fn serve_site(
         return redirect;
     }
 
-    let (incoming, body, on_upgrade) = Incoming::take(req, peer, https);
-    let visit = Visit::of(site, &incoming, host, started_at);
+    let (mut incoming, body, on_upgrade) = Incoming::take(req, peer, https);
+    let mut visit = Visit::of(site, &incoming, host, started_at);
 
     let lists = ListCheck::of(state, site, incoming.client_ip).await;
     if let Some(refusal) = refused_by_lists(state, &visit, &lists) {
@@ -971,10 +991,26 @@ async fn serve_site(
         return handle_verify(state, &incoming.client_ip.to_string(), &body.start.head, incoming.https);
     }
 
-    // Whether the visitor already holds a valid challenge clearance cookie.
-    let cleared = clearance_ok(state, &incoming.headers, &incoming.client_ip.to_string());
+    // The session a visitor already holds, on a site that asks for a sign-in.
+    // Read before the rules run because it bears on them: somebody who has
+    // signed in has proved more than a CAPTCHA asks.
+    let session = site.auth.as_ref().and_then(|ask| signed_in(state, site, ask, &incoming));
 
-    let verdict = judge(state, site, &incoming, body.inspected, &lists, &watch, cleared).await;
+    // Whether the visitor already holds a valid challenge clearance cookie.
+    let cleared = session.is_some()
+        || clearance_ok(state, &incoming.headers, &incoming.client_ip.to_string());
+
+    // A sign-in is posted as a password, and a password is exactly what an
+    // injection rule matches: quotes, semicolons, backslashes. A false positive
+    // there would not block a request, it would lock every user out — and the
+    // person who could fix it could not sign in to do so. The form's body is
+    // the one thing the rules are not shown; its path and headers still are.
+    let signing_in = site.auth.is_some()
+        && incoming.method == Method::POST
+        && incoming.path == crate::gateway::LOGIN_PATH;
+    let inspected = if signing_in { bytes::Bytes::new() } else { body.inspected.clone() };
+
+    let verdict = judge(state, site, &incoming, inspected, &lists, &watch, cleared).await;
 
     let findings = match verdict {
         PipelineVerdict::Block { reason, status, findings } => {
@@ -1010,7 +1046,27 @@ async fn serve_site(
         }
     };
 
-    forward(state, site, &incoming, &visit, &findings, body.start, on_upgrade).await
+    // The gateway, last: after the rules, so an attack on a protected site is
+    // recorded as what it was and not as "sent to a sign-in page", and
+    // immediately before the application, which is what it guards.
+    let mut renewed = None;
+    if let Some(ask) = &site.auth {
+        // What was posted, when all of it has arrived — which a sign-in form
+        // always has.
+        let posted = body.start.complete.then_some(&body.start.head);
+        match gate(state, site, ask, &mut incoming, &mut visit, session, posted, &findings).await {
+            Gate::Answered(response) => return response,
+            Gate::Through(cookie)    => renewed = cookie,
+        }
+    }
+
+    let mut response = forward(state, site, &incoming, &visit, &findings, body.start, on_upgrade).await;
+    // A session in use is given a fresh cookie now and then, which is how its
+    // idle timeout slides without anything being written down.
+    if let Some(cookie) = renewed.and_then(|c| HeaderValue::from_str(&c).ok()) {
+        response.headers_mut().append(axum::http::header::SET_COOKIE, cookie);
+    }
+    response
 }
 
 // ─── Steps 1 to 4 ────────────────────────────────────────
@@ -1201,6 +1257,7 @@ impl Visit {
             // rules in the pipeline read the same lookup.
             country:    crate::geo::country_of(incoming.client_ip),
             started_at,
+            user:       None,
         }
     }
 }
@@ -1496,6 +1553,331 @@ fn detection_of(
         let why = alerts.iter().map(|a| a.reason.as_str()).collect::<Vec<_>>().join("; ");
         (findings.score, findings.hits_json(), d.as_str().to_string(), why)
     })
+}
+
+// ─── The sign-in gateway ─────────────────────────────────
+
+/// The session this request carries, if the site would still honour it.
+///
+/// Over HTTPS only. The cookie is marked Secure and a browser will not send it
+/// in the clear, so one arriving that way was put there by hand.
+fn signed_in(
+    state:    &ProxyState,
+    site:     &SiteRow,
+    ask:      &crate::gateway::SiteAuth,
+    incoming: &Incoming,
+) -> Option<crate::gateway::Session> {
+    if !incoming.https {
+        return None;
+    }
+    let cookie = cookie_value(&incoming.headers, crate::gateway::SESSION_COOKIE)?;
+    crate::gateway::read(&state.secret, site.id, &ask.realm, &cookie, chrono::Utc::now().timestamp())
+}
+
+/// What the gateway did with a request.
+enum Gate {
+    /// It answered: the sign-in page, a redirect after signing in or out, a
+    /// refusal.
+    Answered(Response<Body>),
+    /// The request goes on to the application. Holds a renewed session cookie
+    /// when the visitor is due one.
+    Through(Option<String>),
+}
+
+/// The gateway's part in a request the rules have let through.
+///
+/// In order: signing out and signing in, which are the gateway's own paths;
+/// then, for everything else, the headers a client must not be able to send
+/// are removed; then a path that needs a sign-in is let through for a visitor
+/// who has one, or who sends a good Basic credential where that is allowed —
+/// and anybody else is shown the form.
+#[allow(clippy::too_many_arguments)]
+async fn gate(
+    state:    &ProxyState,
+    site:     &SiteRow,
+    ask:      &crate::gateway::SiteAuth,
+    incoming: &mut Incoming,
+    visit:    &mut Visit,
+    session:  Option<crate::gateway::Session>,
+    posted:   Option<&bytes::Bytes>,
+    detected: &Option<(i64, Option<String>, String, String)>,
+) -> Gate {
+    use crate::gateway::{self, Notice};
+
+    let answered = |visit: &Visit, status: StatusCode, why: &str, response: Response<Body>| {
+        visit.record(&state.traffic, Outcome::answered_here(detected, status.as_u16() as i64, why));
+        Gate::Answered(response)
+    };
+
+    if incoming.path == gateway::LOGOUT_PATH {
+        if let Some(s) = &session {
+            visit.user = Some(s.who.subject.clone());
+            gateway_audit(state, site, ask, &s.who.subject, incoming.client_ip, "signed-out");
+        }
+        let page = sign_in_page(&visit.host, "/", Notice::SignedOut, StatusCode::OK, Some(gateway::clear_cookie()));
+        return answered(visit, StatusCode::OK, "sign-in: signed out", page);
+    }
+
+    if incoming.path == gateway::LOGIN_PATH {
+        if incoming.method == Method::POST {
+            return sign_in(state, site, ask, incoming, visit, posted, detected).await;
+        }
+        // Somebody opened the form's address directly. Signed in already, they
+        // are sent to the site; otherwise it is the form.
+        let response = match &session {
+            Some(_) => redirect_to("/", None),
+            None    => sign_in_page(&visit.host, "/", Notice::None, StatusCode::OK, None),
+        };
+        return answered(visit, response.status(), "sign-in: form", response);
+    }
+
+    // From here the request may reach the application, so what only the
+    // gateway may say is taken off it first — on every path of the site, asked
+    // or not.
+    ask.strip(&mut incoming.headers);
+
+    // Somebody signed in is named to the application wherever on the site
+    // they are, which lets a page that needs no sign-in still greet them.
+    if let Some(s) = session {
+        ask.announce(&mut incoming.headers, &s.who);
+        visit.user = Some(s.who.subject.clone());
+        let renewed = s.refresh.then(|| {
+            let now = chrono::Utc::now().timestamp();
+            gateway::set_cookie(
+                &gateway::mint(&state.secret, site.id, &ask.realm, &s.who, s.user_epoch, s.issued, now),
+                &ask.realm,
+            )
+        });
+        return Gate::Through(renewed);
+    }
+
+    if !ask.needs_sign_in(&incoming.path) {
+        return Gate::Through(None);
+    }
+
+    // A name and password are never asked for, or accepted, in the clear.
+    if !incoming.https {
+        let response = match (site.tls_port, site.has_cert) {
+            (Some(port), true) => {
+                let host = if port == 443 { visit.host.clone() } else { format!("{}:{port}", visit.host) };
+                redirect_to(&format!("https://{host}{}", incoming.path_and_query()), None)
+            }
+            _ => error_response(
+                StatusCode::FORBIDDEN,
+                "This page asks visitors to sign in, which is only done over HTTPS.",
+            ),
+        };
+        return answered(visit, response.status(), "sign-in: needs HTTPS", response);
+    }
+
+    // HTTP Basic, for the clients that cannot fill in a form.
+    if ask.basic
+        && let Some((user, pass)) = gateway::basic_credentials(&incoming.headers)
+    {
+        if gateway::throttled(ask.realm.id, &user, incoming.client_ip) {
+            gateway_audit(state, site, ask, &user, incoming.client_ip, "throttled");
+            return answered(visit, StatusCode::TOO_MANY_REQUESTS, "sign-in: too many attempts",
+                            error_response(StatusCode::TOO_MANY_REQUESTS, "Too many attempts. Try again in a few minutes."));
+        }
+        let (who, trouble) = gateway::check_basic(&state.secret, &ask.realm, &user, &pass).await;
+        if let Some(e) = trouble {
+            tracing::warn!(site = %site.name, realm = %ask.realm.name, "Sign-in could not be checked: {e}");
+        }
+        return match who {
+            Some(who) => {
+                gateway::note_success(incoming.client_ip);
+                // The credential was the gateway's. The application is told
+                // who it was, not handed the password.
+                incoming.headers.remove(axum::http::header::AUTHORIZATION);
+                ask.announce(&mut incoming.headers, &who);
+                visit.user = Some(who.subject);
+                Gate::Through(None)
+            }
+            None => {
+                gateway::note_failure(ask.realm.id, &user, incoming.client_ip);
+                gateway_audit(state, site, ask, &user, incoming.client_ip, "refused");
+                answered(visit, StatusCode::UNAUTHORIZED, "sign-in: refused", basic_challenge(&ask.realm.name))
+            }
+        };
+    }
+
+    // Nobody we can name. A browser is shown the form; a client that did not
+    // ask for a page is told, in the way it understands, that it may send a
+    // credential — where the site accepts one that way.
+    let wants_page = incoming.headers.get(axum::http::header::ACCEPT)
+        .is_none_or(|v| String::from_utf8_lossy(v.as_bytes()).contains("text/html"));
+    let response = if ask.basic && !wants_page {
+        basic_challenge(&ask.realm.name)
+    } else {
+        sign_in_page(&visit.host, &incoming.path_and_query(), Notice::None, StatusCode::UNAUTHORIZED, None)
+    };
+    answered(visit, StatusCode::UNAUTHORIZED, "sign-in: required", response)
+}
+
+/// The sign-in form, posted.
+async fn sign_in(
+    state:    &ProxyState,
+    site:     &SiteRow,
+    ask:      &crate::gateway::SiteAuth,
+    incoming: &Incoming,
+    visit:    &mut Visit,
+    posted:   Option<&bytes::Bytes>,
+    detected: &Option<(i64, Option<String>, String, String)>,
+) -> Gate {
+    use crate::gateway::{self, Notice};
+
+    let answered = |visit: &Visit, status: StatusCode, why: &str, response: Response<Body>| {
+        visit.record(&state.traffic, Outcome::answered_here(detected, status.as_u16() as i64, why));
+        Gate::Answered(response)
+    };
+
+    if !incoming.https {
+        return answered(visit, StatusCode::FORBIDDEN, "sign-in: needs HTTPS",
+                        error_response(StatusCode::FORBIDDEN, "Signing in is only done over HTTPS."));
+    }
+    // The form is this server's and is small. One that did not arrive whole,
+    // or was posted from another site's page, is not it.
+    let Some(posted) = posted else {
+        return answered(visit, StatusCode::PAYLOAD_TOO_LARGE, "sign-in: refused",
+                        error_response(StatusCode::PAYLOAD_TOO_LARGE, "Sign-in submission too large"));
+    };
+    if posted_from_elsewhere(&incoming.headers) {
+        return answered(visit, StatusCode::FORBIDDEN, "sign-in: refused",
+                        error_response(StatusCode::FORBIDDEN, "This sign-in was sent from another site's page."));
+    }
+
+    let form = parse_form(posted);
+    let user = form.get("user").map(|s| s.trim().to_string()).unwrap_or_default();
+    let pass = form.get("pass").cloned().unwrap_or_default();
+    let dest = form.get("dest").map(String::as_str).filter(|d| lands_on_the_site(d)).unwrap_or("/").to_string();
+
+    if gateway::throttled(ask.realm.id, &user, incoming.client_ip) {
+        gateway_audit(state, site, ask, &user, incoming.client_ip, "throttled");
+        let page = sign_in_page(&visit.host, &dest, Notice::Throttled, StatusCode::TOO_MANY_REQUESTS, None);
+        return answered(visit, StatusCode::TOO_MANY_REQUESTS, "sign-in: too many attempts", page);
+    }
+
+    let (checked, trouble) = gateway::check_password(&ask.realm, &user, &pass).await;
+    if let Some(e) = trouble {
+        tracing::warn!(site = %site.name, realm = %ask.realm.name, "Sign-in could not be checked: {e}");
+    }
+    let Some((who, user_epoch)) = checked else {
+        gateway::note_failure(ask.realm.id, &user, incoming.client_ip);
+        gateway_audit(state, site, ask, &user, incoming.client_ip, "refused");
+        let page = sign_in_page(&visit.host, &dest, Notice::Refused, StatusCode::UNAUTHORIZED, None);
+        return answered(visit, StatusCode::UNAUTHORIZED, "sign-in: refused", page);
+    };
+
+    gateway::note_success(incoming.client_ip);
+    gateway_audit(state, site, ask, &who.subject, incoming.client_ip, "signed-in");
+    if ask.realm.kind == gateway::Kind::Local {
+        // For the account list. Not waited for: a sign-in does not depend on it.
+        let (db, realm, name) = (state.db.clone(), ask.realm.id, who.subject.clone());
+        tokio::spawn(async move {
+            let _ = sqlx::query!(
+                "UPDATE auth_users SET last_login = datetime('now') WHERE realm_id = ? AND username = ?",
+                realm, name
+            )
+            .execute(&db)
+            .await;
+        });
+    }
+
+    let now = chrono::Utc::now().timestamp();
+    let cookie = gateway::set_cookie(
+        &gateway::mint(&state.secret, site.id, &ask.realm, &who, user_epoch, now, now),
+        &ask.realm,
+    );
+    visit.user = Some(who.subject);
+    answered(visit, StatusCode::SEE_OTHER, "sign-in: signed in", redirect_to(&dest, Some(cookie)))
+}
+
+/// Whether a path is somewhere to send a visitor who has just signed in: on
+/// this site, and not one of the gateway's own addresses, which would bring
+/// them straight back to a form or sign them out again.
+fn lands_on_the_site(dest: &str) -> bool {
+    challenge::stays_on_site(dest)
+        && !dest.starts_with(crate::gateway::LOGIN_PATH)
+        && !dest.starts_with(crate::gateway::LOGOUT_PATH)
+}
+
+/// Whether a form was posted from a page on another host. A browser says
+/// where a POST came from; a request that does not say is not refused for it.
+fn posted_from_elsewhere(headers: &HeaderMap) -> bool {
+    let text = |name: &str| headers.get(name).map(|v| String::from_utf8_lossy(v.as_bytes()).to_ascii_lowercase());
+    let (Some(origin), Some(host)) = (text("origin"), text("host")) else { return false };
+    origin.split_once("://").map_or(origin.as_str(), |(_, rest)| rest) != host
+}
+
+/// The sign-in page as a response, never cached, with a cookie when it sets
+/// or clears one.
+fn sign_in_page(
+    host:   &str,
+    dest:   &str,
+    notice: crate::gateway::Notice,
+    status: StatusCode,
+    cookie: Option<String>,
+) -> Response<Body> {
+    let mut response = Response::builder()
+        .status(status)
+        .header("content-type", "text/html; charset=utf-8")
+        .header("cache-control", "no-store");
+    if let Some(c) = cookie {
+        response = response.header("set-cookie", c);
+    }
+    response
+        .body(Body::from(crate::gateway::login_page(host, dest, notice)))
+        .unwrap_or_else(|_| error_response(status, "Sign in"))
+}
+
+/// A redirect that is never cached, with a cookie when it sets one.
+fn redirect_to(location: &str, cookie: Option<String>) -> Response<Body> {
+    let mut response = Response::builder()
+        .status(StatusCode::SEE_OTHER)
+        .header("location", location)
+        .header("cache-control", "no-store");
+    if let Some(c) = cookie {
+        response = response.header("set-cookie", c);
+    }
+    response
+        .body(Body::empty())
+        .unwrap_or_else(|_| error_response(StatusCode::INTERNAL_SERVER_ERROR, "Redirect build error"))
+}
+
+/// The answer that asks a client for a Basic credential.
+fn basic_challenge(realm: &str) -> Response<Body> {
+    // The realm is shown by clients. Quotes and control characters cannot be
+    // put in a quoted string, and a realm's name does not need them.
+    let shown: String = realm.chars().filter(|c| !c.is_control() && *c != '"' && *c != '\\').collect();
+    Response::builder()
+        .status(StatusCode::UNAUTHORIZED)
+        .header("www-authenticate", format!("Basic realm=\"{shown}\", charset=\"UTF-8\""))
+        .header("content-type", "text/plain; charset=utf-8")
+        .header("cache-control", "no-store")
+        .body(Body::from("Sign-in required."))
+        .unwrap_or_else(|_| error_response(StatusCode::UNAUTHORIZED, "Sign-in required."))
+}
+
+/// One line in the audit trail for a sign-in to a site: who, to what, from
+/// where, and how it went. Never the password.
+fn gateway_audit(
+    state:  &ProxyState,
+    site:   &SiteRow,
+    ask:    &crate::gateway::SiteAuth,
+    user:   &str,
+    client: std::net::IpAddr,
+    result: &str,
+) {
+    use crate::logging::{clip, field};
+    state.logger.audit(format!(
+        "ts={} event=site-sign-in site={} realm={} user={} client={} result={}",
+        chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ"),
+        field(&site.name),
+        field(&ask.realm.name),
+        field(&clip(user, 128)),
+        client,
+        result,
+    ));
 }
 
 // ─── Step 11: forwarding ─────────────────────────────────
@@ -1951,6 +2333,8 @@ async fn load_sites(db: &SqlitePool, generation: u64) -> Result<SiteTable, sqlx:
         aliases.entry(a.site_id).or_default().push(a.name);
     }
 
+    let mut asks = load_site_auth(db).await?;
+
     let mut table = SiteTable { generation, enabled: HashMap::new(), disabled: HashSet::new() };
     for r in rows {
         let mut names = vec![r.server_name];
@@ -1977,6 +2361,7 @@ async fn load_sites(db: &SqlitePool, generation: u64) -> Result<SiteTable, sqlx:
             rule_engine:    r.rule_engine,
             smart_protect:  r.smart_protect.unwrap_or(false),
             backend_tls_insecure: r.backend_tls_insecure,
+            auth:           asks.remove(&r.id),
         });
         // The oldest site keeps a name two of them claim. The forms refuse
         // that, so it is a tiebreak for a database edited by hand.
@@ -1988,6 +2373,89 @@ async fn load_sites(db: &SqlitePool, generation: u64) -> Result<SiteTable, sqlx:
     // also lists it.
     table.disabled.retain(|n| !table.enabled.contains_key(n));
     Ok(table)
+}
+
+/// What each site asks of its visitors, by site: its realm with that realm's
+/// accounts, the paths, and the headers.
+///
+/// Read with the sites and held with them, so a request that carries a session
+/// is checked against memory. Accounts are few — these are the people let into
+/// an admin panel, not a site's customers — and a realm is shared by reference
+/// between the sites that use it.
+async fn load_site_auth(db: &SqlitePool) -> Result<HashMap<i64, crate::gateway::SiteAuth>, sqlx::Error> {
+    use crate::gateway::{Kind, LdapConfig, LocalUser, Realm, SiteAuth};
+    use std::time::Duration;
+
+    let sites = sqlx::query!(
+        r#"SELECT site_id as "site_id!", realm_id as "realm_id!", paths as "paths!", bypass as "bypass!",
+                  basic as "basic!: bool", user_header as "user_header!", groups_header as "groups_header!"
+           FROM site_auth"#
+    )
+    .fetch_all(db)
+    .await?;
+    if sites.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let mut users: HashMap<i64, HashMap<String, LocalUser>> = HashMap::new();
+    for u in sqlx::query!(
+        r#"SELECT realm_id as "realm_id!", username as "username!", password_hash as "password_hash!",
+                  enabled as "enabled!: bool", epoch as "epoch!"
+           FROM auth_users"#
+    )
+    .fetch_all(db)
+    .await?
+    {
+        users.entry(u.realm_id).or_default().insert(
+            u.username,
+            LocalUser { password_hash: u.password_hash, enabled: u.enabled, epoch: u.epoch },
+        );
+    }
+
+    let mut realms: HashMap<i64, Arc<Realm>> = HashMap::new();
+    for r in sqlx::query!(
+        r#"SELECT id as "id!", name as "name!", kind as "kind!", session_minutes as "session_minutes!",
+                  idle_minutes as "idle_minutes!", epoch as "epoch!", config as "config!"
+           FROM auth_realms"#
+    )
+    .fetch_all(db)
+    .await?
+    {
+        let kind = if r.kind == "ldap" {
+            // A directory whose settings do not read is one nobody can sign in
+            // through, which fails closed: the site still asks.
+            Kind::Ldap(serde_json::from_str::<LdapConfig>(&r.config).unwrap_or_default())
+        } else {
+            Kind::Local
+        };
+        realms.insert(r.id, Arc::new(Realm {
+            id:      r.id,
+            name:    r.name,
+            kind,
+            session: Duration::from_secs(r.session_minutes.max(1) as u64 * 60),
+            idle:    Duration::from_secs(r.idle_minutes.max(1) as u64 * 60),
+            epoch:   r.epoch,
+            users:   users.remove(&r.id).unwrap_or_default(),
+        }));
+    }
+
+    let header = |name: &str, default: &'static str| {
+        HeaderName::from_bytes(name.trim().to_ascii_lowercase().as_bytes())
+            .unwrap_or(HeaderName::from_static(default))
+    };
+    let mut out = HashMap::new();
+    for s in sites {
+        let Some(realm) = realms.get(&s.realm_id) else { continue };
+        out.insert(s.site_id, SiteAuth {
+            realm:         realm.clone(),
+            protect:       crate::gateway::parse_prefixes(&s.paths).0,
+            bypass:        crate::gateway::parse_prefixes(&s.bypass).0,
+            basic:         s.basic,
+            user_header:   header(&s.user_header, "x-forwarded-user"),
+            groups_header: header(&s.groups_header, "x-forwarded-groups"),
+        });
+    }
+    Ok(out)
 }
 
 // ─── maintenance_response ────────────────────────────────
@@ -2421,6 +2889,37 @@ mod tests {
         }
         assert_eq!(got(&h, "x-forwarded-proto"), "http", "the client's own word for the scheme was kept");
         assert_eq!(got(&h, "accept"), "text/html");
+    }
+
+    #[test]
+    fn a_sign_in_posted_from_another_sites_page_is_told_apart() {
+        let from = |origin: Option<&'static str>| {
+            let mut h = HeaderMap::new();
+            h.insert("host", HeaderValue::from_static("shop.example.com"));
+            if let Some(o) = origin {
+                h.insert("origin", HeaderValue::from_static(o));
+            }
+            posted_from_elsewhere(&h)
+        };
+        assert!(!from(Some("https://shop.example.com")));
+        assert!(!from(Some("https://SHOP.example.com")));
+        assert!(from(Some("https://evil.example")));
+        assert!(from(Some("https://shop.example.com.evil.example")));
+        assert!(from(Some("null")), "a sandboxed page is not this site's page");
+        // A client that does not say where it posts from is not a browser, and
+        // is not refused for that.
+        assert!(!from(None));
+    }
+
+    #[test]
+    fn after_signing_in_a_visitor_lands_on_the_site_and_not_back_at_the_form() {
+        for dest in ["/", "/admin/users?page=2", "/a/b"] {
+            assert!(lands_on_the_site(dest), "{dest}");
+        }
+        for dest in ["//evil.example/", "/\\evil.example", "https://evil.example/", "",
+                     "/__easywaf/login", "/__easywaf/logout", "/__easywaf/login?x=1"] {
+            assert!(!lands_on_the_site(dest), "{dest:?}");
+        }
     }
 
     #[test]
