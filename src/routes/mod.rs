@@ -13,6 +13,7 @@ pub mod geoip;
 pub mod iplists;
 pub mod login;
 pub mod policy;
+pub mod realms;
 pub mod rules;
 pub mod settings;
 pub mod setup;

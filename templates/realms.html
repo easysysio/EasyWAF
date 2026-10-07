@@ -1,0 +1,159 @@
+{% extends "layout_default.html" %}
+
+{% block content %}
+{% if result == "failed" %}
+<div class="alert alert-danger alert-dismissible">
+    <button type="button" class="close" data-dismiss="alert">&times;</button>
+    {{ msg }}
+</div>
+{% endif %}
+{% if result == "success" %}
+<div class="alert alert-success alert-dismissible">
+    <button type="button" class="close" data-dismiss="alert">&times;</button>
+    {{ msg }}
+</div>
+{% endif %}
+
+<div class="row">
+    <div class="col-lg-11">
+
+        <div class="alert alert-info">
+            <i class="fa fa-id-badge fa-fw"></i>
+            <strong>A realm is where the people who sign in to a site come from</strong> —
+            accounts kept here, or a directory — and how long a sign-in lasts. A site
+            chooses a realm on its own page, and several sites can share one.
+            <br>
+            These are not EasyWAF's own accounts. Nobody in a realm can sign in to this
+            interface, and nobody under <a href="/accounts">Accounts</a> can sign in to a
+            site.
+        </div>
+
+        <!-- ── The realms ──────────────────────────────────── -->
+        <div class="panel panel-default">
+            <div class="panel-heading"><h4><i class="fa fa-id-badge"></i> Sign-in Realms</h4></div>
+            <div class="panel-body">
+                {% if realms %}
+                <table class="table table-hover" style="margin-bottom:0">
+                    <thead>
+                        <tr>
+                            <th>Realm</th>
+                            <th>Identities</th>
+                            <th>A sign-in lasts</th>
+                            <th>Asked for by</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    {% for r in realms %}
+                        <tr>
+                            <td><a href="/realms/{{ r.name | urlencode }}"><strong>{{ r.name }}</strong></a></td>
+                            <td>
+                                {% if r.kind == "ldap" %}
+                                <span class="label label-primary">directory</span>
+                                {% else %}
+                                {{ r.accounts }} account{% if r.accounts != 1 %}s{% endif %} kept here
+                                {% if r.accounts == 0 %}
+                                <span class="label label-warning" title="Nobody can sign in through a realm with no accounts">nobody can sign in</span>
+                                {% endif %}
+                                {% endif %}
+                            </td>
+                            <td>{{ r.session_minutes }} min, {{ r.idle_minutes }} unused</td>
+                            <td>
+                                {% if r.sites %}
+                                {% for s in r.sites %}<a href="/sites/{{ s | urlencode }}/edit">{{ s }}</a>{% if not loop.last %}, {% endif %}{% endfor %}
+                                {% else %}
+                                <span class="text-muted">no site yet</span>
+                                {% endif %}
+                            </td>
+                            <td class="text-right">
+                                <a href="/realms/{{ r.name | urlencode }}" class="btn btn-default btn-xs">
+                                    <i class="fa fa-cog"></i> Open</a>
+                            </td>
+                        </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+                {% else %}
+                <p class="text-muted" style="margin:0">
+                    There are no realms, so no site can ask anybody to sign in yet. Create
+                    one below.
+                </p>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- ── A new one ───────────────────────────────────── -->
+        <div class="panel panel-default">
+            <div class="panel-heading"><h4><i class="fa fa-plus"></i> Create a realm</h4></div>
+            <div class="panel-body">
+                <form method="post" action="/realms/create">
+                    <div class="row">
+                        <div class="col-sm-4">
+                            <div class="form-group">
+                                <label>Name</label>
+                                <input type="text" class="form-control" name="name" placeholder="staff" required maxlength="64">
+                            </div>
+                        </div>
+                        <div class="col-sm-4">
+                            <div class="form-group">
+                                <label>A sign-in lasts <small class="text-muted">(minutes)</small></label>
+                                <input type="number" class="form-control" name="session_minutes" value="480" min="5" max="43200" required>
+                            </div>
+                        </div>
+                        <div class="col-sm-4">
+                            <div class="form-group">
+                                <label>… or this long unused <small class="text-muted">(minutes)</small></label>
+                                <input type="number" class="form-control" name="idle_minutes" value="60" min="5" max="43200" required>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Identities come from</label>
+                        <div class="radio" style="margin-top:0">
+                            <label>
+                                <input type="radio" name="kind" value="local" checked id="kindLocal">
+                                <strong>Accounts kept here</strong> — names and passwords you add on the
+                                realm's page. The whole feature for an admin panel or a home lab.
+                            </label>
+                        </div>
+                        <div class="radio">
+                            <label>
+                                <input type="radio" name="kind" value="ldap" id="kindLdap">
+                                <strong>A directory</strong> — LDAP or Active Directory, asked at each
+                                sign-in.
+                            </label>
+                        </div>
+                    </div>
+
+                    <div id="ldapFields" style="display:none">
+                        {% include "_ldap_fields.html" %}
+                    </div>
+
+                    <button type="submit" class="btn btn-success">
+                        <i class="fa fa-plus"></i> Create Realm
+                    </button>
+                </form>
+            </div>
+        </div>
+
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// The directory's fields are shown, and required, only for a directory.
+(function () {
+    var box = document.getElementById('ldapFields');
+    function show() {
+        var on = document.getElementById('kindLdap').checked;
+        box.style.display = on ? '' : 'none';
+        box.querySelectorAll('[data-required]').forEach(function (el) { el.required = on; });
+    }
+    document.getElementById('kindLocal').addEventListener('change', show);
+    document.getElementById('kindLdap').addEventListener('change', show);
+    show();
+})();
+</script>
+{% endblock %}

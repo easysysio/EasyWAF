@@ -1,0 +1,92 @@
+{# A directory's settings, shared by the page that creates a realm and the page
+   that edits one.
+
+     ldap               the stored settings, or undefined while creating
+     has_bind_password  whether a search password is stored; it is never shown
+     default_filter     the filter used when the field is left empty
+#}
+<div class="row">
+    <div class="col-sm-6">
+        <div class="form-group">
+            <label>Address</label>
+            <input type="text" class="form-control" name="ldap_url" data-required
+                   value="{{ ldap.url | default(value='') }}" placeholder="ldaps://dc.example.com"
+                   spellcheck="false" style="font-family:monospace">
+            <p class="help-block">
+                <code>ldaps://</code> is encrypted from the start. <code>ldap://</code> is
+                not, unless StartTLS is ticked — and without it every password typed
+                crosses the network in the clear.
+            </p>
+        </div>
+    </div>
+    <div class="col-sm-6">
+        <div class="form-group">
+            <label>Where to look for users <small class="text-muted">(base DN)</small></label>
+            <input type="text" class="form-control" name="ldap_base_dn" data-required
+                   value="{{ ldap.base_dn | default(value='') }}" placeholder="ou=people,dc=example,dc=com"
+                   spellcheck="false" style="font-family:monospace">
+        </div>
+        <div class="checkbox" style="margin-top:0">
+            <label>
+                <input type="checkbox" name="ldap_starttls" value="1"
+                       {% if ldap.starttls | default(value=false) %}checked{% endif %}>
+                Upgrade an <code>ldap://</code> connection with <strong>StartTLS</strong>
+            </label>
+        </div>
+        <div class="checkbox">
+            <label>
+                <input type="checkbox" name="ldap_skip_verify" value="1"
+                       {% if ldap and not ldap.verify_tls %}checked{% endif %}>
+                Do not verify the directory's certificate
+                <small class="text-muted">— for a self-signed one, on a network you trust</small>
+            </label>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-sm-6">
+        <div class="form-group">
+            <label>Search as <small class="text-muted">(bind DN — empty searches anonymously)</small></label>
+            <input type="text" class="form-control" name="ldap_bind_dn"
+                   value="{{ ldap.bind_dn | default(value='') }}" placeholder="cn=easywaf,ou=services,dc=example,dc=com"
+                   spellcheck="false" style="font-family:monospace">
+        </div>
+    </div>
+    <div class="col-sm-6">
+        <div class="form-group">
+            <label>Its password</label>
+            <input type="password" class="form-control" name="ldap_bind_password" autocomplete="new-password"
+                   placeholder="{% if has_bind_password | default(value=false) %}stored — leave empty to keep it{% endif %}">
+            <p class="help-block">
+                Stored in EasyWAF's database, as certificate keys are. Give this account
+                the right to search and nothing else.
+            </p>
+        </div>
+    </div>
+</div>
+
+<div class="form-group">
+    <label>Who may sign in <small class="text-muted">(user filter)</small></label>
+    <input type="text" class="form-control" name="ldap_user_filter"
+           value="{{ ldap.user_filter | default(value=default_filter) }}"
+           spellcheck="false" style="font-family:monospace">
+    <p class="help-block">
+        The search that finds one person. <code>{user}</code> is the name they type. It
+        is also the only say over <em>who</em> may sign in: add a group to it and only
+        that group can —
+        <code>(&amp;(uid={user})(memberOf=cn=staff,ou=groups,dc=example,dc=com))</code>.
+        For Active Directory the name is <code>sAMAccountName</code>.
+    </p>
+</div>
+
+<div class="form-group">
+    <label>Groups attribute <small class="text-muted">(optional)</small></label>
+    <input type="text" class="form-control" name="ldap_groups_attribute" style="max-width:320px"
+           value="{{ ldap.groups_attribute | default(value='') }}" placeholder="memberOf"
+           spellcheck="false">
+    <p class="help-block">
+        The attribute of a person's entry that lists their groups. When set, the
+        application is told them, beside the name.
+    </p>
+</div>

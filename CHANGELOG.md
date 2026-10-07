@@ -12,6 +12,7 @@ Version bumps and tags are created only after explicit approval.
 - **A site can ask its visitors to sign in.** The whole site or chosen paths, with paths that are never asked, so `/admin` can need a sign-in while an API and a sync client's WebDAV do not. The application behind needs no change, and is told who the visitor is in a header.
 - Names and passwords come from a **realm**: accounts kept in EasyWAF, or a directory over LDAP, LDAPS or StartTLS. These are not the accounts that open EasyWAF's own interface, and cannot be.
 - A sign-in lasts eight hours, or one hour unused, unless the realm says otherwise. Disabling an account, changing its password or signing everyone out ends sessions at once.
+- **Settings → Sign-in Realms** makes and edits realms: a realm's accounts, a directory's connection with a *Try a sign-in* button that says what the directory answered, and *Sign everyone out*. A site chooses its realm, its paths and its headers under **Sign-in** on its own page.
 - **HTTP Basic** can be accepted as well, for clients that cannot fill in a form.
 - A visitor who has signed in is not also shown a CAPTCHA. Signing in never raises what the rules allow: a signed-in request is inspected and blocked like any other.
 - Sign-ins, refusals and sign-outs are in the audit log. Traffic Monitor and the flow line name a signed-in visitor (`user=`), and the flow line has a new verdict, `unauthenticated`, for a request sent to the sign-in page.

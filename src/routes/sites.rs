@@ -125,6 +125,172 @@ pub struct SiteForm {
     /// Create-form only: the page to return to, when the site is created from
     /// somewhere other than the sites list.
     pub back:           Option<String>,
+    /// The realm visitors sign in with, by name. Empty asks nobody.
+    pub auth_realm:     Option<String>,
+    /// Path prefixes that need a sign-in, and ones that never do.
+    pub auth_paths:     Option<String>,
+    pub auth_bypass:    Option<String>,
+    pub auth_basic:     Option<String>,
+    pub auth_user_header:   Option<String>,
+    pub auth_groups_header: Option<String>,
+}
+
+// ─── Sign-in ─────────────────────────────────────────────
+
+/// What a site asks of its visitors, as its page shows and edits it.
+#[derive(Debug, Serialize, Default, PartialEq)]
+pub struct SignIn {
+    /// The realm's name. Empty when the site asks nobody.
+    pub realm:         String,
+    pub paths:         String,
+    pub bypass:        String,
+    pub basic:         bool,
+    pub user_header:   String,
+    pub groups_header: String,
+}
+
+const DEFAULT_USER_HEADER: &str = "X-Forwarded-User";
+const DEFAULT_GROUPS_HEADER: &str = "X-Forwarded-Groups";
+
+/// Headers the proxy sets itself. Naming the visitor in one of them would have
+/// two things writing the same header.
+const HEADERS_ALREADY_SET: &[&str] =
+    &["x-forwarded-for", "x-forwarded-proto", "x-forwarded-host", "x-real-ip"];
+
+/// The sign-in settings typed on a site's form, checked. `None` when no realm
+/// is chosen — the site asks nobody.
+///
+/// Checked before anything is saved, like the ports, so a refused field leaves
+/// the site as it was.
+fn read_sign_in(form: &SiteForm) -> std::result::Result<Option<SignIn>, String> {
+    let text = |v: &Option<String>| v.as_deref().unwrap_or("").trim().to_string();
+    let realm = text(&form.auth_realm);
+    if realm.is_empty() {
+        return Ok(None);
+    }
+
+    let prefixes = |raw: &Option<String>, what: &str| {
+        let (ok, bad) = crate::gateway::parse_prefixes(raw.as_deref().unwrap_or(""));
+        if bad.is_empty() {
+            Ok(ok.join("\n"))
+        } else {
+            Err(format!("{what}: {} — a path begins with / and has no spaces, ? or #.", bad.join(", ")))
+        }
+    };
+    let paths  = prefixes(&form.auth_paths, "Not a path to ask for a sign-in on")?;
+    let bypass = prefixes(&form.auth_bypass, "Not a path to leave open")?;
+
+    let header = |raw: &Option<String>, default: &str, what: &str| {
+        let name = match text(raw) {
+            n if n.is_empty() => default.to_string(),
+            n => n,
+        };
+        let lower = name.to_ascii_lowercase();
+        // An X- name only: the visitor's name must not be written over a
+        // header that means something to HTTP.
+        let valid = axum::http::HeaderName::from_bytes(lower.as_bytes()).is_ok()
+            && lower.starts_with("x-")
+            && !HEADERS_ALREADY_SET.contains(&lower.as_str());
+        if valid {
+            Ok(name)
+        } else {
+            Err(format!("{what} must be a header of its own beginning X-, such as {default}."))
+        }
+    };
+    let user_header   = header(&form.auth_user_header, DEFAULT_USER_HEADER, "The header for the visitor's name")?;
+    let groups_header = header(&form.auth_groups_header, DEFAULT_GROUPS_HEADER, "The header for their groups")?;
+    if user_header.eq_ignore_ascii_case(&groups_header) {
+        return Err("The name and the groups need a header each.".to_string());
+    }
+
+    Ok(Some(SignIn { realm, paths, bypass, basic: form.auth_basic.is_some(), user_header, groups_header }))
+}
+
+/// Store what a site asks of its visitors, or stop asking. Returns what the
+/// administrator should be told about the result: a setting that saves and
+/// then turns every visitor away is worth a sentence at the time.
+async fn save_sign_in(
+    db: &SqlitePool,
+    site_id: i64,
+    choice: Option<&SignIn>,
+) -> Result<std::result::Result<Vec<String>, String>> {
+    let Some(s) = choice else {
+        sqlx::query!("DELETE FROM site_auth WHERE site_id = ?", site_id).execute(db).await?;
+        return Ok(Ok(Vec::new()));
+    };
+    let realm = sqlx::query!(
+        r#"SELECT id as "id!", kind as "kind!",
+                  (SELECT COUNT(*) FROM auth_users u WHERE u.realm_id = auth_realms.id AND u.enabled = 1)
+                      as "accounts!: i64"
+           FROM auth_realms WHERE name = ?"#,
+        s.realm
+    )
+    .fetch_optional(db)
+    .await?;
+    let Some(realm) = realm else {
+        return Ok(Err(format!("There is no sign-in realm named {}.", s.realm)));
+    };
+
+    sqlx::query!(
+        "INSERT INTO site_auth (site_id, realm_id, paths, bypass, basic, user_header, groups_header)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(site_id) DO UPDATE SET
+             realm_id = excluded.realm_id, paths = excluded.paths, bypass = excluded.bypass,
+             basic = excluded.basic, user_header = excluded.user_header,
+             groups_header = excluded.groups_header",
+        site_id, realm.id, s.paths, s.bypass, s.basic, s.user_header, s.groups_header
+    )
+    .execute(db)
+    .await?;
+
+    let mut notes = Vec::new();
+    if realm.kind == "local" && realm.accounts == 0 {
+        notes.push(format!(
+            "The realm {} has no account that can sign in, so every visitor asked is turned away — add one              under Settings → Sign-in Realms", s.realm));
+    }
+    let https: i64 = sqlx::query_scalar!(
+        r#"SELECT COUNT(*) as "n!: i64" FROM sites s JOIN certs c ON c.id = s.cert_id
+           WHERE s.id = ? AND s.tls_port IS NOT NULL
+             AND trim(COALESCE(c.cert_pem, '')) <> '' AND trim(COALESCE(c.key_pem, '')) <> ''"#,
+        site_id
+    )
+    .fetch_one(db)
+    .await?;
+    if https == 0 && crate::routes::settings::get_trusted_proxies(db).await.trim().is_empty() {
+        notes.push(
+            "A sign-in is only asked for over HTTPS, and this site has no HTTPS port with a certificate:              visitors to a path that needs one are refused until it does".to_string());
+    }
+    Ok(Ok(notes))
+}
+
+/// What a site asks of its visitors now, for its form.
+async fn fetch_sign_in(db: &SqlitePool, site_id: i64) -> Result<SignIn> {
+    let row = sqlx::query!(
+        r#"SELECT r.name as "realm!", a.paths as "paths!", a.bypass as "bypass!", a.basic as "basic!: bool",
+                  a.user_header as "user_header!", a.groups_header as "groups_header!"
+           FROM site_auth a JOIN auth_realms r ON r.id = a.realm_id WHERE a.site_id = ?"#,
+        site_id
+    )
+    .fetch_optional(db)
+    .await?;
+    Ok(match row {
+        Some(r) => SignIn {
+            realm: r.realm, paths: r.paths, bypass: r.bypass, basic: r.basic,
+            user_header: r.user_header, groups_header: r.groups_header,
+        },
+        None => SignIn {
+            user_header: DEFAULT_USER_HEADER.to_string(),
+            groups_header: DEFAULT_GROUPS_HEADER.to_string(),
+            ..SignIn::default()
+        },
+    })
+}
+
+/// The realms a site can choose from, by name.
+async fn fetch_realms(db: &SqlitePool) -> Result<Vec<String>> {
+    Ok(sqlx::query_scalar!(r#"SELECT name as "name!" FROM auth_realms ORDER BY name"#)
+        .fetch_all(db)
+        .await?)
 }
 
 #[derive(Deserialize)]
@@ -180,6 +346,7 @@ pub async fn get_site_new(
     // a checkbox whose only outcome is an error, so the form says what is
     // missing instead.
     ctx.insert("acme_configured", &crate::acme::config(&state.db).await?.is_some());
+    ctx.insert("realms",    &fetch_realms(&state.db).await?);
 
     Ok((jar, Html(state.tera.render("site_create.html", &ctx)?)).into_response())
 }
@@ -271,6 +438,17 @@ pub async fn post_site_create(
                               "A site needs somewhere to forward requests to");
     }
 
+    // And the sign-in settings, for the same reason.
+    let sign_in = match read_sign_in(&form) {
+        Ok(s)  => s,
+        Err(e) => return flash_redirect(&back, "failed", &e),
+    };
+    if let Some(s) = &sign_in
+        && !fetch_realms(&state.db).await?.contains(&s.realm)
+    {
+        return flash_redirect(&back, "failed", &format!("There is no sign-in realm named {}.", s.realm));
+    }
+
     let site_id = sqlx::query!(
         "INSERT INTO sites
          (name, server_name, listen_port, tls_port, cert_id, tls_redirect,
@@ -295,13 +473,20 @@ pub async fn post_site_create(
 
     save_extra_ports(&state.db, site_id, &extra_http, &extra_https).await?;
     save_aliases(&state.db, site_id, &aliases).await?;
+    // What the administrator should know about the sign-in they just asked
+    // for, added to whichever message this ends with.
+    let noted = match save_sign_in(&state.db, site_id, sign_in.as_ref()).await? {
+        Ok(notes) if !notes.is_empty() => format!(". Note: {}", notes.join(". Note: ")),
+        Ok(_)   => String::new(),
+        Err(e)  => format!(". Sign-in was not switched on: {e}"),
+    };
 
     // Before any certificate request: HTTP-01 validation arrives on a port that
     // has to be listening, and the challenge is answered by the proxy.
     announce_site(&state, listen_port, tls_port, &extra_http, &extra_https).await;
 
     if form.acme.is_none() {
-        return flash_redirect(&back, "success", &format!("Site {} created successfully", name));
+        return flash_redirect(&back, "success", &format!("Site {} created successfully{noted}", name));
     }
 
     // The site is created either way. Issuing talks to a CA over the network
@@ -313,7 +498,7 @@ pub async fn post_site_create(
         return flash_redirect(
             &back,
             "failed",
-            &format!("Site {name} was created, but no certificate was issued: {e}"),
+            &format!("Site {name} was created, but no certificate was issued: {e}{noted}"),
         );
     }
 
@@ -327,7 +512,7 @@ pub async fn post_site_create(
              set an HTTPS port on the site to serve it"
         ),
     };
-    flash_redirect(&back, "success", &msg)
+    flash_redirect(&back, "success", &format!("{msg}{noted}"))
 }
 
 /// Issue a certificate for a site that has just been created, and assign it.
@@ -389,6 +574,8 @@ pub async fn get_site_edit(
     ctx.insert("site",      &site);
     ctx.insert("policies",  &policies);
     ctx.insert("certs",     &fetch_certs(&state).await?);
+    ctx.insert("realms",    &fetch_realms(&state.db).await?);
+    ctx.insert("sign_in",   &fetch_sign_in(&state.db, site.id).await?);
     // The request button is offered only when there is a contact address to
     // request with, the same as on the create form.
     ctx.insert("acme_configured", &crate::acme::config(&state.db).await?.is_some());
@@ -478,6 +665,15 @@ pub async fn post_site_update(
         Ok(a)  => a,
         Err(e) => return flash_redirect("/sites", "failed", &e),
     };
+    let sign_in = match read_sign_in(&form) {
+        Ok(s)  => s,
+        Err(e) => return flash_redirect("/sites", "failed", &e),
+    };
+    if let Some(s) = &sign_in
+        && !fetch_realms(&state.db).await?.contains(&s.realm)
+    {
+        return flash_redirect("/sites", "failed", &format!("There is no sign-in realm named {}.", s.realm));
+    }
     if let Some(e) = alias_conflict(&state.db, Some(site_id), &aliases).await? {
         return flash_redirect("/sites", "failed", &e);
     }
@@ -544,6 +740,16 @@ pub async fn post_site_update(
             name, server_name, aliases.len(), if aliases.len() == 1 { "" } else { "es" }
         )
     };
+
+    match save_sign_in(&state.db, site_id, sign_in.as_ref()).await? {
+        Ok(notes) => for note in notes {
+            msg.push_str(&format!(". Note: {note}"));
+        },
+        Err(e) => msg.push_str(&format!(". Sign-in was not changed: {e}")),
+    }
+    if !msg.ends_with('.') {
+        msg.push('.');
+    }
 
     // What happened to the pool, named. A backend removed by editing a field
     // is the one change on this form that takes something out of service, and
@@ -1654,6 +1860,60 @@ mod tests {
     fn an_empty_field_is_no_aliases_not_an_error() {
         assert_eq!(parse_aliases("", "example.com").unwrap(), Vec::<String>::new());
         assert_eq!(parse_aliases("  \n , \n ", "example.com").unwrap(), Vec::<String>::new());
+    }
+
+    /// A site form holding only what a test sets about signing in.
+    fn asking(realm: &str, paths: &str, bypass: &str) -> SiteForm {
+        SiteForm {
+            name: None, server_name: "shop.example.com".into(), aliases: None,
+            target: "http://127.0.0.1:3000".into(), listen_port: None, tls_port: None, cert_id: None,
+            tls_redirect: None, waf_policy_id: None, hsts: None, x_frame: None, x_frame_value: None,
+            x_content_type: None, xss_protection: None, affinity: None, backend_tls_insecure: None,
+            acme: None, back: None,
+            auth_realm: Some(realm.into()), auth_paths: Some(paths.into()), auth_bypass: Some(bypass.into()),
+            auth_basic: None, auth_user_header: None, auth_groups_header: None,
+        }
+    }
+
+    #[test]
+    fn a_site_with_no_realm_chosen_asks_nobody() {
+        assert_eq!(read_sign_in(&asking("", "/admin", "")), Ok(None));
+        // A form that has no sign-in fields at all — the tutorial's — is the same.
+        let bare = SiteForm { auth_realm: None, auth_paths: None, auth_bypass: None, ..asking("", "", "") };
+        assert_eq!(read_sign_in(&bare), Ok(None));
+    }
+
+    #[test]
+    fn sign_in_settings_are_read_as_typed_with_the_usual_headers() {
+        let s = read_sign_in(&asking("staff", "/admin\n /settings ", "/api")).unwrap().unwrap();
+        assert_eq!(s.realm, "staff");
+        assert_eq!(s.paths, "/admin\n/settings");
+        assert_eq!(s.bypass, "/api");
+        assert!(!s.basic);
+        assert_eq!((s.user_header.as_str(), s.groups_header.as_str()), ("X-Forwarded-User", "X-Forwarded-Groups"));
+    }
+
+    #[test]
+    fn a_path_that_is_not_one_is_refused_and_named() {
+        let e = read_sign_in(&asking("staff", "/admin\nsettings", "")).unwrap_err();
+        assert!(e.contains("settings"), "{e}");
+        assert!(read_sign_in(&asking("staff", "", "/api?x=1")).is_err());
+    }
+
+    /// The visitor's name is written into this header on every request. It
+    /// must not be one that already means something.
+    #[test]
+    fn the_identity_header_must_be_one_of_its_own() {
+        let with = |user: &str, groups: &str| read_sign_in(&SiteForm {
+            auth_user_header: Some(user.into()), auth_groups_header: Some(groups.into()),
+            ..asking("staff", "", "")
+        });
+        assert!(with("X-Remote-User", "X-Remote-Groups").is_ok());
+        for bad in ["Host", "Cookie", "Authorization", "X-Forwarded-For", "x-real-ip", "X Forwarded User", "X-Bad:Name"] {
+            assert!(with(bad, "X-Forwarded-Groups").is_err(), "{bad} was accepted for the name");
+            assert!(with("X-Forwarded-User", bad).is_err(), "{bad} was accepted for the groups");
+        }
+        assert!(with("X-Who", "x-who").is_err(), "one header for two things");
     }
 
     /// A site's own hostname is held to what its aliases are. What a form can

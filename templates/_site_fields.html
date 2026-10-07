@@ -136,3 +136,103 @@
                             address — many clients share one address behind NAT.
                         </p>
                     </div>
+
+                    {# Sign-in. Offered only once there is a realm to choose:
+                       before that the one useful thing the form can say is
+                       where to make one.
+
+                         realms    the realms that exist, by name
+                         sign_in   what this site asks now; undefined while
+                                   one is being created #}
+                    <hr>
+                    <h4 style="margin-top:0"><i class="fa fa-id-badge"></i> Sign-in</h4>
+                    {% if realms %}
+                    <div class="form-group">
+                        <label>Ask visitors to sign in with</label>
+                        <select class="form-control" name="auth_realm" style="max-width:360px">
+                            <option value="">— nobody is asked —</option>
+                            {% for r in realms %}
+                            <option value="{{ r }}" {% if sign_in and sign_in.realm == r %}selected{% endif %}>{{ r }}</option>
+                            {% endfor %}
+                        </select>
+                        <p class="help-block">
+                            A realm is where names and passwords come from — see
+                            <a href="/realms">Settings → Sign-in Realms</a>. The application behind
+                            needs no change: it is told who the visitor is in a header.
+                        </p>
+                    </div>
+
+                    <div class="alert alert-warning">
+                        <i class="fa fa-exclamation-triangle"></i>
+                        <strong>Asking on the whole site breaks anything that is not a person in a
+                        browser.</strong> A sync client, a mobile app, WebDAV, CalDAV, an API or a
+                        webhook does not fill in a form: it gets a sign-in page where it expected
+                        an answer, and fails without saying why. In front of Nextcloud or Immich
+                        that is every desktop and phone client at once. Name the paths that need a
+                        sign-in — <code>/admin</code>, <code>/settings</code> — or leave the ones
+                        machines use open below.
+                    </div>
+
+                    <div class="row">
+                        <div class="col-sm-6">
+                            <div class="form-group">
+                                <label>Paths that need a sign-in
+                                    <small class="text-muted">(one per line — empty means the whole site)</small></label>
+                                <textarea class="form-control" name="auth_paths" rows="3" spellcheck="false"
+                                          style="font-family: monospace; font-size: 12px"
+                                          placeholder="/admin&#10;/settings">{{ sign_in.paths | default(value='') }}</textarea>
+                            </div>
+                        </div>
+                        <div class="col-sm-6">
+                            <div class="form-group">
+                                <label>Paths left open
+                                    <small class="text-muted">(never asked, whatever is on the left)</small></label>
+                                <textarea class="form-control" name="auth_bypass" rows="3" spellcheck="false"
+                                          style="font-family: monospace; font-size: 12px"
+                                          placeholder="/api&#10;/remote.php&#10;/.well-known">{{ sign_in.bypass | default(value='') }}</textarea>
+                            </div>
+                        </div>
+                    </div>
+                    <p class="help-block" style="margin-top:-6px">
+                        A path covers itself and everything below it: <code>/admin</code> covers
+                        <code>/admin/users</code>, not <code>/administrator</code>. It is matched on
+                        the path as the application reads it, so <code>//admin</code> and
+                        <code>/x/../admin</code> are <code>/admin</code>.
+                    </p>
+
+                    <div class="checkbox">
+                        <label>
+                            <input type="checkbox" name="auth_basic" value="1"
+                                   {% if sign_in.basic | default(value=false) %}checked{% endif %}>
+                            <strong>Accept HTTP Basic as well</strong> — for <code>curl</code>, scripts
+                            and clients that can send a name and password but cannot fill in a form
+                        </label>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-sm-6">
+                            <div class="form-group">
+                                <label>Tell the application the visitor's name in</label>
+                                <input type="text" class="form-control" name="auth_user_header" spellcheck="false"
+                                       value="{{ sign_in.user_header | default(value='X-Forwarded-User') }}">
+                            </div>
+                        </div>
+                        <div class="col-sm-6">
+                            <div class="form-group">
+                                <label>… and their groups in <small class="text-muted">(a directory's, when it gives them)</small></label>
+                                <input type="text" class="form-control" name="auth_groups_header" spellcheck="false"
+                                       value="{{ sign_in.groups_header | default(value='X-Forwarded-Groups') }}">
+                            </div>
+                        </div>
+                    </div>
+                    <p class="help-block" style="margin-top:-6px">
+                        Both are removed from every request to this site before they are set, so a
+                        visitor cannot send one. A sign-in is asked for over HTTPS only.
+                    </p>
+                    {% else %}
+                    <p class="text-muted">
+                        Visitors can be asked to sign in before they reach this site, or chosen
+                        paths of it. There is no realm to sign in with yet — make one under
+                        <a href="/realms">Settings → Sign-in Realms</a>, and it is offered here.
+                    </p>
+                    {% endif %}

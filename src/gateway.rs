@@ -70,7 +70,7 @@ pub enum Kind {
 }
 
 /// How to ask a directory whether a password is somebody's.
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LdapConfig {
     /// `ldap://host[:port]` or `ldaps://host[:port]`.
@@ -78,7 +78,6 @@ pub struct LdapConfig {
     /// Upgrade an `ldap://` connection with StartTLS before anything is sent.
     pub starttls:      bool,
     /// Check the directory's certificate. On unless switched off.
-    #[serde(default = "yes")]
     pub verify_tls:    bool,
     /// The account searches are made as. Empty searches anonymously.
     pub bind_dn:       String,
@@ -87,16 +86,28 @@ pub struct LdapConfig {
     pub base_dn:       String,
     /// The search that finds one user. `{user}` is the name typed, escaped.
     /// Whatever else it requires — membership of a group — is who may sign in.
-    #[serde(default = "default_user_filter")]
     pub user_filter:   String,
     /// The attribute of a user's entry that lists their groups, for the
     /// header the application is sent. Empty sends none.
     pub groups_attribute: String,
 }
 
-fn yes() -> bool { true }
-
-fn default_user_filter() -> String { "(uid={user})".to_string() }
+/// A directory nobody has described yet: its certificate is checked, and a
+/// person is found by `uid`, which is where most directories keep the name.
+impl Default for LdapConfig {
+    fn default() -> Self {
+        Self {
+            url:              String::new(),
+            starttls:         false,
+            verify_tls:       true,
+            bind_dn:          String::new(),
+            bind_password:    String::new(),
+            base_dn:          String::new(),
+            user_filter:      "(uid={user})".to_string(),
+            groups_attribute: String::new(),
+        }
+    }
+}
 
 /// One account of a local realm, as a sign-in and a session need it.
 #[derive(Debug, Clone, PartialEq)]
@@ -956,6 +967,17 @@ mod tests {
         let (ok, bad) = parse_prefixes("/admin\n /settings/ ,/api\n\n/admin\nadmin\n/a b\n/x?y=1");
         assert_eq!(ok, ["/admin", "/settings/", "/api"]);
         assert_eq!(bad, ["admin", "/a b", "/x?y=1"]);
+    }
+
+    /// Settings stored before a field existed, or stored without one, read as
+    /// the safe value: the certificate is checked.
+    #[test]
+    fn a_directory_setting_that_is_missing_reads_as_the_safe_one() {
+        let c: LdapConfig = serde_json::from_str(r#"{"url":"ldaps://dc.example.com","base_dn":"dc=example,dc=com"}"#).unwrap();
+        assert!(c.verify_tls);
+        assert_eq!(c.user_filter, "(uid={user})");
+        assert!(!c.starttls);
+        assert!(LdapConfig::default().verify_tls);
     }
 
     #[test]

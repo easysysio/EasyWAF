@@ -1,0 +1,197 @@
+{% extends "layout_default.html" %}
+
+{% block content %}
+{% if result == "failed" %}
+<div class="alert alert-danger alert-dismissible">
+    <button type="button" class="close" data-dismiss="alert">&times;</button>
+    {{ msg }}
+</div>
+{% endif %}
+{% if result == "success" %}
+<div class="alert alert-success alert-dismissible">
+    <button type="button" class="close" data-dismiss="alert">&times;</button>
+    {{ msg }}
+</div>
+{% endif %}
+
+<div class="row">
+    <div class="col-lg-11">
+
+        <p><a href="/realms"><i class="fa fa-chevron-left"></i> Sign-in Realms</a></p>
+
+        <!-- ── Who uses it ─────────────────────────────────── -->
+        <div class="alert {% if sites %}alert-info{% else %}alert-warning{% endif %}">
+            <i class="fa fa-globe fa-fw"></i>
+            {% if sites %}
+            <strong>{{ name }}</strong> is what
+            {% for s in sites %}<a href="/sites/{{ s | urlencode }}/edit" class="alert-link">{{ s }}</a>{% if not loop.last %}, {% endif %}{% endfor %}
+            {% if sites | length == 1 %}asks its{% else %}ask their{% endif %} visitors to sign in with.
+            {% else %}
+            <strong>No site asks for a sign-in from {{ name }} yet.</strong> Choose it under
+            <em>Sign-in</em> on a site's page.
+            {% endif %}
+        </div>
+
+        <!-- ── Accounts ────────────────────────────────────── -->
+        {% if kind == "local" %}
+        <div class="panel panel-default">
+            <div class="panel-heading"><h4><i class="fa fa-users"></i> Accounts</h4></div>
+            <div class="panel-body">
+                {% if accounts %}
+                <table class="table table-hover">
+                    <thead>
+                        <tr><th>Name</th><th>Status</th><th>Last signed in</th><th style="width:1%"></th></tr>
+                    </thead>
+                    <tbody>
+                    {% for a in accounts %}
+                        <tr>
+                            <td><strong>{{ a.username }}</strong></td>
+                            <td>
+                                {% if a.enabled %}<span class="label label-success">can sign in</span>
+                                {% else %}<span class="label label-default">disabled</span>{% endif %}
+                            </td>
+                            <td>
+                                {% if a.last_login %}{{ a.last_login | utc }}
+                                {% else %}<span class="text-muted">never</span>{% endif %}
+                            </td>
+                            <td style="white-space:nowrap">
+                                <form method="post" style="display:inline-block"
+                                      action="/realms/{{ name | urlencode }}/accounts/{{ a.username | urlencode }}/password">
+                                    <input type="password" name="password" class="form-control input-sm"
+                                           style="display:inline-block;width:130px" placeholder="new password"
+                                           minlength="{{ min_length }}" autocomplete="new-password" required>
+                                    <input type="password" name="confirm_password" class="form-control input-sm"
+                                           style="display:inline-block;width:130px" placeholder="again"
+                                           minlength="{{ min_length }}" autocomplete="new-password" required>
+                                    <button type="submit" class="btn btn-default btn-sm">Set password</button>
+                                </form>
+                                <form method="post" style="display:inline-block"
+                                      action="/realms/{{ name | urlencode }}/accounts/{{ a.username | urlencode }}/toggle">
+                                    <button type="submit" class="btn btn-default btn-sm">
+                                        {% if a.enabled %}Disable{% else %}Enable{% endif %}
+                                    </button>
+                                </form>
+                                <form method="post" style="display:inline-block"
+                                      action="/realms/{{ name | urlencode }}/accounts/{{ a.username | urlencode }}/delete"
+                                      onsubmit="return confirm('Delete {{ a.username }}? They are signed out everywhere at once.')">
+                                    <button type="submit" class="btn btn-danger btn-sm"><i class="fa fa-trash"></i></button>
+                                </form>
+                            </td>
+                        </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+                <p class="help-block">
+                    Disabling an account, changing its password or deleting it signs that
+                    person out everywhere, at their next request.
+                </p>
+                {% else %}
+                <div class="alert alert-warning" style="margin-bottom:14px">
+                    <strong>Nobody can sign in through this realm yet.</strong> A site that asks
+                    for it would turn everybody away. Add an account.
+                </div>
+                {% endif %}
+
+                <form method="post" action="/realms/{{ name | urlencode }}/accounts/add" class="form-inline">
+                    <input type="text" name="username" class="form-control" placeholder="name" required maxlength="64"
+                           autocomplete="off" autocapitalize="none" spellcheck="false">
+                    <input type="password" name="password" class="form-control" placeholder="password"
+                           minlength="{{ min_length }}" autocomplete="new-password" required>
+                    <input type="password" name="confirm_password" class="form-control" placeholder="password again"
+                           minlength="{{ min_length }}" autocomplete="new-password" required>
+                    <button type="submit" class="btn btn-success"><i class="fa fa-plus"></i> Add account</button>
+                    <span class="text-muted" style="margin-left:8px">At least {{ min_length }} characters.</span>
+                </form>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- ── Settings ────────────────────────────────────── -->
+        <div class="panel panel-default">
+            <div class="panel-heading">
+                <h4><i class="fa fa-sliders"></i> {{ name }}
+                    <small>{% if kind == "ldap" %}a directory{% else %}accounts kept here{% endif %}</small></h4>
+            </div>
+            <div class="panel-body">
+                <form method="post" action="/realms/{{ name | urlencode }}/update">
+                    <div class="row">
+                        <div class="col-sm-4">
+                            <div class="form-group">
+                                <label>A sign-in lasts <small class="text-muted">(minutes)</small></label>
+                                <input type="number" class="form-control" name="session_minutes"
+                                       value="{{ session_minutes }}" min="5" max="43200" required>
+                            </div>
+                        </div>
+                        <div class="col-sm-4">
+                            <div class="form-group">
+                                <label>… or this long unused <small class="text-muted">(minutes)</small></label>
+                                <input type="number" class="form-control" name="idle_minutes"
+                                       value="{{ idle_minutes }}" min="5" max="43200" required>
+                            </div>
+                        </div>
+                    </div>
+                    {% if kind == "ldap" %}
+                    <div class="alert alert-warning">
+                        <i class="fa fa-clock-o"></i>
+                        <strong>Somebody removed from the directory stays signed in until their
+                        session ends.</strong> The directory is asked when a person signs in, not
+                        at every request. If that matters, make a sign-in short — or use
+                        <em>Sign everyone out</em> below.
+                    </div>
+                    {% include "_ldap_fields.html" %}
+                    {% endif %}
+                    <button type="submit" class="btn btn-success"><i class="fa fa-save"></i> Save</button>
+                </form>
+            </div>
+        </div>
+
+        <!-- ── Try it ──────────────────────────────────────── -->
+        {% if kind == "ldap" %}
+        <div class="panel panel-default">
+            <div class="panel-heading"><h4><i class="fa fa-plug"></i> Try a sign-in</h4></div>
+            <div class="panel-body">
+                <p class="help-block" style="margin-top:0">
+                    Asks the directory exactly as a visitor's sign-in would, with the settings
+                    as saved, and says what happened: a wrong address, a search account that
+                    cannot bind and a filter that finds nobody all look the same to a visitor.
+                    Nothing typed here is kept.
+                </p>
+                <form method="post" action="/realms/{{ name | urlencode }}/test" class="form-inline">
+                    <input type="text" name="username" class="form-control" placeholder="name" required
+                           autocomplete="off" autocapitalize="none" spellcheck="false">
+                    <input type="password" name="password" class="form-control" placeholder="password"
+                           autocomplete="off" required>
+                    <button type="submit" class="btn btn-primary"><i class="fa fa-plug"></i> Try</button>
+                </form>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- ── Ending things ───────────────────────────────── -->
+        <div class="panel panel-default">
+            <div class="panel-heading"><h4><i class="fa fa-sign-out"></i> Sign everyone out, or delete</h4></div>
+            <div class="panel-body">
+                <form method="post" action="/realms/{{ name | urlencode }}/sign-out" style="display:inline-block"
+                      onsubmit="return confirm('Sign everyone out of {{ name }}?\n\nEvery visitor signed in through it, on every site that uses it, is asked to sign in again.')">
+                    <button type="submit" class="btn btn-warning">
+                        <i class="fa fa-sign-out"></i> Sign everyone out
+                    </button>
+                </form>
+                <form method="post" action="/realms/{{ name | urlencode }}/delete" style="display:inline-block;margin-left:8px"
+                      onsubmit="return confirm('Delete the realm {{ name }}{% if kind == "local" %} and its accounts{% endif %}?')">
+                    <button type="submit" class="btn btn-danger" {% if sites %}disabled title="In use by a site"{% endif %}>
+                        <i class="fa fa-trash"></i> Delete realm
+                    </button>
+                </form>
+                {% if sites %}
+                <p class="help-block" style="margin-bottom:0">
+                    A realm a site asks for cannot be deleted: that site would go from asking
+                    everybody to sign in to asking nobody.
+                </p>
+                {% endif %}
+            </div>
+        </div>
+
+    </div>
+</div>
+{% endblock %}
