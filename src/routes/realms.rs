@@ -98,7 +98,9 @@ pub struct PasswordForm {
 
 #[derive(Debug, Deserialize)]
 pub struct TestForm {
+    #[serde(default)]
     pub username: String,
+    #[serde(default)]
     pub password: String,
 }
 
@@ -311,6 +313,19 @@ pub async fn get_realm(
     Path(name): Path<String>,
     Query(flash): Query<FlashQuery>,
 ) -> Result<Response> {
+    let page = realm_page(&state, &session, &name, flash, None).await?;
+    Ok((jar, page).into_response())
+}
+
+/// A realm's page — with what a test of its directory found, when one was
+/// just run.
+async fn realm_page(
+    state:   &AppState,
+    session: &crate::auth::SessionData,
+    name:    &str,
+    flash:   FlashQuery,
+    tested:  Option<Vec<crate::gateway::Step>>,
+) -> Result<Response> {
     let Some(r) = sqlx::query!(
         r#"SELECT id as "id!", kind as "kind!", session_minutes as "session_minutes!",
                   idle_minutes as "idle_minutes!", config as "config!"
@@ -355,7 +370,7 @@ pub async fn get_realm(
     let ldap = LdapConfig { bind_password: String::new(), ..ldap };
 
     let mut ctx = Context::new();
-    crate::routes::who_context(&mut ctx, &session);
+    crate::routes::who_context(&mut ctx, session);
     ctx.insert("title",  &format!("Realm {name}"));
     ctx.insert("url",    "/realms");
     ctx.insert("name",   &name);
@@ -369,7 +384,8 @@ pub async fn get_realm(
     ctx.insert("min_length", &MIN_PASSWORD_LEN);
     ctx.insert("result", &flash.result.unwrap_or_default());
     ctx.insert("msg",    &flash.msg.unwrap_or_default());
-    Ok((jar, Html(state.tera.render("realm.html", &ctx)?)).into_response())
+    ctx.insert("tested", &tested);
+    Ok(Html(state.tera.render("realm.html", &ctx)?).into_response())
 }
 
 // ─── post_realm_update ───────────────────────────────────
@@ -477,7 +493,7 @@ pub async fn post_realm_delete(
 /// somebody is looking, and not at the first visitor's sign-in.
 pub async fn post_realm_test(
     State(state): State<AppState>,
-    Admin(_session): Admin,
+    Admin(session): Admin,
     Path(name): Path<String>,
     Form(form): Form<TestForm>,
 ) -> Result<Response> {
@@ -490,23 +506,15 @@ pub async fn post_realm_test(
         return flash_redirect("/realms", "failed", &format!("There is no realm named {name}."));
     };
     if r.kind != "ldap" {
-        return flash_redirect(&back, "failed", "Only a directory has a connection to try.");
-    }
-    let username = form.username.trim();
-    if username.is_empty() || form.password.is_empty() {
-        return flash_redirect(&back, "failed", "Give a name and its password to try.");
+        return flash_redirect(&back, "failed", "Only a directory has a connection to test.");
     }
     let cfg: LdapConfig = serde_json::from_str(&r.config).unwrap_or_default();
-    match crate::gateway::ldap_check(&cfg, username, &form.password).await {
-        Ok(Some(who)) => flash_redirect(&back, "success", &format!(
-            "{username} can sign in.{}",
-            if who.groups.is_empty() { String::new() } else { format!(" Groups: {}.", who.groups.join(", ")) }
-        )),
-        Ok(None) => flash_redirect(&back, "failed", &format!(
-            "The directory answered, and {username} cannot sign in: the filter found nobody of that \
-             name (or more than one), or the password is not theirs.")),
-        Err(e) => flash_redirect(&back, "failed", &format!("The directory could not be asked: {e}.")),
-    }
+    // With no name it tests the connection and the filter; with a name, that
+    // the filter finds that one person; with their password too, a sign-in.
+    let steps = crate::gateway::ldap_probe(&cfg, form.username.trim(), &form.password).await;
+    // Answered with the page itself: what the directory said is shown once
+    // and is in no address somebody could copy.
+    realm_page(&state, &session, &name, FlashQuery { result: None, msg: None }, Some(steps)).await
 }
 
 // ─── Accounts of a local realm ───────────────────────────

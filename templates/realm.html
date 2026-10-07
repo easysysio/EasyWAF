@@ -145,23 +145,49 @@
             </div>
         </div>
 
-        <!-- ── Try it ──────────────────────────────────────── -->
+        <!-- ── Test it ─────────────────────────────────────── -->
         {% if kind == "ldap" %}
-        <div class="panel panel-default">
-            <div class="panel-heading"><h4><i class="fa fa-plug"></i> Try a sign-in</h4></div>
+        <div class="panel panel-default" id="test">
+            <div class="panel-heading"><h4><i class="fa fa-plug"></i> Test the directory</h4></div>
             <div class="panel-body">
+                {% if tested %}
+                <table class="table table-condensed" style="margin-bottom:15px">
+                    <tbody>
+                        {% for s in tested %}
+                        <tr class="{% if s.ok %}success{% else %}danger{% endif %}">
+                            <td style="width:28px">
+                                <i class="fa {% if s.ok %}fa-check text-success{% else %}fa-times text-danger{% endif %}"></i>
+                            </td>
+                            <td>
+                                <strong>{{ s.what }}</strong>
+                                {% if s.detail %}<br><span class="text-muted">{{ s.detail }}</span>{% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                {% endif %}
                 <p class="help-block" style="margin-top:0">
-                    Asks the directory exactly as a visitor's sign-in would, with the settings
-                    as saved, and says what happened: a wrong address, a search account that
-                    cannot bind and a filter that finds nobody all look the same to a visitor.
-                    Nothing typed here is kept.
+                    Goes through a sign-in one step at a time, with the settings <strong>as
+                    saved</strong>, and stops at the first step that fails — a wrong address, a
+                    search account that cannot bind and a filter that finds nobody all look the
+                    same to a visitor. Nothing typed here is kept.
                 </p>
-                <form method="post" action="/realms/{{ name | urlencode }}/test" class="form-inline">
+                <form method="post" action="/realms/{{ name | urlencode }}/test#test" style="margin-bottom:12px">
+                    <button type="submit" class="btn btn-primary"><i class="fa fa-plug"></i> Test the connection</button>
+                    <span class="help-block" style="display:inline;margin-left:8px">
+                        connects, binds as the search account, and looks for people with the filter
+                    </span>
+                </form>
+                <form method="post" action="/realms/{{ name | urlencode }}/test#test" class="form-inline">
                     <input type="text" name="username" class="form-control" placeholder="name" required
                            autocomplete="off" autocapitalize="none" spellcheck="false">
-                    <input type="password" name="password" class="form-control" placeholder="password"
-                           autocomplete="off" required>
-                    <button type="submit" class="btn btn-primary"><i class="fa fa-plug"></i> Try</button>
+                    <input type="password" name="password" class="form-control" placeholder="password (optional)"
+                           autocomplete="off">
+                    <button type="submit" class="btn btn-default"><i class="fa fa-user"></i> Try a sign-in</button>
+                    <span class="help-block" style="display:inline;margin-left:8px">
+                        without a password, only checks that the filter finds that person
+                    </span>
                 </form>
             </div>
         </div>

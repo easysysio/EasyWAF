@@ -57,11 +57,24 @@ that matches two entries signs in neither.
 What a visitor types is escaped before it is put into the filter, so a name
 cannot rewrite it.
 
-**Try a sign-in**, on the realm's page, asks the directory with a name and
-password you type and says what it answered: signed in and with which groups,
-refused, or why the directory could not be asked. Use it before pointing a site
-at the realm — a directory that cannot be reached is better found while somebody
-is looking at it.
+**Test the directory**, on the realm's page, goes through a sign-in one step
+at a time with the settings as saved, and stops at the first step that fails:
+
+1. connecting, and whether the certificate was checked;
+2. binding as the search account;
+3. reading the base;
+4. finding people with the filter.
+
+*Test the connection* does those four and needs nobody's password. *Try a
+sign-in* with a name finds that one person — and says so when the filter finds
+nobody, or more than one — and with their password as well, binds as them and
+lists their groups. Use it before pointing a site at the realm: a wrong
+address, a search account that cannot bind and a filter that finds nobody all
+look the same to a visitor.
+
+For Active Directory or Samba the filter is usually
+`(sAMAccountName={user})` and the groups attribute `memberOf`, and a password
+is only accepted over LDAPS or StartTLS.
 
 !!! warning "Use LDAPS or StartTLS"
     Over plain `ldap://` the visitor's password crosses your network in the

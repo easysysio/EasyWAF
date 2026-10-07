@@ -475,12 +475,250 @@ async fn ldap_ask(cfg: &LdapConfig, username: &str, password: &str) -> Result<Op
         return Ok(None);
     }
 
+    // A directory returns an attribute under its own spelling of the name:
+    // asked for `memberof`, Active Directory answers `memberOf`.
     let groups = entry
         .attrs
-        .get(&cfg.groups_attribute)
-        .map(|values| values.iter().map(|dn| group_name(dn)).collect())
-        .unwrap_or_default();
+        .iter()
+        .filter(|(name, _)| !cfg.groups_attribute.is_empty() && name.eq_ignore_ascii_case(&cfg.groups_attribute))
+        .flat_map(|(_, values)| values.iter().map(|dn| group_name(dn)))
+        .collect();
     Ok(Some(Identity { subject: username.to_string(), groups }))
+}
+
+/// One thing a test of a directory did, and how it went.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct Step {
+    pub what:   String,
+    pub ok:     bool,
+    pub detail: String,
+}
+
+/// How many entries a test of the filter asks the directory for.
+const PROBE_SAMPLE: i32 = 5;
+
+/// Walk through a sign-in one step at a time and say how each went, stopping
+/// at the first that fails: connect, bind as the search account, read the
+/// base, find people with the filter — and, given a name, find that one
+/// person, then with a password bind as them and read their groups.
+///
+/// A visitor's sign-in says only yes or no. This is for the administrator,
+/// who needs to know which of five things was wrong.
+pub async fn ldap_probe(cfg: &LdapConfig, username: &str, password: &str) -> Vec<Step> {
+    use ldap3::{LdapConnAsync, LdapConnSettings, Scope, SearchEntry, SearchOptions, SearchResult};
+
+    let mut steps: Vec<Step> = Vec::new();
+    let mut note = |what: String, ok: bool, detail: String| steps.push(Step { what, ok, detail });
+    // Each step has the whole timeout, so a directory that stops answering
+    // is reported at the step it stopped at.
+    macro_rules! within {
+        ($what:expr, $work:expr) => {
+            match tokio::time::timeout(LDAP_TIMEOUT, $work).await {
+                Ok(r) => r,
+                Err(_) => {
+                    note($what, false, format!("No answer within {} seconds.", LDAP_TIMEOUT.as_secs()));
+                    return steps;
+                }
+            }
+        };
+    }
+
+    // ── Connect ──
+    let how = match (cfg.url.starts_with("ldaps://"), cfg.starttls) {
+        (true, _)      => "over TLS",
+        (false, true)  => "with StartTLS",
+        (false, false) => "unencrypted",
+    };
+    let what = format!("Connect to {}, {how}", cfg.url);
+    let settings = LdapConnSettings::new()
+        .set_conn_timeout(LDAP_TIMEOUT)
+        .set_starttls(cfg.starttls)
+        .set_no_tls_verify(!cfg.verify_tls);
+    let mut ldap = match within!(what.clone(), LdapConnAsync::with_settings(settings, &cfg.url)) {
+        Ok((conn, ldap)) => {
+            ldap3::drive!(conn);
+            let detail = match (how, cfg.verify_tls) {
+                ("unencrypted", _) => "Passwords cross the network in the clear.",
+                (_, true)          => "The directory's certificate was checked.",
+                (_, false)         => "The directory's certificate was not checked.",
+            };
+            note(what, true, detail.to_string());
+            ldap
+        }
+        Err(e) => {
+            let e = e.to_string();
+            let hint = if e.contains("certificate") {
+                " The directory's certificate is not one this host trusts: install its CA here, or \
+                 switch off Check the certificate."
+            } else {
+                ""
+            };
+            note(what, false, format!("{e}.{hint}"));
+            return steps;
+        }
+    };
+
+    // ── The search account ──
+    if cfg.bind_dn.is_empty() {
+        note("Search anonymously".into(), true, "No search account is set.".into());
+    } else {
+        let what = format!("Bind as {}", cfg.bind_dn);
+        match within!(what.clone(), ldap.simple_bind(&cfg.bind_dn, &cfg.bind_password)) {
+            Ok(r) if r.rc == 0 => note(what, true, String::new()),
+            Ok(r) => {
+                note(what, false, format!("{}{}", said(r.rc, &r.text), bind_hint(r.rc)));
+                return steps;
+            }
+            Err(e) => {
+                note(what, false, format!("{e}."));
+                return steps;
+            }
+        }
+    }
+
+    // ── The base ──
+    let what = format!("Read {}", cfg.base_dn);
+    match within!(what.clone(), ldap.search(&cfg.base_dn, Scope::Base, "(objectClass=*)", vec!["1.1"])) {
+        Ok(SearchResult(_, r)) if r.rc == 0 => note(what, true, String::new()),
+        Ok(SearchResult(_, r)) => {
+            let hint = match r.rc {
+                32 => " Nothing in the directory has that name: check Where to look for users.",
+                1 if cfg.bind_dn.is_empty() => " This directory does not answer anonymous searches: give it a search account.",
+                50 => " The search account may not read it.",
+                _ => "",
+            };
+            note(what, false, format!("{}{hint}", said(r.rc, &r.text)));
+            return steps;
+        }
+        Err(e) => {
+            note(what, false, format!("{e}."));
+            return steps;
+        }
+    }
+
+    let attrs: Vec<&str> = if cfg.groups_attribute.is_empty() { vec!["1.1"] } else { vec![&cfg.groups_attribute] };
+
+    // ── The filter, with no name: does it find anybody at all ──
+    if username.is_empty() {
+        let filter = cfg.user_filter.replace("{user}", "*");
+        let what = format!("Find people with {filter}");
+        let asked = ldap
+            .with_search_options(SearchOptions::new().sizelimit(PROBE_SAMPLE))
+            .search(&cfg.base_dn, Scope::Subtree, &filter, vec!["1.1"]);
+        match within!(what.clone(), asked) {
+            // 4 is the directory saying there are more than were asked for.
+            Ok(SearchResult(entries, r)) if r.rc == 0 || r.rc == 4 => {
+                let found: Vec<String> = entries.into_iter().map(|e| SearchEntry::construct(e).dn).collect();
+                if found.is_empty() {
+                    let hint = if cfg.user_filter.to_ascii_lowercase().contains("uid=") {
+                        " Active Directory and Samba name people by sAMAccountName, not uid."
+                    } else if cfg.bind_dn.is_empty() {
+                        " A directory may show an anonymous search nothing: give it a search account."
+                    } else {
+                        " The search account may not be allowed to read them."
+                    };
+                    note(what, false, format!("The filter matches nobody under the base.{hint}"));
+                } else {
+                    let more = if r.rc == 4 { " and more" } else { "" };
+                    note(what, true, format!("Found {}{more}.", found.join("; ")));
+                }
+            }
+            Ok(SearchResult(_, r)) => note(what, false, said(r.rc, &r.text)),
+            Err(e) => note(what, false, format!("{e}.")),
+        }
+        let _ = ldap.unbind().await;
+        return steps;
+    }
+
+    // ── One person ──
+    let filter = cfg.user_filter.replace("{user}", &ldap3::ldap_escape(username));
+    let what = format!("Find {username} with {filter}");
+    let entry = match within!(what.clone(), ldap.search(&cfg.base_dn, Scope::Subtree, &filter, attrs)) {
+        Ok(SearchResult(entries, r)) if r.rc == 0 => {
+            let mut found: Vec<SearchEntry> = entries.into_iter().map(SearchEntry::construct).collect();
+            match found.len() {
+                1 => {
+                    let entry = found.remove(0);
+                    note(what, true, format!("Found {}.", entry.dn));
+                    entry
+                }
+                0 => {
+                    note(what, false, "The filter finds nobody of that name under the base.".into());
+                    return steps;
+                }
+                n => {
+                    let dns: Vec<String> = found.into_iter().map(|e| e.dn).collect();
+                    note(what, false, format!(
+                        "The filter finds {n} entries, and a sign-in needs exactly one: {}.", dns.join("; ")));
+                    return steps;
+                }
+            }
+        }
+        Ok(SearchResult(_, r)) => {
+            note(what, false, said(r.rc, &r.text));
+            return steps;
+        }
+        Err(e) => {
+            note(what, false, format!("{e}."));
+            return steps;
+        }
+    };
+
+    if password.is_empty() {
+        let _ = ldap.unbind().await;
+        return steps;
+    }
+
+    // ── Their password ──
+    let what = format!("Bind as {} with the password typed", entry.dn);
+    match within!(what.clone(), ldap.simple_bind(&entry.dn, password)) {
+        Ok(r) if r.rc == 0 => note(what, true, format!("{username} can sign in.")),
+        Ok(r) => {
+            note(what, false, format!("{}{}", said(r.rc, &r.text), bind_hint(r.rc)));
+            return steps;
+        }
+        Err(e) => {
+            note(what, false, format!("{e}."));
+            return steps;
+        }
+    }
+    let _ = ldap.unbind().await;
+
+    // ── Their groups ──
+    if !cfg.groups_attribute.is_empty() {
+        let what = format!("Read groups from {}", cfg.groups_attribute);
+        // A directory returns an attribute under its own spelling of the name.
+        let groups: Vec<String> = entry.attrs.iter()
+            .filter(|(name, _)| name.eq_ignore_ascii_case(&cfg.groups_attribute))
+            .flat_map(|(_, values)| values.iter().map(|v| group_name(v)))
+            .collect();
+        if groups.is_empty() {
+            note(what, true, "The entry has none, so the application is told no groups.".into());
+        } else {
+            note(what, true, format!("{}.", groups.join(", ")));
+        }
+    }
+    steps
+}
+
+/// What a directory answered, as a sentence.
+fn said(rc: u32, text: &str) -> String {
+    let text = text.trim();
+    if text.is_empty() {
+        format!("The directory answered with result {rc}.")
+    } else {
+        format!("The directory answered with result {rc}: {text}.")
+    }
+}
+
+/// What usually lies behind a refused bind.
+fn bind_hint(rc: u32) -> &'static str {
+    match rc {
+        8  => " It wants an encrypted connection before it takes a password: use ldaps:// or StartTLS.",
+        49 => " The name or the password is not right.",
+        53 => " The directory will not let this account bind — it may be disabled, locked or expired.",
+        _  => "",
+    }
 }
 
 /// A group as an application wants to read it: `staff`, from

@@ -6,6 +6,16 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
+## [1.1.1] — unreleased
+
+### Added
+- **Test the directory**, on a directory realm's page, goes through a sign-in one step at a time and says how each went: connecting, the search account, the base, the filter, and — given a name — finding that person, their password and their groups. *Test the connection* needs no visitor's name or password, and *Try a sign-in* without a password checks only that the filter finds that person. It replaces a single line that said whether a sign-in worked.
+
+### Fixed
+- A directory's groups were not passed to the application when the groups attribute was typed in a different case than the directory returns it — `memberof` for Active Directory's or Samba's `memberOf`.
+
+---
+
 ## [1.1.0] — 2026-10-07
 
 ### Added
