@@ -592,11 +592,12 @@ fn diff_sites(current: &Document, doc: &Document) -> Vec<Item> {
         let asks = |s: &export::Site| match &s.sign_in {
             None => "nobody is asked".to_string(),
             Some(x) => format!(
-                "realm {}, {}{}{}",
+                "realm {}, {}{}{}{}",
                 x.realm,
                 if x.paths.is_empty() { "the whole site".to_string() } else { format!("on {}", x.paths.join(" ")) },
                 if x.bypass.is_empty() { String::new() } else { format!(", open {}", x.bypass.join(" ")) },
                 if x.basic { ", Basic accepted" } else { "" },
+                if x.captcha { ", with a CAPTCHA" } else { "" },
             ),
         };
         field(&mut d, "sign-in", asks(a).as_str(), asks(b).as_str());
@@ -917,9 +918,10 @@ pub async fn apply(work: &SqlitePool, doc: &Document, importer: &str) -> Result<
             && let Some(realm) = realm_ids.get(&ask.realm)
         {
             sqlx::query(
-                "INSERT INTO site_auth (site_id, realm_id, paths, bypass, basic, user_header, groups_header)
-                 VALUES (?, ?, ?, ?, ?, ?, ?)")
+                "INSERT INTO site_auth (site_id, realm_id, paths, bypass, basic, captcha, user_header, groups_header)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
                 .bind(id).bind(realm).bind(ask.paths.join("\n")).bind(ask.bypass.join("\n")).bind(ask.basic)
+                .bind(ask.captcha)
                 .bind(&ask.user_header).bind(&ask.groups_header)
                 .execute(work).await.map_err(err)?;
         }

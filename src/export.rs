@@ -285,6 +285,8 @@ pub struct SignIn {
     pub bypass: Vec<String>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub basic: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub captcha: bool,
     #[serde(default = "user_header")]
     pub user_header: String,
     #[serde(default = "groups_header")]
@@ -728,13 +730,14 @@ pub async fn build(db: &SqlitePool, opts: Options) -> Result<Document, sqlx::Err
         let flag = |c: &str| s.get::<i64, _>(c) != 0;
         let lines = |text: String| text.lines().map(str::to_string).filter(|l| !l.is_empty()).collect::<Vec<_>>();
         let sign_in = sqlx::query(
-            "SELECT realm_id, paths, bypass, basic, user_header, groups_header FROM site_auth WHERE site_id = ?")
+            "SELECT realm_id, paths, bypass, basic, captcha, user_header, groups_header FROM site_auth WHERE site_id = ?")
             .bind(id).fetch_optional(db).await?
             .and_then(|a| Some(SignIn {
                 realm: realm_names.get(&a.get::<i64, _>("realm_id"))?.clone(),
                 paths: lines(a.get("paths")),
                 bypass: lines(a.get("bypass")),
                 basic: a.get::<i64, _>("basic") != 0,
+                captcha: a.get::<i64, _>("captcha") != 0,
                 user_header: a.get("user_header"),
                 groups_header: a.get("groups_header"),
             }));
@@ -916,8 +919,8 @@ pub(crate) mod tests {
                  (1, 'dave',  '$2b$12$dddddddddddddddddddddddddddddddddddddddddddddddddddddd', 0);
             INSERT INTO auth_realms (name, kind, config) VALUES ('corp', 'ldap',
                  '{"url":"ldaps://dc.example.com","starttls":false,"verify_tls":true,"bind_dn":"cn=easywaf,dc=example,dc=com","bind_password":"SEARCHSECRET","base_dn":"ou=people,dc=example,dc=com","user_filter":"(uid={user})","groups_attribute":"memberOf"}');
-            INSERT INTO site_auth (site_id, realm_id, paths, bypass, basic)
-                 VALUES (1, 1, '/admin' || char(10) || '/settings', '/admin/health', 1);
+            INSERT INTO site_auth (site_id, realm_id, paths, bypass, basic, captcha)
+                 VALUES (1, 1, '/admin' || char(10) || '/settings', '/admin/health', 1, 1);
             INSERT OR REPLACE INTO settings (key, value) VALUES ('traffic_retention_days', '30');
             INSERT OR REPLACE INTO settings (key, value) VALUES ('syslog_host', 'logs.example.com');
         "#).execute(&db).await.expect("estate");

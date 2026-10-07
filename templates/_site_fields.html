@@ -208,6 +208,15 @@
                             and clients that can send a name and password but cannot fill in a form
                         </label>
                     </div>
+                    <div class="checkbox">
+                        <label>
+                            <input type="checkbox" name="auth_captcha" value="1"
+                                   {% if sign_in.captcha | default(value=false) %}checked{% endif %}>
+                            <strong>Ask for a CAPTCHA with the sign-in</strong> — the form also shows an
+                            image whose characters have to be typed, so a script cannot try passwords
+                            at it. A client using HTTP Basic is not asked
+                        </label>
+                    </div>
 
                     <div class="row">
                         <div class="col-sm-6">

@@ -6,6 +6,13 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
+## [1.1.2] — unreleased
+
+### Added
+- **A site's sign-in can ask for a CAPTCHA.** *Ask for a CAPTCHA with the sign-in*, under **Sign-in** on the site's page, adds an image to the form whose characters have to be typed with the name and password. A wrong answer ends the attempt there: the name and password are not looked at, and a directory is not asked. A client signing in with HTTP Basic is not asked for one.
+
+---
+
 ## [1.1.1] — 2026-10-07
 
 ### Added

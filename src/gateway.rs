@@ -147,6 +147,8 @@ pub struct SiteAuth {
     pub bypass:        Vec<String>,
     /// Whether HTTP Basic is accepted in place of the form.
     pub basic:         bool,
+    /// Whether the form also asks for the characters of an image.
+    pub captcha:       bool,
     pub user_header:   HeaderName,
     pub groups_header: HeaderName,
 }
@@ -879,6 +881,11 @@ pub enum Notice {
     Throttled,
     /// The visitor signed out.
     SignedOut,
+    /// The characters typed were not the image's, or the image had expired.
+    /// The name and password were not looked at.
+    WrongCode,
+    /// No image could be made: too many are waiting to be answered.
+    Busy,
 }
 
 fn escape(s: &str) -> String {
@@ -887,12 +894,27 @@ fn escape(s: &str) -> String {
 
 /// The sign-in page. Self-contained, like the CAPTCHA's: nothing is fetched
 /// from anywhere, and nothing of the site behind it is shown.
-pub fn login_page(host: &str, dest: &str, notice: Notice) -> String {
+///
+/// `code` is the id and image of a CAPTCHA, on a site that asks for one.
+pub fn login_page(host: &str, dest: &str, notice: Notice, code: Option<(&str, &str)>) -> String {
     let notice = match notice {
         Notice::None      => String::new(),
         Notice::Refused   => r#"<p class="note bad">That name and password were not accepted.</p>"#.to_string(),
         Notice::Throttled => r#"<p class="note bad">Too many attempts. Try again in a few minutes.</p>"#.to_string(),
         Notice::SignedOut => r#"<p class="note">You have signed out.</p>"#.to_string(),
+        Notice::WrongCode => r#"<p class="note bad">Those were not the characters in the image. Try this one.</p>"#.to_string(),
+        Notice::Busy      => r#"<p class="note bad">Signing in is busy just now. Try again in a minute.</p>"#.to_string(),
+    };
+    let code = match code {
+        Some((id, image)) => format!(
+            r#"<img src="{image}" alt="Characters to type" width="220" height="120">
+      <input type="hidden" name="code_id" value="{id}">
+      <label for="code">The characters above</label>
+      <input type="text" id="code" name="code" class="code" autocomplete="off" autocapitalize="characters" required>"#,
+            image = escape(image),
+            id = escape(id),
+        ),
+        None => String::new(),
     };
     format!(
         r#"<!DOCTYPE html>
@@ -918,6 +940,8 @@ pub fn login_page(host: &str, dest: &str, notice: Notice) -> String {
   button {{ width:100%; padding:11px; font-size:15px; font-weight:600; border:none;
            border-radius:8px; background:linear-gradient(135deg,#0ea5e9,#0284c7); color:#fff;
            cursor:pointer; }}
+  img {{ display:block; margin:0 auto 14px; border-radius:8px; background:#fff; padding:6px; }}
+  input.code {{ letter-spacing:3px; text-transform:uppercase; }}
   .foot {{ color:#64748b; font-size:11px; margin-top:18px; text-align:center; }}
 </style>
 </head>
@@ -932,6 +956,7 @@ pub fn login_page(host: &str, dest: &str, notice: Notice) -> String {
       <input type="text" id="user" name="user" autocomplete="username" autocapitalize="none" autofocus required>
       <label for="pass">Password</label>
       <input type="password" id="pass" name="pass" autocomplete="current-password" required>
+      {code}
       <button type="submit">Sign in</button>
     </form>
     <div class="foot">Protected by EasyWAF</div>
@@ -974,6 +999,7 @@ mod tests {
             protect: protect.iter().map(|s| s.to_string()).collect(),
             bypass: bypass.iter().map(|s| s.to_string()).collect(),
             basic: false,
+            captcha: false,
             user_header: HeaderName::from_static("x-forwarded-user"),
             groups_header: HeaderName::from_static("x-forwarded-groups"),
         }
@@ -1225,9 +1251,20 @@ mod tests {
         assert_eq!(group_name("staff"), "staff");
     }
 
+    /// A site that asks for a CAPTCHA shows the image and posts its id with
+    /// the answer; one that does not has neither field.
+    #[test]
+    fn the_form_carries_a_captcha_only_when_given_one() {
+        let with = login_page("shop.example.com", "/", Notice::None, Some(("abc123", "data:image/png;base64,AAAA")));
+        assert!(with.contains(r#"name="code_id" value="abc123""#) && with.contains(r#"name="code""#));
+        assert!(with.contains(r#"src="data:image/png;base64,AAAA""#));
+        let without = login_page("shop.example.com", "/", Notice::None, None);
+        assert!(!without.contains("code_id") && !without.contains("<img"));
+    }
+
     #[test]
     fn the_page_shows_nothing_a_visitor_typed_as_markup() {
-        let page = login_page("shop.example.com", "/cart?x=\"><script>alert(1)</script>", Notice::Refused);
+        let page = login_page("shop.example.com", "/cart?x=\"><script>alert(1)</script>", Notice::Refused, None);
         assert!(!page.contains("<script>alert"));
         assert!(page.contains("not accepted"));
         assert!(page.contains(LOGIN_PATH));

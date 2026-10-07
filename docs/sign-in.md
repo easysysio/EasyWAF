@@ -121,6 +121,21 @@ but cannot fill in a form: `curl -u`, a monitoring probe, a feed reader. A
 browser still gets the page. The credential is the gateway's and is not passed
 on to the application.
 
+### A CAPTCHA with the sign-in
+
+Tick **Ask for a CAPTCHA with the sign-in** and the form also shows an image
+whose characters have to be typed, the same self-hosted CAPTCHA a policy's
+challenge uses. It is off by default.
+
+The image is checked first. A wrong answer ends the attempt there — the name
+and password are not looked at, and a directory is not asked — so a script
+that cannot read the image learns nothing about either. Each image takes one
+answer, right or wrong, and lasts three minutes; the form then shows a new one.
+
+A client signing in with HTTP Basic is not asked: it could not answer. On a
+site that accepts Basic, what slows guessing there is the count of failed
+attempts, below.
+
 ## A session
 
 | | Default | Accepts |
@@ -185,7 +200,7 @@ Counts are kept in memory, per node, and start again when EasyWAF restarts.
 
 - **Traffic Monitor** names the signed-in visitor under the client address, and
   marks a request that was sent to the sign-in page `SIGN-IN`.
-- **The audit log** has a line for each sign-in, refusal and sign-out:
+- **The audit log** has a line for each sign-in, refusal, wrong CAPTCHA and sign-out:
   `event=site-sign-in`, with the site, realm, name, address and result.
 - **Flow logs** carry `user=` for a signed-in visitor, and the verdict
   `unauthenticated` for a request sent to the sign-in page. See

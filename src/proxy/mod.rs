@@ -1614,7 +1614,7 @@ async fn gate(
             visit.user = Some(s.who.subject.clone());
             gateway_audit(state, site, ask, &s.who.subject, incoming.client_ip, "signed-out");
         }
-        let page = sign_in_page(&visit.host, "/", Notice::SignedOut, StatusCode::OK, Some(gateway::clear_cookie()));
+        let page = sign_in_page(state, ask, visit, "/", Notice::SignedOut, StatusCode::OK, Some(gateway::clear_cookie()));
         return answered(visit, StatusCode::OK, "sign-in: signed out", page);
     }
 
@@ -1626,7 +1626,7 @@ async fn gate(
         // are sent to the site; otherwise it is the form.
         let response = match &session {
             Some(_) => redirect_to("/", None),
-            None    => sign_in_page(&visit.host, "/", Notice::None, StatusCode::OK, None),
+            None    => sign_in_page(state, ask, visit, "/", Notice::None, StatusCode::OK, None),
         };
         return answered(visit, response.status(), "sign-in: form", response);
     }
@@ -1709,7 +1709,7 @@ async fn gate(
     let response = if ask.basic && !wants_page {
         basic_challenge(&ask.realm.name)
     } else {
-        sign_in_page(&visit.host, &incoming.path_and_query(), Notice::None, StatusCode::UNAUTHORIZED, None)
+        sign_in_page(state, ask, visit, &incoming.path_and_query(), Notice::None, StatusCode::UNAUTHORIZED, None)
     };
     answered(visit, StatusCode::UNAUTHORIZED, "sign-in: required", response)
 }
@@ -1753,8 +1753,25 @@ async fn sign_in(
 
     if gateway::throttled(ask.realm.id, &user, incoming.client_ip) {
         gateway_audit(state, site, ask, &user, incoming.client_ip, "throttled");
-        let page = sign_in_page(&visit.host, &dest, Notice::Throttled, StatusCode::TOO_MANY_REQUESTS, None);
+        let page = sign_in_page(state, ask, visit, &dest, Notice::Throttled, StatusCode::TOO_MANY_REQUESTS, None);
         return answered(visit, StatusCode::TOO_MANY_REQUESTS, "sign-in: too many attempts", page);
+    }
+
+    // The image first. A wrong answer ends it here, with the name and password
+    // unread: a script that cannot read the image learns nothing about either,
+    // and has not cost the directory a question.
+    if ask.captcha {
+        let id   = form.get("code_id").map(String::as_str).unwrap_or_default();
+        let code = form.get("code").map(String::as_str).unwrap_or_default();
+        let right = matches!(
+            state.challenges.verify(id, code, &incoming.client_ip.to_string()),
+            challenge::Answer::Right(_)
+        );
+        if !right {
+            gateway_audit(state, site, ask, &user, incoming.client_ip, "wrong-code");
+            let page = sign_in_page(state, ask, visit, &dest, Notice::WrongCode, StatusCode::UNAUTHORIZED, None);
+            return answered(visit, StatusCode::UNAUTHORIZED, "sign-in: wrong code", page);
+        }
     }
 
     let (checked, trouble) = gateway::check_password(&ask.realm, &user, &pass).await;
@@ -1764,7 +1781,7 @@ async fn sign_in(
     let Some((who, user_epoch)) = checked else {
         gateway::note_failure(ask.realm.id, &user, incoming.client_ip);
         gateway_audit(state, site, ask, &user, incoming.client_ip, "refused");
-        let page = sign_in_page(&visit.host, &dest, Notice::Refused, StatusCode::UNAUTHORIZED, None);
+        let page = sign_in_page(state, ask, visit, &dest, Notice::Refused, StatusCode::UNAUTHORIZED, None);
         return answered(visit, StatusCode::UNAUTHORIZED, "sign-in: refused", page);
     };
 
@@ -1811,13 +1828,22 @@ fn posted_from_elsewhere(headers: &HeaderMap) -> bool {
 
 /// The sign-in page as a response, never cached, with a cookie when it sets
 /// or clears one.
+///
+/// On a site that asks for a CAPTCHA every showing of the form has a new
+/// image, since an image is used up by one answer. When none can be made the
+/// page says so: a form without one could not be accepted.
 fn sign_in_page(
-    host:   &str,
+    state:  &ProxyState,
+    ask:    &crate::gateway::SiteAuth,
+    visit:  &Visit,
     dest:   &str,
     notice: crate::gateway::Notice,
     status: StatusCode,
     cookie: Option<String>,
 ) -> Response<Body> {
+    let code = if ask.captcha { state.challenges.issue(dest, &visit.client_ip) } else { None };
+    let notice = if ask.captcha && code.is_none() { crate::gateway::Notice::Busy } else { notice };
+    let code = code.as_ref().map(|(id, image)| (id.as_str(), image.as_str()));
     let mut response = Response::builder()
         .status(status)
         .header("content-type", "text/html; charset=utf-8")
@@ -1826,7 +1852,7 @@ fn sign_in_page(
         response = response.header("set-cookie", c);
     }
     response
-        .body(Body::from(crate::gateway::login_page(host, dest, notice)))
+        .body(Body::from(crate::gateway::login_page(&visit.host, dest, notice, code)))
         .unwrap_or_else(|_| error_response(status, "Sign in"))
 }
 
@@ -2388,7 +2414,8 @@ async fn load_site_auth(db: &SqlitePool) -> Result<HashMap<i64, crate::gateway::
 
     let sites = sqlx::query!(
         r#"SELECT site_id as "site_id!", realm_id as "realm_id!", paths as "paths!", bypass as "bypass!",
-                  basic as "basic!: bool", user_header as "user_header!", groups_header as "groups_header!"
+                  basic as "basic!: bool", captcha as "captcha!: bool",
+                  user_header as "user_header!", groups_header as "groups_header!"
            FROM site_auth"#
     )
     .fetch_all(db)
@@ -2451,6 +2478,7 @@ async fn load_site_auth(db: &SqlitePool) -> Result<HashMap<i64, crate::gateway::
             protect:       crate::gateway::parse_prefixes(&s.paths).0,
             bypass:        crate::gateway::parse_prefixes(&s.bypass).0,
             basic:         s.basic,
+            captcha:       s.captcha,
             user_header:   header(&s.user_header, "x-forwarded-user"),
             groups_header: header(&s.groups_header, "x-forwarded-groups"),
         });

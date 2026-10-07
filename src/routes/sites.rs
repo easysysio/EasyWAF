@@ -131,6 +131,7 @@ pub struct SiteForm {
     pub auth_paths:     Option<String>,
     pub auth_bypass:    Option<String>,
     pub auth_basic:     Option<String>,
+    pub auth_captcha:   Option<String>,
     pub auth_user_header:   Option<String>,
     pub auth_groups_header: Option<String>,
 }
@@ -145,6 +146,7 @@ pub struct SignIn {
     pub paths:         String,
     pub bypass:        String,
     pub basic:         bool,
+    pub captcha:       bool,
     pub user_header:   String,
     pub groups_header: String,
 }
@@ -203,7 +205,8 @@ fn read_sign_in(form: &SiteForm) -> std::result::Result<Option<SignIn>, String> 
         return Err("The name and the groups need a header each.".to_string());
     }
 
-    Ok(Some(SignIn { realm, paths, bypass, basic: form.auth_basic.is_some(), user_header, groups_header }))
+    Ok(Some(SignIn { realm, paths, bypass, basic: form.auth_basic.is_some(),
+                     captcha: form.auth_captcha.is_some(), user_header, groups_header }))
 }
 
 /// Store what a site asks of its visitors, or stop asking. Returns what the
@@ -232,13 +235,13 @@ async fn save_sign_in(
     };
 
     sqlx::query!(
-        "INSERT INTO site_auth (site_id, realm_id, paths, bypass, basic, user_header, groups_header)
-         VALUES (?, ?, ?, ?, ?, ?, ?)
+        "INSERT INTO site_auth (site_id, realm_id, paths, bypass, basic, captcha, user_header, groups_header)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(site_id) DO UPDATE SET
              realm_id = excluded.realm_id, paths = excluded.paths, bypass = excluded.bypass,
-             basic = excluded.basic, user_header = excluded.user_header,
+             basic = excluded.basic, captcha = excluded.captcha, user_header = excluded.user_header,
              groups_header = excluded.groups_header",
-        site_id, realm.id, s.paths, s.bypass, s.basic, s.user_header, s.groups_header
+        site_id, realm.id, s.paths, s.bypass, s.basic, s.captcha, s.user_header, s.groups_header
     )
     .execute(db)
     .await?;
@@ -267,7 +270,7 @@ async fn save_sign_in(
 async fn fetch_sign_in(db: &SqlitePool, site_id: i64) -> Result<SignIn> {
     let row = sqlx::query!(
         r#"SELECT r.name as "realm!", a.paths as "paths!", a.bypass as "bypass!", a.basic as "basic!: bool",
-                  a.user_header as "user_header!", a.groups_header as "groups_header!"
+                  a.captcha as "captcha!: bool", a.user_header as "user_header!", a.groups_header as "groups_header!"
            FROM site_auth a JOIN auth_realms r ON r.id = a.realm_id WHERE a.site_id = ?"#,
         site_id
     )
@@ -276,7 +279,7 @@ async fn fetch_sign_in(db: &SqlitePool, site_id: i64) -> Result<SignIn> {
     Ok(match row {
         Some(r) => SignIn {
             realm: r.realm, paths: r.paths, bypass: r.bypass, basic: r.basic,
-            user_header: r.user_header, groups_header: r.groups_header,
+            captcha: r.captcha, user_header: r.user_header, groups_header: r.groups_header,
         },
         None => SignIn {
             user_header: DEFAULT_USER_HEADER.to_string(),
@@ -1883,7 +1886,7 @@ mod tests {
             x_content_type: None, xss_protection: None, affinity: None, backend_tls_insecure: None,
             acme: None, back: None,
             auth_realm: Some(realm.into()), auth_paths: Some(paths.into()), auth_bypass: Some(bypass.into()),
-            auth_basic: None, auth_user_header: None, auth_groups_header: None,
+            auth_basic: None, auth_captcha: None, auth_user_header: None, auth_groups_header: None,
         }
     }
 

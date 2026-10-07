@@ -88,6 +88,7 @@ pub async fn init(database_url: &str) -> SqlitePool {
     run_migration_037(&pool).await;
     run_migration_038(&pool).await;
     run_migration_039(&pool).await;
+    run_migration_040(&pool).await;
 
     // After the migrations, so the version recorded is the one whose schema
     // this now is. A snapshot carries it, and a restore reads it.
@@ -95,6 +96,30 @@ pub async fn init(database_url: &str) -> SqlitePool {
 
     info!("Database ready: {}", database_url);
     pool
+}
+
+// ─── run_migration_040 ───────────────────────────────────
+
+/// Whether a site's sign-in also asks for a CAPTCHA. Applied while the column
+/// is missing, since `ALTER TABLE ADD COLUMN` fails on a database that has it.
+async fn run_migration_040(pool: &SqlitePool) {
+    let done: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM pragma_table_info('site_auth') WHERE name = 'captcha'",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0);
+    if done > 0 {
+        return;
+    }
+
+    let sql = include_str!("../migrations/040_sign_in_captcha.sql");
+    sqlx::raw_sql(sql)
+        .execute(pool)
+        .await
+        .unwrap_or_else(|e| panic!("Migration 040 failed: {}", e));
+
+    info!("Migration 040 applied: a sign-in can ask for a CAPTCHA");
 }
 
 // ─── run_migration_039 ───────────────────────────────────

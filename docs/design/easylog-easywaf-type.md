@@ -111,7 +111,7 @@ Exactly one of:
 | `blocked` | Refused. `status` is 403. |
 | `would_block` | Served, but an enforcing policy would have refused it. Only from a policy in DetectionOnly. |
 | `would_challenge` | Served, but an enforcing policy would have challenged it. DetectionOnly only. |
-| `unauthenticated` | The site asks for a sign-in and the request had none: it was answered with the sign-in page, a redirect to it, or a 401. Not an attack and not served. `reason` begins `sign-in:` and says which — `refused` is a wrong password, `too many attempts` a throttled one. Since 1.1.0. |
+| `unauthenticated` | The site asks for a sign-in and the request had none: it was answered with the sign-in page, a redirect to it, or a 401. Not an attack and not served. `reason` begins `sign-in:` and says which — `refused` is a wrong password, `wrong code` a wrong CAPTCHA on the form, `too many attempts` a throttled one. Since 1.1.0. |
 
 A parser written before 1.1.0 meets `unauthenticated` as an unknown verdict. It
 should store the line under the value it was given rather than reject it.
