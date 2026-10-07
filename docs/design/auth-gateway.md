@@ -342,5 +342,6 @@ open:
   long.
 * **Export and import carry realms**, with a directory's search password under
   *private keys* and local accounts under *accounts*.
-* **Not tested against a real directory over LDAPS or StartTLS**, only over
-  plain LDAP against OpenLDAP. The TLS paths are ldap3's and rustls's own.
+* **Tested against OpenLDAP**, over plain LDAP, LDAPS and StartTLS, and with a
+  certificate nobody vouches for — refused with checking on, accepted with it
+  off. Not tested against Active Directory.
