@@ -6,7 +6,7 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
-## [1.1.0] — unreleased
+## [1.1.0] — 2026-10-07
 
 ### Added
 - **A site can ask its visitors to sign in.** The whole site or chosen paths, with paths that are never asked, so `/admin` can need a sign-in while an API and a sync client's WebDAV do not. The application behind needs no change, and is told who the visitor is in a header.

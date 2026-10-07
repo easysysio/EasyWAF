@@ -1,6 +1,6 @@
 # Design note — authentication gateway
 
-Status: **built for 1.1.0** — see [roadmap.md](roadmap.md), and
+Status: **released in 1.1.0** — see [roadmap.md](roadmap.md), and
 [As built](#as-built) at the end for where the result differs from this note.
 The operator's page is [sign-in.md](../sign-in.md). Proposed
 2026-09-10 and unscheduled for six releases; given a version by Yariv on
