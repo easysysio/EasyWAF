@@ -15,6 +15,8 @@ Version bumps and tags are created only after explicit approval.
 - **Settings → Sign-in Realms** makes and edits realms: a realm's accounts, a directory's connection with a *Try a sign-in* button that says what the directory answered, and *Sign everyone out*. A site chooses its realm, its paths and its headers under **Sign-in** on its own page.
 - **HTTP Basic** can be accepted as well, for clients that cannot fill in a form.
 - A visitor who has signed in is not also shown a CAPTCHA. Signing in never raises what the rules allow: a signed-in request is inspected and blocked like any other.
+- The sites list says which sites ask for a sign-in, and with which realm.
+- **Export and import carry realms and each site's sign-in settings.** A directory's search password travels only with *include private keys*, and a realm's accounts only with *include accounts*; without them an import keeps the password already stored for a realm of that name, and never removes an account.
 - Sign-ins, refusals and sign-outs are in the audit log. Traffic Monitor and the flow line name a signed-in visitor (`user=`), and the flow line has a new verdict, `unauthenticated`, for a request sent to the sign-in page.
 
 ### Security

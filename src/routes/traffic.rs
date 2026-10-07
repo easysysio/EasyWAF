@@ -60,6 +60,8 @@ pub struct TrafficEvent {
     /// add it twice. Read from the in-memory matcher, so it costs a bisection
     /// per row rather than a query.
     pub listed:       Option<String>,
+    /// Who the sign-in gateway identified the visitor as, on a site that asks.
+    pub user:         Option<String>,
     /// The site's policy now, and how many sites use it. An IP list entry or
     /// an exclusion made from this row lands on that policy, so the buttons
     /// say how far it reaches. `None` for a site with no policy, which offers
@@ -129,6 +131,7 @@ struct EventRow {
     matched_rules: Option<String>,
     waf_score:    Option<i64>,
     country:      Option<String>,
+    user:          Option<String>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -284,7 +287,7 @@ async fn fetch_events(
                 (SELECT COUNT(*) FROM sites o
                  WHERE o.waf_policy_id = s.waf_policy_id) AS policy_sites,
                 te.blocked, te.block_reason, te.country,
-                te.matched_rules, te.waf_score, te.detection
+                te.matched_rules, te.waf_score, te.detection, te.user
          FROM traffic_events te
          LEFT JOIN sites s ON s.id = te.site_id
          LEFT JOIN policies p ON p.id = s.waf_policy_id
@@ -342,6 +345,7 @@ async fn fetch_events(
         },
         waf_score:    r.waf_score,
         country:      r.country,
+        user:         r.user,
         listed,
         policy:       r.policy_name,
         policy_sites: r.policy_sites,

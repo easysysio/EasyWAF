@@ -155,6 +155,9 @@
                     <td>{{ e.site_name }}</td>
                     <td style="white-space:nowrap">
                         <code>{{ e.client_ip }}</code>
+                        {% if e.user %}
+                        <br><small title="Signed in to the site as {{ e.user }}"><i class="fa fa-user"></i> {{ e.user }}</small>
+                        {% endif %}
                         {% if e.listed == "block" %}
                         <br><span class="label label-danger" title="On {{ e.policy }}'s block list: refused before any rule runs, on every site using it">
                             <i class="fa fa-hand-stop-o"></i> blocked
@@ -261,6 +264,13 @@
                             <span class="label label-info"
                                   title="Rules matched and added score, but the total stayed under this policy's block threshold — so the request was allowed. This is normal on an enforcing policy. {{ e.block_reason | default(value='') }}">
                                 <i class="fa fa-eye"></i> SCORED{% if e.waf_score %} {{ e.waf_score }}{% endif %}
+                            </span>
+                        {% elif e.block_reason and e.block_reason is starting_with("sign-in:") and not e.user %}
+                            {# Not served and not refused by a rule: the site asks
+                               its visitors to sign in, and this one had not. #}
+                            <span class="label label-default"
+                                  title="The site asks visitors to sign in. {{ e.block_reason }}">
+                                <i class="fa fa-id-badge"></i> SIGN-IN
                             </span>
                         {% else %}
                             <span class="label label-success">

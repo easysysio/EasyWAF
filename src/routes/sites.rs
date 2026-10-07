@@ -317,6 +317,18 @@ pub async fn get_sites(
     ctx.insert("title",     "Site Management");
     ctx.insert("url",       "/sites");
     ctx.insert("sites",     &sites);
+    // Which sites ask their visitors to sign in, and with what: site name to
+    // realm name.
+    let asking: std::collections::HashMap<String, String> = sqlx::query!(
+        r#"SELECT s.name as "site!", r.name as "realm!"
+           FROM site_auth a JOIN sites s ON s.id = a.site_id JOIN auth_realms r ON r.id = a.realm_id"#
+    )
+    .fetch_all(&state.db)
+    .await?
+    .into_iter()
+    .map(|r| (r.site, r.realm))
+    .collect();
+    ctx.insert("asking",    &asking);
     ctx.insert("policies",  &policies);
     ctx.insert("certs",     &fetch_certs(&state).await?);
     ctx.insert("result",    &flash.result.unwrap_or_default());

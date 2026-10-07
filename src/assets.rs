@@ -984,6 +984,7 @@ mod tests {
             ctx.insert("is_admin", &true);
             ctx.insert("policies", &Vec::<serde_json::Value>::new());
             ctx.insert("certs",    &Vec::<serde_json::Value>::new());
+            ctx.insert("asking",   &std::collections::HashMap::<String, String>::new());
             ctx.insert("sites", &vec![serde_json::json!({
                 "id": 1, "name": "demo", "server_name": "demo.test", "aliases": "",
                 "target": "http://10.0.0.8", "upstreams": [], "affinity": false,

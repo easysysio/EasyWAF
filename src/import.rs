@@ -158,6 +158,7 @@ pub async fn plan(db: &SqlitePool, doc: &Document, gui_ports: &[u16], importer: 
         Group { title: "Every policy",      items: diff_everywhere(&current, doc) },
         Group { title: "Policies",          items: diff_policies(&current, doc) },
         Group { title: "Certificates",      items: diff_certificates(db, &current, doc).await },
+        Group { title: "Sign-in realms",    items: diff_realms(&current, doc) },
         Group { title: "Sites",             items: diff_sites(&current, doc) },
         Group { title: "Accounts",          items: diff_accounts(&current, doc, importer) },
     ];
@@ -324,6 +325,48 @@ async fn check(db: &SqlitePool, doc: &Document, gui_ports: &[u16], p: &mut Plan)
     // The management certificate stays wherever the file is silent about it.
     usable.insert(management.clone());
 
+    // ── Sign-in realms ──
+    let mut realm_names = HashSet::new();
+    for r in &doc.realms {
+        let who = format!("Realm {}", r.name);
+        if !realm_names.insert(r.name.as_str()) { b.push(format!("{who} appears twice")); }
+        if !(5..=43_200).contains(&r.session_minutes) || !(5..=43_200).contains(&r.idle_minutes)
+            || r.idle_minutes > r.session_minutes
+        {
+            b.push(format!("{who}: a sign-in lasts between 5 minutes and 30 days, and no longer unused than at all"));
+        }
+        match (r.kind.as_str(), &r.directory) {
+            ("local", None) => {}
+            ("local", Some(_)) => b.push(format!("{who} keeps its own accounts and also names a directory")),
+            ("ldap", Some(d)) => {
+                if !(d.url.starts_with("ldap://") || d.url.starts_with("ldaps://")) {
+                    b.push(format!("{who}: {:?} is not an ldap:// or ldaps:// address", d.url));
+                }
+                if !d.user_filter.contains("{user}") {
+                    b.push(format!("{who}: the user filter has no {{user}}, so it would find the same \
+                                    person whatever name was typed"));
+                }
+                if !d.bind_dn.is_empty() && d.bind_password.is_none() {
+                    w.push(format!("{who}: the file does not carry the search account's password. One \
+                                    already stored here for a realm of this name is kept; otherwise it \
+                                    has to be typed in on the realm's page before anyone can sign in"));
+                }
+                if !r.accounts.is_empty() {
+                    b.push(format!("{who} is a directory and also lists accounts"));
+                }
+            }
+            ("ldap", None) => b.push(format!("{who} is a directory with no connection described")),
+            (other, _) => b.push(format!("{who}: {other:?} is not a kind of realm (local or ldap)")),
+        }
+        let mut names = HashSet::new();
+        for a in &r.accounts {
+            if !names.insert(a.username.as_str()) { b.push(format!("{who}: account {} appears twice", a.username)); }
+            if !a.password_hash.starts_with("$2") {
+                b.push(format!("{who}: account {}'s password hash is not a bcrypt hash", a.username));
+            }
+        }
+    }
+
     // ── Sites ──
     let policy_names: HashSet<&str> = doc.policies.iter().map(|p| p.name.as_str()).collect();
     let mut site_names = HashSet::new();
@@ -369,6 +412,24 @@ async fn check(db: &SqlitePool, doc: &Document, gui_ports: &[u16], p: &mut Plan)
         }
         if !s.upstreams.iter().any(|u| u.enabled) {
             b.push(format!("{who} has no upstream switched on — it would have nothing to forward to"));
+        }
+        if let Some(ask) = &s.sign_in {
+            if !realm_names.contains(ask.realm.as_str()) {
+                b.push(format!("{who} asks visitors to sign in with realm {}, which the file does not \
+                                have — the site would ask nobody", ask.realm));
+            }
+            for path in ask.paths.iter().chain(&ask.bypass) {
+                if crate::gateway::parse_prefixes(path).0.len() != 1 {
+                    b.push(format!("{who}: {path:?} is not a path to ask for a sign-in on, or to leave open"));
+                }
+            }
+            for header in [&ask.user_header, &ask.groups_header] {
+                if !header.to_ascii_lowercase().starts_with("x-")
+                    || axum::http::HeaderName::from_bytes(header.to_ascii_lowercase().as_bytes()).is_err()
+                {
+                    b.push(format!("{who}: {header:?} is not a header to name a visitor in"));
+                }
+            }
         }
         for u in &s.upstreams {
             let ok = reqwest::Url::parse(&u.url)
@@ -528,12 +589,58 @@ fn diff_sites(current: &Document, doc: &Document) -> Vec<Item> {
         field(&mut d, "X-Frame-Options value", a.x_frame_value.as_str(), b.x_frame_value.as_str());
         field(&mut d, "X-Content-Type-Options", a.x_content_type, b.x_content_type);
         field(&mut d, "X-XSS-Protection", a.xss_protection, b.xss_protection);
+        let asks = |s: &export::Site| match &s.sign_in {
+            None => "nobody is asked".to_string(),
+            Some(x) => format!(
+                "realm {}, {}{}{}",
+                x.realm,
+                if x.paths.is_empty() { "the whole site".to_string() } else { format!("on {}", x.paths.join(" ")) },
+                if x.bypass.is_empty() { String::new() } else { format!(", open {}", x.bypass.join(" ")) },
+                if x.basic { ", Basic accepted" } else { "" },
+            ),
+        };
+        field(&mut d, "sign-in", asks(a).as_str(), asks(b).as_str());
+        let headers = |s: &export::Site| s.sign_in.as_ref()
+            .map(|x| format!("{} / {}", x.user_header, x.groups_header)).unwrap_or_default();
+        field(&mut d, "sign-in headers", headers(a).as_str(), headers(b).as_str());
         let ups = |s: &export::Site| s.upstreams.iter()
             .map(|u| format!("{} weight {}{}", u.url, u.weight, if u.enabled { "" } else { " (off)" }))
             .collect::<Vec<_>>();
         set_change(&mut d, "upstreams", &ups(a), &ups(b), |x| x.clone());
         set_change(&mut d, "extra ports", &a.extra_ports, &b.extra_ports,
                    |p| format!("{}{}", p.port, if p.tls { " (HTTPS)" } else { "" }));
+        d
+    })
+}
+
+fn diff_realms(current: &Document, doc: &Document) -> Vec<Item> {
+    by_name(&current.realms, &doc.realms, |r| &r.name, |a, b| {
+        let mut d = Vec::new();
+        field(&mut d, "kind", a.kind.as_str(), b.kind.as_str());
+        field(&mut d, "a sign-in lasts (minutes)", a.session_minutes, b.session_minutes);
+        field(&mut d, "unused (minutes)", a.idle_minutes, b.idle_minutes);
+        // The search password is in neither side of this comparison: what
+        // this installation has is never read out, so it cannot be compared.
+        let shown = |r: &export::Realm| r.directory.clone().map(|x| export::Directory { bind_password: None, ..x });
+        if shown(a) != shown(b) {
+            d.push("directory settings changed to the file's".into());
+        }
+        if b.directory.as_ref().is_some_and(|x| x.bind_password.is_some()) {
+            d.push("search password set from the file".into());
+        }
+        // Accounts are merged, as the management ones are: the file's are
+        // written, and ones only here are kept.
+        let have: BTreeMap<&str, &export::RealmAccount> = a.accounts.iter().map(|u| (u.username.as_str(), u)).collect();
+        let (mut added, mut changed) = (Vec::new(), Vec::new());
+        for u in &b.accounts {
+            match have.get(u.username.as_str()) {
+                None => added.push(u.username.clone()),
+                Some(h) if h.password_hash != u.password_hash || h.enabled != u.enabled => changed.push(u.username.clone()),
+                _ => {}
+            }
+        }
+        if !added.is_empty()   { d.push(format!("accounts added: {}", listing(added))); }
+        if !changed.is_empty() { d.push(format!("accounts changed to the file's: {}", listing(changed))); }
         d
     })
 }
@@ -690,6 +797,70 @@ pub async fn apply(work: &SqlitePool, doc: &Document, importer: &str) -> Result<
         .fetch_all(work).await.map_err(err)?
         .into_iter().map(|r| (r.get("name"), r.get("id"))).collect();
 
+    // ── Sign-in realms: the file's, and none that it does not name ──
+    //
+    // What each site asks is rewritten with the sites below, so it is cleared
+    // first: a realm still asked for cannot be removed, by design.
+    sqlx::query("DELETE FROM site_auth").execute(work).await.map_err(err)?;
+    let wanted: Vec<&str> = doc.realms.iter().map(|r| r.name.as_str()).collect();
+    for (id, name) in sqlx::query("SELECT id, name FROM auth_realms").fetch_all(work).await.map_err(err)?
+        .into_iter().map(|r| (r.get::<i64, _>("id"), r.get::<String, _>("name")))
+    {
+        if !wanted.contains(&name.as_str()) {
+            sqlx::query("DELETE FROM auth_realms WHERE id = ?").bind(id).execute(work).await.map_err(err)?;
+        }
+    }
+    let mut realm_ids: HashMap<String, i64> = HashMap::new();
+    for r in &doc.realms {
+        // The search account's password is a credential and travels only when
+        // the export was asked to carry them. Without one, what a realm of
+        // this name already has here is kept.
+        let kept: Option<String> = sqlx::query_scalar("SELECT config FROM auth_realms WHERE name = ?")
+            .bind(&r.name).fetch_optional(work).await.map_err(err)?;
+        let kept_password = kept
+            .and_then(|c| serde_json::from_str::<crate::gateway::LdapConfig>(&c).ok())
+            .map(|c| c.bind_password)
+            .unwrap_or_default();
+        let config = match &r.directory {
+            Some(d) => serde_json::to_string(&crate::gateway::LdapConfig {
+                url: d.url.clone(),
+                starttls: d.starttls,
+                verify_tls: d.verify_tls,
+                bind_dn: d.bind_dn.clone(),
+                bind_password: d.bind_password.clone().unwrap_or(kept_password),
+                base_dn: d.base_dn.clone(),
+                user_filter: d.user_filter.clone(),
+                groups_attribute: d.groups_attribute.clone(),
+            }).map_err(|e| e.to_string())?,
+            None => "{}".to_string(),
+        };
+        sqlx::query(
+            "INSERT INTO auth_realms (name, kind, session_minutes, idle_minutes, config) VALUES (?, ?, ?, ?, ?)
+             ON CONFLICT(name) DO UPDATE SET kind = excluded.kind, session_minutes = excluded.session_minutes,
+                 idle_minutes = excluded.idle_minutes, config = excluded.config, updated_at = datetime('now')")
+            .bind(&r.name).bind(&r.kind).bind(r.session_minutes).bind(r.idle_minutes).bind(&config)
+            .execute(work).await.map_err(err)?;
+        let id: i64 = sqlx::query_scalar("SELECT id FROM auth_realms WHERE name = ?")
+            .bind(&r.name).fetch_one(work).await.map_err(err)?;
+        realm_ids.insert(r.name.clone(), id);
+        if r.kind != "local" {
+            // A realm that has become a directory keeps no accounts of its own.
+            sqlx::query("DELETE FROM auth_users WHERE realm_id = ?").bind(id).execute(work).await.map_err(err)?;
+        }
+        // Merged, like the management accounts: the file's are written, and
+        // ones only here are left. A changed password or switch ends that
+        // account's sessions, as it does when made by hand.
+        for a in &r.accounts {
+            sqlx::query(
+                "INSERT INTO auth_users (realm_id, username, password_hash, enabled) VALUES (?, ?, ?, ?)
+                 ON CONFLICT(realm_id, username) DO UPDATE SET
+                     epoch = epoch + (password_hash <> excluded.password_hash OR enabled <> excluded.enabled),
+                     password_hash = excluded.password_hash, enabled = excluded.enabled")
+                .bind(id).bind(&a.username).bind(&a.password_hash).bind(a.enabled)
+                .execute(work).await.map_err(err)?;
+        }
+    }
+
     // ── Sites ──
     let wanted: Vec<&str> = doc.sites.iter().map(|s| s.name.as_str()).collect();
     for (id, name) in sqlx::query("SELECT id, name FROM sites").fetch_all(work).await.map_err(err)?
@@ -740,6 +911,16 @@ pub async fn apply(work: &SqlitePool, doc: &Document, importer: &str) -> Result<
         for p in &s.extra_ports {
             sqlx::query("INSERT INTO site_ports (site_id, port, tls) VALUES (?, ?, ?)")
                 .bind(id).bind(p.port).bind(p.tls)
+                .execute(work).await.map_err(err)?;
+        }
+        if let Some(ask) = &s.sign_in
+            && let Some(realm) = realm_ids.get(&ask.realm)
+        {
+            sqlx::query(
+                "INSERT INTO site_auth (site_id, realm_id, paths, bypass, basic, user_header, groups_header)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)")
+                .bind(id).bind(realm).bind(ask.paths.join("\n")).bind(ask.bypass.join("\n")).bind(ask.basic)
+                .bind(&ask.user_header).bind(&ask.groups_header)
                 .execute(work).await.map_err(err)?;
         }
     }
@@ -868,9 +1049,63 @@ mod tests {
         assert_eq!(y.everywhere, x.everywhere, "what applies to every policy differs");
         assert_eq!(y.policies, x.policies, "policies differ after the round trip");
         assert_eq!(y.certificates, x.certificates, "certificates differ");
+        assert_eq!(y.realms, x.realms, "sign-in realms differ");
         assert_eq!(y.sites, x.sites, "sites differ");
         assert_eq!(y.accounts, x.accounts, "accounts differ");
         a.close().await;
+        b.close().await;
+    }
+
+    /// An export made without credentials still moves the realms: what it
+    /// cannot carry is kept from the installation it lands on, and a site
+    /// naming a realm the file lacks is refused rather than left open.
+    #[tokio::test]
+    async fn realms_arrive_without_their_secrets_and_keep_what_is_here() {
+        let a = crate::export::tests::estate("import-realms-a").await;
+        sqlx::raw_sql("DELETE FROM policy_rule_sets").execute(&a).await.unwrap();
+        let ck = rcgen::generate_simple_self_signed(vec!["example.com".to_string()]).unwrap();
+        sqlx::query("UPDATE certs SET cert_pem = ?, key_pem = ? WHERE name = 'example'")
+            .bind(ck.cert.pem()).bind(ck.key_pair.serialize_pem()).execute(&a).await.unwrap();
+        let bare = export::build(&a, export::Options { private_keys: false, accounts: false }).await.unwrap();
+        let text = export::to_toml(&bare).unwrap();
+        assert!(!text.contains("SEARCHSECRET") && !text.contains("$2b$"),
+                "an export without credentials carries one");
+        a.close().await;
+
+        // Here: the same directory realm with its own password, a local realm
+        // with an account the file knows nothing of, and a realm of its own.
+        let b = fresh("import-realms-b").await;
+        sqlx::raw_sql(r#"
+            INSERT INTO auth_realms (name, kind, config) VALUES ('corp', 'ldap', '{"url":"ldap://old","bind_password":"KEPT"}');
+            INSERT INTO auth_realms (name, kind) VALUES ('staff', 'local'), ('only-here', 'local');
+            INSERT INTO auth_users (realm_id, username, password_hash) VALUES
+                 (2, 'erin', '$2b$12$eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee');"#)
+            .execute(&b).await.unwrap();
+
+        // A certificate's key does not travel either, so the file is one the
+        // import refuses whole; the realms are what is under test here.
+        let mut doc = parse(&text).unwrap();
+        doc.certificates.clear();
+        for s in &mut doc.sites { s.certificate = None; s.tls_port = None; s.tls_redirect = false; }
+        let p = plan(&b, &doc, GUI, "someone").await;
+        assert!(p.blockers.is_empty(), "refused: {:?}", p.blockers);
+        assert!(p.warnings.iter().any(|w| w.contains("search account")), "no word about the password: {:?}", p.warnings);
+        apply(&b, &doc, "someone").await.expect("apply");
+
+        let config: String = sqlx::query_scalar("SELECT config FROM auth_realms WHERE name = 'corp'")
+            .fetch_one(&b).await.unwrap();
+        let config: crate::gateway::LdapConfig = serde_json::from_str(&config).unwrap();
+        assert_eq!((config.url.as_str(), config.bind_password.as_str()), ("ldaps://dc.example.com", "KEPT"));
+        let names: Vec<String> = sqlx::query_scalar("SELECT name FROM auth_realms ORDER BY name").fetch_all(&b).await.unwrap();
+        assert_eq!(names, ["corp", "staff"], "a realm the file does not name stayed");
+        let users: Vec<String> = sqlx::query_scalar("SELECT username FROM auth_users ORDER BY username").fetch_all(&b).await.unwrap();
+        assert_eq!(users, ["erin"], "an account only here is kept, and none arrives without its hash");
+        let asked: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM site_auth").fetch_one(&b).await.unwrap();
+        assert_eq!(asked, 1, "the site's sign-in did not arrive");
+
+        doc.realms.retain(|r| r.name != "staff");
+        let p = plan(&b, &doc, GUI, "someone").await;
+        assert!(p.blockers.iter().any(|x| x.contains("realm staff")), "a missing realm passed: {:?}", p.blockers);
         b.close().await;
     }
 

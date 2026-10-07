@@ -56,6 +56,10 @@ pub struct Document {
     pub policies: Vec<Policy>,
     #[serde(default, rename = "certificate", skip_serializing_if = "Vec::is_empty")]
     pub certificates: Vec<Certificate>,
+    /// Where the people who sign in to a site come from. Before the sites,
+    /// which name the one they use.
+    #[serde(default, rename = "realm", skip_serializing_if = "Vec::is_empty")]
+    pub realms: Vec<Realm>,
     #[serde(default, rename = "site", skip_serializing_if = "Vec::is_empty")]
     pub sites: Vec<Site>,
     #[serde(default, rename = "account", skip_serializing_if = "Vec::is_empty")]
@@ -257,11 +261,82 @@ pub struct Site {
     pub x_content_type: bool,
     #[serde(default)]
     pub xss_protection: bool,
+    /// What the site asks of its visitors. Absent when it asks nobody.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sign_in: Option<SignIn>,
     #[serde(default, rename = "upstream", skip_serializing_if = "Vec::is_empty")]
     pub upstreams: Vec<Upstream>,
     /// Ports beyond listen_port and tls_port.
     #[serde(default, rename = "port", skip_serializing_if = "Vec::is_empty")]
     pub extra_ports: Vec<Port>,
+}
+
+/// A site's sign-in settings.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct SignIn {
+    /// The realm, by name.
+    pub realm: String,
+    /// Path prefixes that need a sign-in. None means the whole site.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub paths: Vec<String>,
+    /// Path prefixes that never do.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bypass: Vec<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub basic: bool,
+    #[serde(default = "user_header")]
+    pub user_header: String,
+    #[serde(default = "groups_header")]
+    pub groups_header: String,
+}
+
+/// A source of identities for the sites that ask for a sign-in.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Realm {
+    pub name: String,
+    /// "local" or "ldap".
+    pub kind: String,
+    pub session_minutes: i64,
+    pub idle_minutes: i64,
+    /// A directory's connection, for an "ldap" realm.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub directory: Option<Directory>,
+    /// A local realm's accounts. Present only in an export that includes
+    /// accounts, like the management ones.
+    #[serde(default, rename = "account", skip_serializing_if = "Vec::is_empty")]
+    pub accounts: Vec<RealmAccount>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Directory {
+    pub url: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub starttls: bool,
+    #[serde(default = "yes")]
+    pub verify_tls: bool,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub bind_dn: String,
+    /// The search account's password. Present only in an export that includes
+    /// private keys: it is a credential like them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bind_password: Option<String>,
+    pub base_dn: String,
+    pub user_filter: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub groups_attribute: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct RealmAccount {
+    pub username: String,
+    #[serde(default = "yes")]
+    pub enabled: bool,
+    /// bcrypt. The password itself is never stored anywhere.
+    pub password_hash: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -297,6 +372,8 @@ fn off() -> String { "off".to_string() }
 fn yes() -> bool { true }
 fn one() -> i64 { 1 }
 fn sameorigin() -> String { "SAMEORIGIN".to_string() }
+fn user_header() -> String { "X-Forwarded-User".to_string() }
+fn groups_header() -> String { "X-Forwarded-Groups".to_string() }
 
 // ─── Settings: what travels ──────────────────────────────
 //
@@ -579,6 +656,49 @@ pub async fn build(db: &SqlitePool, opts: Options) -> Result<Document, sqlx::Err
         });
     }
 
+    // ── Realms ──
+    let mut realms = Vec::new();
+    let mut realm_names: BTreeMap<i64, String> = BTreeMap::new();
+    for r in sqlx::query(
+        "SELECT id, name, kind, session_minutes, idle_minutes, config FROM auth_realms ORDER BY name")
+        .fetch_all(db).await?
+    {
+        let (id, name, kind): (i64, String, String) = (r.get("id"), r.get("name"), r.get("kind"));
+        realm_names.insert(id, name.clone());
+        let directory = (kind == "ldap").then(|| {
+            let c: crate::gateway::LdapConfig =
+                serde_json::from_str(&r.get::<String, _>("config")).unwrap_or_default();
+            Directory {
+                url: c.url,
+                starttls: c.starttls,
+                verify_tls: c.verify_tls,
+                bind_dn: c.bind_dn,
+                bind_password: (opts.private_keys && !c.bind_password.is_empty()).then_some(c.bind_password),
+                base_dn: c.base_dn,
+                user_filter: c.user_filter,
+                groups_attribute: c.groups_attribute,
+            }
+        });
+        let accounts = if opts.accounts {
+            sqlx::query("SELECT username, enabled, password_hash FROM auth_users
+                          WHERE realm_id = ? ORDER BY username")
+                .bind(id).fetch_all(db).await?
+                .into_iter().map(|u| RealmAccount {
+                    username: u.get("username"),
+                    enabled: u.get::<i64, _>("enabled") != 0,
+                    password_hash: u.get("password_hash"),
+                }).collect()
+        } else {
+            Vec::new()
+        };
+        realms.push(Realm {
+            name, kind,
+            session_minutes: r.get("session_minutes"),
+            idle_minutes: r.get("idle_minutes"),
+            directory, accounts,
+        });
+    }
+
     // ── Sites ──
     let mut sites = Vec::new();
     for s in sqlx::query(
@@ -606,6 +726,18 @@ pub async fn build(db: &SqlitePool, opts: Options) -> Result<Document, sqlx::Err
             .collect();
         extra_ports.sort();
         let flag = |c: &str| s.get::<i64, _>(c) != 0;
+        let lines = |text: String| text.lines().map(str::to_string).filter(|l| !l.is_empty()).collect::<Vec<_>>();
+        let sign_in = sqlx::query(
+            "SELECT realm_id, paths, bypass, basic, user_header, groups_header FROM site_auth WHERE site_id = ?")
+            .bind(id).fetch_optional(db).await?
+            .and_then(|a| Some(SignIn {
+                realm: realm_names.get(&a.get::<i64, _>("realm_id"))?.clone(),
+                paths: lines(a.get("paths")),
+                bypass: lines(a.get("bypass")),
+                basic: a.get::<i64, _>("basic") != 0,
+                user_header: a.get("user_header"),
+                groups_header: a.get("groups_header"),
+            }));
 
         sites.push(Site {
             name: s.get("name"),
@@ -625,6 +757,7 @@ pub async fn build(db: &SqlitePool, opts: Options) -> Result<Document, sqlx::Err
             x_frame_value: s.get("x_frame_value"),
             x_content_type: flag("x_content_type"),
             xss_protection: flag("xss_protection"),
+            sign_in,
             upstreams,
             extra_ports,
         });
@@ -654,6 +787,7 @@ pub async fn build(db: &SqlitePool, opts: Options) -> Result<Document, sqlx::Err
         everywhere,
         policies,
         certificates,
+        realms,
         sites,
         accounts,
     })
@@ -776,6 +910,14 @@ pub(crate) mod tests {
             INSERT INTO site_aliases (site_id, name) VALUES (1, 'www.shop.example.com');
             INSERT INTO upstreams (site_id, url, weight, enabled) VALUES (1, 'http://10.0.0.8:3000', 3, 1),
                                                                        (1, 'http://10.0.0.9:3000', 1, 0);
+            INSERT INTO auth_realms (name, kind, session_minutes, idle_minutes) VALUES ('staff', 'local', 240, 30);
+            INSERT INTO auth_users (realm_id, username, password_hash, enabled) VALUES
+                 (1, 'carol', '$2b$12$cccccccccccccccccccccccccccccccccccccccccccccccccccccc', 1),
+                 (1, 'dave',  '$2b$12$dddddddddddddddddddddddddddddddddddddddddddddddddddddd', 0);
+            INSERT INTO auth_realms (name, kind, config) VALUES ('corp', 'ldap',
+                 '{"url":"ldaps://dc.example.com","starttls":false,"verify_tls":true,"bind_dn":"cn=easywaf,dc=example,dc=com","bind_password":"SEARCHSECRET","base_dn":"ou=people,dc=example,dc=com","user_filter":"(uid={user})","groups_attribute":"memberOf"}');
+            INSERT INTO site_auth (site_id, realm_id, paths, bypass, basic)
+                 VALUES (1, 1, '/admin' || char(10) || '/settings', '/admin/health', 1);
             INSERT OR REPLACE INTO settings (key, value) VALUES ('traffic_retention_days', '30');
             INSERT OR REPLACE INTO settings (key, value) VALUES ('syslog_host', 'logs.example.com');
         "#).execute(&db).await.expect("estate");

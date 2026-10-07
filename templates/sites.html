@@ -106,6 +106,12 @@
                                     <i class="fa fa-exclamation-triangle"></i> Not inspected
                                 </span>
                             {% endif %}
+                            {% if site.name in asking %}
+                            <br><span class="label label-default" style="margin-top:3px;display:inline-block"
+                                      title="Visitors are asked to sign in, with the realm {{ asking[site.name] }}">
+                                <i class="fa fa-id-badge"></i> Sign-in: {{ asking[site.name] }}
+                            </span>
+                            {% endif %}
                         </td>
                         <td>
                             <form class="admin-only" method="post" action="/sites/{{ site.name }}/toggle"
