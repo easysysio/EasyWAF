@@ -31,6 +31,7 @@ next minor, so a release's notes stay about its feature.
 | 1.0.1 | What a review of the request path found: header values with a byte that is not ASCII were not inspected, root-anchored rules were walked past by `//.env` and `/a/b/../../.env`, compressed request bodies were not read, a POST could be sent to two backends, and an abandoned upload counted against the backend. Seven optional rule sets were written for the channel beside it: exploit probes, AI crawlers, AI assistants, Node.js and NoSQL, bad bots, web shells, IIS — **released 2026-10-03** |
 | 1.1.0 | Authentication gateway: a sign-in in front of a site or a path, with local accounts or LDAP (see [auth-gateway.md](auth-gateway.md)) — **released 2026-10-07** |
 | 1.1.1 | A directory realm is tested one step at a time — connection, search account, base, filter, one person, their password and groups — where the page said only whether a sign-in worked; and groups are read whatever case the directory names the attribute in — **released 2026-10-07** |
+| 1.1.2 | A site's sign-in can ask for a CAPTCHA, checked before the name and password are looked at — **released 2026-10-09** |
 | 1.2.0 | Configuration sync between nodes — HA (see [ha-config-sync.md](ha-config-sync.md)) |
 | 1.3.0 | Per-site rate limiting (see [rate-limiting.md](rate-limiting.md)) |
 | 1.4.0 | Learning and hardening modes — URL allowlisting (see [url-learning.md](url-learning.md)) |
