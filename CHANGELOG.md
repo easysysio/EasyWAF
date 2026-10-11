@@ -6,6 +6,13 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
+## [1.1.3] — unreleased
+
+### Changed
+- The documentation site counts visits with Google Analytics, for a visitor who accepts: it asks first, and loads nothing from Google until then. EasyWAF itself is unchanged and sends nothing anywhere.
+
+---
+
 ## [1.1.2] — 2026-10-09
 
 ### Added

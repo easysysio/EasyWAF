@@ -15,7 +15,9 @@ site_url: https://easywaf.easysys.io/
 site_description: A self-contained web application firewall and HTTP reverse proxy, in a single Rust binary.
 repo_url: https://github.com/easysysio/EasyWAF
 repo_name: easysysio/EasyWAF
-copyright: GPL-3.0-or-later licensed · part of the EasySYS suite
+copyright: >
+  GPL-3.0-or-later licensed · part of the EasySYS suite ·
+  <a href="#__consent">Cookie settings</a>
 
 # The design notes are working documents — unshipped plans, arguments with
 # earlier decisions — and they live in this directory because they belong
@@ -112,6 +114,22 @@ plugins:
   - glightbox
 
 extra:
+  # Visits are counted with Google Analytics, and only for a visitor who
+  # accepts: nothing is loaded from Google, and no cookie is set, until then.
+  # "Cookie settings" in the footer opens the choice again.
+  analytics:
+    provider: google
+    property: G-XLSZLEJQDE
+  consent:
+    title: Cookies
+    description: >-
+      This site uses Google Analytics to count visits and see which pages are
+      read, so the documentation can be made better. Nothing is sent unless
+      you accept.
+    actions:
+      - accept
+      - reject
+      - manage
   social:
     - icon: fontawesome/brands/github
       link: https://github.com/easysysio/EasyWAF
