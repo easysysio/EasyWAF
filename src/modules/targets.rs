@@ -24,6 +24,49 @@ pub const MAX_VALUES: usize = 1024;
 /// The longest name a targeted zone accepts after its colon.
 const MAX_NAME: usize = 128;
 
+/// A condition a rule adds to its first: a zone and a pattern, and whether it
+/// holds when the pattern matches nothing instead. As a set file and the
+/// database's `conditions` column write it.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Condition {
+    pub zone:    String,
+    pub pattern: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub negate:  bool,
+}
+
+/// The conditions stored in a rule's `conditions` column. `None` for text that
+/// is not a list of them, which a rule is not run with.
+pub fn read_conditions(json: &str) -> Option<Vec<Condition>> {
+    if json.trim().is_empty() {
+        return Some(Vec::new());
+    }
+    serde_json::from_str(json).ok()
+}
+
+/// A rule's conditions from a set file's TOML table — its zone and pattern
+/// first, then each of `and` — as (zone, pattern, negate). `Err` names what is
+/// missing.
+pub fn table_conditions(rule: &toml::Table) -> Result<Vec<(String, String, bool)>, String> {
+    let text = |t: &toml::Table, k: &str| t.get(k).and_then(|v| v.as_str()).map(str::to_string);
+    let flag = |t: &toml::Table| t.get("negate").and_then(|v| v.as_bool()).unwrap_or(false);
+    let mut out = vec![(
+        text(rule, "zone").unwrap_or_else(|| "ANY".into()),
+        text(rule, "pattern").ok_or("a rule without a pattern")?,
+        flag(rule),
+    )];
+    for c in rule.get("and").and_then(|v| v.as_array()).into_iter().flatten() {
+        let c = c.as_table().ok_or("a condition that is not a table")?;
+        out.push((
+            text(c, "zone").ok_or("a condition without a zone")?,
+            text(c, "pattern").ok_or("a condition without a pattern")?,
+            flag(c),
+        ));
+    }
+    Ok(out)
+}
+
 /// One part of a request a rule reads.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Target {

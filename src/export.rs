@@ -154,6 +154,12 @@ pub struct Rule {
     pub description: String,
     pub zone: String,
     pub pattern: String,
+    /// Whether the first condition holds when the pattern matches nothing.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub negate: bool,
+    /// The conditions after the first, all of which must hold too.
+    #[serde(default, rename = "and", skip_serializing_if = "Vec::is_empty")]
+    pub and: Vec<crate::modules::targets::Condition>,
     pub score: i64,
     pub action: String,
     #[serde(default = "yes")]
@@ -543,7 +549,7 @@ pub async fn build(db: &SqlitePool, opts: Options) -> Result<Document, sqlx::Err
         let mut row_ids: BTreeMap<i64, usize> = BTreeMap::new();
         for r in sqlx::query(
             "SELECT id, name, COALESCE(description, '') AS description, zone, pattern, score, action,
-                    enabled, external_id, rule_set,
+                    negate, conditions, enabled, external_id, rule_set,
                     cloned_from_external_id, cloned_from_version, cloned_from_set
                FROM waf_rules WHERE policy_id = ?
               ORDER BY external_id IS NULL, external_id, name, id")
@@ -566,6 +572,8 @@ pub async fn build(db: &SqlitePool, opts: Options) -> Result<Document, sqlx::Err
                 description: r.get("description"),
                 zone: r.get("zone"),
                 pattern: r.get("pattern"),
+                negate: r.get::<i64, _>("negate") != 0,
+                and: crate::modules::targets::read_conditions(&r.get::<String, _>("conditions")).unwrap_or_default(),
                 score: r.get("score"),
                 action: r.get("action"),
                 enabled,
@@ -894,6 +902,10 @@ pub(crate) mod tests {
             -- A rule written here, and a catalogue rule taken on its own.
             INSERT INTO waf_rules (policy_id, name, description, zone, pattern, score, action, enabled)
                  VALUES (1, 'Block the old admin', 'written here', 'URL', '^/old-admin', 10, 'block', 1);
+            INSERT INTO waf_rules (policy_id, name, zone, pattern, negate, conditions, score, action, enabled)
+                 VALUES (1, 'Pingback without a referer', 'URL', '(?i)/xmlrpc\.php', 0,
+                         '[{"zone":"METHOD","pattern":"^POST$"},{"zone":"HEADER:Referer","pattern":".","negate":true}]',
+                         6, 'score', 1);
             INSERT INTO waf_rules (policy_id, name, zone, pattern, score, action, enabled, external_id, rule_set)
                  VALUES (1, 'XSS script tag', 'ARGS', '<script', 5, 'score', 1, 941001, 'owasp-xss');
             -- An exclusion of the set's rule, by number, and one of the rule written here.
@@ -940,10 +952,13 @@ pub(crate) mod tests {
         assert_eq!(p.rule_sets, [RuleSetRef { id: "owasp-sqli".into(), version: 2 }]);
         assert_eq!(p.rules_off, [942002], "the set rule switched off was not recorded");
         assert_eq!(p.countries, ["CN", "RU"]);
-        // The set's rules travel as the set; the other two in full.
+        // The set's rules travel as the set; the other three in full.
         let names: Vec<&str> = p.rules.iter().map(|r| r.name.as_str()).collect();
-        assert_eq!(names, ["XSS script tag", "Block the old admin"],
+        assert_eq!(names, ["XSS script tag", "Block the old admin", "Pingback without a referer"],
                    "a rule of an installed set travelled in full, or a rule of this installation's own did not");
+        let pingback = &p.rules[2];
+        assert_eq!(pingback.and.len(), 2, "a rule's conditions did not travel with it");
+        assert!(pingback.and[1].negate && pingback.and[1].zone == "HEADER:Referer");
         assert_eq!(p.exclusions.len(), 1);
         assert_eq!(p.exclusions[0].rule, Some(942001));
         let own = p.rules.iter().find(|r| r.name == "Block the old admin").unwrap();

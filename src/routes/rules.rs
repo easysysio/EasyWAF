@@ -478,16 +478,24 @@ pub async fn install_set(
     version: i64,
     toml_text: &str,
 ) -> Result<usize> {
+    // Every rule's keys and zones, before anything is written. A set written
+    // for a newer EasyWAF would otherwise install rules that never run, or
+    // that run without part of what they say. The keys first, so that one this
+    // version does not read is named rather than reported as a parse error.
+    if let Some((id, key)) = unread_key(toml_text) {
+        return Err(AppError::Refused(format!(
+            "{set_id} v{version} needs a newer EasyWAF: rule {id} has {key:?}, which this version \
+             ({}) does not read. Upgrade, then apply it.",
+            env!("CARGO_PKG_VERSION")
+        )));
+    }
     let file: RuleFile = toml::from_str(toml_text)
         .map_err(|e| AppError::Internal(format!("rule set could not be parsed: {e}")))?;
-
-    // Every rule's zone, before anything is written. A set written for a newer
-    // EasyWAF would otherwise install rules that never run.
-    if let Some(rule) = file.rules.iter().find(|r| crate::modules::targets::parse_zone(&r.zone).is_none()) {
+    if let Some((id, zone)) = file.rules.iter().find_map(|r| r.unreadable_zone().map(|z| (r.id, z))) {
         return Err(AppError::Refused(format!(
-            "{set_id} v{version} needs a newer EasyWAF: rule {} reads the zone {:?}, which this \
+            "{set_id} v{version} needs a newer EasyWAF: rule {id} reads the zone {zone:?}, which this \
              version ({}) does not. Upgrade, then apply it.",
-            rule.id, rule.zone, env!("CARGO_PKG_VERSION")
+            env!("CARGO_PKG_VERSION")
         )));
     }
 
@@ -510,27 +518,29 @@ pub async fn install_set(
 
         match existing {
             Some(id) => {
+                let conditions = rule.conditions_json();
                 sqlx::query!(
                     "UPDATE waf_rules
                      SET name = ?, description = ?, zone = ?, pattern = ?,
-                         score = ?, action = ?, rule_set = ?,
+                         score = ?, action = ?, rule_set = ?, negate = ?, conditions = ?,
                          imported_pattern = ?, imported_score = ?, imported_action = ?
                      WHERE id = ?",
                     rule.name, description, rule.zone, rule.pattern,
-                    rule.score, rule.action, set_id,
+                    rule.score, rule.action, set_id, rule.negate, conditions,
                     rule.pattern, rule.score, rule.action, id
                 )
                 .execute(db)
                 .await?;
             }
             None => {
+                let conditions = rule.conditions_json();
                 sqlx::query!(
                     "INSERT INTO waf_rules
-                     (policy_id, name, description, zone, pattern, score, action,
+                     (policy_id, name, description, zone, pattern, score, action, negate, conditions,
                       external_id, rule_set, imported_pattern, imported_score, imported_action)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     policy_id, rule.name, description, rule.zone, rule.pattern,
-                    rule.score, rule.action, rule.id, set_id,
+                    rule.score, rule.action, rule.negate, conditions, rule.id, set_id,
                     rule.pattern, rule.score, rule.action
                 )
                 .execute(db)
@@ -586,6 +596,15 @@ struct PreviousRule {
     pattern:     String,
     score:       i64,
     action:      String,
+    /// Absent from what versions before conditions recorded, which had none.
+    #[serde(default)]
+    negate:      bool,
+    #[serde(default = "no_conditions")]
+    conditions:  String,
+}
+
+fn no_conditions() -> String {
+    "[]".into()
 }
 
 /// What a policy could put back, for the page to offer it.
@@ -627,7 +646,8 @@ async fn snapshot_before_update(
         r#"SELECT external_id as "external_id!", name as "name!",
                   COALESCE(description, '') as "description!: String",
                   zone as "zone!", pattern as "pattern!",
-                  score as "score!", action as "action!"
+                  score as "score!", action as "action!",
+                  negate as "negate!: bool", conditions as "conditions!"
            FROM waf_rules
            WHERE policy_id = ? AND rule_set = ? AND external_id IS NOT NULL"#,
         policy_id, set_id
@@ -643,6 +663,8 @@ async fn snapshot_before_update(
         pattern:     r.pattern,
         score:       r.score,
         action:      r.action,
+        negate:      r.negate,
+        conditions:  r.conditions,
     }).collect();
     if previous.is_empty() {
         return Ok(());
@@ -724,9 +746,11 @@ pub async fn revert_set(
         let done = sqlx::query!(
             "UPDATE waf_rules
              SET name = ?, description = ?, zone = ?, pattern = ?, score = ?, action = ?,
+                 negate = ?, conditions = ?,
                  imported_pattern = ?, imported_score = ?, imported_action = ?
              WHERE policy_id = ? AND rule_set = ? AND external_id = ?",
             r.name, r.description, r.zone, r.pattern, r.score, r.action,
+            r.negate, r.conditions,
             r.pattern, r.score, r.action,
             policy_id, set_id, r.external_id
         )
@@ -739,10 +763,11 @@ pub async fn revert_set(
         if done == 0 {
             sqlx::query!(
                 "INSERT INTO waf_rules
-                   (policy_id, name, description, zone, pattern, score, action,
+                   (policy_id, name, description, zone, pattern, score, action, negate, conditions,
                     external_id, rule_set, imported_pattern, imported_score, imported_action)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 policy_id, r.name, r.description, r.zone, r.pattern, r.score, r.action,
+                r.negate, r.conditions,
                 r.external_id, set_id, r.pattern, r.score, r.action
             )
             .execute(db)
@@ -1023,6 +1048,57 @@ struct RuleFileDef {
     pattern:     String,
     score:       i64,
     action:      String,
+    /// Whether the first condition holds when the pattern matches nothing.
+    #[serde(default)]
+    negate:      bool,
+    /// The conditions after the first, all of which must hold too.
+    #[serde(default, rename = "and")]
+    and:         Vec<crate::modules::targets::Condition>,
+}
+
+impl RuleFileDef {
+    /// The further conditions as the database's `conditions` column holds them.
+    fn conditions_json(&self) -> String {
+        serde_json::to_string(&self.and).unwrap_or_else(|_| "[]".into())
+    }
+
+    /// The first zone the rule names, its conditions' included, that this
+    /// version does not read.
+    fn unreadable_zone(&self) -> Option<&str> {
+        std::iter::once(self.zone.as_str())
+            .chain(self.and.iter().map(|c| c.zone.as_str()))
+            .find(|z| crate::modules::targets::parse_zone(z).is_none())
+    }
+
+    /// Whether this version reads every zone the rule names.
+    fn readable(&self) -> bool {
+        self.unreadable_zone().is_none()
+    }
+}
+
+/// The keys a rule in a set file may have. A key beyond these is something a
+/// newer EasyWAF reads, and a rule installed without it would match more, or
+/// less, than it was written to.
+const RULE_KEYS: &[&str] = &["id", "name", "description", "zone", "pattern", "score", "action", "negate", "and"];
+const CONDITION_KEYS: &[&str] = &["zone", "pattern", "negate"];
+
+/// A key in one of a set file's rules that this version does not read, as
+/// `(rule id, key)`.
+fn unread_key(toml_text: &str) -> Option<(i64, String)> {
+    let table: toml::Table = toml_text.parse().ok()?;
+    for rule in table.get("rules")?.as_array()? {
+        let Some(rule) = rule.as_table() else { continue };
+        let id = rule.get("id").and_then(|v| v.as_integer()).unwrap_or(0);
+        if let Some(k) = rule.keys().find(|k| !RULE_KEYS.contains(&k.as_str())) {
+            return Some((id, k.clone()));
+        }
+        for c in rule.get("and").and_then(|v| v.as_array()).into_iter().flatten() {
+            if let Some(k) = c.as_table().and_then(|c| c.keys().find(|k| !CONDITION_KEYS.contains(&k.as_str()))) {
+                return Some((id, format!("and.{k}")));
+            }
+        }
+    }
+    None
 }
 
 // ─── Rule files ──────────────────────────────────────────
@@ -1160,7 +1236,7 @@ fn read_rule_defs() -> HashMap<i64, (RuleFileDef, Option<String>)> {
             let set_id = parsed.set.as_ref().map(|s| s.id.clone());
             // A rule in a zone this version does not read is not offered: it
             // would be added and never run.
-            for rule in parsed.rules.into_iter().filter(|r| crate::modules::targets::parse_zone(&r.zone).is_some()) {
+            for rule in parsed.rules.into_iter().filter(RuleFileDef::readable) {
                 map.insert(rule.id, (rule, set_id.clone()));
             }
         }
@@ -1221,7 +1297,7 @@ pub fn read_catalog_categories(held: &Held) -> Result<Vec<CatalogCategory>> {
 
         let mut rules = Vec::new();
         let mut added_count = 0;
-        for r in parsed.rules.into_iter().filter(|r| crate::modules::targets::parse_zone(&r.zone).is_some()) {
+        for r in parsed.rules.into_iter().filter(RuleFileDef::readable) {
             // Present and off is not the same as present: the tick means the
             // rule applies here, and one switched off applies to nothing. It
             // is shown unticked, with a label saying it is still in the policy.
@@ -1355,15 +1431,16 @@ pub async fn add_rules_by_external_ids(
         }
 
         let desc = def.description.as_deref().unwrap_or("");
+        let conditions = def.conditions_json();
         // rule_set records provenance; it does not make the policy *hold* the
         // set. That is what policy_rule_sets is for, and it is deliberately not
         // written here — a policy that took three rules out of eighteen chose
         // three, and an update must not arrive and install the other fifteen.
         sqlx::query!(
             "INSERT INTO waf_rules
-             (policy_id, name, description, zone, pattern, score, action, external_id,
-              rule_set, imported_pattern, imported_score, imported_action)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             (policy_id, name, description, zone, pattern, score, action, negate, conditions,
+              external_id, rule_set, imported_pattern, imported_score, imported_action)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             policy_id,
             def.name,
             desc,
@@ -1371,6 +1448,8 @@ pub async fn add_rules_by_external_ids(
             def.pattern,
             def.score,
             def.action,
+            def.negate,
+            conditions,
             def.id,
             set_id,
             // What the rule looked like on import — see migration 008.
@@ -1941,6 +2020,8 @@ pub async fn get_rule_edit_global(
                 wr.cloned_from_set,
                 wr.cloned_from_external_id,
                 wr.cloned_from_version,
+                wr.negate  as \"negate!: bool\",
+                wr.conditions as \"conditions!\",
                 wr.policy_id as \"policy_id!\"
          FROM   waf_rules wr
          JOIN   policies  p ON p.id = wr.policy_id
@@ -1972,6 +2053,10 @@ pub async fn get_rule_edit_global(
     ctx.insert("rule_set",     &r.rule_set);
     ctx.insert("cloned_from",  &r.cloned_from_external_id);
     ctx.insert("cloned_ver",   &r.cloned_from_version);
+    // Shown, not edited here: a rule with several conditions comes from a set
+    // or an import.
+    ctx.insert("negate",       &r.negate);
+    ctx.insert("conditions",   &crate::modules::targets::read_conditions(&r.conditions).unwrap_or_default());
 
     // Where this rule does not actually run.
     //
@@ -2154,6 +2239,7 @@ async fn share_custom_rules(
     let rules = sqlx::query!(
         r#"SELECT name, description as "description!", zone, pattern,
                   score as "score!", action, enabled as "enabled!: i64",
+                  negate as "negate!: bool", conditions as "conditions!",
                   cloned_from_set, cloned_from_external_id, cloned_from_version
            FROM   waf_rules
            WHERE  policy_id = ? AND external_id IS NULL
@@ -2167,8 +2253,8 @@ async fn share_custom_rules(
     for r in rules {
         let clash: i64 = sqlx::query_scalar!(
             r#"SELECT COUNT(*) as "n!: i64" FROM waf_rules
-               WHERE policy_id = ? AND zone = ? AND pattern = ?"#,
-            to_policy, r.zone, r.pattern
+               WHERE policy_id = ? AND zone = ? AND pattern = ? AND negate = ? AND conditions = ?"#,
+            to_policy, r.zone, r.pattern, r.negate, r.conditions
         )
         .fetch_one(db)
         .await?;
@@ -2182,11 +2268,11 @@ async fn share_custom_rules(
         // a rule that began as a clone still says what it was forked from.
         sqlx::query!(
             "INSERT INTO waf_rules
-             (policy_id, name, description, zone, pattern, score, action, enabled,
+             (policy_id, name, description, zone, pattern, score, action, negate, conditions, enabled,
               rule_set, cloned_from_set, cloned_from_external_id, cloned_from_version)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)",
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)",
             to_policy, r.name, r.description, r.zone, r.pattern, r.score,
-            r.action, r.enabled, r.cloned_from_set, r.cloned_from_external_id,
+            r.action, r.negate, r.conditions, r.enabled, r.cloned_from_set, r.cloned_from_external_id,
             r.cloned_from_version
         )
         .execute(db)
@@ -2268,7 +2354,8 @@ pub async fn post_rule_clone(
 
     let src = sqlx::query!(
         r#"SELECT policy_id as "policy_id!", name, description, zone, pattern,
-                  score as "score!", action, external_id, rule_set
+                  score as "score!", action, external_id, rule_set,
+                  negate as "negate!: bool", conditions as "conditions!"
            FROM waf_rules WHERE id = ?"#,
         id
     )
@@ -2308,12 +2395,12 @@ pub async fn post_rule_clone(
     // it came from is provenance, and lives in cloned_from_set.
     let new_id = sqlx::query!(
         "INSERT INTO waf_rules
-         (policy_id, name, description, zone, pattern, score, action,
+         (policy_id, name, description, zone, pattern, score, action, negate, conditions,
           enabled, rule_set, cloned_from_set, cloned_from_external_id,
           cloned_from_version)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 1, NULL, ?, ?, ?)",
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NULL, ?, ?, ?)",
         src.policy_id, name, src.description, src.zone, src.pattern,
-        src.score, src.action, src.rule_set, external_id, version
+        src.score, src.action, src.negate, src.conditions, src.rule_set, external_id, version
     )
     .execute(&state.db)
     .await?
@@ -2559,6 +2646,36 @@ action = "score"
 
         let targeted = V1.replace(r#"zone = "ARGS""#, r#"zone = "ARG:q|COOKIE""#);
         install_set(&db, policy, "demo", 1, &targeted).await.expect("a set using targeted zones");
+    }
+
+    /// A key in a rule that this version does not read is refused; one it
+    /// reads — conditions — is stored with the rule.
+    #[tokio::test]
+    async fn a_rules_conditions_are_installed_and_an_unknown_key_refused() {
+        let (db, policy) = fixture("conditions").await;
+        let first = r#"pattern = "one""#;
+        assert!(V1.contains(first));
+
+        let unknown = V1.replacen(first, &format!("{first}\nlimit = 5"), 1);
+        let e = install_set(&db, policy, "demo", 1, &unknown).await.expect_err("installed");
+        assert!(e.to_string().contains("\"limit\""), "{e}");
+
+        // A condition goes after the rule's last key: a [[rules.and]] table takes
+        // every key below it until the next table.
+        let last = "action = \"score\"\n";
+        assert!(V1.contains(last));
+        let bad = V1.replacen(last, &format!("{last}[[rules.and]]\nzone = \"METHOD\"\npattern = \"x\"\ncount = 2\n"), 1);
+        let e = install_set(&db, policy, "demo", 1, &bad).await.expect_err("installed");
+        assert!(e.to_string().contains("and.count"), "{e}");
+
+        let with = V1.replacen(first, &format!("{first}\nnegate = true"), 1)
+            .replacen(last, &format!("{last}[[rules.and]]\nzone = \"METHOD\"\npattern = \"^POST$\"\n"), 1);
+        install_set(&db, policy, "demo", 1, &with).await.expect("a set using conditions");
+        let (negate, conditions): (bool, String) = sqlx::query_as(
+            "SELECT negate, conditions FROM waf_rules WHERE policy_id = ? AND external_id = 990001")
+            .bind(policy).fetch_one(&db).await.unwrap();
+        assert!(negate);
+        assert_eq!(conditions, r#"[{"zone":"METHOD","pattern":"^POST$"}]"#);
     }
 
     /// A rule a new version no longer has leaves the policy with it, unless it

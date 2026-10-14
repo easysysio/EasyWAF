@@ -6,6 +6,17 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
+## [1.3.0] — unreleased
+
+### Added
+- **A rule can have several conditions, all of which must hold.** Each is a zone and a pattern of its own — the method is `POST`, the URI names `/xmlrpc.php`, the body holds `pingback.ping` — and any of them, the first included, can be negated: it holds when its pattern matches nothing, so "no `Referer`" is a condition. In a set file they are `negate = true` and `[[rules.and]]` tables. A rule without either is what it was.
+- A rule's page shows its further conditions and whether it is negated. They are not edited there; a rule with several conditions comes from a set or an import.
+
+### Changed
+- Installing a rule set with a key in a rule that this version does not read is refused, naming the key, where it was ignored and the rule installed without it.
+
+---
+
 ## [1.2.1] — 2026-10-14
 
 ### Changed

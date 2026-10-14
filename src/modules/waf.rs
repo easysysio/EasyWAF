@@ -24,7 +24,7 @@
 // =========================================================
 
 use crate::modules::{Detection, Findings, RuleHit, InspectionModule, ModuleDecision, RequestContext};
-use crate::modules::targets::{parse_zone, Parts, Target};
+use crate::modules::targets::{parse_zone, read_conditions, Parts, Target};
 use async_trait::async_trait;
 use axum::http::StatusCode;
 use regex::Regex;
@@ -70,21 +70,21 @@ impl WafModule {
     /// Two requests can race and compile the same pattern twice — harmless,
     /// since both produce the same value and the second insert simply wins. No
     /// lock is held across an await point.
-    fn compiled_pattern(&self, rule: &RuleRow) -> Option<Arc<Regex>> {
+    fn compiled_pattern(&self, rule_id: i64, pattern: &str) -> Option<Arc<Regex>> {
         // Fast path — already compiled, or already known to be invalid.
         if let Ok(cache) = self.regex_cache.read()
-            && let Some(entry) = cache.get(&rule.pattern)
+            && let Some(entry) = cache.get(pattern)
         {
             return entry.clone();
         }
 
         // Slow path — compile once and remember the outcome either way.
-        let compiled = match Regex::new(&rule.pattern) {
+        let compiled = match Regex::new(pattern) {
             Ok(re) => Some(Arc::new(re)),
             Err(e) => {
                 tracing::warn!(
-                    rule_id = rule.id,
-                    pattern = %rule.pattern,
+                    rule_id,
+                    pattern,
                     "WAF rule has invalid regex, skipping: {}",
                     e
                 );
@@ -93,9 +93,25 @@ impl WafModule {
         };
 
         if let Ok(mut cache) = self.regex_cache.write() {
-            cache.insert(rule.pattern.clone(), compiled.clone());
+            cache.insert(pattern.to_string(), compiled.clone());
         }
         compiled
+    }
+
+    /// Whether every condition of a rule holds for this request: its own zone
+    /// and pattern, then each further one, stopping at the first that does not.
+    /// A negated condition holds when its pattern matches nothing. A rule with
+    /// a pattern that does not compile holds nowhere.
+    fn holds(&self, rule: &RuleRow, whole: &Whole, parts: &Parts) -> bool {
+        let first = (&rule.targets, &rule.pattern, rule.negate);
+        std::iter::once(first)
+            .chain(rule.and.iter().map(|c| (&c.targets, &c.pattern, c.negate)))
+            .all(|(targets, pattern, negate)| {
+                let (Some(targets), Some(re)) = (targets, self.compiled_pattern(rule.id, pattern)) else {
+                    return false;
+                };
+                reads(targets, whole, parts, &re) != negate
+            })
     }
 
     /// This site's configuration, from the cache unless it has changed.
@@ -153,8 +169,19 @@ struct RuleRow {
     /// zone this version does not know, which is never run.
     targets: Option<Vec<Target>>,
     pattern: String,
+    /// Whether the first condition holds when the pattern matches nothing.
+    negate:  bool,
+    /// The conditions after the first, all of which must hold too.
+    and:     Vec<RuleCondition>,
     score:   i64,
     action:  String,
+}
+
+/// A rule's further condition, its zone parsed as the rule's is.
+struct RuleCondition {
+    targets: Option<Vec<Target>>,
+    pattern: String,
+    negate:  bool,
 }
 
 /// Everything inspection needs to know about one site, read together so the
@@ -234,18 +261,10 @@ impl InspectionModule for WafModule {
                 continue;
             }
 
-            // A rule whose zone this version cannot read is not run. It was
-            // reported when the policy was loaded.
-            let Some(targets) = &rule.targets else { continue };
-
-            // Compiled on first use and cached; skip a rule whose pattern
-            // could not be compiled.
-            let re = match self.compiled_pattern(rule) {
-                Some(r) => r,
-                None    => continue,
-            };
-
-            if !reads(targets, &whole, &parts, &re) {
+            // Every condition, each compiled on first use and cached. A rule
+            // with a zone this version cannot read was reported when the
+            // policy was loaded, and holds nowhere.
+            if !self.holds(rule, &whole, &parts) {
                 continue;
             }
 
@@ -1159,7 +1178,9 @@ async fn get_rules(db: &SqlitePool, policy_id: i64) -> Vec<RuleRow> {
                 zone,
                 pattern,
                 score    as \"score!\",
-                action
+                action,
+                negate   as \"negate!: bool\",
+                conditions as \"conditions!\"
          FROM   waf_rules
          WHERE  policy_id = ? AND enabled = 1
          ORDER  BY id",
@@ -1178,6 +1199,23 @@ async fn get_rules(db: &SqlitePool, policy_id: i64) -> Vec<RuleRow> {
                 tracing::warn!(rule_id = r.id, rule = %r.name, zone = %r.zone,
                                "WAF rule names a zone this version does not read, and is not run");
             }
+            let and: Vec<RuleCondition> = match read_conditions(&r.conditions) {
+                Some(list) => list.into_iter().map(|c| {
+                    let targets = parse_zone(&c.zone);
+                    if targets.is_none() {
+                        tracing::warn!(rule_id = r.id, rule = %r.name, zone = %c.zone,
+                                       "WAF rule has a condition in a zone this version does not read, and is not run");
+                    }
+                    RuleCondition { targets, pattern: c.pattern, negate: c.negate }
+                }).collect(),
+                None => {
+                    tracing::warn!(rule_id = r.id, rule = %r.name,
+                                   "WAF rule's conditions cannot be read, and it is not run");
+                    // One that never holds, so the rule does not run on its
+                    // first condition alone.
+                    vec![RuleCondition { targets: None, pattern: String::new(), negate: false }]
+                }
+            };
             RuleRow {
                 id:          r.id,
                 external_id: r.external_id,
@@ -1185,6 +1223,8 @@ async fn get_rules(db: &SqlitePool, policy_id: i64) -> Vec<RuleRow> {
                 zone:        r.zone,
                 targets,
                 pattern:     r.pattern,
+                negate:      r.negate,
+                and,
                 score:       r.score,
                 action:      r.action,
             }
@@ -1639,6 +1679,8 @@ mod tests {
             zone:    "URL".into(),
             targets: Some(vec![crate::modules::targets::Target::Url]),
             pattern: ".".into(),
+            negate:  false,
+            and:     Vec::new(),
             score:   5,
             action:  "score".into(),
         }
@@ -1995,9 +2037,16 @@ mod set_cases {
     use regex::Regex;
 
     struct Rule {
-        id:      i64,
-        targets: Vec<crate::modules::targets::Target>,
-        pattern: Regex,
+        id:    i64,
+        /// Every condition: what it reads, its pattern, and whether negated.
+        conds: Vec<(Vec<crate::modules::targets::Target>, Regex, bool)>,
+    }
+
+    impl Rule {
+        /// As the engine decides it: every condition holds.
+        fn holds(&self, whole: &Whole, parts: &Parts) -> bool {
+            self.conds.iter().all(|(t, re, negate)| reads(t, whole, parts, re) != *negate)
+        }
     }
 
     fn rules(path: &str) -> Vec<Rule> {
@@ -2008,13 +2057,17 @@ mod set_cases {
         table.get("rules").and_then(|r| r.as_array()).into_iter().flatten()
             .map(|r| {
                 let id = r.get("id").and_then(|v| v.as_integer()).expect("a rule without an id");
-                let pattern = r.get("pattern").and_then(|v| v.as_str()).expect("a rule without a pattern");
-                let zone = r.get("zone").and_then(|v| v.as_str()).unwrap_or("ANY");
-                Rule {
-                    id,
-                    targets: parse_zone(zone).unwrap_or_else(|| panic!("rule {id}: {zone:?} is not a zone")),
-                    pattern: Regex::new(pattern).unwrap_or_else(|e| panic!("rule {id} does not compile: {e}")),
-                }
+                let table = r.as_table().expect("a rule that is not a table");
+                let conds = crate::modules::targets::table_conditions(table)
+                    .unwrap_or_else(|e| panic!("rule {id}: {e}"))
+                    .into_iter()
+                    .map(|(zone, pattern, negate)| (
+                        parse_zone(&zone).unwrap_or_else(|| panic!("rule {id}: {zone:?} is not a zone")),
+                        Regex::new(&pattern).unwrap_or_else(|e| panic!("rule {id} does not compile: {e}")),
+                        negate,
+                    ))
+                    .collect();
+                Rule { id, conds }
             })
             .collect()
     }
@@ -2064,6 +2117,54 @@ mod set_cases {
         }
     }
 
+    /// Every condition must hold; a negated one holds where its pattern
+    /// matches nothing, including a header the request does not have.
+    #[test]
+    fn a_rule_holds_only_where_every_condition_does() {
+        let path = std::env::temp_dir().join(format!("easywaf-conditions-{}.rules.toml", std::process::id()));
+        std::fs::write(&path, r#"
+[set]
+id = "t"
+[[rules]]
+id = 1
+zone = "URL"
+pattern = '(?i)/xmlrpc\.php'
+[[rules.and]]
+zone = "METHOD"
+pattern = '^POST$'
+[[rules.and]]
+zone = "BODY"
+pattern = 'pingback\.ping'
+[[rules.and]]
+zone = "HEADER:Referer"
+pattern = '.'
+negate = true
+
+[[rules]]
+id = 2
+zone = "METHOD"
+pattern = '^(?:GET|HEAD|POST)$'
+negate = true
+"#).unwrap();
+        let rules = rules(path.to_str().unwrap());
+        let _ = std::fs::remove_file(&path);
+        let fired = |method: &str, path: &str, body: &str, referer: Option<&str>| -> Vec<i64> {
+            let mut ctx = request("BODY", body);
+            ctx.method = method.into();
+            ctx.path = path.into();
+            if let Some(r) = referer {
+                ctx.headers.insert("referer", r.parse().unwrap());
+            }
+            let (whole, parts) = (Whole::of(&ctx, &ctx.body), Parts::new(&ctx, &ctx.body));
+            rules.iter().filter(|r| r.holds(&whole, &parts)).map(|r| r.id).collect()
+        };
+        assert_eq!(fired("POST", "/xmlrpc.php", "<methodName>pingback.ping</methodName>", None), [1]);
+        assert!(fired("GET", "/xmlrpc.php", "pingback.ping", None).is_empty(), "the method condition did not hold it back");
+        assert!(fired("POST", "/xmlrpc.php", "system.listMethods", None).is_empty(), "the body condition did not");
+        assert!(fired("POST", "/xmlrpc.php", "pingback.ping", Some("https://x/")).is_empty(), "the negated one did not");
+        assert_eq!(fired("TRACE", "/", "", None), [2], "a negated first condition did not hold");
+    }
+
     #[test]
     fn a_set_does_what_its_cases_say() {
         let (Ok(set), Ok(cases)) = (std::env::var("EASYWAF_SET"), std::env::var("EASYWAF_CASES")) else {
@@ -2089,7 +2190,7 @@ mod set_cases {
             let ctx = request(arrives, sample);
             let (whole, parts) = (Whole::of(&ctx, &ctx.body), Parts::new(&ctx, &ctx.body));
             let matched: Vec<i64> = rules.iter()
-                .filter(|r| reads(&r.targets, &whole, &parts, &r.pattern))
+                .filter(|r| r.holds(&whole, &parts))
                 .map(|r| r.id)
                 .collect();
 

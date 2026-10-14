@@ -119,7 +119,34 @@
                         <span class="help-block" id="patternHelp" style="color:#999;font-size:11px">
                             Rust regex syntax. Case-insensitive flag: <code>(?i)</code>
                         </span>
+                        {% if negate %}
+                        <p class="text-warning" style="margin:6px 0 0">
+                            <i class="fa fa-exchange"></i> <strong>Negated:</strong> this condition holds when
+                            the pattern matches <em>nothing</em> in its zone.
+                        </p>
+                        {% endif %}
                     </div>
+
+                    {% if conditions %}
+                    <div class="form-group">
+                        <label>And every one of these <small class="text-muted">(all must hold for the rule to match)</small></label>
+                        <table class="table table-condensed" style="margin-bottom:0">
+                            <thead><tr><th style="width:30%">Zone</th><th>Pattern</th><th style="width:1%"></th></tr></thead>
+                            <tbody>
+                                {% for c in conditions %}
+                                <tr>
+                                    <td><code>{{ c.zone }}</code></td>
+                                    <td><code style="word-break:break-all">{{ c.pattern }}</code></td>
+                                    <td>{% if c.negate %}<span class="label label-warning" title="Holds when the pattern matches nothing">not</span>{% endif %}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                        <span class="help-block" style="font-size:11px">
+                            The pattern above is the first condition. These are not edited here.
+                        </span>
+                    </div>
+                    {% endif %}
 
                     <div class="checkbox">
                         <label>

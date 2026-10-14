@@ -29,10 +29,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 struct Rule {
-    id:      i64,
-    crs:     i64,
-    targets: Vec<Target>,
-    pattern: regex::Regex,
+    id:    i64,
+    crs:   i64,
+    /// Every condition: what it reads, its pattern, and whether negated.
+    conds: Vec<(Vec<Target>, regex::Regex, bool)>,
 }
 
 /// One request a CRS test sends, and what it says about which rules fire.
@@ -75,7 +75,7 @@ pub fn run(args: &[String]) -> i32 {
             } else {
                 continue;
             };
-            let fired = reads(&rule.targets, &whole, &parts, &rule.pattern);
+            let fired = rule.conds.iter().all(|(t, re, negate)| reads(t, &whole, &parts, re) != *negate);
             let entry = checked.entry(rule.id).or_default();
             entry.0 += 1;
             if fired != wants {
@@ -108,14 +108,16 @@ fn rules(path: &Path) -> Result<Vec<Rule>, String> {
         let id = r.get("id").and_then(|v| v.as_integer()).ok_or("a rule without an id")?;
         let description = r.get("description").and_then(|v| v.as_str()).unwrap_or("");
         let Some(crs) = crs_id.captures(description).and_then(|c| c[1].parse().ok()) else { continue };
-        let zone = r.get("zone").and_then(|v| v.as_str()).unwrap_or("ANY");
-        let pattern = r.get("pattern").and_then(|v| v.as_str()).ok_or(format!("rule {id} has no pattern"))?;
-        out.push(Rule {
-            id,
-            crs,
-            targets: parse_zone(zone).ok_or(format!("rule {id}: {zone:?} is not a zone"))?,
-            pattern: regex::Regex::new(pattern).map_err(|e| format!("rule {id}: {e}"))?,
-        });
+        let table = r.as_table().ok_or(format!("rule {id} is not a table"))?;
+        let mut conds = Vec::new();
+        for (zone, pattern, negate) in crate::modules::targets::table_conditions(table).map_err(|e| format!("rule {id}: {e}"))? {
+            conds.push((
+                parse_zone(&zone).ok_or(format!("rule {id}: {zone:?} is not a zone"))?,
+                regex::Regex::new(&pattern).map_err(|e| format!("rule {id}: {e}"))?,
+                negate,
+            ));
+        }
+        out.push(Rule { id, crs, conds });
     }
     Ok(out)
 }

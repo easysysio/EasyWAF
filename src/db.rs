@@ -89,6 +89,7 @@ pub async fn init(database_url: &str) -> SqlitePool {
     run_migration_038(&pool).await;
     run_migration_039(&pool).await;
     run_migration_040(&pool).await;
+    run_migration_041(&pool).await;
 
     // After the migrations, so the version recorded is the one whose schema
     // this now is. A snapshot carries it, and a restore reads it.
@@ -96,6 +97,31 @@ pub async fn init(database_url: &str) -> SqlitePool {
 
     info!("Database ready: {}", database_url);
     pool
+}
+
+// ─── run_migration_041 ───────────────────────────────────
+
+/// A rule's further conditions, and whether its first one is negated. Applied
+/// while the column is missing, since `ALTER TABLE ADD COLUMN` fails on a
+/// database that already has it.
+async fn run_migration_041(pool: &SqlitePool) {
+    let done: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM pragma_table_info('waf_rules') WHERE name = 'conditions'",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0);
+    if done > 0 {
+        return;
+    }
+
+    let sql = include_str!("../migrations/041_rule_conditions.sql");
+    sqlx::raw_sql(sql)
+        .execute(pool)
+        .await
+        .unwrap_or_else(|e| panic!("Migration 041 failed: {}", e));
+
+    info!("Migration 041 applied: a rule can have several conditions");
 }
 
 // ─── run_migration_040 ───────────────────────────────────
