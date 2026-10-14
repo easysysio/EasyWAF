@@ -202,11 +202,12 @@ When you apply one:
   state**. A rule you disabled because it blocked your traffic stays disabled
   through the update.
 - **The version it replaced is kept.** If the update refuses traffic it should
-  not, *put back vN* on the Rule Sets page restores those rules as they were and
-  deletes anything the newer version added. One step back, and your clones and
-  your switched-off rules are untouched.
-- Rules you cloned are untouched, and a rule dropped from the set is left rather
-  than deleted.
+  not, *put back vN* on the Rule Sets page restores those rules as they were —
+  including any the newer version removed — and deletes anything it added. One
+  step back, and your clones and your switched-off rules are untouched.
+- **A rule the new version no longer has is removed from the policy.** Left in
+  place it would go on scoring beside its replacement. Rules you cloned are your
+  own and are never touched.
 
 Under **Settings → [Updates](updates.md)** you can turn the check off — an appliance with
 no outbound access should not keep trying — or point it at a different channel.

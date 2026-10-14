@@ -465,9 +465,12 @@ async fn fetch_rules(state: &AppState, policy_name: String) -> Result<Vec<Rule>>
 /// stay off across an update; a delete-and-reimport would quietly turn it back
 /// on, which is the same class of surprise as an edit being reverted.
 ///
-/// Rules new in this version are inserted. Rules the version no longer contains
-/// are left alone rather than deleted — an orphan that still matches something
-/// is less alarming than a rule vanishing from a policy without being asked.
+/// Rules new in this version are inserted, and the set's rules it no longer
+/// contains are removed. Kept, they went on matching and scoring: a set rebuilt
+/// from upstream, where rules are renumbered and retired every release, would
+/// score one attack under an old number and a new one. The rules removed are
+/// in the snapshot taken first, so putting the previous version back restores
+/// them. A clone is a custom rule, not the set's, and is never touched.
 pub async fn install_set(
     db: &SqlitePool,
     policy_id: i64,
@@ -535,6 +538,22 @@ pub async fn install_set(
             }
         }
         touched += 1;
+    }
+
+    let keep: Vec<String> = file.rules.iter().map(|r| r.id.to_string()).collect();
+    let removed = sqlx::query(
+        "DELETE FROM waf_rules
+         WHERE policy_id = ? AND rule_set = ? AND external_id IS NOT NULL
+           AND instr(',' || ? || ',', ',' || external_id || ',') = 0",
+    )
+    .bind(policy_id)
+    .bind(set_id)
+    .bind(keep.join(","))
+    .execute(db)
+    .await?
+    .rows_affected();
+    if removed > 0 {
+        tracing::info!(policy_id, set_id, version, removed, "Removed the rules this version of the set no longer has");
     }
 
     let name = file.set.as_ref().and_then(|s| s.name.clone()).unwrap_or_else(|| set_id.to_string());
@@ -716,9 +735,7 @@ pub async fn revert_set(
         .map_err(|e| e.to_string())?
         .rows_affected();
 
-        // A rule the newer version deleted — which nothing does today, but a
-        // rollback that silently skipped it would be wrong the day something
-        // does.
+        // A rule the newer version removed.
         if done == 0 {
             sqlx::query!(
                 "INSERT INTO waf_rules
@@ -2542,6 +2559,31 @@ action = "score"
 
         let targeted = V1.replace(r#"zone = "ARGS""#, r#"zone = "ARG:q|COOKIE""#);
         install_set(&db, policy, "demo", 1, &targeted).await.expect("a set using targeted zones");
+    }
+
+    /// A rule a new version no longer has leaves the policy with it, unless it
+    /// was cloned — the clone is the operator's. Putting the old version back
+    /// brings it back.
+    #[tokio::test]
+    async fn an_update_removes_what_the_new_version_dropped() {
+        let (db, policy) = fixture("dropped").await;
+        install_set(&db, policy, "demo", 2, V2).await.expect("v2");
+        sqlx::raw_sql("INSERT INTO waf_rules (policy_id, name, zone, pattern, score, action, cloned_from_external_id)
+                       VALUES (1, 'my copy of Second', 'ARGS', 'two', 5, 'score', 990002)")
+            .execute(&db).await.unwrap();
+
+        let second = "[[rules]]\nid = 990002\nname = \"Second\"\nzone = \"ARGS\"\npattern = \"two\"\nscore = 5\naction = \"score\"\n\n";
+        assert!(V2.contains(second), "the fixture changed shape");
+        let v3 = V2.replace(second, "").replace("version = 2", "version = 3");
+        install_set(&db, policy, "demo", 3, &v3).await.expect("v3");
+        assert!(rule(&db, policy, 990002).await.is_none(), "a rule v3 dropped is still enforcing");
+        assert!(rule(&db, policy, 990001).await.is_some() && rule(&db, policy, 990003).await.is_some());
+        let clones: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM waf_rules WHERE cloned_from_external_id = 990002")
+            .fetch_one(&db).await.unwrap();
+        assert_eq!(clones, 1, "a clone of the dropped rule was removed with it");
+
+        revert_set(&db, policy, "demo").await.expect("rollback");
+        assert!(rule(&db, policy, 990002).await.is_some(), "putting v2 back did not restore its rule");
     }
 
     #[tokio::test]

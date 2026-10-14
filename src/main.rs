@@ -15,6 +15,7 @@ mod backup;
 mod auth;
 mod cert;
 mod challenge;
+mod crs_tests;
 mod channel;
 mod config;
 mod db;
@@ -109,6 +110,13 @@ impl FromRef<AppState> for sqlx::SqlitePool {
 
 #[tokio::main]
 async fn main() {
+    // A command rather than the service. Run before anything else starts:
+    // it needs no configuration, no database and no listener.
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().map(String::as_str) == Some("test-crs") {
+        std::process::exit(crs_tests::run(&args[1..]));
+    }
+
     fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),

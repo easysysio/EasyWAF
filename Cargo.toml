@@ -47,6 +47,7 @@ sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio-rustls", "macros"
 # Serialisation
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+serde_yaml = "0.9"
 
 # Templates
 tera = "1.20"
@@ -152,6 +153,8 @@ assets = [
     ["packaging/easywaf.service",     "/lib/systemd/system/easywaf.service",    "644"],
     # Run by the postinst; see the script for what it does and in what order.
     ["packaging/service-account.sh",  "/usr/lib/easywaf/service-account",       "755"],
+    # For a server building rule sets from ModSecurity's, with `easywaf test-crs`.
+    ["scripts/modsec2easywaf.py",     "/usr/share/easywaf/modsec2easywaf.py",   "644"],
     ["CHANGELOG.md",                  "/usr/share/doc/easywaf/CHANGELOG.md",    "644"],
 ]
 
@@ -186,5 +189,6 @@ assets = [
     { source = "LICENSE",                    dest = "/usr/share/licenses/easywaf/LICENSE",  mode = "644" },
     { source = "packaging/easywaf.service",  dest = "/usr/lib/systemd/system/easywaf.service", mode = "644" },
     { source = "packaging/service-account.sh", dest = "/usr/lib/easywaf/service-account",    mode = "755" },
+    { source = "scripts/modsec2easywaf.py",  dest = "/usr/share/easywaf/modsec2easywaf.py", mode = "644" },
     { source = "CHANGELOG.md",               dest = "/usr/share/doc/easywaf/CHANGELOG.md", mode = "644" },
 ]

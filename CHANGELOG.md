@@ -6,6 +6,17 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
+## [1.2.1] — unreleased
+
+### Changed
+- **Applying a rule set update removes the set's rules the new version no longer has.** They were left on the policy, still matching and scoring, so a set rebuilt from upstream — where rules are renumbered and retired every release — scored one attack under an old number and a new one. *Put back* restores the removed rules with the rest of the previous version. Rules you cloned are never touched.
+
+### Added
+- `easywaf test-crs <set> <tests>` checks a rule set converted from OWASP CRS against CRS's own regression tests, run through this engine, and names each rule that fires where CRS says it must not, or stays silent where it must.
+- The ModSecurity converter is installed with EasyWAF, at `/usr/share/easywaf/modsec2easywaf.py`, and can scale CRS's scores (`--score-scale 2`) so a policy's threshold of 10 blocks what CRS's threshold of 5 does.
+
+---
+
 ## [1.2.0] — 2026-10-14
 
 ### Added

@@ -440,7 +440,7 @@ def toml_string(value):
     return '"' + escaped + '"'
 
 
-def convert(paths, id_base, include_widened, set_id, set_name, max_paranoia=1):
+def convert(paths, id_base, include_widened, set_id, set_name, max_paranoia=1, score_scale=1):
     rules, skipped, stats = [], [], Counter()
     seen_ids = set()
 
@@ -593,7 +593,7 @@ def convert(paths, id_base, include_widened, set_id, set_name, max_paranoia=1):
                 pattern = fixed
 
             severity = (actions.get("severity") or ["WARNING"])[0].upper()
-            score = SEVERITY_SCORE.get(severity, 3)
+            score = SEVERITY_SCORE.get(severity, 3) * score_scale
 
             new_id = id_base + int(rid)
             if new_id in seen_ids:
@@ -618,9 +618,13 @@ def convert(paths, id_base, include_widened, set_id, set_name, max_paranoia=1):
         f"# represented faithfully is left out rather than approximated, because a",
         f"# rule that looks present and is bypassable is worse than a missing one.",
         f"#",
-        f"# Scores are CRS severities (CRITICAL 5 / ERROR 4 / WARNING 3 / NOTICE 2)",
-        f"# against CRS's own threshold of 5. EasyWAF's default is 10, so set this",
-        f"# policy's Score Threshold to 5 to reproduce CRS blocking behaviour.",
+        *([f"# Scores are CRS severities (CRITICAL 5 / ERROR 4 / WARNING 3 / NOTICE 2)",
+           f"# against CRS's own threshold of 5. EasyWAF's default is 10, so set this",
+           f"# policy's Score Threshold to 5 to reproduce CRS blocking behaviour."]
+          if score_scale == 1 else
+          [f"# Scores are CRS severities times {score_scale} (CRITICAL {5 * score_scale} / ERROR "
+           f"{4 * score_scale} / WARNING {3 * score_scale} / NOTICE {2 * score_scale}),",
+           f"# so a policy's threshold of {5 * score_scale} blocks what CRS's threshold of 5 does."]),
         f"#",
         f"# Ids are offset by {id_base} because CRS numbering collides with EasyWAF's",
         f"# own bundled sets. Each rule's description carries its original id.",
@@ -762,6 +766,10 @@ def self_test():
         check(wstats["converted"] == 7, f"expected 7 with widening, got {wstats['converted']}")
         check("WIDENED" in wide, "a widened rule must say so in its description")
         check('zone        = "HEADER"' in wide, "headers chosen by a pattern should widen to every header")
+        # Scaled scores, for a policy at EasyWAF's threshold of 10.
+        scaled, _, _ = convert([path], 2000000, False, "t", "t", 1, 2)
+        check("score       = 10" in scaled, "CRITICAL should score 10 at a scale of 2")
+
         # t:lowercase becomes a regex flag rather than a lost transformation.
         check("'(?i)sqlmap'" in wide, "t:lowercase should fold into (?i)")
 
@@ -801,6 +809,9 @@ def main():
     ap.add_argument("--max-paranoia", type=int, default=1, metavar="N",
                     help="highest CRS paranoia level to convert (default 1, which "
                          "is what CRS itself runs unless told otherwise)")
+    ap.add_argument("--score-scale", type=int, default=1, metavar="N",
+                    help="multiply CRS's severity scores by N; 2 makes EasyWAF's default "
+                         "threshold of 10 block what CRS's 5 does")
     ap.add_argument("--self-test", action="store_true",
                     help="check the refusals and rewrites, then exit")
     args, _ = ap.parse_known_args()
@@ -809,7 +820,8 @@ def main():
     args = ap.parse_args()
 
     toml, skipped, stats = convert(args.files, args.id_base, args.include_widened,
-                                   args.set_id, args.set_name, args.max_paranoia)
+                                   args.set_id, args.set_name, args.max_paranoia,
+                                   args.score_scale)
 
     if args.out:
         with open(args.out, "w", encoding="utf-8") as fh:
