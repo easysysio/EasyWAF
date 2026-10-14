@@ -1,6 +1,6 @@
 # Design note — rules with several conditions
 
-Status: **built for 1.3.0, not released** — see [roadmap.md](roadmap.md). Decided by
+Status: **released in 1.3.0** — see [roadmap.md](roadmap.md). Decided by
 Yariv on 2026-10-14, to make ET Open's rules convertible.
 
 ## The gap
