@@ -1,6 +1,6 @@
 # Design note — targeted zones
 
-Status: **scheduled for 1.2.0** — see [roadmap.md](roadmap.md). Decided by
+Status: **built for 1.2.0, not released** — see [roadmap.md](roadmap.md). Decided by
 Yariv on 2026-10-14, after a review of CRS 4.30.0 for what could be imported.
 
 ## The gap

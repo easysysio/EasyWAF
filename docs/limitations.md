@@ -49,6 +49,14 @@ Current as of **1.1.2**.
   half of a WAF that the OWASP Core Rule Set reserves its 950xxx band for. Not
   scheduled, and it has a real cost: responses stream today, and inspecting them
   means buffering.
+- **Arguments come from the query string, a form body and a JSON body only.**
+  A field in a `multipart/form-data` upload, or in an XML body, is not an
+  argument: a rule on `ARG` does not see it, though `BODY` reads the upload as
+  it arrived. At most 1,024 arguments and 1,024 cookies are read from one
+  request; any beyond that are seen only by the zones that read whole text.
+- **No exclusion by argument.** An exclusion silences a rule on a path or for a
+  client, not on one argument, so a rich-text field that trips a rule is
+  excluded with the whole path. Not scheduled; the obvious step after 1.2.0.
 - **Some rule transformations are still not implemented.** HTML entity,
   JavaScript, CSS and `%uHHHH` decoding are applied, so rules assuming those
   are matched against decoded text. Rules assuming `cmdLine`,
