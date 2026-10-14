@@ -201,17 +201,9 @@ pub async fn catalog(db: &SqlitePool, policy_id: i64) -> Result<Vec<CatalogSet>>
         }
     }
 
-    // Installed first, then what can be added, each alphabetically: the sets
-    // already enforcing are the ones an operator is usually looking for.
-    out.sort_by(|a, b| {
-        let rank = |c: &CatalogSet| match c.status.as_str() {
-            "update" => 0,
-            "current" => 1,
-            "withdrawn" => 2,
-            _ => 3,
-        };
-        (rank(a), a.name.clone()).cmp(&(rank(b), b.name.clone()))
-    });
+    // By name, so the sets from one source — "OWASP CRS: …", "ET Open: …" —
+    // sit together. Each row says whether the policy holds it.
+    out.sort_by_key(|c| c.name.to_lowercase());
     Ok(out)
 }
 

@@ -9,6 +9,7 @@ Version bumps and tags are created only after explicit approval.
 ## [1.3.1] — unreleased
 
 ### Changed
+- A policy's Rule Sets page and its rule picker list sets by name, so those from one source — "OWASP CRS: …", "ET Open: …", "EasyWAF: …" — sit together. The picker's headings are the sets' own names, where they were made from file names.
 - The documentation describes the basic rule sets as what they now are: built from OWASP CRS, rebuilt from each CRS release, and named "OWASP CRS: …" in the channel.
 
 ### Fixed

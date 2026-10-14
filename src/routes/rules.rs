@@ -1293,7 +1293,11 @@ pub fn read_catalog_categories(held: &Held) -> Result<Vec<CatalogCategory>> {
             }
         };
 
-        let (code, title) = category_title(&stem);
+        // The set's own name where it gives one — "OWASP CRS: SQL injection",
+        // "ET Open: exploits" — which says where the rules come from; the
+        // name made from the file's for a file that does not.
+        let (code, fallback) = category_title(&stem);
+        let title = parsed.set.as_ref().and_then(|s| s.name.clone()).unwrap_or(fallback);
 
         let mut rules = Vec::new();
         let mut added_count = 0;
@@ -1331,6 +1335,9 @@ pub fn read_catalog_categories(held: &Held) -> Result<Vec<CatalogCategory>> {
         });
     }
 
+    // By name, as the Rule Sets page lists them, so the sets from one source
+    // sit together.
+    categories.sort_by_key(|c| c.title.to_lowercase());
     Ok(categories)
 }
 
