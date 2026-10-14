@@ -48,6 +48,11 @@ fit one pattern; with conditions about 95% do, and CRS's chained protocol rules
 with them. Put as 1.3.0, publishing ET's rules from 2015 on as optional sets;
 HA, rate limiting and URL learning move to 1.4.0, 1.5.0 and 1.6.0.
 
+As built: about 2,200 of ET's rules from 2015 on convert, in four optional sets
+rebuilt daily by `github2repo.sh --et`. CRS's chained rules mostly still do
+not: they count variables (`&ARGS`), or re-test the value that matched
+(`MATCHED_VARS`), which a condition — reading a zone, not a value — cannot.
+
 ## Targeted zones before HA (Yariv, 2026-10-14)
 
 Raised by a review of CRS 4.30.0 for what could be imported. Nearly everything

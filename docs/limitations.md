@@ -54,6 +54,12 @@ Current as of **1.2.1**.
   argument: a rule on `ARG` does not see it, though `BODY` reads the upload as
   it arrived. At most 1,024 arguments and 1,024 cookies are read from one
   request; any beyond that are seen only by the zones that read whole text.
+- **A condition is a pattern, not a count.** A rule can require several
+  conditions, or that one does not match, but not "more than 255 arguments" or
+  "this header twice". CRS's rules that count are still refused by the
+  converter, as are ET's that need state across requests.
+- **A rule's conditions are not edited in the interface.** They are shown on
+  its page; one with several comes from a rule set or an import.
 - **No exclusion by argument.** An exclusion silences a rule on a path or for a
   client, not on one argument, so a rich-text field that trips a rule is
   excluded with the whole path. Not scheduled; the obvious step after 1.2.0.

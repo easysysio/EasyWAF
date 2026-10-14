@@ -162,6 +162,24 @@ people who ask an assistant about you. Both match what a crawler calls itself in
 its `User-Agent`, so they stop the ones that announce themselves — the large
 operators do — and do nothing about one pretending to be a browser.
 
+**The ET Open sets** are four optional sets converted from Emerging Threats' ET
+Open ruleset and rebuilt from each new ET release. They need EasyWAF 1.3.0:
+
+| Set | Rules | What it catches |
+|---|---|---|
+| ET Open: web application exploits | about 1,200 | Exploits of named applications and devices — WordPress plugins, CMSs, routers, VPN and file-transfer appliances — mostly by CVE |
+| ET Open: exploits | about 780 | Exploit attempts over HTTP against servers and the software behind them |
+| ET Open: web server attacks | about 140 | Attacks on the server itself and on generic server-side code |
+| ET Open: scanners | about 50 | Vulnerability scanners and reconnaissance tools, by what they send |
+
+Each rule keeps its ET signature id as its number, so a Traffic Monitor row can
+be looked up in ET's own documentation. Only ET's rules from 2015 on are taken,
+and only those for requests to a server; a rule that fires on any of the
+ordinary requests the channel is checked against is left out before it is
+published. Together the four cost about 77 µs per request. They overlap the
+basic sets in places — an injection both recognise scores in both — so a
+policy holding them may want a higher threshold.
+
 Take a whole set by ticking its heading: it is recorded as a set and offered an
 update when the channel publishes a newer version. Open the heading and tick
 rules individually to take only those — single rules are copies, and nothing will
@@ -264,6 +282,20 @@ undone where it carries them.
 A zone EasyWAF does not recognise is refused when a rule is saved. A rule set
 written for a newer EasyWAF, using a zone this one does not read, is shown on
 the policy's rule sets as needing an upgrade and cannot be applied.
+
+### Several conditions
+
+A rule can have **more than one condition, and matches only when every one
+holds**. Each is a zone and a pattern of its own: the method is `POST`, *and*
+the path names `/xmlrpc.php`, *and* the body holds `pingback.ping`. A condition
+can also be **negated**: it holds when its pattern matches nothing in its zone,
+so "no `Referer`" is a condition, and a negated condition on a header the
+request does not have holds.
+
+Conditions are checked in order and a rule stops at the first that does not
+hold, so it costs what its first condition costs on almost every request. A
+rule's page lists its conditions. They are not edited there: a rule with
+several conditions comes from a rule set, or from an imported configuration.
 
 ## Customising a rule
 
