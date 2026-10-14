@@ -58,10 +58,10 @@ Current as of **1.2.0**.
   client, not on one argument, so a rich-text field that trips a rule is
   excluded with the whole path. Not scheduled; the obvious step after 1.2.0.
 - **Some rule transformations are still not implemented.** HTML entity,
-  JavaScript, CSS and `%uHHHH` decoding are applied, so rules assuming those
-  are matched against decoded text. Rules assuming `cmdLine`,
-  `normalizePath`, `replaceComments`, `removeWhitespace` or `escapeSeqDecode`
-  are still refused by the converter rather than shipped broken, so an attack
+  JavaScript, CSS and `%uHHHH` decoding and path normalisation are applied, so
+  rules assuming those are matched against decoded text. Rules assuming
+  `cmdLine`, `replaceComments`, `removeWhitespace` or `escapeSeqDecode` are
+  still refused by the converter rather than shipped broken, so an attack
   hidden behind one of *those* encodings is not caught. `base64Decode` is
   excluded deliberately: decoding base64 anywhere in a request would match
   ordinary payloads — an image upload, a JWT, a session blob.

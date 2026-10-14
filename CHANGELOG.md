@@ -13,6 +13,7 @@ Version bumps and tags are created only after explicit approval.
 
 ### Added
 - `easywaf test-crs <set> <tests>` checks a rule set converted from OWASP CRS against CRS's own regression tests, run through this engine, and names each rule that fires where CRS says it must not, or stays silent where it must.
+- **A value carrying a path is also read normalised**, as CRS's `normalizePathWin` reads it: backslashes made slashes, repeated slashes merged and `.` and `..` segments resolved. `/etc/./passwd`, `/etc//passwd` and `..\..\windows\win.ini` are read as the files they name. CRS's rules for OS files, restricted files such as `.env`, and AI coding tool directories assume this, and now convert.
 - The ModSecurity converter is installed with EasyWAF, at `/usr/share/easywaf/modsec2easywaf.py`, and can scale CRS's scores (`--score-scale 2`) so a policy's threshold of 10 blocks what CRS's threshold of 5 does.
 
 ---

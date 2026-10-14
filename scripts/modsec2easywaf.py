@@ -106,6 +106,9 @@ SAFE_TRANSFORMS = {
     # zone_text applies these in the chains CRS declares, so a rule naming
     # them is matched against the text it was written against.
     "htmlentitydecode", "jsdecode", "cssdecode",
+    # Each decoded form with a path to normalise is also read with backslashes
+    # made slashes, slashes merged and dot segments resolved.
+    "normalizepath", "normalisepath", "normalizepathwin", "normalisepathwin",
 }
 CASE_TRANSFORMS = {"lowercase", "uppercase"}
 

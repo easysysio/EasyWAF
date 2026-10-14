@@ -465,8 +465,9 @@ pub(crate) fn zone_text(raw: &str, plus_is_space: bool) -> Vec<String> {
     // One pass for the characters the decoders below act on. Text carrying
     // none of them — which is most text — costs this scan and one allocation.
     let has_esc  = raw.as_bytes().iter().any(|b| matches!(b, b'&' | b'\\' | 0));
+    let has_path = raw.contains("//") || raw.contains("/.");
 
-    if !has_pct && !has_plus && !has_esc {
+    if !has_pct && !has_plus && !has_esc && !has_path {
         return vec![raw.to_string()];
     }
 
@@ -499,6 +500,18 @@ pub(crate) fn zone_text(raw: &str, plus_is_space: bool) -> Vec<String> {
     // on its own: `%uFF1C` has to become a form whether or not any escape
     // survives for the chains below to work on.
     push_unique(&mut forms, uni.clone());
+
+    // A path written to be read around: `/etc/./passwd`, `/etc//passwd`,
+    // `..\..\windows\win.ini`. CRS's file-access rules declare
+    // t:normalizePathWin after decoding and match the result, so each decoded
+    // form that has something to normalise is also read normalised.
+    // normalizePath is the same without the backslashes, and this form
+    // serves rules declaring it too.
+    for decoded in [once.clone(), uni.clone()] {
+        if decoded.contains('\\') || decoded.contains("//") || decoded.contains("/.") {
+            push_unique(&mut forms, normalize_path_win(&decoded));
+        }
+    }
 
     // The transformation chains CRS declares, in its own order.
     if uni.as_bytes().iter().any(|b| matches!(b, b'&' | b'\\' | 0)) {
@@ -551,6 +564,33 @@ pub(crate) fn normalised_paths(path: &str) -> Vec<String> {
                 out.push(read);
             }
         }
+    }
+    out
+}
+
+/// libmodsecurity's normalizePathWin: backslashes made slashes, runs of
+/// slashes made one, `.` segments dropped and each `..` taking the segment
+/// before it with it. A `..` with nothing before it to take is kept, as it
+/// is there: `../../etc/passwd` stays what it is.
+fn normalize_path_win(text: &str) -> String {
+    let text = text.replace('\\', "/");
+    let absolute = text.starts_with('/');
+    let trailing = text.ends_with('/') || text.ends_with("/.") || text.ends_with("/..");
+    let mut kept: Vec<&str> = Vec::new();
+    for segment in text.split('/') {
+        match segment {
+            "" | "." => {}
+            ".." if kept.last().is_some_and(|s| *s != "..") => { kept.pop(); }
+            ".." if absolute => {}
+            other => kept.push(other),
+        }
+    }
+    let mut out = kept.join("/");
+    if absolute {
+        out.insert(0, '/');
+    }
+    if trailing && !out.ends_with('/') {
+        out.push('/');
     }
     out
 }
@@ -1467,6 +1507,27 @@ mod tests {
             assert!(forms.iter().any(|f| f.contains("${jndi:ldap://")),
                     "{field:?} never reduced to the payload: {forms:?}");
         }
+    }
+
+    #[test]
+    fn a_path_written_to_be_read_around_is_read_normalised() {
+        use super::normalize_path_win as n;
+        assert_eq!(n("/etc/./passwd"), "/etc/passwd");
+        assert_eq!(n("/etc//passwd"), "/etc/passwd");
+        assert_eq!(n("/var/www/../../etc/passwd"), "/etc/passwd");
+        assert_eq!(n("..\\..\\windows\\win.ini"), "../../windows/win.ini");
+        assert_eq!(n("../../etc/passwd"), "../../etc/passwd");
+        assert_eq!(n("/../../etc/passwd"), "/etc/passwd");
+        assert_eq!(n("c:\\boot.ini"), "c:/boot.ini");
+        assert_eq!(n("/a/b/"), "/a/b/");
+        // One argument's value, as CRS normalises it, and the same inside a
+        // whole query string, where the name before it is a segment too.
+        let forms = super::zone_text("..%5c..%5cwindows%5c.%5cwin.ini", true);
+        assert!(forms.iter().any(|f| f == "../../windows/win.ini"), "{forms:?}");
+        let forms = super::zone_text("file=..%5c..%5cwindows%5c.%5cwin.ini", true);
+        assert!(forms.iter().any(|f| f.ends_with("windows/win.ini")), "{forms:?}");
+        let forms = super::zone_text("f=/etc/./passwd", true);
+        assert!(forms.iter().any(|f| f == "f=/etc/passwd"), "{forms:?}");
     }
 
     #[test]
