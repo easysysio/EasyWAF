@@ -26,6 +26,7 @@ use crate::modules::targets::{parse_zone, Parts, Target};
 use crate::modules::waf::{reads, Whole};
 use crate::modules::RequestContext;
 use std::collections::{BTreeMap, BTreeSet};
+use yaml_rust2::Yaml;
 use std::path::Path;
 
 struct Rule {
@@ -130,9 +131,11 @@ fn collect(dir: &Path, out: &mut Vec<Case>) -> Result<(), String> {
             collect(&path, out)?;
         } else if path.extension().is_some_and(|x| x == "yaml" || x == "yml") {
             let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-            let doc: serde_yaml::Value = serde_yaml::from_str(&text)
+            let docs = yaml_rust2::YamlLoader::load_from_str(&text)
                 .map_err(|e| format!("{}: {e}", path.display()))?;
-            cases(&doc, &path, out);
+            for doc in &docs {
+                cases(doc, &path, out);
+            }
         }
     }
     Ok(())
@@ -140,25 +143,18 @@ fn collect(dir: &Path, out: &mut Vec<Case>) -> Result<(), String> {
 
 /// The requests one file sends. A stage sent as raw bytes (`encoded_request`)
 /// or with no assertion about rule ids is not one this can check.
-fn cases(doc: &serde_yaml::Value, path: &Path, out: &mut Vec<Case>) {
+fn cases(doc: &Yaml, path: &Path, out: &mut Vec<Case>) {
     let file = path.file_stem().and_then(|s| s.to_str()).unwrap_or("?");
-    for test in doc.get("tests").and_then(|t| t.as_sequence()).into_iter().flatten() {
-        let test_id = test.get("test_id").map(|v| match v {
-            serde_yaml::Value::Number(n) => n.to_string(),
-            serde_yaml::Value::String(s) => s.clone(),
-            _ => "?".into(),
-        }).unwrap_or_else(|| "?".into());
-        for (n, stage) in test.get("stages").and_then(|s| s.as_sequence()).into_iter().flatten().enumerate() {
-            let stage = stage.get("stage").unwrap_or(stage);
-            let (Some(input), Some(log)) = (stage.get("input"), stage.get("output").and_then(|o| o.get("log"))) else {
-                continue;
-            };
-            if input.get("encoded_request").is_some() {
+    for test in doc["tests"].as_vec().into_iter().flatten() {
+        let test_id = yaml_text(&test["test_id"]).unwrap_or_else(|| "?".into());
+        for (n, stage) in test["stages"].as_vec().into_iter().flatten().enumerate() {
+            let stage = if stage["stage"].is_badvalue() { stage } else { &stage["stage"] };
+            let (input, log) = (&stage["input"], &stage["output"]["log"]);
+            if input.is_badvalue() || log.is_badvalue() || !input["encoded_request"].is_badvalue() {
                 continue;
             }
             let ids = |key: &str| -> BTreeSet<i64> {
-                log.get(key).and_then(|v| v.as_sequence()).into_iter().flatten()
-                    .filter_map(|v| v.as_i64()).collect()
+                log[key].as_vec().into_iter().flatten().filter_map(Yaml::as_i64).collect()
             };
             let (expect, no_expect) = (ids("expect_ids"), ids("no_expect_ids"));
             if expect.is_empty() && no_expect.is_empty() {
@@ -172,15 +168,15 @@ fn cases(doc: &serde_yaml::Value, path: &Path, out: &mut Vec<Case>) {
 
 /// A test's request as the engine is given one. `None` when it cannot be
 /// built — a header value no HTTP stack would accept, for one.
-fn request(input: &serde_yaml::Value) -> Option<RequestContext> {
-    let text = |key: &str| input.get(key).and_then(|v| v.as_str()).map(str::to_string);
+fn request(input: &Yaml) -> Option<RequestContext> {
+    let text = |key: &str| input[key].as_str().map(str::to_string);
     let uri = text("uri").unwrap_or_else(|| "/".into());
     let (path, query) = match uri.split_once('?') {
         Some((p, q)) => (p.to_string(), Some(q.to_string())),
         None => (uri, None),
     };
     let mut headers = axum::http::HeaderMap::new();
-    if let Some(map) = input.get("headers").and_then(|h| h.as_mapping()) {
+    if let Some(map) = input["headers"].as_hash() {
         for (k, v) in map {
             let (Some(k), Some(v)) = (k.as_str(), yaml_text(v)) else { continue };
             let name = axum::http::HeaderName::from_bytes(k.as_bytes()).ok()?;
@@ -188,15 +184,14 @@ fn request(input: &serde_yaml::Value) -> Option<RequestContext> {
             headers.append(name, value);
         }
     }
-    let body = match input.get("data") {
-        Some(serde_yaml::Value::Sequence(lines)) => lines.iter().filter_map(yaml_text).collect::<Vec<_>>().join("\r\n"),
-        Some(v) => yaml_text(v).unwrap_or_default(),
-        None => String::new(),
+    let body = match &input["data"] {
+        Yaml::Array(lines) => lines.iter().filter_map(yaml_text).collect::<Vec<_>>().join("\r\n"),
+        v => yaml_text(v).unwrap_or_default(),
     };
     // go-ftw, which CRS's tests are written for, completes a request's headers
     // unless told not to: a body sent without a Content-Type is sent as a form,
     // and the rules are tested reading it that way.
-    let autocomplete = input.get("autocomplete_headers").and_then(|v| v.as_bool()).unwrap_or(true);
+    let autocomplete = input["autocomplete_headers"].as_bool().unwrap_or(true);
     if autocomplete && !body.is_empty() && !headers.contains_key(axum::http::header::CONTENT_TYPE) {
         headers.insert(axum::http::header::CONTENT_TYPE,
                        axum::http::HeaderValue::from_static("application/x-www-form-urlencoded"));
@@ -213,11 +208,11 @@ fn request(input: &serde_yaml::Value) -> Option<RequestContext> {
     })
 }
 
-fn yaml_text(v: &serde_yaml::Value) -> Option<String> {
+fn yaml_text(v: &Yaml) -> Option<String> {
     match v {
-        serde_yaml::Value::String(s) => Some(s.clone()),
-        serde_yaml::Value::Number(n) => Some(n.to_string()),
-        serde_yaml::Value::Bool(b) => Some(b.to_string()),
+        Yaml::String(s) | Yaml::Real(s) => Some(s.clone()),
+        Yaml::Integer(n) => Some(n.to_string()),
+        Yaml::Boolean(b) => Some(b.to_string()),
         _ => None,
     }
 }

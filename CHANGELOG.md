@@ -6,6 +6,17 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
+## [1.3.3] — unreleased
+
+### Security
+- **rustls updated to 0.23.46**, for RUSTSEC-2026-0346 to 0349: TLS secrets in client session `Debug` output, data sent to the outer server after an ECH rejection, a 1 GiB allocation from Brotli-compressed certificates before authentication, and an unauthenticated ServerHello downgrading later connections to classical key exchange. rustls is what EasyWAF serves and makes every TLS connection with.
+- quinn-proto updated to 0.11.19, for RUSTSEC-2026-0338, 0340 and 0343. It is in the lock file through reqwest but is not built into EasyWAF; updated so `cargo audit` is clean.
+
+### Changed
+- `easywaf test-crs` reads CRS's test files with yaml-rust2, where it used serde_yaml, which is deprecated and brought in unsafe-libyaml, which is unmaintained (RUSTSEC-2024-0449). It reads the same 5,177 requests from CRS 4.30.0's tests, with the same results.
+
+---
+
 ## [1.3.2] — 2026-10-14
 
 ### Added
