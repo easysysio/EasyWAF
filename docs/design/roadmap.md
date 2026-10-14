@@ -34,9 +34,19 @@ next minor, so a release's notes stay about its feature.
 | 1.1.2 | A site's sign-in can ask for a CAPTCHA, checked before the name and password are looked at — **released 2026-10-09** |
 | 1.2.0 | Targeted zones: a rule reads one header, one argument, the cookies or the path alone, one value at a time, and arguments include a form or JSON body (see [targeted-zones.md](targeted-zones.md)) — **released 2026-10-14** |
 | 1.2.1 | Rule sets rebuilt from OWASP CRS: an update removes the rules a set's new version dropped, `easywaf test-crs` runs CRS's own regression tests in the engine, the converter is installed with EasyWAF, and a value carrying a path is read normalised as CRS's file-access rules assume — **released 2026-10-14** |
-| 1.3.0 | Configuration sync between nodes — HA (see [ha-config-sync.md](ha-config-sync.md)) |
-| 1.4.0 | Per-site rate limiting (see [rate-limiting.md](rate-limiting.md)) |
-| 1.5.0 | Learning and hardening modes — URL allowlisting (see [url-learning.md](url-learning.md)) |
+| 1.3.0 | Rules with several conditions, all of which must hold, and rules that must not match; and the ET Open rules this makes convertible, rebuilt weekly (see [conditions.md](conditions.md)) |
+| 1.4.0 | Configuration sync between nodes — HA (see [ha-config-sync.md](ha-config-sync.md)) |
+| 1.5.0 | Per-site rate limiting (see [rate-limiting.md](rate-limiting.md)) |
+| 1.6.0 | Learning and hardening modes — URL allowlisting (see [url-learning.md](url-learning.md)) |
+
+## Conditions and ET Open before HA (Yariv, 2026-10-14)
+
+An ET Open rule is several conditions that must all hold — a method, a URI, a
+body — or several strings in any order, which one regular expression cannot
+say. Of ET Open's 7,092 BSD-licensed rules for requests to a server, about 9%
+fit one pattern; with conditions about 95% do, and CRS's chained protocol rules
+with them. Put as 1.3.0, publishing ET's rules from 2015 on as optional sets;
+HA, rate limiting and URL learning move to 1.4.0, 1.5.0 and 1.6.0.
 
 ## Targeted zones before HA (Yariv, 2026-10-14)
 
