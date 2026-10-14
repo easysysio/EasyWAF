@@ -6,6 +6,18 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
+## [1.3.2] — unreleased
+
+### Added
+- **XML and multipart bodies are read for rules.** `XML` is an XML body's text and `XML_ATTR` each of its attributes' values, as CRS's `XML:/*` and `XML://@*` read them; a DTD is read, no external entity is fetched, and entity expansion deep or wide enough to be a billion-laughs attack is refused. A `multipart/form-data` upload's fields are arguments (`ARG`), and its files' names are `FILE_NAME`.
+- The CRS converter maps `XML:/*`, `XML://@*`, `FILES` and `MULTIPART_FILENAME` onto them. Of CRS 4.30.0's request rules at paranoia level 1 it converts 83 exactly, where it converted 16: the rules CRS also points at XML no longer have to read the whole raw body.
+
+### Changed
+- **A body that says how it is written and cannot be read that way is read whole.** JSON or XML cut off at the inspection limit, or written so a parser gives up, and a multipart body without its boundary, are each shown to the rules as one value, so a malformed body cannot hide what it carries.
+- `easywaf test-crs` completes a body's `Content-Type` as go-ftw does, as CRS's tests expect.
+
+---
+
 ## [1.3.1] — 2026-10-14
 
 ### Changed

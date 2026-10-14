@@ -91,6 +91,12 @@ pub enum Target {
     Cookie(Option<String>),
     CookieName,
     Method,
+    /// An XML body's text, as XPath's `/*` reads it: the whole document's.
+    Xml,
+    /// Each attribute's value in an XML body.
+    XmlAttr,
+    /// Each file's name in a `multipart/form-data` upload.
+    FileName,
 }
 
 /// A zone as a rule writes it — one zone, or several joined by `|` — as the
@@ -116,6 +122,9 @@ pub fn parse_zone(zone: &str) -> Option<Vec<Target>> {
             ("HEADER_NAME", None) => Target::HeaderName,
             ("COOKIE_NAME", None) => Target::CookieName,
             ("METHOD", None)      => Target::Method,
+            ("XML", None)         => Target::Xml,
+            ("XML_ATTR", None)    => Target::XmlAttr,
+            ("FILE_NAME", None)   => Target::FileName,
             ("ARG", name)         => Target::Arg(named(name, false)?),
             ("HEADER", name)      => Target::Header(named(name, true)?),
             ("COOKIE", name)      => Target::Cookie(named(name, false)?),
@@ -158,6 +167,7 @@ pub fn canonical(zone: &str) -> Option<String> {
 // ─── A request, a value at a time ───────────────────────
 
 /// A name, and the forms its value is matched in.
+#[derive(Clone)]
 struct Value {
     /// Decoded and lowercased, for comparing with a zone's name.
     key:   String,
@@ -177,6 +187,10 @@ pub struct Parts<'a> {
     args:    OnceCell<Vec<Value>>,
     headers: OnceCell<Vec<Value>>,
     cookies: OnceCell<Vec<Value>>,
+    /// An XML body's text, and its attributes' values.
+    xml:     OnceCell<(Vec<String>, Vec<Value>)>,
+    /// A multipart body's fields, and its files' names.
+    parts:   OnceCell<(Vec<Value>, Vec<Value>)>,
 }
 
 impl<'a> Parts<'a> {
@@ -188,6 +202,8 @@ impl<'a> Parts<'a> {
             args: OnceCell::new(),
             headers: OnceCell::new(),
             cookies: OnceCell::new(),
+            xml: OnceCell::new(),
+            parts: OnceCell::new(),
         }
     }
 
@@ -209,6 +225,9 @@ impl<'a> Parts<'a> {
             Target::Cookie(name) => values(self.cookies(), name),
             Target::CookieName  => names(self.cookies()),
             Target::Method      => is_match(&self.ctx.method),
+            Target::Xml         => self.xml().0.iter().any(|f| is_match(f)),
+            Target::XmlAttr     => values(&self.xml().1, &None),
+            Target::FileName    => values(&self.multipart().1, &None),
             Target::Url | Target::Args | Target::Body | Target::Headers | Target::Any => false,
         }
     }
@@ -238,10 +257,74 @@ impl<'a> Parts<'a> {
             }
             match body_kind(&self.ctx.headers) {
                 Some(BodyKind::Form) => pairs(&String::from_utf8_lossy(self.body), &mut out),
-                Some(BodyKind::Json) => json(self.body, &mut out),
-                None => {}
+                Some(BodyKind::Json) => {
+                    if !json(self.body, &mut out) {
+                        whole_body(self.body, &mut out);
+                    }
+                }
+                Some(BodyKind::Multipart(_)) => {
+                    for field in &self.multipart().0 {
+                        if out.len() >= MAX_VALUES {
+                            break;
+                        }
+                        out.push(field.clone());
+                    }
+                }
+                Some(BodyKind::Xml) | None => {}
             }
             out
+        })
+    }
+
+    /// An XML body as XPath reads it: the document's text, and each attribute's
+    /// value. A body that says it is XML and does not parse — cut off at the
+    /// inspection limit, or written so that a parser gives up — is read whole as
+    /// its text, so a malformed document cannot hide what is in it.
+    fn xml(&self) -> &(Vec<String>, Vec<Value>) {
+        self.xml.get_or_init(|| {
+            if !matches!(body_kind(&self.ctx.headers), Some(BodyKind::Xml)) {
+                return (Vec::new(), Vec::new());
+            }
+            let text = String::from_utf8_lossy(self.body);
+            let options = roxmltree::ParsingOptions { allow_dtd: true, nodes_limit: 100_000, ..Default::default() };
+            match roxmltree::Document::parse_with_options(&text, options) {
+                Ok(doc) => {
+                    let all: String = doc.descendants().filter(|n| n.is_text()).filter_map(|n| n.text()).collect();
+                    let mut attrs = Vec::new();
+                    for node in doc.descendants().filter(|n| n.is_element()) {
+                        for a in node.attributes() {
+                            if attrs.len() >= MAX_VALUES {
+                                break;
+                            }
+                            attrs.push(Value {
+                                key:   a.name().to_lowercase(),
+                                name:  vec![a.name().to_string()],
+                                value: zone_text(a.value(), false),
+                            });
+                        }
+                    }
+                    (zone_text(&all, false), attrs)
+                }
+                Err(_) => (zone_text(&text, false), Vec::new()),
+            }
+        })
+    }
+
+    /// A `multipart/form-data` body's fields, as arguments, and its files'
+    /// names. One whose parts cannot be found is read whole, as one field.
+    fn multipart(&self) -> &(Vec<Value>, Vec<Value>) {
+        self.parts.get_or_init(|| {
+            let Some(BodyKind::Multipart(boundary)) = body_kind(&self.ctx.headers) else {
+                return (Vec::new(), Vec::new());
+            };
+            match multipart(self.body, &boundary) {
+                Some(found) => found,
+                None => {
+                    let mut whole = Vec::new();
+                    whole_body(self.body, &mut whole);
+                    (whole, Vec::new())
+                }
+            }
         })
     }
 
@@ -290,11 +373,13 @@ impl<'a> Parts<'a> {
 enum BodyKind {
     Form,
     Json,
+    Xml,
+    /// With its boundary.
+    Multipart(String),
 }
 
-/// How a body's arguments are written, by its `Content-Type`. Anything else —
-/// multipart, XML, plain text, none at all — has no arguments here, and is
-/// read as a whole by `BODY`.
+/// How a body is written, by its `Content-Type`. Anything else — plain text,
+/// none at all — has no arguments here, and is read as a whole by `BODY`.
 fn body_kind(headers: &axum::http::HeaderMap) -> Option<BodyKind> {
     let ct = headers.get(axum::http::header::CONTENT_TYPE)?.to_str().ok()?;
     let mime = ct.split(';').next()?.trim().to_ascii_lowercase();
@@ -302,9 +387,81 @@ fn body_kind(headers: &axum::http::HeaderMap) -> Option<BodyKind> {
         Some(BodyKind::Form)
     } else if mime == "application/json" || mime.ends_with("+json") {
         Some(BodyKind::Json)
+    } else if mime.ends_with("/xml") || mime.ends_with("+xml") {
+        Some(BodyKind::Xml)
+    } else if mime == "multipart/form-data" {
+        // A multipart body without a boundary cannot be split; read whole.
+        let boundary = ct.split(';').skip(1)
+            .filter_map(|p| p.trim().split_once('='))
+            .find(|(k, _)| k.trim().eq_ignore_ascii_case("boundary"))
+            .map(|(_, v)| v.trim().trim_matches('"').to_string())
+            .unwrap_or_default();
+        Some(BodyKind::Multipart(boundary))
     } else {
         None
     }
+}
+
+/// A body read whole, as one argument with no name: what the rules are shown
+/// of a body that says how it is written and cannot be read that way.
+fn whole_body(body: &[u8], out: &mut Vec<Value>) {
+    if !body.is_empty() {
+        out.push(Value { key: String::new(), name: Vec::new(), value: zone_text(&String::from_utf8_lossy(body), true) });
+    }
+}
+
+/// A multipart body's parts: each field's name and value, and each file's
+/// field name and file name, from its `Content-Disposition`. `None` when the
+/// boundary is not in the body. A file's content is not a value here; `BODY`
+/// reads it as it arrived.
+fn multipart(body: &[u8], boundary: &str) -> Option<(Vec<Value>, Vec<Value>)> {
+    if boundary.is_empty() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(body);
+    let delimiter = format!("--{boundary}");
+    let mut sections = text.split(delimiter.as_str());
+    sections.next()?;                      // the preamble, before the first
+    let (mut fields, mut files) = (Vec::new(), Vec::new());
+    let mut found = false;
+    for section in sections {
+        if section.starts_with("--") {
+            break;                         // the closing delimiter
+        }
+        found = true;
+        let section = section.strip_prefix("\r\n").or_else(|| section.strip_prefix('\n')).unwrap_or(section);
+        let (head, content) = section.split_once("\r\n\r\n")
+            .or_else(|| section.split_once("\n\n"))
+            .unwrap_or((section, ""));
+        let content = content.strip_suffix("\r\n").or_else(|| content.strip_suffix('\n')).unwrap_or(content);
+        let disposition = head.lines()
+            .find(|l| l.to_ascii_lowercase().starts_with("content-disposition:"))
+            .unwrap_or("");
+        let param = |want: &str| -> Option<String> {
+            disposition.split(';').skip(1).find_map(|p| {
+                let (k, v) = p.trim().split_once('=')?;
+                k.trim().eq_ignore_ascii_case(want).then(|| v.trim().trim_matches('"').to_string())
+            })
+        };
+        let name = param("name").unwrap_or_default();
+        match param("filename") {
+            Some(file) => {
+                if files.len() < MAX_VALUES {
+                    files.push(Value { key: name.to_lowercase(), name: zone_text(&name, false), value: zone_text(&file, false) });
+                }
+                // A file's field is an argument's name, without a value.
+                if fields.len() < MAX_VALUES {
+                    fields.push(Value { key: name.to_lowercase(), name: zone_text(&name, false), value: Vec::new() });
+                }
+            }
+            None => {
+                if fields.len() < MAX_VALUES {
+                    fields.push(Value { key: name.to_lowercase(), name: zone_text(&name, false), value: zone_text(content, false) });
+                }
+            }
+        }
+    }
+    found.then_some((fields, files))
 }
 
 /// `a=1&b=2` into arguments. Split on `&` and the first `=` before anything is
@@ -327,15 +484,16 @@ fn pairs(text: &str, out: &mut Vec<Value>) {
 }
 
 /// A JSON body's leaves as arguments, each named by its own key; an array's
-/// elements by the array's. Keys are names too. A body that does not parse —
-/// cut off at the inspection limit, or not JSON at all — gives none.
-fn json(body: &[u8], out: &mut Vec<Value>) {
+/// elements by the array's. Keys are names too. False for a body that does not
+/// parse — cut off at the inspection limit, or not JSON at all — which the
+/// caller reads whole instead.
+fn json(body: &[u8], out: &mut Vec<Value>) -> bool {
     use serde_json::Value as J;
-    let Ok(root) = serde_json::from_slice::<J>(body) else { return };
+    let Ok(root) = serde_json::from_slice::<J>(body) else { return false };
     let mut stack: Vec<(String, &J)> = vec![(String::new(), &root)];
     while let Some((key, node)) = stack.pop() {
         if out.len() >= MAX_VALUES {
-            return;
+            return true;
         }
         let leaf = |text: String| Value {
             key:   key.to_lowercase(),
@@ -367,6 +525,7 @@ fn json(body: &[u8], out: &mut Vec<Value>) {
             J::Null      => {}
         }
     }
+    true
 }
 
 // ─── Tests ───────────────────────────────────────────────
@@ -451,9 +610,8 @@ mod tests {
     }
 
     #[test]
-    fn a_body_of_another_kind_or_cut_short_has_no_arguments() {
-        for (ct, body) in [("multipart/form-data; boundary=x", "a=1"), ("text/plain", "a=1"),
-                           ("application/json", r#"{"a": "1"#)] {
+    fn a_body_of_no_kind_that_has_arguments_has_none() {
+        for (ct, body) in [("text/plain", "a=1"), ("application/octet-stream", "a=1")] {
             let c = ctx("/x", None, &[("content-type", ct)], body);
             let p = Parts::new(&c, c.body.as_ref());
             assert!(!hits(&p, "ARG", "1"), "{ct}: {body}");
@@ -487,6 +645,63 @@ mod tests {
         assert!(hits(&p, "PATH", r"^/\.env$"));
         assert!(!hits(&p, "PATH", "x=1"));
         assert!(hits(&p, "METHOD", "^POST$"));
+    }
+
+    fn body(ct: &str, body: &str) -> RequestContext {
+        ctx("/x", None, &[("content-type", ct)], body)
+    }
+
+    #[test]
+    fn an_xml_body_is_read_as_its_text_and_its_attributes() {
+        let c = body("application/soap+xml; charset=utf-8",
+                     r#"<?xml version="1.0"?><e:Envelope xmlns:e="x"><user id="1' OR '1'='1">alice</user><q>UNION SELECT</q></e:Envelope>"#);
+        let p = Parts::new(&c, c.body.as_ref());
+        assert!(hits(&p, "XML", "aliceUNION SELECT"), "the document's text, as XPath's /* reads it");
+        assert!(hits(&p, "XML_ATTR", "^1' OR '1'='1$"));
+        assert!(!hits(&p, "XML_ATTR", "alice"));
+        assert!(!hits(&p, "ARG", "UNION"), "XML is not arguments, as ModSecurity's is not");
+    }
+
+    #[test]
+    fn an_xml_body_with_a_dtd_is_read_without_fetching_or_exploding_it() {
+        // An internal entity is expanded, as a parser behind would.
+        let c = body("text/xml", r#"<!DOCTYPE a [<!ENTITY x "UNION SELECT">]><a>&x;</a>"#);
+        let p = Parts::new(&c, c.body.as_ref());
+        assert!(hits(&p, "XML", "^UNION SELECT$"));
+        // An external one is not fetched, and a billion laughs is refused:
+        // either way the body is read whole, payload and all.
+        for xxe in [r#"<!DOCTYPE a [<!ENTITY x SYSTEM "file:///etc/passwd">]><a>&x;</a>"#,
+                    r#"<!DOCTYPE a [<!ENTITY a "aa"><!ENTITY b "&a;&a;&a;&a;&a;&a;&a;&a;"><!ENTITY c "&b;&b;&b;&b;&b;&b;&b;&b;"><!ENTITY d "&c;&c;&c;&c;&c;&c;&c;&c;"><!ENTITY e "&d;&d;&d;&d;&d;&d;&d;&d;">]><a>&e;</a>"#] {
+            let c = body("application/xml", xxe);
+            let p = Parts::new(&c, c.body.as_ref());
+            assert!(hits(&p, "XML", "<!ENTITY"), "{xxe}");
+        }
+    }
+
+    #[test]
+    fn a_body_that_does_not_parse_is_read_whole() {
+        let c = body("application/xml", "<a><b>UNION SELECT</a>");
+        let p = Parts::new(&c, c.body.as_ref());
+        assert!(hits(&p, "XML", "UNION SELECT"), "a malformed document hid its text");
+        let c = body("application/json", r#"{"q": "UNION SELECT", "#);
+        let p = Parts::new(&c, c.body.as_ref());
+        assert!(hits(&p, "ARG", "UNION SELECT"), "JSON cut short hid its values");
+        let c = body("multipart/form-data; boundary=zz", "no parts here: UNION SELECT");
+        let p = Parts::new(&c, c.body.as_ref());
+        assert!(hits(&p, "ARG", "UNION SELECT"), "a multipart body without its boundary hid it");
+    }
+
+    #[test]
+    fn a_multipart_bodys_fields_are_arguments_and_its_files_have_names() {
+        let upload = "--XyZ\r\nContent-Disposition: form-data; name=\"comment\"\r\n\r\n<script>alert(1)</script>\r\n\
+                      --XyZ\r\nContent-Disposition: form-data; name=\"avatar\"; filename=\"shell.php\"\r\nContent-Type: image/png\r\n\r\nPNG-bytes\r\n\
+                      --XyZ--\r\n";
+        let c = body("multipart/form-data; boundary=\"XyZ\"", upload);
+        let p = Parts::new(&c, c.body.as_ref());
+        assert!(hits(&p, "ARG:comment", "^<script>alert\\(1\\)</script>$"));
+        assert!(hits(&p, "FILE_NAME", r"^shell\.php$"));
+        assert!(hits(&p, "ARG_NAME", "^avatar$"), "a file's field is an argument's name");
+        assert!(!hits(&p, "ARG", "PNG"), "a file's content is not an argument");
     }
 
     #[test]

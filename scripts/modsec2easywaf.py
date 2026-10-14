@@ -82,9 +82,13 @@ ZONE_OF = {
     "ARGS_NAMES": ("ARG_NAME", True),
     "ARGS_GET_NAMES": ("ARG_NAME", False), "ARGS_POST_NAMES": ("ARG_NAME", False),
     "REQUEST_BODY": ("BODY", True),
-    # XML is not parsed, nor is a multipart upload: the body holds them whole.
-    "XML": ("BODY", False), "FILES": ("BODY", False),
-    "FILES_NAMES": ("BODY", False), "MULTIPART_FILENAME": ("BODY", False),
+    # XML by its XPath, below: /* is the document's text, //@* its attributes'
+    # values. Any other path is a part of the document, which XML holds.
+    "XML": ("XML", False),
+    # An upload's file names, and the names of the fields that carry files —
+    # among every argument's name.
+    "FILES": ("FILE_NAME", True), "MULTIPART_FILENAME": ("FILE_NAME", True),
+    "FILES_NAMES": ("ARG_NAME", False),
     "REQUEST_HEADERS": ("HEADER", True), "REQUEST_HEADERS_NAMES": ("HEADER_NAME", True),
     "REQUEST_COOKIES": ("COOKIE", True), "REQUEST_COOKIES_NAMES": ("COOKIE_NAME", True),
     "REQUEST_METHOD": ("METHOD", True),
@@ -92,6 +96,16 @@ ZONE_OF = {
     # "GET /x HTTP/1.1" is no zone; the URL holds its middle.
     "REQUEST_LINE": ("URL", False),
 }
+
+def exact_var(var):
+    """Whether a variable's zone holds only what the variable does — so that an
+    anchor in its pattern means the same place in both."""
+    name, _, selector = var.strip().partition(":")
+    name = name.upper()
+    if name == "XML":
+        return selector in ("/*", "//@*", "/@*")
+    return ZONE_OF.get(name, ("", True))[1]
+
 
 # The variables a name after a colon narrows to one value of, and the zone
 # that names it the same way.
@@ -251,10 +265,16 @@ def classify_vars(variables):
         if name not in ZONE_OF:
             return None, False, f"unknown variable {name}"
         zone, exact = ZONE_OF[name]
-        if selector and name in NAMED and not selector.startswith("/") and "|" not in selector:
+        if name == "XML" and selector == "/*":
+            zone, exact = "XML", True
+        elif name == "XML" and selector in ("//@*", "/@*"):
+            zone, exact = "XML_ATTR", True
+        elif name == "XML":
+            pass
+        elif selector and name in NAMED and not selector.startswith("/") and "|" not in selector:
             # ARGS:foo — one named parameter, which ARG:foo reads.
             zone = f"{NAMED[name]}:{selector}"
-        elif selector and name != "XML":
+        elif selector:
             # ARGS:/^id_/ — names chosen by a pattern. The zone holds them all.
             widened = True
         widened |= not exact
@@ -566,8 +586,7 @@ def convert(paths, id_base, include_widened, set_id, set_name, max_paranoia=1, s
             # A zone that holds more than the variable holds more than one
             # value of it, so an anchor falls somewhere else in it.
             loose = sorted({v.strip().split(":", 1)[0].upper() for v in variables.split("|")
-                            if v.strip() and not v.strip().startswith("!")
-                            and not ZONE_OF.get(v.strip().split(":", 1)[0].upper(), ("", True))[1]})
+                            if v.strip() and not v.strip().startswith("!") and not exact_var(v)})
             if loose and is_anchored(pattern):
                 stats["anchored"] += 1
                 skipped.append((label, f"anchored with ^ or $ to one value of {loose[0]}, which EasyWAF "
@@ -763,6 +782,12 @@ def self_test():
         check(r"\{\{.*?\}\}" in toml, "literal braces should be escaped")
         # @pm becomes one case-insensitive alternation.
         check("nikto|nmap" in toml, "@pm should become an alternation")
+
+        # XML by its XPath: the document's text, and its attributes' values.
+        zone_, wide_, _ = classify_vars("ARGS|XML:/*|XML://@*")
+        check((zone_, wide_) == ("ARG|XML|XML_ATTR", False), f"XML's two paths should be exact, got {zone_} {wide_}")
+        check(classify_vars("XML://book")[1], "another XPath should widen")
+        check(classify_vars("FILES|MULTIPART_FILENAME")[0] == "FILE_NAME", "files should read their names")
 
         # With widening allowed, the pattern selector converts too, and says so.
         wide, _, wstats = convert([path], 2000000, True, "t", "t")

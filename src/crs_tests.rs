@@ -193,6 +193,14 @@ fn request(input: &serde_yaml::Value) -> Option<RequestContext> {
         Some(v) => yaml_text(v).unwrap_or_default(),
         None => String::new(),
     };
+    // go-ftw, which CRS's tests are written for, completes a request's headers
+    // unless told not to: a body sent without a Content-Type is sent as a form,
+    // and the rules are tested reading it that way.
+    let autocomplete = input.get("autocomplete_headers").and_then(|v| v.as_bool()).unwrap_or(true);
+    if autocomplete && !body.is_empty() && !headers.contains_key(axum::http::header::CONTENT_TYPE) {
+        headers.insert(axum::http::header::CONTENT_TYPE,
+                       axum::http::HeaderValue::from_static("application/x-www-form-urlencoded"));
+    }
     Some(RequestContext {
         site_id: 0,
         site_name: "crs".into(),
