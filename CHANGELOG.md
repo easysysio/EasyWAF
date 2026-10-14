@@ -6,7 +6,7 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
-## [1.2.0] — unreleased
+## [1.2.0] — 2026-10-14
 
 ### Added
 - **A rule can read one part of a request, one value at a time.** New zones: `PATH` (the path without its query), `ARG` and `ARG:name` (argument values), `ARG_NAME`, `HEADER` and `HEADER:Name` (header values), `HEADER_NAME`, `COOKIE`, `COOKIE:name`, `COOKIE_NAME` and `METHOD`. Each value is matched on its own, so `^` and `$` mean the start and end of the value, as rules written for ModSecurity assume. The five zones a rule has always named read what they read before.
