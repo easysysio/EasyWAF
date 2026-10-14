@@ -213,6 +213,57 @@ no outbound access should not keep trying — or point it at a different channel
 Pointing it elsewhere relaxes nothing: the signature and hash checks are the same
 wherever the manifest came from, and the trusted key ships with EasyWAF.
 
+## What a rule reads
+
+A rule's **zone** says which part of the request its pattern is matched
+against. There are two kinds.
+
+**Whole text.** Each of these is one block of text, matched as a whole:
+
+| Zone | The text |
+|---|---|
+| `URL` | path and query string together |
+| `ARGS` | the query string |
+| `BODY` | the body, inflated if it arrived compressed, up to the inspection limit |
+| `HEADERS` | every header's value, joined |
+| `ANY` | all four |
+
+**One value at a time.** Each of these is matched against every value of one
+part of the request, on its own. So `^` and `$` mean the start and end of *that
+value*: `^https?://` on `ARG` is an argument whose value begins with a URL,
+where on `ARGS` it would only be a query string that does.
+
+| Zone | Each value is |
+|---|---|
+| `PATH` | the path, without the query |
+| `ARG` | an argument's value — from the query string, and from a body sent as a form or as JSON |
+| `ARG:name` | the value of each argument called *name* |
+| `ARG_NAME` | an argument's name |
+| `HEADER` | a header's value |
+| `HEADER:Name` | the value of the header *Name*, such as `HEADER:User-Agent` |
+| `HEADER_NAME` | a header's name |
+| `COOKIE` | a cookie's value |
+| `COOKIE:name` | the value of the cookie *name* |
+| `COOKIE_NAME` | a cookie's name |
+| `METHOD` | the request method |
+
+Names are compared without regard to case. In a JSON body every leaf is an
+argument named by its own key, so `ARG:password` finds
+`{"user": {"password": "…"}}` as well as `password=…` in a form. A body cut
+off at the inspection limit, a `multipart/form-data` upload and XML give no
+arguments; `BODY` still reads them.
+
+**Several zones** are joined with `|` — `ARG|COOKIE` — and the rule matches
+once, however many of them its pattern is found in.
+
+Every value is matched in the same forms as before: as it arrived,
+percent-decoded once and twice, and with the HTML, JavaScript and CSS escapes
+undone where it carries them.
+
+A zone EasyWAF does not recognise is refused when a rule is saved. A rule set
+written for a newer EasyWAF, using a zone this one does not read, is shown on
+the policy's rule sets as needing an upgrade and cannot be applied.
+
 ## Customising a rule
 
 Imported rules cannot be edited, because an update would overwrite the change

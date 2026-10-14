@@ -118,8 +118,8 @@ you press **Import it**. Among the reasons it will refuse:
   file from a newer EasyWAF says to upgrade;
 - a setting that belongs to one host — the session key, which certificate the
   management page uses;
-- a rule whose pattern does not compile, or whose zone the engine would read
-  as *any*, inspecting more than was meant;
+- a rule whose pattern does not compile, or whose zone is not one this EasyWAF
+  reads;
 - a site whose policy is not in the file, whose certificate the file carries
   without its key and this installation does not have, that has no upstream
   switched on, that asks for a sign-in with a realm the file does not have, or
