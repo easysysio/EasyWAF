@@ -352,6 +352,12 @@ def convert_rule(line):
             if "endswith" in mods:
                 regex += "$"
             pieces.append((zone, Piece(regex, relative, negated, fast, len(data))))
+            # Suricata does not inspect a buffer the request does not have,
+            # so a negated content on a named header holds only where the
+            # header is there. In EasyWAF a negated condition on a header that
+            # is absent holds; this one says it must be present.
+            if negated and zone.startswith("HEADER:"):
+                pieces.append((zone, Piece("^", False, False)))
         last, mods = None, {}
 
     for k, v in opts:
@@ -525,6 +531,7 @@ alert http $EXTERNAL_NET any -> $HOME_NET any (msg:"ET WEB_SERVER header"; flow:
 alert http $EXTERNAL_NET any -> $HOME_NET any (msg:"ET state"; flow:to_server; flowbits:set,x; http.uri; content:"/a"; metadata:created_at 2020_01_01; sid:2030000; rev:1;)
 alert http $EXTERNAL_NET any -> $HOME_NET any (msg:"ET old"; flow:to_server; http.uri; content:"/old.php"; metadata:created_at 2009_01_01; sid:2009000; rev:1;)
 alert http $EXTERNAL_NET any -> $HOME_NET any (msg:"ET SCAN Bingbot"; flow:to_server; http.user_agent; content:"bingbot"; classtype:not-suspicious; metadata:created_at 2021_05_18, signature_severity Informational; sid:2032981; rev:2;)
+alert http $EXTERNAL_NET any -> $HOME_NET any (msg:"ET EXPLOIT cross origin"; flow:to_server; http.uri; content:"/api/admin"; http.referer; content:!"example.com"; metadata:created_at 2023_01_01, signature_severity Major; sid:2059000; rev:1;)
 alert http $EXTERNAL_NET any -> $HOME_NET any (msg:"GPL no date"; flow:to_server; http.uri; content:"/x"; sid:2100001; rev:1;)
 alert http $EXTERNAL_NET any -> $HOME_NET any (msg:"GPL low sid"; flow:to_server; http.uri; content:"/y"; sid:2001; rev:1;)
 alert http $HOME_NET any -> $EXTERNAL_NET any (msg:"ET outbound"; flow:to_server; http.uri; content:"/beacon"; sid:2040000; rev:1;)
@@ -544,7 +551,11 @@ def self_test():
     try:
         rules, refused, stats = convert([path], 2015)
         by = {r["id"]: r for r in rules}
-        check(set(by) == {2018277, 2050001, 2034647, 2060001}, f"converted {sorted(by)}")
+        check(set(by) == {2018277, 2050001, 2034647, 2060001, 2059000}, f"converted {sorted(by)}")
+        co = by.get(2059000)
+        check(co and ["HEADER:Referer", "^", False] in [c[:3] for c in co["conds"]],
+              "a negated content on a named header should require the header")
+
         ln = by.get(2060001)
         check(ln and any(c[1] == "^(?s:.{12})$" for c in ln["conds"]), "bsize should be a length condition")
         check(ln and any(c[0] == "URL" and c[1] == "^(?s:.{9,})$" for c in ln["conds"]), "urilen:>8")
@@ -558,6 +569,8 @@ def self_test():
         h = by.get(2034647)
         check(h and any(c[0] == "HEADER:X-Api-Version" for c in h["conds"]), "a header content names its header")
         check(h and any(c[0] == "HEADER_NAME" and c[2] for c in h["conds"]), "a negated header name")
+        check(h and not any(c[1] == "^" for c in h["conds"]),
+              "a negated header-names content should not require a header")
         check(any(s == 2030000 and "flowbits" in why for s, why, _ in refused), "flowbits refused")
         check(any(s == 2032981 and "not an attack" in why for s, why, _ in refused), "a crawler-seeing rule refused")
         check(pcre_classes(r'[^\x22}*?[\x3b\x7c]') == r'[^\x22}*?\[\x3b\x7c]', pcre_classes(r'[^\x22}*?[\x3b\x7c]'))
