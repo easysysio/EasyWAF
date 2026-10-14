@@ -24,6 +24,7 @@
 // =========================================================
 
 use crate::modules::{Detection, Findings, RuleHit, InspectionModule, ModuleDecision, RequestContext};
+use crate::modules::targets::{parse_zone, Parts, Target};
 use async_trait::async_trait;
 use axum::http::StatusCode;
 use regex::Regex;
@@ -148,6 +149,9 @@ struct RuleRow {
     external_id: Option<i64>,
     name:    String,
     zone:    String,
+    /// What the zone reads, parsed once when the policy is loaded. `None` for a
+    /// zone this version does not know, which is never run.
+    targets: Option<Vec<Target>>,
     pattern: String,
     score:   i64,
     action:  String,
@@ -201,63 +205,13 @@ impl InspectionModule for WafModule {
         // be sent, not the one as typed. See `path_as_forwarded`.
         let forwarded_path = path_as_forwarded(&ctx.path);
 
-        // Step 4 — build zone content forms from the request.
-        // Each zone is a small list of candidate strings — raw, then
-        // percent-decoded — matched independently rather than concatenated.
-        // Concatenating would need a separator character, and a separator is
-        // exactly the kind of thing a rule can accidentally match: an earlier
-        // version joined forms with '\n' and a CRLF-detection rule matched
-        // that '\n' on any request carrying a percent-encoded header, having
-        // nothing to do with anything the client sent. See zone_text.
-        // Joined with '?', as a URL is. Concatenating them directly made the
-        // path run into the query — "/admin?c=1" became "/adminc=1" — so a rule
-        // anchored to the end of a path never matched when a query was present,
-        // and the join could manufacture a string appearing in neither half.
-        let raw_url = match ctx.query.as_deref() {
-            Some(q) if !q.is_empty() => format!("{}?{}", ctx.path, q),
-            _                        => ctx.path.clone(),
-        };
-        let mut url = zone_text(&raw_url, true);
-        // And the path as a backend will read it. A rule anchored to the path
-        // root is otherwise walked past by writing the path another way —
-        // `//.env`, `/a/b/../../.env` — which this proxy or the server behind
-        // it turns back into `/.env`. See `normalised_paths`.
-        for path in normalised_paths(&ctx.path) {
-            let whole = match ctx.query.as_deref() {
-                Some(q) if !q.is_empty() => format!("{path}?{q}"),
-                _                        => path,
-            };
-            for form in zone_text(&whole, true) {
-                push_unique(&mut url, form);
-            }
-        }
-        let args    = zone_text(ctx.query.as_deref().unwrap_or(""), true);
-        // A body sent compressed is read as what it holds. Matched as it
-        // arrived, it is a run of bytes no pattern recognises, while a backend
-        // that inflates request bodies — Express does unless told not to —
-        // receives the payload whole.
-        let body = match inflated(&ctx.headers, &ctx.body) {
-            Some(plain) => zone_text(&String::from_utf8_lossy(&plain), true),
-            None        => zone_text(&String::from_utf8_lossy(&ctx.body), true),
-        };
-        // Every header value, whatever bytes it holds. A value is not required
-        // to be ASCII, and one that is not is still forwarded: read strictly,
-        // a single stray byte would take the whole value out of inspection
-        // while the backend received all of it.
-        let headers = zone_text(
-            &ctx.headers
-                .values()
-                .map(|v| String::from_utf8_lossy(v.as_bytes()))
-                .collect::<Vec<_>>()
-                .join(" "),
-            false,
-        );
-        // "ANY" is every form from every zone — still no concatenation, so a
-        // zone boundary can never masquerade as content either.
-        let any: Vec<&str> = url.iter().chain(&args).chain(&body).chain(&headers)
-            .map(String::as_str)
-            .collect();
-
+        // Step 4 — the request as the rules read it: the five whole-text
+        // zones, built now, and the parts the targeted zones read, built when
+        // a rule first asks for one. See `Whole` and `targets::Parts`.
+        let plain = inflated(&ctx.headers, &ctx.body);
+        let plain_body: &[u8] = plain.as_deref().unwrap_or(&ctx.body);
+        let whole = Whole::of(ctx, plain_body);
+        let parts = Parts::new(ctx, plain_body);
         // Step 5 — evaluate each rule in order.
         let mut total_score: i64 = 0;
         let mut challenge_reason: Option<String> = None;
@@ -280,15 +234,9 @@ impl InspectionModule for WafModule {
                 continue;
             }
 
-            // Select the candidate forms for this rule's zone. A rule matches
-            // if it matches ANY one form — never a concatenation of them.
-            let targets: Vec<&str> = match rule.zone.as_str() {
-                "URL"     => url.iter().map(String::as_str).collect(),
-                "ARGS"    => args.iter().map(String::as_str).collect(),
-                "BODY"    => body.iter().map(String::as_str).collect(),
-                "HEADERS" => headers.iter().map(String::as_str).collect(),
-                _         => any.clone(),  // "ANY" or unrecognised
-            };
+            // A rule whose zone this version cannot read is not run. It was
+            // reported when the policy was loaded.
+            let Some(targets) = &rule.targets else { continue };
 
             // Compiled on first use and cached; skip a rule whose pattern
             // could not be compiled.
@@ -297,7 +245,7 @@ impl InspectionModule for WafModule {
                 None    => continue,
             };
 
-            if !targets.iter().any(|t| re.is_match(t)) {
+            if !reads(targets, &whole, &parts, &re) {
                 continue;
             }
 
@@ -391,6 +339,89 @@ impl InspectionModule for WafModule {
     }
 }
 
+// ─── The whole-text zones ───────────────────────────────
+
+/// The five zones a rule has always read, each a few forms of one block of
+/// text.
+///
+/// Each zone is a small list of candidate strings — raw, then decoded —
+/// matched independently rather than concatenated. Concatenating would need a
+/// separator character, and a separator is exactly the kind of thing a rule
+/// can accidentally match: an earlier version joined forms with '\n' and a
+/// CRLF-detection rule matched that '\n' on any request carrying a
+/// percent-encoded header, having nothing to do with anything the client sent.
+/// See zone_text.
+pub(crate) struct Whole {
+    url:     Vec<String>,
+    args:    Vec<String>,
+    body:    Vec<String>,
+    headers: Vec<String>,
+}
+
+impl Whole {
+    pub(crate) fn of(ctx: &RequestContext, plain_body: &[u8]) -> Self {
+        // Joined with '?', as a URL is. Concatenating them directly made the
+        // path run into the query — "/admin?c=1" became "/adminc=1" — so a rule
+        // anchored to the end of a path never matched when a query was present,
+        // and the join could manufacture a string appearing in neither half.
+        let raw_url = match ctx.query.as_deref() {
+            Some(q) if !q.is_empty() => format!("{}?{}", ctx.path, q),
+            _                        => ctx.path.clone(),
+        };
+        let mut url = zone_text(&raw_url, true);
+        // And the path as a backend will read it. A rule anchored to the path
+        // root is otherwise walked past by writing the path another way —
+        // `//.env`, `/a/b/../../.env` — which this proxy or the server behind
+        // it turns back into `/.env`. See `normalised_paths`.
+        for path in normalised_paths(&ctx.path) {
+            let whole = match ctx.query.as_deref() {
+                Some(q) if !q.is_empty() => format!("{path}?{q}"),
+                _                        => path,
+            };
+            for form in zone_text(&whole, true) {
+                push_unique(&mut url, form);
+            }
+        }
+        // A body sent compressed is read as what it holds — `plain_body` is
+        // inflated. Matched as it arrived, it is a run of bytes no pattern
+        // recognises, while a backend that inflates request bodies — Express
+        // does unless told not to — receives the payload whole.
+        Whole {
+            url,
+            args: zone_text(ctx.query.as_deref().unwrap_or(""), true),
+            body: zone_text(&String::from_utf8_lossy(plain_body), true),
+            // Every header value, whatever bytes it holds. A value is not
+            // required to be ASCII, and one that is not is still forwarded:
+            // read strictly, a single stray byte would take the whole value out
+            // of inspection while the backend received all of it.
+            headers: zone_text(
+                &ctx.headers
+                    .values()
+                    .map(|v| String::from_utf8_lossy(v.as_bytes()))
+                    .collect::<Vec<_>>()
+                    .join(" "),
+                false,
+            ),
+        }
+    }
+}
+
+/// Whether a rule reading `targets` matches this request: its pattern matches
+/// one form of one value of one part it reads — never a concatenation. `ANY`
+/// is every form of the four other whole-text zones.
+pub(crate) fn reads(targets: &[Target], whole: &Whole, parts: &Parts, re: &Regex) -> bool {
+    let any_of = |forms: &[String]| forms.iter().any(|f| re.is_match(f));
+    targets.iter().any(|t| match t {
+        Target::Url     => any_of(&whole.url),
+        Target::Args    => any_of(&whole.args),
+        Target::Body    => any_of(&whole.body),
+        Target::Headers => any_of(&whole.headers),
+        Target::Any     => any_of(&whole.url) || any_of(&whole.args)
+                           || any_of(&whole.body) || any_of(&whole.headers),
+        other           => parts.any(other, &|f| re.is_match(f)),
+    })
+}
+
 // ─── Zone text ───────────────────────────────────────────
 
 /// Build the candidate forms a rule is matched against: the request text as
@@ -428,7 +459,7 @@ impl InspectionModule for WafModule {
 /// A single-element result costs only the scan for `%` — this runs per
 /// request, on up to the inspection limit of each body — when the text carries
 /// no encoding.
-fn zone_text(raw: &str, plus_is_space: bool) -> Vec<String> {
+pub(crate) fn zone_text(raw: &str, plus_is_space: bool) -> Vec<String> {
     let has_pct  = raw.contains('%');
     let has_plus = plus_is_space && raw.contains('+');
     // One pass for the characters the decoders below act on. Text carrying
@@ -599,7 +630,7 @@ fn push_unique(forms: &mut Vec<String>, form: String) {
 /// EasyWAF decodes the rest of the field regardless and receives it. A lossy
 /// decode keeps every ASCII character of a payload visible whatever else the
 /// field contains, and decodes valid input exactly.
-fn percent_decode(s: &str) -> String {
+pub(crate) fn percent_decode(s: &str) -> String {
     String::from_utf8_lossy(&urlencoding::decode_binary(s.as_bytes())).into_owned()
 }
 
@@ -1099,14 +1130,24 @@ async fn get_rules(db: &SqlitePool, policy_id: i64) -> Vec<RuleRow> {
     .unwrap_or_default();
 
     rows.into_iter()
-        .map(|r| RuleRow {
-            id:          r.id,
-            external_id: r.external_id,
-            name:        r.name,
-            zone:    r.zone,
-            pattern: r.pattern,
-            score:   r.score,
-            action:  r.action,
+        .map(|r| {
+            let targets = parse_zone(&r.zone);
+            if targets.is_none() {
+                // Once per change to the configuration, which is when this is
+                // read: not run, and said so, rather than read as everything.
+                tracing::warn!(rule_id = r.id, rule = %r.name, zone = %r.zone,
+                               "WAF rule names a zone this version does not read, and is not run");
+            }
+            RuleRow {
+                id:          r.id,
+                external_id: r.external_id,
+                name:        r.name,
+                zone:        r.zone,
+                targets,
+                pattern:     r.pattern,
+                score:       r.score,
+                action:      r.action,
+            }
         })
         .collect()
 }
@@ -1535,6 +1576,7 @@ mod tests {
             external_id,
             name:    "test".into(),
             zone:    "URL".into(),
+            targets: Some(vec![crate::modules::targets::Target::Url]),
             pattern: ".".into(),
             score:   5,
             action:  "score".into(),
@@ -1743,8 +1785,7 @@ mod bench {
         .execute(&db).await.unwrap().last_insert_rowid();
 
         let site_id = sqlx::query(
-            "INSERT INTO sites (name, server_name, target, waf_policy_id)
-             VALUES ('bench', 'bench.example', 'http://127.0.0.1:1', ?)",
+            "INSERT INTO sites (name, server_name, waf_policy_id) VALUES ('bench', 'bench.example', ?)",
         )
         .bind(policy_id)
         .execute(&db).await.unwrap().last_insert_rowid();
@@ -1779,6 +1820,7 @@ mod bench {
             site_id,
             site_name:  "bench".into(),
             client_ip:  "203.0.113.9".parse().unwrap(),
+            method:     "POST".into(),
             path:       "/api/search".into(),
             query:      Some("q=red%20running%20shoes&size=42&sort=price%20asc".into()),
             headers,
@@ -1886,12 +1928,14 @@ mod exclusion_path_tests {
 // zone covers that: a URL arrives in URL, in ARGS (its query) and in ANY.
 #[cfg(test)]
 mod set_cases {
-    use super::zone_text;
+    use super::{reads, Parts, Whole};
+    use crate::modules::targets::parse_zone;
+    use crate::modules::RequestContext;
     use regex::Regex;
 
     struct Rule {
         id:      i64,
-        zone:    String,
+        targets: Vec<crate::modules::targets::Target>,
         pattern: Regex,
     }
 
@@ -1904,36 +1948,58 @@ mod set_cases {
             .map(|r| {
                 let id = r.get("id").and_then(|v| v.as_integer()).expect("a rule without an id");
                 let pattern = r.get("pattern").and_then(|v| v.as_str()).expect("a rule without a pattern");
+                let zone = r.get("zone").and_then(|v| v.as_str()).unwrap_or("ANY");
                 Rule {
                     id,
-                    zone:    r.get("zone").and_then(|v| v.as_str()).unwrap_or("ANY").to_string(),
+                    targets: parse_zone(zone).unwrap_or_else(|| panic!("rule {id}: {zone:?} is not a zone")),
                     pattern: Regex::new(pattern).unwrap_or_else(|e| panic!("rule {id} does not compile: {e}")),
                 }
             })
             .collect()
     }
 
-    /// The forms a rule in `zone` is matched against when `text` arrives in
-    /// `arrives`, built as `inspect` builds them.
-    fn forms(zone: &str, arrives: &str, text: &str) -> Vec<String> {
-        match (arrives, zone) {
-            ("URL", "URL" | "ANY") => {
-                let mut all = zone_text(text, true);
-                // And the path as a backend reads it, as `inspect` adds.
-                let (path, query) = text.split_once('?').map_or((text, None), |(p, q)| (p, Some(q)));
-                for read in super::normalised_paths(path) {
-                    let whole = query.map_or(read.clone(), |q| format!("{read}?{q}"));
-                    all.extend(zone_text(&whole, true));
-                }
-                if zone == "ANY" {
-                    all.extend(zone_text(text.split_once('?').map_or("", |(_, q)| q), true));
-                }
-                all
+    /// The request a case describes. `URL` is a path and query; `BODY` a body,
+    /// sent as JSON when it starts like JSON and as a form otherwise; `HEADERS`
+    /// a header value, under a name no rule reads; `HEADER:Name` that header;
+    /// `COOKIE` a Cookie header; `METHOD` the method.
+    fn request(arrives: &str, text: &str) -> RequestContext {
+        let mut headers = axum::http::HeaderMap::new();
+        let mut put = |name: &str, value: &str| {
+            headers.append(
+                axum::http::HeaderName::from_bytes(name.as_bytes()).expect("a header name"),
+                axum::http::HeaderValue::from_str(value).expect("a header value"),
+            );
+        };
+        let (mut path, mut query, mut body, mut method) = ("/".to_string(), None, String::new(), "GET".to_string());
+        match arrives {
+            "URL" => {
+                let (p, q) = text.split_once('?').map_or((text, None), |(p, q)| (p, Some(q)));
+                path = p.to_string();
+                query = q.map(str::to_string);
             }
-            ("URL", "ARGS")               => zone_text(text.split_once('?').map_or("", |(_, q)| q), true),
-            ("BODY", "BODY" | "ANY")      => zone_text(text, true),
-            ("HEADERS", "HEADERS" | "ANY") => zone_text(text, false),
-            _ => Vec::new(),
+            "BODY" => {
+                let json = text.trim_start().starts_with(['{', '[']);
+                put("content-type", if json { "application/json" } else { "application/x-www-form-urlencoded" });
+                body = text.to_string();
+                method = "POST".into();
+            }
+            "HEADERS" => put("x-case", text),
+            "COOKIE" => put("cookie", text),
+            "METHOD" => method = text.to_string(),
+            other => match other.strip_prefix("HEADER:") {
+                Some(name) => put(name, text),
+                None => panic!("{other:?} is not a way a case arrives"),
+            },
+        }
+        RequestContext {
+            site_id: 1,
+            site_name: "cases".into(),
+            client_ip: "203.0.113.9".parse().unwrap(),
+            method,
+            path,
+            query,
+            headers,
+            body: bytes::Bytes::from(body),
         }
     }
 
@@ -1956,11 +2022,13 @@ mod set_cases {
             let [expect, arrives, sample] = parts[..] else {
                 panic!("{cases}:{}: expected three tab-separated columns", n + 1);
             };
-            assert!(matches!(arrives, "URL" | "BODY" | "HEADERS"), "{cases}:{}: {arrives:?}", n + 1);
             checked += 1;
 
+            // Through the same matching a live request goes through.
+            let ctx = request(arrives, sample);
+            let (whole, parts) = (Whole::of(&ctx, &ctx.body), Parts::new(&ctx, &ctx.body));
             let matched: Vec<i64> = rules.iter()
-                .filter(|r| forms(&r.zone, arrives, sample).iter().any(|f| r.pattern.is_match(f)))
+                .filter(|r| reads(&r.targets, &whole, &parts, &r.pattern))
                 .map(|r| r.id)
                 .collect();
 

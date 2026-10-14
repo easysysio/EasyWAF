@@ -1463,6 +1463,7 @@ async fn judge(
             site_id:   site.id,
             site_name: site.name.clone(),
             client_ip: incoming.client_ip,
+            method:    incoming.method.to_string(),
             path:      incoming.path.clone(),
             query:     incoming.query.clone(),
             headers:   incoming.headers.clone(),

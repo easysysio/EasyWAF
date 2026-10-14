@@ -32,9 +32,23 @@ next minor, so a release's notes stay about its feature.
 | 1.1.0 | Authentication gateway: a sign-in in front of a site or a path, with local accounts or LDAP (see [auth-gateway.md](auth-gateway.md)) — **released 2026-10-07** |
 | 1.1.1 | A directory realm is tested one step at a time — connection, search account, base, filter, one person, their password and groups — where the page said only whether a sign-in worked; and groups are read whatever case the directory names the attribute in — **released 2026-10-07** |
 | 1.1.2 | A site's sign-in can ask for a CAPTCHA, checked before the name and password are looked at — **released 2026-10-09** |
-| 1.2.0 | Configuration sync between nodes — HA (see [ha-config-sync.md](ha-config-sync.md)) |
-| 1.3.0 | Per-site rate limiting (see [rate-limiting.md](rate-limiting.md)) |
-| 1.4.0 | Learning and hardening modes — URL allowlisting (see [url-learning.md](url-learning.md)) |
+| 1.2.0 | Targeted zones: a rule reads one header, one argument, the cookies or the path alone, one value at a time, and arguments include a form or JSON body (see [targeted-zones.md](targeted-zones.md)) |
+| 1.3.0 | Configuration sync between nodes — HA (see [ha-config-sync.md](ha-config-sync.md)) |
+| 1.4.0 | Per-site rate limiting (see [rate-limiting.md](rate-limiting.md)) |
+| 1.5.0 | Learning and hardening modes — URL allowlisting (see [url-learning.md](url-learning.md)) |
+
+## Targeted zones before HA (Yariv, 2026-10-14)
+
+Raised by a review of CRS 4.30.0 for what could be imported. Nearly everything
+that does not convert comes down to one gap: CRS tests one part of a request —
+`User-Agent` alone, each argument, the cookies — where a rule here sees five
+blocks of text, so 80 of the 86 rules that convert at paranoia level 1 inspect
+more than CRS means and stay unpublished. Put first, as 1.2.0, because it
+improves every rule on the one node already running, and conditions,
+libinjection and multipart parsing all build on it. HA, rate limiting and URL
+learning keep their order and move down one: 1.3.0, 1.4.0 and 1.5.0. Where an
+older section gives one of their old numbers, it is the number the feature had
+when that section was written.
 
 ## 1.0, and the numbers after it
 
@@ -88,7 +102,7 @@ losing the file loses every key; and HA has to share the key between nodes,
 which is the argument for building this before HA and not after. No download of
 a key from the interface, before or after — declined the same day.
 
-**After HA, which keeps 1.2.0** — Yariv's choice over putting it first. The cost
+**After HA** (then 1.2.0, now 1.3.0) — Yariv's choice over putting it first. The cost
 is the one named above and is accepted knowingly: HA is built on keys held in
 the clear, and the sync has to be revisited when they are not. Whether this then
 takes 1.3.0, moving rate limiting and URL learning down, or follows all four, is

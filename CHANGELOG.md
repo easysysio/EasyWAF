@@ -6,7 +6,15 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
-## [1.1.3] — unreleased
+## [1.2.0] — unreleased
+
+### Added
+- **A rule can read one part of a request, one value at a time.** New zones: `PATH` (the path without its query), `ARG` and `ARG:name` (argument values), `ARG_NAME`, `HEADER` and `HEADER:Name` (header values), `HEADER_NAME`, `COOKIE`, `COOKIE:name`, `COOKIE_NAME` and `METHOD`. Each value is matched on its own, so `^` and `$` mean the start and end of the value, as rules written for ModSecurity assume. The five zones a rule has always named read what they read before.
+- Arguments come from a body sent as a form or as JSON as well as from the query string. A JSON leaf is named by its own key, so `ARG:password` means the same in both.
+- A rule can name several zones joined by `|`, such as `ARG|COOKIE`, and matches once.
+
+### Changed
+- A rule naming a zone this version does not read is not run, and the journal says so. It was read as `ANY`, inspecting everything.
 
 ### Fixed
 - The ModSecurity converter (`scripts/modsec2easywaf.py`) refused rules for a possessive quantifier they did not have: `\?+` and `\*+` are one or more literal `?` and `*`. And it converted, as exact, rules anchored to one argument or header value, which EasyWAF's zones — the whole query string, every header joined — would have missed. Those are refused now.

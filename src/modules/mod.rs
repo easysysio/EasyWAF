@@ -16,6 +16,7 @@
 
 pub mod generation;
 pub mod geoip;
+pub mod targets;
 pub mod traffic;
 pub mod waf;
 
@@ -32,6 +33,7 @@ pub struct RequestContext {
     pub site_id:    i64,
     pub site_name:  String,
     pub client_ip:  IpAddr,
+    pub method:     String,
     pub path:       String,
     pub query:      Option<String>,
     pub headers:    HeaderMap,

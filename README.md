@@ -38,8 +38,9 @@ updates, IP lists and country rules, the CAPTCHA challenge, Smart Protect, HTTPS
 Let's Encrypt, a sign-in in front of a site, traffic history, accounts with an audit log,
 flow logs over syslog, and backup, restore and configuration export.
 
-Still to come, in this order: configuration sync between nodes (1.2.0), rate limiting
-(1.3.0) and URL allowlisting (1.4.0). Read
+Still to come, in this order: rules that read one header, argument or cookie (1.2.0),
+configuration sync between nodes (1.3.0), rate limiting (1.4.0) and URL allowlisting
+(1.5.0). Read
 [What EasyWAF does not do](#what-easywaf-does-not-do) before deploying — it is short, and it
 is the honest half of this page.
 
@@ -409,8 +410,8 @@ each release. The ones most likely to matter:
   traces, SQL errors, card numbers. Not scheduled.
 * **A sign-in is a name and a password** — local accounts or LDAP. No OIDC, SAML or second
   factor. Not scheduled.
-* **No high availability.** No configuration sync between nodes. Scheduled for **1.2.0**.
-* **No rate limiting.** Scheduled for **1.3.0**. An address that attacks repeatedly is
+* **No high availability.** No configuration sync between nodes. Scheduled for **1.3.0**.
+* **No rate limiting.** Scheduled for **1.4.0**. An address that attacks repeatedly is
   handled by Smart Protect, which counts refusals, not requests.
 * **No HTTP/2 to clients**, and routing is by `Host:` only — no path prefixes, no wildcard
   hostnames. Not scheduled.
