@@ -16,6 +16,7 @@ mod auth;
 mod cert;
 mod challenge;
 mod crs_tests;
+mod set_check;
 mod channel;
 mod config;
 mod db;
@@ -115,6 +116,9 @@ async fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.first().map(String::as_str) == Some("test-crs") {
         std::process::exit(crs_tests::run(&args[1..]));
+    }
+    if args.first().map(String::as_str) == Some("check-set") {
+        std::process::exit(set_check::run(&args[1..]));
     }
 
     fmt()

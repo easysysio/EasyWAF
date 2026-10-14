@@ -10,6 +10,8 @@ Version bumps and tags are created only after explicit approval.
 
 ### Added
 - **A rule can have several conditions, all of which must hold.** Each is a zone and a pattern of its own — the method is `POST`, the URI names `/xmlrpc.php`, the body holds `pingback.ping` — and any of them, the first included, can be negated: it holds when its pattern matches nothing, so "no `Referer`" is a condition. In a set file they are `negate = true` and `[[rules.and]]` tables. A rule without either is what it was.
+- `easywaf check-set <set> [<cases>]` loads a rule set as installing it would, names each rule with a zone or pattern this version cannot read, and with a file of ordinary requests, each rule that fires on one.
+- A converter for Suricata's HTTP rules (`scripts/suricata2easywaf.py`, installed at `/usr/share/easywaf/`), for ET Open: buffers onto zones, chained contents into one pattern, separate ones into conditions, the fast pattern first. Of ET Open's BSD-licensed rules for requests to a server created from 2015 on, it converts about 2,200; none fires on the ordinary requests EasyWAF's sets are checked against, and together they cost about 77 µs per request.
 - A rule's page shows its further conditions and whether it is negated. They are not edited there; a rule with several conditions comes from a set or an import.
 
 ### Changed

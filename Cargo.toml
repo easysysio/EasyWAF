@@ -155,6 +155,7 @@ assets = [
     ["packaging/service-account.sh",  "/usr/lib/easywaf/service-account",       "755"],
     # For a server building rule sets from ModSecurity's, with `easywaf test-crs`.
     ["scripts/modsec2easywaf.py",     "/usr/share/easywaf/modsec2easywaf.py",   "644"],
+    ["scripts/suricata2easywaf.py",   "/usr/share/easywaf/suricata2easywaf.py", "644"],
     ["CHANGELOG.md",                  "/usr/share/doc/easywaf/CHANGELOG.md",    "644"],
 ]
 
@@ -190,5 +191,6 @@ assets = [
     { source = "packaging/easywaf.service",  dest = "/usr/lib/systemd/system/easywaf.service", mode = "644" },
     { source = "packaging/service-account.sh", dest = "/usr/lib/easywaf/service-account",    mode = "755" },
     { source = "scripts/modsec2easywaf.py",  dest = "/usr/share/easywaf/modsec2easywaf.py", mode = "644" },
+    { source = "scripts/suricata2easywaf.py", dest = "/usr/share/easywaf/suricata2easywaf.py", mode = "644" },
     { source = "CHANGELOG.md",               dest = "/usr/share/doc/easywaf/CHANGELOG.md", mode = "644" },
 ]

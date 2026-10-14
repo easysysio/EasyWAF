@@ -2033,7 +2033,6 @@ mod exclusion_path_tests {
 mod set_cases {
     use super::{reads, Parts, Whole};
     use crate::modules::targets::parse_zone;
-    use crate::modules::RequestContext;
     use regex::Regex;
 
     struct Rule {
@@ -2072,49 +2071,9 @@ mod set_cases {
             .collect()
     }
 
-    /// The request a case describes. `URL` is a path and query; `BODY` a body,
-    /// sent as JSON when it starts like JSON and as a form otherwise; `HEADERS`
-    /// a header value, under a name no rule reads; `HEADER:Name` that header;
-    /// `COOKIE` a Cookie header; `METHOD` the method.
-    fn request(arrives: &str, text: &str) -> RequestContext {
-        let mut headers = axum::http::HeaderMap::new();
-        let mut put = |name: &str, value: &str| {
-            headers.append(
-                axum::http::HeaderName::from_bytes(name.as_bytes()).expect("a header name"),
-                axum::http::HeaderValue::from_str(value).expect("a header value"),
-            );
-        };
-        let (mut path, mut query, mut body, mut method) = ("/".to_string(), None, String::new(), "GET".to_string());
-        match arrives {
-            "URL" => {
-                let (p, q) = text.split_once('?').map_or((text, None), |(p, q)| (p, Some(q)));
-                path = p.to_string();
-                query = q.map(str::to_string);
-            }
-            "BODY" => {
-                let json = text.trim_start().starts_with(['{', '[']);
-                put("content-type", if json { "application/json" } else { "application/x-www-form-urlencoded" });
-                body = text.to_string();
-                method = "POST".into();
-            }
-            "HEADERS" => put("x-case", text),
-            "COOKIE" => put("cookie", text),
-            "METHOD" => method = text.to_string(),
-            other => match other.strip_prefix("HEADER:") {
-                Some(name) => put(name, text),
-                None => panic!("{other:?} is not a way a case arrives"),
-            },
-        }
-        RequestContext {
-            site_id: 1,
-            site_name: "cases".into(),
-            client_ip: "203.0.113.9".parse().unwrap(),
-            method,
-            path,
-            query,
-            headers,
-            body: bytes::Bytes::from(body),
-        }
+    /// The request a case describes; see `set_check::case_request`.
+    fn request(arrives: &str, text: &str) -> crate::modules::RequestContext {
+        crate::set_check::case_request(arrives, text).unwrap_or_else(|e| panic!("{e}"))
     }
 
     /// Every condition must hold; a negated one holds where its pattern
