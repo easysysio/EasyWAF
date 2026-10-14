@@ -3,7 +3,8 @@
 **A self-contained web application firewall and HTTP reverse proxy, in a single Rust binary.**
 
 EasyWAF sits in front of your web applications, routes each request to the right
-backend by its `Host:` header, inspects it against OWASP-style rules, and then
+backend by its `Host:` header, inspects it against rules from OWASP CRS and ET
+Open, and then
 forwards, challenges or blocks it. Sites, policies, rules, certificates and
 traffic history are managed from a built-in web interface and stored in one
 SQLite file.
@@ -61,10 +62,11 @@ inspected.
 
 **Firewall**
 
-- Bundled OWASP-style rule sets — SQL injection, XSS, local and remote file
-  inclusion, remote code execution, PHP, protocol enforcement and scanner
-  detection — plus optional sets for WordPress, Apache, Java and credential
-  file exposure.
+- Basic rule sets built from OWASP CRS — SQL injection, XSS, local and remote
+  file inclusion, remote code execution, PHP, protocol enforcement and scanner
+  detection — rebuilt from each CRS release; optional sets for WordPress,
+  Apache, Java, IIS, Node.js, credential files, exploit probes, web shells and
+  bots; and four optional sets of ET Open's exploit rules, rebuilt daily.
 - Anomaly scoring: each matching rule adds to a score, and the request is
   blocked when the score reaches the policy's threshold. Some rules block
   outright.

@@ -3,7 +3,7 @@
 A self-contained web application firewall and HTTP reverse proxy, in a single Rust binary.
 
 EasyWAF sits in front of your web applications, routes requests to the right backend by
-`Host:` header, inspects them against OWASP-style rules, and blocks, challenges or forwards
+`Host:` header, inspects them against rules from OWASP CRS and ET Open, and blocks, challenges or forwards
 them. Everything — virtual hosts, WAF policies, rules, traffic history — is managed from a
 built-in web GUI and stored in one SQLite file. There is no separate database server, no
 runtime dependency beyond glibc, and nothing to wire together.
@@ -79,9 +79,12 @@ and the per-site security headers still apply, but nothing is inspected.
 * **Load balancing** — list several backends for a site and requests go round them in
   turn, by weight. A backend that stops answering is taken out and tried again, and
   session affinity keeps a client on the backend that first served it.
-* **Rule engine** — 111 bundled OWASP-style rules across SQLi, XSS, LFI, RFI, RCE, PHP,
-  protocol and scanner categories. Rules match a request zone (`URL`, `ARGS`, `BODY`,
-  `HEADERS`, or `ANY`) and either add to a score or block outright.
+* **Rule engine** — basic sets built from OWASP CRS (SQLi, XSS, LFI, RFI, RCE, PHP,
+  protocol and scanners) and rebuilt from each CRS release, optional sets for specific
+  applications, and about 2,200 rules from ET Open. A rule reads a whole zone (`URL`,
+  `ARGS`, `BODY`, `HEADERS`, `ANY`) or one value at a time (`ARG:id`, `HEADER:User-Agent`,
+  `COOKIE`, …), can require several conditions at once, and either adds to a score or
+  blocks outright.
 * **Signed rule updates** — corrected rule sets are published to a signed channel. EasyWAF
   says which policies are behind; applying an update is your decision, and the version it
   replaced is kept so it can be put back.
@@ -394,7 +397,7 @@ src/
   slow_clients.rs   connection timeouts and the per-address connection cap
   routes/           GUI pages (dashboard, sites, policy, rules, traffic, certs, settings)
 migrations/         schema, applied in order at startup
-rules/              bundled OWASP-style rule sets (TOML), and key.gpg
+rules/              the basic rule sets bundled for a first run offline (TOML)
 templates/          Tera templates      — compiled into the binary
 static/             CSS, JS and fonts   — compiled into the binary
 packaging/          systemd unit and package scripts

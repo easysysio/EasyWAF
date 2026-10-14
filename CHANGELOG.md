@@ -8,6 +8,9 @@ Version bumps and tags are created only after explicit approval.
 
 ## [1.3.1] — unreleased
 
+### Changed
+- The documentation describes the basic rule sets as what they now are: built from OWASP CRS, rebuilt from each CRS release, and named "OWASP CRS: …" in the channel.
+
 ### Fixed
 - The CRS and ET converters installed with EasyWAF raised `SyntaxWarning: invalid escape sequence` under Python 3.12, which a later Python makes an error. And the ET converter wrote one condition several times where several negated contents on a header each required the header.
 

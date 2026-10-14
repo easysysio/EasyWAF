@@ -92,18 +92,26 @@ rule that is about to become a false positive.
 Rules arrive as **sets**, versioned and published to a signed channel.
 
 **Basic sets** are bundled with every build and installed by default. They assume
-nothing about the application behind the proxy:
+nothing about the application behind the proxy. They are built from **OWASP
+CRS** and rebuilt from each CRS release; each rule's description names the CRS
+rule it came from:
 
 | Band | Set |
 |---|---|
-| 913 | Scanner and automated tool detection |
-| 920 | Protocol enforcement |
-| 930 | Local file inclusion and path traversal |
-| 931 | Remote file inclusion |
-| 932 | Remote code execution and command injection |
-| 933 | PHP injection |
-| 941 | Cross-site scripting |
-| 942 | SQL injection |
+| 913 | OWASP CRS: scanner and automated tool detection |
+| 920 | OWASP CRS: protocol enforcement |
+| 930 | OWASP CRS: local file inclusion |
+| 931 | OWASP CRS: remote file inclusion |
+| 932 | OWASP CRS: remote code execution |
+| 933 | OWASP CRS: PHP injection |
+| 941 | OWASP CRS: cross-site scripting |
+| 942 | OWASP CRS: SQL injection |
+
+Only the CRS rules EasyWAF can read faithfully are taken, and each is checked
+against CRS's own regression tests in this engine before it is published — so a
+basic set holds fewer rules than CRS's band of the same name. CRS's scores are
+doubled, so a policy's default threshold of 10 blocks what CRS's threshold of 5
+does.
 
 **Optional sets** are published but never bundled. They only make sense in front
 of the thing they name — WordPress, Apache httpd, Java and Tomcat, protocol

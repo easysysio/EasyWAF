@@ -33,7 +33,7 @@ GitHub
 <div class="es-hero-copy es-rise">
 <div class="es-eyebrow"><span class="es-eyebrow-dot"></span>Web application firewall · part of EasySYS</div>
 <h1 class="es-h1">A firewall in front of every site you run.</h1>
-<p class="es-lead">EasyWAF is a reverse proxy that routes each request to its site, scores it against OWASP-style rules, and then passes it, challenges it or blocks it. Sites, certificates, policies and traffic history are managed from a built-in console and kept in one SQLite file.</p>
+<p class="es-lead">EasyWAF is a reverse proxy that routes each request to its site, scores it against rules from OWASP CRS and ET Open, and then passes it, challenges it or blocks it. Sites, certificates, policies and traffic history are managed from a built-in console and kept in one SQLite file.</p>
 <div class="es-actions">
 <a class="es-btn es-btn--primary es-btn--lg" href="#install">
 Get started
