@@ -66,28 +66,36 @@ from collections import Counter
 
 # ── Zones ────────────────────────────────────────────────
 #
-# Cookies map to HEADERS because that is where EasyWAF sees them: it does not
-# parse a cookie jar, it matches the header text the client sent.
+# Each variable as (zone, exact). A zone in the singular reads one value at a
+# time, as ModSecurity does, so `^` and `$` mean the same in both and a named
+# selector (REQUEST_HEADERS:User-Agent) keeps its name. `exact` is False where
+# the zone holds more than the variable: ARGS_GET is the query string's
+# arguments, ARG is the body's as well. Zones in the singular need EasyWAF
+# 1.2.0; a set using them says so with `requires` in the channel's sets.toml.
 ZONE_OF = {
-    "REQUEST_URI": "URL", "REQUEST_URI_RAW": "URL", "REQUEST_FILENAME": "URL",
-    "REQUEST_BASENAME": "URL", "QUERY_STRING": "URL",
-    "ARGS": "ARGS", "ARGS_GET": "ARGS", "ARGS_POST": "ARGS",
-    "ARGS_NAMES": "ARGS", "ARGS_GET_NAMES": "ARGS", "ARGS_POST_NAMES": "ARGS",
-    "REQUEST_BODY": "BODY", "XML": "BODY", "FILES": "BODY",
-    "FILES_NAMES": "BODY", "MULTIPART_FILENAME": "BODY",
-    "REQUEST_HEADERS": "HEADERS", "REQUEST_HEADERS_NAMES": "HEADERS",
-    "REQUEST_COOKIES": "HEADERS", "REQUEST_COOKIES_NAMES": "HEADERS",
-    "REQUEST_LINE": "URL", "REQUEST_METHOD": "HEADERS",
-    "REQUEST_PROTOCOL": "HEADERS", "USER_AGENT": "HEADERS",
+    "REQUEST_URI": ("URL", True), "REQUEST_URI_RAW": ("URL", True),
+    "REQUEST_FILENAME": ("PATH", True),
+    # The last segment of the path. PATH holds it, and more.
+    "REQUEST_BASENAME": ("PATH", False),
+    "QUERY_STRING": ("ARGS", True),
+    "ARGS": ("ARG", True), "ARGS_GET": ("ARG", False), "ARGS_POST": ("ARG", False),
+    "ARGS_NAMES": ("ARG_NAME", True),
+    "ARGS_GET_NAMES": ("ARG_NAME", False), "ARGS_POST_NAMES": ("ARG_NAME", False),
+    "REQUEST_BODY": ("BODY", True),
+    # XML is not parsed, nor is a multipart upload: the body holds them whole.
+    "XML": ("BODY", False), "FILES": ("BODY", False),
+    "FILES_NAMES": ("BODY", False), "MULTIPART_FILENAME": ("BODY", False),
+    "REQUEST_HEADERS": ("HEADER", True), "REQUEST_HEADERS_NAMES": ("HEADER_NAME", True),
+    "REQUEST_COOKIES": ("COOKIE", True), "REQUEST_COOKIES_NAMES": ("COOKIE_NAME", True),
+    "REQUEST_METHOD": ("METHOD", True),
+    "USER_AGENT": ("HEADER:User-Agent", True),
+    # "GET /x HTTP/1.1" is no zone; the URL holds its middle.
+    "REQUEST_LINE": ("URL", False),
 }
 
-# Variables EasyWAF matches as the whole of what ModSecurity means by them, so
-# that `^` and `$` in a pattern mean the same place in both. Every other one is
-# one value among several in ModSecurity — an argument, a header, a cookie —
-# where EasyWAF's zone is all of them run together: the query string, every
-# header value joined. An anchor there sits at the start or end of the zone
-# instead of the value, and the rule quietly misses.
-ANCHORS_HOLD = {"REQUEST_URI", "REQUEST_URI_RAW", "REQUEST_BODY"}
+# The variables a name after a colon narrows to one value of, and the zone
+# that names it the same way.
+NAMED = {"ARGS": "ARG", "REQUEST_HEADERS": "HEADER", "REQUEST_COOKIES": "COOKIE"}
 
 # Transformations EasyWAF's own matching already covers, or that map onto a
 # regex flag. Anything outside this set changes what the pattern is matched
@@ -130,6 +138,7 @@ UNSUPPORTED_VARS = {
     "PERF_ALL", "HIGHEST_SEVERITY", "INBOUND_DATA_ERROR", "MULTIPART_STRICT_ERROR",
     "REQBODY_ERROR", "REQBODY_PROCESSOR", "WEBSERVER_ERROR_LOG", "ENV",
     "GLOBAL", "RESOURCE", "UNIQUE_ID", "MULTIPART_UNMATCHED_BOUNDARY",
+    "REQUEST_PROTOCOL",
     "OUTBOUND_DATA_ERROR", "FULL_REQUEST", "FULL_REQUEST_LENGTH",
     "MULTIPART_PART_HEADERS", "ARGS_COMBINED_SIZE", "FILES_COMBINED_SIZE",
 }
@@ -212,13 +221,15 @@ def parse_rules(text):
 
 
 def classify_vars(variables):
-    """Map a ModSecurity variable list onto one EasyWAF zone.
+    """Map a ModSecurity variable list onto the zones a rule names.
 
-    Returns (zone, widened, reason). `widened` marks a rule whose scope grew
-    because EasyWAF picks one zone where ModSecurity named several, or because
-    an exclusion could not be expressed.
+    Returns (zone, widened, reason). Several variables become several zones
+    joined by `|`, which one rule reads and matches once, as ModSecurity does.
+    `widened` marks a rule whose scope grew: a zone that holds more than its
+    variable, a selector by regular expression, or an exclusion that cannot be
+    expressed.
     """
-    zones, widened = set(), False
+    zones, widened = [], False
     for var in variables.split("|"):
         var = var.strip()
         if not var:
@@ -230,22 +241,26 @@ def classify_vars(variables):
             continue
         if var.startswith("&"):
             return None, False, "counts a variable rather than matching it"
-        name = var.split(":", 1)[0].upper()
+        name, _, selector = var.partition(":")
+        name = name.upper()
         if name in UNSUPPORTED_VARS:
             return None, False, f"variable {name} has no EasyWAF equivalent"
         if name not in ZONE_OF:
             return None, False, f"unknown variable {name}"
-        if ":" in var and name not in ("XML",):
-            # ARGS:foo — a single named parameter. EasyWAF matches the whole
-            # zone, so this widens to every parameter.
+        zone, exact = ZONE_OF[name]
+        if selector and name in NAMED and not selector.startswith("/") and "|" not in selector:
+            # ARGS:foo — one named parameter, which ARG:foo reads.
+            zone = f"{NAMED[name]}:{selector}"
+        elif selector and name != "XML":
+            # ARGS:/^id_/ — names chosen by a pattern. The zone holds them all.
             widened = True
-        zones.add(ZONE_OF[name])
+        widened |= not exact
+        if zone not in zones:
+            zones.append(zone)
 
     if not zones:
         return None, False, "no usable variable"
-    if len(zones) == 1:
-        return zones.pop(), widened, None
-    return "ANY", True, None
+    return "|".join(zones), widened, None
 
 
 def pm_to_regex(operator_arg, base_dir):
@@ -545,13 +560,16 @@ def convert(paths, id_base, include_widened, set_id, set_name, max_paranoia=1):
                 stats["variables"] += 1
                 skipped.append((label, reason))
                 continue
-            loose = sorted({v.strip().lstrip("!").split(":", 1)[0].upper() for v in variables.split("|")
-                            if v.strip() and not v.strip().startswith("!")} - ANCHORS_HOLD)
+            # A zone that holds more than the variable holds more than one
+            # value of it, so an anchor falls somewhere else in it.
+            loose = sorted({v.strip().split(":", 1)[0].upper() for v in variables.split("|")
+                            if v.strip() and not v.strip().startswith("!")
+                            and not ZONE_OF.get(v.strip().split(":", 1)[0].upper(), ("", True))[1]})
             if loose and is_anchored(pattern):
                 stats["anchored"] += 1
-                skipped.append((label, f"anchored with ^ or $ to one value of {loose[0]}, where EasyWAF "
-                                       "matches all of them as one text — the anchor would fall at its "
-                                       "start or end instead, and the rule would miss"))
+                skipped.append((label, f"anchored with ^ or $ to one value of {loose[0]}, which EasyWAF "
+                                       "reads as part of a larger text — the anchor would fall elsewhere "
+                                       "in it, and the rule would miss"))
                 continue
             if widened and not include_widened:
                 stats["would widen"] += 1
@@ -661,13 +679,17 @@ SecRule RESPONSE_BODY "@rx secret" \
 SecRule ARGS "@detectSQLi" \
     "id:100006,phase:2,t:none,msg:'SQLi',severity:'CRITICAL'"
 
-# Exact, with t:lowercase folded into a flag.
+# Exact: one header, by name, with t:lowercase folded into a flag.
 SecRule REQUEST_HEADERS:User-Agent "@rx sqlmap" \
     "id:100007,phase:2,t:lowercase,msg:'Scanner',severity:'NOTICE'"
 
-# Widened: two zones at once.
+# Exact: two variables, as one rule reading two zones.
 SecRule ARGS|REQUEST_HEADERS "@rx evil" \
-    "id:100008,phase:2,t:none,msg:'Widened',severity:'WARNING'"
+    "id:100008,phase:2,t:none,msg:'Two zones',severity:'WARNING'"
+
+# Widened: headers chosen by a pattern, which no zone names.
+SecRule REQUEST_HEADERS:/^x-/ "@rx evil" \
+    "id:100014,phase:2,t:none,msg:'Widened',severity:'WARNING'"
 
 # Literal brace: legal in PCRE, rejected by Rust's regex until escaped.
 SecRule ARGS "@rx {{.*?}}" \
@@ -683,10 +705,14 @@ SecRule REQUEST_HEADERS "@pm nikto nmap" \
 SecRule ARGS_NAMES "@rx ." \
     "id:100011,phase:2,pass,nolog,setvar:'tx.paramcounter_%{MATCHED_VAR_NAME}=+1'"
 
-# Refused: anchored to one argument's value, where EasyWAF's ARGS is the
-# whole query string. CRS 931120's shape.
+# Exact: anchored to one argument's value, which ARG reads. CRS 931120's shape.
 SecRule ARGS "@rx ^(?i:https?).*?\?+$" \
     "id:100013,phase:2,block,t:none,msg:'Anchored',severity:'CRITICAL'"
+
+# Refused: anchored to the query string's arguments, which ARG reads together
+# with the body's — and widened besides.
+SecRule ARGS_GET "@rx ^https?://" \
+    "id:100015,phase:2,block,t:none,msg:'Anchored, inexact',severity:'CRITICAL'"
 
 # Refused by the backstop even though it declares itself a detection.
 SecRule ARGS "@rx .*" \
@@ -710,14 +736,17 @@ def self_test():
         toml, skipped, stats = convert([path], 2000000, False, "t", "t")
         refused = {lbl.split()[0] for lbl, _ in skipped}
 
-        check(stats["converted"] == 3, f"expected 3 exact conversions, got {stats['converted']}")
+        check(stats["converted"] == 6, f"expected 6 exact conversions, got {stats['converted']}")
         for rid, why in [("100002", "chain"), ("100003", "transformation"),
                          ("100004", "lookahead"), ("100005", "response phase"),
-                         ("100006", "@detectSQLi"), ("100008", "widening"),
+                         ("100006", "@detectSQLi"), ("100014", "widening"),
                          ("100011", "pass/setvar bookkeeping"),
                          ("100012", "matches ordinary traffic"),
-                         ("100013", "anchored to one value")]:
+                         ("100015", "anchored in a zone holding more")]:
             check(rid in refused, f"{rid} ({why}) should have been refused")
+        check('zone        = "HEADER:User-Agent"' in toml, "a named header should keep its name")
+        check('zone        = "ARG|HEADER"' in toml, "two variables should become one rule reading both")
+        check("id          = 2100013" in toml, "an anchor on one argument's value should convert")
 
         check("'(?i)/etc/passwd'" in toml, "exact pattern not carried through verbatim")
         check("score       = 5" in toml, "CRITICAL should score 5")
@@ -728,16 +757,11 @@ def self_test():
         # @pm becomes one case-insensitive alternation.
         check("nikto|nmap" in toml, "@pm should become an alternation")
 
-        # A named selector (REQUEST_HEADERS:User-Agent) widens too: EasyWAF
-        # matches the whole zone, so the rule now sees every header. Refused by
-        # default for that reason, which is why 100007 is not in the exact set.
-        check("100007" in refused, "a named-variable selector should count as widening")
-
-        # With widening allowed, both appear — the two-zone rule as ANY.
+        # With widening allowed, the pattern selector converts too, and says so.
         wide, _, wstats = convert([path], 2000000, True, "t", "t")
-        check(wstats["converted"] == 5, f"expected 5 with widening, got {wstats['converted']}")
+        check(wstats["converted"] == 7, f"expected 7 with widening, got {wstats['converted']}")
         check("WIDENED" in wide, "a widened rule must say so in its description")
-        check('zone        = "ANY"' in wide, "two zones should widen to ANY")
+        check('zone        = "HEADER"' in wide, "headers chosen by a pattern should widen to every header")
         # t:lowercase becomes a regex flag rather than a lost transformation.
         check("'(?i)sqlmap'" in wide, "t:lowercase should fold into (?i)")
 

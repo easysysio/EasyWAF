@@ -19,6 +19,8 @@ Version bumps and tags are created only after explicit approval.
 - A rule naming a zone this version does not read is not run, and the journal says so. It was read as `ANY`, inspecting everything.
 - Installing or updating a rule set that uses a zone this version does not read is refused, with the set, the rule and the zone named, before any rule is written. An import refuses such a rule the same way.
 
+- The ModSecurity converter (`scripts/modsec2easywaf.py`) maps variables onto the targeted zones: `REQUEST_HEADERS:User-Agent` to `HEADER:User-Agent`, `ARGS` to `ARG`, `REQUEST_COOKIES_NAMES` to `COOKIE_NAME`, `REQUEST_FILENAME` to `PATH`, and several variables to one rule naming several zones. Of CRS 4.30.0's request rules at paranoia level 1 it converts 16 exactly, where it converted 5.
+
 ### Fixed
 - The ModSecurity converter (`scripts/modsec2easywaf.py`) refused rules for a possessive quantifier they did not have: `\?+` and `\*+` are one or more literal `?` and `*`. And it converted, as exact, rules anchored to one argument or header value, which EasyWAF's zones — the whole query string, every header joined — would have missed. Those are refused now.
 

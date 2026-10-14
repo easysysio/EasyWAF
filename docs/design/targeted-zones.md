@@ -140,3 +140,10 @@ basic sets that reads none of the new zones should cost exactly what it cost in
 * **Conditions** — counts, lengths, "matches unless", several conditions at
   once — and **libinjection**. Both read targeted values; neither is a zone.
 * **Multipart parsing**, above.
+* **XML bodies.** CRS points most of its attack rules at `XML:/*` as well as at
+  arguments and cookies. With no XML parsing here, the converter maps that to
+  `BODY` and marks the rule widened. Of CRS 4.30.0's request rules at paranoia
+  level 1, the converter takes 16 exactly once the targeted zones exist (5
+  before them); XML alone keeps about 60 more from being exact. Nearly all are
+  in the SQL injection, XSS, RCE and PHP bands, which sets written for EasyWAF
+  cover and which are not published from CRS, so this waits for a reason.
