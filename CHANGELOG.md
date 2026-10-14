@@ -6,7 +6,7 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
-## [1.2.1] — unreleased
+## [1.2.1] — 2026-10-14
 
 ### Changed
 - **Applying a rule set update removes the set's rules the new version no longer has.** They were left on the policy, still matching and scoring, so a set rebuilt from upstream — where rules are renumbered and retired every release — scored one attack under an old number and a new one. *Put back* restores the removed rules with the rest of the previous version. Rules you cloned are never touched.
