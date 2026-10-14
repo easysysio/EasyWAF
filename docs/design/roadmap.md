@@ -36,6 +36,7 @@ next minor, so a release's notes stay about its feature.
 | 1.2.1 | Rule sets rebuilt from OWASP CRS: an update removes the rules a set's new version dropped, `easywaf test-crs` runs CRS's own regression tests in the engine, the converter is installed with EasyWAF, and a value carrying a path is read normalised as CRS's file-access rules assume — **released 2026-10-14** |
 | 1.3.0 | Rules with several conditions, all of which must hold, and rules that must not match; and the ET Open rules this makes convertible, rebuilt daily (see [conditions.md](conditions.md)) — **released 2026-10-14** |
 | 1.3.1 | Rule sets listed by name, so each source's sit together, with the picker headed by the sets' own names; the converters free of escapes a later Python refuses; and documentation describing the basic sets as built from OWASP CRS — **released 2026-10-14** |
+| 1.3.2 | XML and multipart bodies read for rules — `XML`, `XML_ATTR`, `FILE_NAME`, upload fields as arguments — and a body that does not parse read whole; CRS's rules that also read XML convert exactly, 83 at paranoia level 1 where 16 did — **released 2026-10-14** |
 | 1.4.0 | Configuration sync between nodes — HA (see [ha-config-sync.md](ha-config-sync.md)) |
 | 1.5.0 | Per-site rate limiting (see [rate-limiting.md](rate-limiting.md)) |
 | 1.6.0 | Learning and hardening modes — URL allowlisting (see [url-learning.md](url-learning.md)) |

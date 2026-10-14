@@ -273,12 +273,21 @@ where on `ARGS` it would only be a query string that does.
 | `COOKIE:name` | the value of the cookie *name* |
 | `COOKIE_NAME` | a cookie's name |
 | `METHOD` | the request method |
+| `XML` | an XML body's text, as XPath's `/*` reads it |
+| `XML_ATTR` | each attribute's value in an XML body |
+| `FILE_NAME` | each uploaded file's name in a `multipart/form-data` body |
 
 Names are compared without regard to case. In a JSON body every leaf is an
 argument named by its own key, so `ARG:password` finds
-`{"user": {"password": "…"}}` as well as `password=…` in a form. A body cut
-off at the inspection limit, a `multipart/form-data` upload and XML give no
-arguments; `BODY` still reads them.
+`{"user": {"password": "…"}}` as well as `password=…` in a form; a
+`multipart/form-data` upload's fields are arguments too. An XML body is read by
+`XML` and `XML_ATTR`: a DTD is read, no external entity is fetched, and entity
+expansion large enough to be a billion-laughs attack is refused.
+
+**A body that says how it is written and cannot be read that way is read
+whole.** JSON or XML cut off at the inspection limit or malformed, and a
+multipart body without its boundary, are each one value to the rules that
+would have read them parsed, so a broken body cannot hide what it carries.
 
 **Several zones** are joined with `|` — `ARG|COOKIE` — and the rule matches
 once, however many of them its pattern is found in.

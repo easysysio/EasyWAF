@@ -6,7 +6,7 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
-## [1.3.2] — unreleased
+## [1.3.2] — 2026-10-14
 
 ### Added
 - **XML and multipart bodies are read for rules.** `XML` is an XML body's text and `XML_ATTR` each of its attributes' values, as CRS's `XML:/*` and `XML://@*` read them; a DTD is read, no external entity is fetched, and entity expansion deep or wide enough to be a billion-laughs attack is refused. A `multipart/form-data` upload's fields are arguments (`ARG`), and its files' names are `FILE_NAME`.

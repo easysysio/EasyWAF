@@ -3,7 +3,7 @@
 Called out so nothing here is a surprise in production. Split by whether it is
 scheduled or decided.
 
-Current as of **1.3.1**.
+Current as of **1.3.2**.
 
 ## As a reverse proxy
 
@@ -49,11 +49,10 @@ Current as of **1.3.1**.
   half of a WAF that the OWASP Core Rule Set reserves its 950xxx band for. Not
   scheduled, and it has a real cost: responses stream today, and inspecting them
   means buffering.
-- **Arguments come from the query string, a form body and a JSON body only.**
-  A field in a `multipart/form-data` upload, or in an XML body, is not an
-  argument: a rule on `ARG` does not see it, though `BODY` reads the upload as
-  it arrived. At most 1,024 arguments and 1,024 cookies are read from one
-  request; any beyond that are seen only by the zones that read whole text.
+- **At most 1,024 arguments, cookies, XML attributes and uploaded files** are
+  read from one request; any beyond that are seen only by the zones that read
+  whole text. An uploaded file's content is not an argument; `BODY` reads it
+  as it arrived, up to the inspection limit.
 - **A condition is a pattern, not a count.** A rule can require several
   conditions, or that one does not match, but not "more than 255 arguments" or
   "this header twice". CRS's rules that count are still refused by the
