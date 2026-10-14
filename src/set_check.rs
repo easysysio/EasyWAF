@@ -24,7 +24,7 @@
 // rules drops what this reports and publishes the rest.
 // =========================================================
 
-use crate::modules::targets::{parse_zone, table_conditions, Parts, Target};
+use crate::modules::targets::{parse_zone, table_conditions, Compiled, Parts};
 use crate::modules::waf::{reads, Whole};
 use crate::modules::RequestContext;
 use std::collections::BTreeSet;
@@ -47,7 +47,7 @@ pub fn run(args: &[String]) -> i32 {
         Err(e) => { eprintln!("{set}: {e}"); return 2; }
     };
 
-    let mut rules: Vec<(i64, Vec<(Vec<Target>, regex::Regex, bool)>)> = Vec::new();
+    let mut rules: Vec<(i64, Compiled)> = Vec::new();
     let mut broken = 0;
     for r in table.get("rules").and_then(|r| r.as_array()).into_iter().flatten() {
         let id = r.get("id").and_then(|v| v.as_integer()).unwrap_or(0);

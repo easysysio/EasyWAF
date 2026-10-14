@@ -67,6 +67,10 @@ pub fn table_conditions(rule: &toml::Table) -> Result<Vec<(String, String, bool)
     Ok(out)
 }
 
+/// A rule's conditions, each compiled: what it reads, its pattern, and whether
+/// it is negated.
+pub type Compiled = Vec<(Vec<Target>, regex::Regex, bool)>;
+
 /// One part of a request a rule reads.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Target {
