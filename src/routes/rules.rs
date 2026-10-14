@@ -178,6 +178,9 @@ pub async fn post_rule_create(
             &format!("{}?error=Invalid+regex+pattern", redirect)
         ).into_response());
     }
+    let Some(zone) = crate::modules::targets::canonical(&form.zone) else {
+        return Ok(Redirect::to(&format!("{redirect}?error={}", not_a_zone(&form.zone))).into_response());
+    };
 
     let description = form.description.unwrap_or_default();
     let score: i64  = form.score.as_deref()
@@ -200,7 +203,7 @@ pub async fn post_rule_create(
         policy_id,
         form.name,
         description,
-        form.zone,
+        zone,
         form.pattern,
         score,
         form.action,
@@ -209,6 +212,16 @@ pub async fn post_rule_create(
     .await?;
 
     Ok(Redirect::to(&redirect).into_response())
+}
+
+/// The message, ready for a query string, for a zone that is not one.
+fn not_a_zone(zone: &str) -> String {
+    let text = format!(
+        "{zone:?} is not a zone. Use ANY, URL, ARGS, BODY or HEADERS for whole text, or PATH, ARG, \
+         ARG:name, ARG_NAME, HEADER, HEADER:Name, HEADER_NAME, COOKIE, COOKIE:name, COOKIE_NAME or \
+         METHOD for one value at a time, joined with | for several."
+    );
+    url::form_urlencoded::byte_serialize(text.as_bytes()).collect()
 }
 
 // ─── post_rule_toggle ────────────────────────────────────
@@ -464,6 +477,16 @@ pub async fn install_set(
 ) -> Result<usize> {
     let file: RuleFile = toml::from_str(toml_text)
         .map_err(|e| AppError::Internal(format!("rule set could not be parsed: {e}")))?;
+
+    // Every rule's zone, before anything is written. A set written for a newer
+    // EasyWAF would otherwise install rules that never run.
+    if let Some(rule) = file.rules.iter().find(|r| crate::modules::targets::parse_zone(&r.zone).is_none()) {
+        return Err(AppError::Refused(format!(
+            "{set_id} v{version} needs a newer EasyWAF: rule {} reads the zone {:?}, which this \
+             version ({}) does not. Upgrade, then apply it.",
+            rule.id, rule.zone, env!("CARGO_PKG_VERSION")
+        )));
+    }
 
     // Before a single row is overwritten. An update that turns out to refuse
     // legitimate traffic can then be undone, which is what makes applying one
@@ -1118,7 +1141,9 @@ fn read_rule_defs() -> HashMap<i64, (RuleFileDef, Option<String>)> {
             // signature of a leftover from a renumbering — indistinguishable
             // from real debris in anything that goes looking for it.
             let set_id = parsed.set.as_ref().map(|s| s.id.clone());
-            for rule in parsed.rules {
+            // A rule in a zone this version does not read is not offered: it
+            // would be added and never run.
+            for rule in parsed.rules.into_iter().filter(|r| crate::modules::targets::parse_zone(&r.zone).is_some()) {
                 map.insert(rule.id, (rule, set_id.clone()));
             }
         }
@@ -1179,7 +1204,7 @@ pub fn read_catalog_categories(held: &Held) -> Result<Vec<CatalogCategory>> {
 
         let mut rules = Vec::new();
         let mut added_count = 0;
-        for r in parsed.rules {
+        for r in parsed.rules.into_iter().filter(|r| crate::modules::targets::parse_zone(&r.zone).is_some()) {
             // Present and off is not the same as present: the tick means the
             // rule applies here, and one switched off applies to nothing. It
             // is shown unticked, with a label saying it is still in the policy.
@@ -2010,6 +2035,9 @@ pub async fn post_rule_update_global(
             &format!("/rules/{}/edit?error=Invalid+regex+pattern", id)
         ).into_response());
     }
+    let Some(zone) = crate::modules::targets::canonical(&form.zone) else {
+        return Ok(Redirect::to(&format!("/rules/{id}/edit?error={}", not_a_zone(&form.zone))).into_response());
+    };
 
     let description = form.description.unwrap_or_default();
     let score: i64  = form.score.as_deref().and_then(|s| s.parse().ok()).unwrap_or(5);
@@ -2047,7 +2075,7 @@ pub async fn post_rule_update_global(
          SET name = ?, description = ?, zone = ?, pattern = ?,
              score = ?, action = ?, enabled = ?
          WHERE id = ?",
-        form.name, description, form.zone, form.pattern,
+        form.name, description, zone, form.pattern,
         score, form.action, enabled, id,
     )
     .execute(&state.db)
@@ -2374,6 +2402,9 @@ pub async fn post_custom_rule_create(
     if regex::Regex::new(&form.pattern).is_err() {
         return Ok(Redirect::to("/rules/new?error=Invalid+regex+pattern").into_response());
     }
+    let Some(zone) = crate::modules::targets::canonical(&form.zone) else {
+        return Ok(Redirect::to(&format!("/rules/new?error={}", not_a_zone(&form.zone))).into_response());
+    };
 
     // Resolve the target policy by name.
     let policy_id: i64 = sqlx::query_scalar!(
@@ -2395,7 +2426,7 @@ pub async fn post_custom_rule_create(
         policy_id,
         form.name,
         description,
-        form.zone,
+        zone,
         form.pattern,
         score,
         form.action,
@@ -2497,6 +2528,20 @@ action = "score"
         .fetch_optional(db)
         .await
         .unwrap()
+    }
+
+    /// A set written for a newer EasyWAF is refused before a row is written:
+    /// installed, its rules would never run.
+    #[tokio::test]
+    async fn a_set_using_a_zone_this_version_cannot_read_is_refused() {
+        let (db, policy) = fixture("zones").await;
+        let newer = V1.replace(r#"zone = "ARGS""#, r#"zone = "BODY_PART:file""#);
+        let e = install_set(&db, policy, "demo", 1, &newer).await.expect_err("installed");
+        assert!(e.to_string().contains("needs a newer EasyWAF") && e.to_string().contains("BODY_PART:file"), "{e}");
+        assert!(rule(&db, policy, 990001).await.is_none(), "a rule was written before the refusal");
+
+        let targeted = V1.replace(r#"zone = "ARGS""#, r#"zone = "ARG:q|COOKIE""#);
+        install_set(&db, policy, "demo", 1, &targeted).await.expect("a set using targeted zones");
     }
 
     #[tokio::test]

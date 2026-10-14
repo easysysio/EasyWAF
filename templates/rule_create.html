@@ -24,16 +24,7 @@
 
                     <div class="row">
                         <div class="col-sm-4">
-                            <div class="form-group">
-                                <label>Zone <small class="text-muted">(where to inspect)</small></label>
-                                <select class="form-control" name="zone">
-                                    <option value="ANY">ANY — all zones</option>
-                                    <option value="URL">URL — path + query string</option>
-                                    <option value="ARGS">ARGS — query string only</option>
-                                    <option value="BODY">BODY — request body</option>
-                                    <option value="HEADERS">HEADERS — all header values</option>
-                                </select>
-                            </div>
+                            {% include "_zone_field.html" %}
                         </div>
                         <div class="col-sm-4">
                             <div class="form-group">

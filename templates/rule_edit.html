@@ -89,16 +89,8 @@
 
                     <div class="row">
                         <div class="col-sm-4">
-                            <div class="form-group">
-                                <label>Zone</label>
-                                <select class="form-control" name="zone" {% if imported %}disabled{% endif %}>
-                                    <option value="ANY"     {% if rule.zone == "ANY" %}selected{% endif %}>ANY</option>
-                                    <option value="URL"     {% if rule.zone == "URL" %}selected{% endif %}>URL</option>
-                                    <option value="ARGS"    {% if rule.zone == "ARGS" %}selected{% endif %}>ARGS</option>
-                                    <option value="BODY"    {% if rule.zone == "BODY" %}selected{% endif %}>BODY</option>
-                                    <option value="HEADERS" {% if rule.zone == "HEADERS" %}selected{% endif %}>HEADERS</option>
-                                </select>
-                            </div>
+                            {% set zone_value = rule.zone %}{% set zone_readonly = imported %}
+                            {% include "_zone_field.html" %}
                         </div>
                         <div class="col-sm-4">
                             <div class="form-group">

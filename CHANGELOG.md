@@ -12,9 +12,12 @@ Version bumps and tags are created only after explicit approval.
 - **A rule can read one part of a request, one value at a time.** New zones: `PATH` (the path without its query), `ARG` and `ARG:name` (argument values), `ARG_NAME`, `HEADER` and `HEADER:Name` (header values), `HEADER_NAME`, `COOKIE`, `COOKIE:name`, `COOKIE_NAME` and `METHOD`. Each value is matched on its own, so `^` and `$` mean the start and end of the value, as rules written for ModSecurity assume. The five zones a rule has always named read what they read before.
 - Arguments come from a body sent as a form or as JSON as well as from the query string. A JSON leaf is named by its own key, so `ARG:password` means the same in both.
 - A rule can name several zones joined by `|`, such as `ARG|COOKIE`, and matches once.
+- The custom-rule and rule-edit pages take any zone, with the zones suggested as you type, and refuse one that is not a zone with the list of those that are.
+- A rule set's entry in the channel can say which EasyWAF it needs (`requires`). One written for a newer EasyWAF is shown as *needs EasyWAF …* on a policy's rule sets, with no button to apply it.
 
 ### Changed
 - A rule naming a zone this version does not read is not run, and the journal says so. It was read as `ANY`, inspecting everything.
+- Installing or updating a rule set that uses a zone this version does not read is refused, with the set, the rule and the zone named, before any rule is written. An import refuses such a rule the same way.
 
 ### Fixed
 - The ModSecurity converter (`scripts/modsec2easywaf.py`) refused rules for a possessive quantifier they did not have: `\?+` and `\*+` are one or more literal `?` and `*`. And it converted, as exact, rules anchored to one argument or header value, which EasyWAF's zones — the whole query string, every header joined — would have missed. Those are refused now.

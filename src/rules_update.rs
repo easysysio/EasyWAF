@@ -46,6 +46,20 @@ pub struct OfferedSet {
     /// Empty when the channel does not carry one. Older channels do not, and a
     /// missing description is a set that reads plainly, not one that fails.
     pub description: String,
+    /// The oldest EasyWAF this version of the set is written for, or empty.
+    pub requires:    String,
+}
+
+/// Whether a set's `requires` is newer than this EasyWAF. One that cannot be
+/// read counts as newer: a set is not applied on a guess that it fits.
+pub fn needs_newer(requires: &str) -> bool {
+    if requires.is_empty() {
+        return false;
+    }
+    match (crate::backup::version(requires), crate::backup::version(env!("CARGO_PKG_VERSION"))) {
+        (Some(theirs), Some(ours)) => theirs > ours,
+        _ => true,
+    }
 }
 
 /// Parse the manifest. Hand-rolled rather than via a TOML struct because the
@@ -75,6 +89,7 @@ pub fn parse_manifest(text: &str) -> Vec<OfferedSet> {
             name:        value("name").unwrap_or_else(|| id.clone()),
             tier:        value("tier").unwrap_or_else(|| "basic".into()),
             description: value("description").unwrap_or_default(),
+            requires:    value("requires").unwrap_or_default(),
             id,
             version,
         });
@@ -95,7 +110,10 @@ pub struct CatalogSet {
     pub offered:     Option<i64>,
     /// What this policy holds, if anything.
     pub held:        Option<i64>,
-    /// `new`, `current`, `update`, or `withdrawn`. Decided here so the template
+    /// The oldest EasyWAF the version offered is written for, or empty.
+    pub requires:    String,
+    /// `new`, `current`, `update`, `withdrawn`, or `upgrade` — offered, and
+    /// written for a newer EasyWAF than this. Decided here so the template
     /// does not have to compare two optional numbers, which is where a display
     /// that quietly says the wrong thing comes from.
     pub status:      String,
@@ -141,10 +159,16 @@ pub async fn catalog(db: &SqlitePool, policy_id: i64) -> Result<Vec<CatalogSet>>
         .iter()
         .map(|o| {
             let have = held.iter().find(|h| h.set_id == o.id).map(|h| h.version);
-            let status = match have {
-                None                        => "new",
-                Some(v) if o.version > v    => "update",
-                Some(_)                     => "current",
+            // A version written for a newer EasyWAF is not one to apply here,
+            // whether it would be new to this policy or an update to it.
+            let status = if needs_newer(&o.requires) && have.is_none_or(|v| o.version > v) {
+                "upgrade"
+            } else {
+                match have {
+                    None                     => "new",
+                    Some(v) if o.version > v => "update",
+                    Some(_)                  => "current",
+                }
             };
             CatalogSet {
                 id:          o.id.clone(),
@@ -153,6 +177,7 @@ pub async fn catalog(db: &SqlitePool, policy_id: i64) -> Result<Vec<CatalogSet>>
                 tier:        o.tier.clone(),
                 offered:     Some(o.version),
                 held:        have,
+                requires:    o.requires.clone(),
                 status:      status.to_string(),
                 rules:       count_of(&o.id),
             }
@@ -169,6 +194,7 @@ pub async fn catalog(db: &SqlitePool, policy_id: i64) -> Result<Vec<CatalogSet>>
                 tier:        String::new(),
                 offered:     None,
                 held:        Some(h.version),
+                requires:    String::new(),
                 status:      "withdrawn".to_string(),
                 rules:       count_of(&h.set_id),
             });
@@ -429,6 +455,7 @@ pub async fn apply(db: &SqlitePool, policy_id: i64, set_id: &str) -> std::result
     // checked, so the file name and hash are as trustworthy as the versions.
     let entry = manifest_entry(&manifest, set_id)
         .ok_or_else(|| format!("the channel does not offer a set called '{set_id}'"))?;
+    fits_here(set_id, &entry)?;
 
     let body = fetch(format!("{base}/{}", entry.file)).await?;
     let digest = crate::channel::sha256_hex(&body);
@@ -451,9 +478,21 @@ pub async fn apply(db: &SqlitePool, policy_id: i64, set_id: &str) -> std::result
 
 /// One set's entry in the manifest, including what the versions alone omit.
 struct ManifestEntry {
-    file:    String,
-    sha256:  String,
-    version: i64,
+    file:     String,
+    sha256:   String,
+    version:  i64,
+    requires: String,
+}
+
+/// Refuse a version of a set written for a newer EasyWAF, with what to do.
+fn fits_here(set_id: &str, entry: &ManifestEntry) -> std::result::Result<(), String> {
+    if needs_newer(&entry.requires) {
+        return Err(format!(
+            "{set_id} v{} is written for EasyWAF {} or later, and this is {}. Upgrade, then apply it",
+            entry.version, entry.requires, env!("CARGO_PKG_VERSION")
+        ));
+    }
+    Ok(())
 }
 
 fn manifest_entry(manifest: &str, set_id: &str) -> Option<ManifestEntry> {
@@ -470,9 +509,10 @@ fn manifest_entry(manifest: &str, set_id: &str) -> Option<ManifestEntry> {
             continue;
         }
         return Some(ManifestEntry {
-            file:    value("file")?,
-            sha256:  value("sha256")?,
-            version: value("version")?.parse().ok()?,
+            file:     value("file")?,
+            sha256:   value("sha256")?,
+            version:  value("version")?.parse().ok()?,
+            requires: value("requires").unwrap_or_default(),
         });
     }
     None
@@ -500,6 +540,9 @@ async fn apply_from_cache(
     };
     let manifest = String::from_utf8(manifest).ok()?;
     let entry = manifest_entry(&manifest, set_id)?;
+    if let Err(e) = fits_here(set_id, &entry) {
+        return Some(Err(e));
+    }
 
     let name = std::path::Path::new(&entry.file).file_name()?;
     let body = std::fs::read(dir.join("sets").join(name)).ok()?;
@@ -840,6 +883,23 @@ async fn cached_manifest(db: &SqlitePool) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_set_written_for_a_newer_easywaf_is_not_offered_as_an_update() {
+        let here = env!("CARGO_PKG_VERSION");
+        assert!(!needs_newer(""), "no requires is any version");
+        assert!(!needs_newer(here) && !needs_newer("0.1.0"));
+        assert!(needs_newer("99.0.0"));
+        assert!(needs_newer("soon"), "a requires that cannot be read is not guessed to fit");
+
+        let text = "[[sets]]\nid = \"a\"\nversion = 2\nrequires = \"99.0.0\"\n\n[[sets]]\nid = \"b\"\nversion = 1\n";
+        let sets = parse_manifest(text);
+        assert_eq!((sets[0].requires.as_str(), sets[1].requires.as_str()), ("99.0.0", ""));
+
+        let entry = ManifestEntry { file: "f".into(), sha256: "s".into(), version: 2, requires: "99.0.0".into() };
+        let e = fits_here("a", &entry).expect_err("applied");
+        assert!(e.contains("99.0.0") && e.contains(here), "{e}");
+    }
 
     const MANIFEST: &str = r#"
 generated = "2026-09-06T00:00:00Z"

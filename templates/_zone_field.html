@@ -1,0 +1,34 @@
+{# The zone a rule reads. Set zone_value, and zone_readonly for a rule that
+   cannot be edited, before including this. #}
+<div class="form-group">
+    <label for="zone">Zone <small class="text-muted">(where to inspect)</small></label>
+    <input type="text" class="form-control" id="zone" name="zone" list="zones"
+           value="{{ zone_value | default(value='ANY') }}" required maxlength="400"
+           autocomplete="off" autocapitalize="characters" spellcheck="false"
+           {% if zone_readonly | default(value=false) %}readonly{% endif %}>
+    <datalist id="zones">
+        <option value="ANY">all of the request, as whole text</option>
+        <option value="URL">path and query, as one text</option>
+        <option value="ARGS">the query string, as one text</option>
+        <option value="BODY">the body, as one text</option>
+        <option value="HEADERS">every header value, as one text</option>
+        <option value="PATH">the path, without the query</option>
+        <option value="ARG">each argument's value — query, form or JSON body</option>
+        <option value="ARG:">the value of one argument — add its name</option>
+        <option value="ARG_NAME">each argument's name</option>
+        <option value="HEADER">each header's value</option>
+        <option value="HEADER:User-Agent">one header's value</option>
+        <option value="HEADER_NAME">each header's name</option>
+        <option value="COOKIE">each cookie's value</option>
+        <option value="COOKIE:">one cookie's value — add its name</option>
+        <option value="COOKIE_NAME">each cookie's name</option>
+        <option value="METHOD">the request method</option>
+    </datalist>
+    {% if not zone_readonly | default(value=false) %}
+    <p class="help-block" style="margin-bottom:0">
+        The capitalised plural zones read one block of text. The singular ones read
+        <strong>one value at a time</strong>, so <code>^</code> and <code>$</code> mean the start
+        and end of that value. Join several with <code>|</code>: <code>ARG|COOKIE</code>.
+    </p>
+    {% endif %}
+</div>

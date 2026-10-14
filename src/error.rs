@@ -28,12 +28,18 @@ pub enum AppError {
 
     #[error("Not found: {0}")]
     NotFound(String),
+
+    /// Something asked of this installation that it will not do, with the
+    /// reason as the whole message.
+    #[error("{0}")]
+    Refused(String),
 }
 
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let (status, msg) = match &self {
             AppError::NotFound(_) => (StatusCode::NOT_FOUND, self.to_string()),
+            AppError::Refused(_)  => (StatusCode::BAD_REQUEST, self.to_string()),
             _ => {
                 tracing::error!("Internal error: {}", self);
                 (StatusCode::INTERNAL_SERVER_ERROR, self.to_string())

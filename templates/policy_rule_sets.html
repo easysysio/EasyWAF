@@ -103,12 +103,21 @@
                                     <span class="text-muted">v{{ s.offered }} available</span>
                                 {% elif s.status == "withdrawn" %}
                                     v{{ s.held }}
+                                {% elif s.status == "upgrade" %}
+                                    {% if s.held %}v{{ s.held }} <i class="fa fa-long-arrow-right text-muted"></i>{% endif %}
+                                    <span class="text-muted">v{{ s.offered }}</span>
                                 {% else %}
                                     v{{ s.held }}
                                 {% endif %}
                             </td>
                             <td class="text-right" style="white-space:nowrap">
-                                {% if s.status == "new" %}
+                                {% if s.status == "upgrade" %}
+                                <span class="label label-default"
+                                      title="v{{ s.offered }} of this set is written for a newer EasyWAF than this one. Upgrade EasyWAF to apply it.">
+                                    <i class="fa fa-level-up"></i> needs EasyWAF {{ s.requires }}
+                                </span>
+
+                                {% elif s.status == "new" %}
                                 <form class="admin-only" method="post"
                                       action="/policy/{{ policy_name }}/rules/update/{{ s.id }}"
                                       onsubmit="return confirm('Install {{ s.id }} v{{ s.offered }} into policy {{ policy_name }}?\n\nIts rules start enabled and will be enforced by every site using this policy.');"

@@ -43,7 +43,6 @@ use serde::Serialize;
 use sqlx::{Row, SqlitePool};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
-const ZONES: &[&str] = &["ANY", "ARGS", "BODY", "HEADERS", "URL"];
 const ACTIONS: &[&str] = &["score", "block"];
 const MODES: &[&str] = &["On", "DetectionOnly", "Off"];
 const COUNTRY_MODES: &[&str] = &["off", "block", "allow"];
@@ -276,9 +275,9 @@ async fn check(db: &SqlitePool, doc: &Document, gui_ports: &[u16], p: &mut Plan)
         }
         for r in &pol.rules {
             let rw = format!("{who}, rule {:?}", r.name);
-            if !ZONES.contains(&r.zone.as_str()) {
-                b.push(format!("{rw}: zone {:?} is not ANY, ARGS, BODY, HEADERS or URL — the engine \
-                                would read it as ANY and inspect more than was meant", r.zone));
+            if crate::modules::targets::parse_zone(&r.zone).is_none() {
+                b.push(format!("{rw}: zone {:?} is not one this EasyWAF reads, so the rule would never \
+                                run — a misspelling, or a file from a newer EasyWAF", r.zone));
             }
             if !ACTIONS.contains(&r.action.as_str()) {
                 b.push(format!("{rw}: action {:?} is not score or block", r.action));
@@ -1195,7 +1194,7 @@ enabled = false
         for (needle, why) in [
             ("cookie_secret",        "a credential in the file was not refused"),
             ("does not compile",     "a pattern the engine would skip was accepted"),
-            ("\"URI\"",              "a zone the engine would widen to ANY was accepted"),
+            ("\"URI\"",              "a zone the engine does not read was accepted"),
             ("not-in-the-file",      "a site using a policy the import would not create was accepted"),
             ("nobody-has-it",        "a site with a certificate nobody has was accepted"),
             ("management interface", "a site on the management port was accepted"),
