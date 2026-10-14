@@ -81,6 +81,14 @@ ZONE_OF = {
     "REQUEST_PROTOCOL": "HEADERS", "USER_AGENT": "HEADERS",
 }
 
+# Variables EasyWAF matches as the whole of what ModSecurity means by them, so
+# that `^` and `$` in a pattern mean the same place in both. Every other one is
+# one value among several in ModSecurity — an argument, a header, a cookie —
+# where EasyWAF's zone is all of them run together: the query string, every
+# header value joined. An anchor there sits at the start or end of the zone
+# instead of the value, and the rule quietly misses.
+ANCHORS_HOLD = {"REQUEST_URI", "REQUEST_URI_RAW", "REQUEST_BODY"}
+
 # Transformations EasyWAF's own matching already covers, or that map onto a
 # regex flag. Anything outside this set changes what the pattern is matched
 # against, and is a refusal rather than a warning.
@@ -106,7 +114,6 @@ UNSUPPORTED_RE = [
     (re.compile(r"\(\?<?[=!]"),        "lookaround"),
     (re.compile(r"\(\?<[A-Za-z_]"),    "named group in PCRE syntax"),
     (re.compile(r"\(\?>"),             "atomic group"),
-    (re.compile(r"[*+?}][+]"),         "possessive quantifier"),
     (re.compile(r"\\[1-9]"),           "backreference"),
     (re.compile(r"\(\?R\)|\(\?[0-9]\)"), "recursion"),
     (re.compile(r"\\K"),               "\\K"),
@@ -325,11 +332,86 @@ def matches_ordinary_traffic(pattern):
     return all(rx.search(b) for b in BENIGN)
 
 
+COUNTED = re.compile(r"\{\d+(?:,\d*)?\}")
+
+
+def tokens(pattern):
+    """The pattern's tokens outside escapes and classes, with their positions.
+
+    An escape or a character class is skipped whole: a character that means
+    something bare is literal behind a backslash or inside brackets.
+    """
+    i, n = 0, len(pattern)
+    while i < n:
+        ch = pattern[i]
+        if ch == "\\":
+            # \x{..}, \p{..} and \u{..} run to the brace.
+            if i + 2 < n and pattern[i + 1] in "xpPu" and pattern[i + 2] == "{":
+                close = pattern.find("}", i + 3)
+                i = n if close < 0 else close + 1
+            else:
+                i += 2
+            yield i, None
+            continue
+        if ch == "[":
+            # A ']' first in a class, or after '^', is literal.
+            j = i + 1
+            if j < n and pattern[j] == "^":
+                j += 1
+            if j < n and pattern[j] == "]":
+                j += 1
+            while j < n and pattern[j] != "]":
+                j += 2 if pattern[j] == "\\" else 1
+            i = j + 1
+            yield i, None
+            continue
+        yield i, ch
+        i += 1
+
+
+def is_anchored(pattern):
+    """True when the pattern uses `^` or `$` as an anchor."""
+    return any(ch is not None and ch in "^$" for _, ch in tokens(pattern))
+
+
+def has_possessive(pattern):
+    """True when a quantifier is made possessive by a `+` after it: `a++`,
+    `a*+`, `a?+`, `a{2}+`.
+
+    Read a token at a time, because a character that quantifies when bare is
+    literal when escaped or inside a class. `\\?+` is one or more question
+    marks and `[*+]` is a star or a plus; a scan for the two characters side by
+    side refused both, and with them rules that use neither.
+    """
+    after_quantifier = False
+    previous = None
+    for i, ch in tokens(pattern):
+        if ch is None:
+            after_quantifier = False
+        elif ch == "+" and after_quantifier:
+            return True
+        elif ch in "*+?":
+            # `?` opening a group's flags is not a quantifier; after a
+            # quantifier it makes it lazy, which Rust supports, and a `+`
+            # after that is not possessive.
+            after_quantifier = not ((ch == "?" and after_quantifier) or (ch == "?" and previous == "("))
+        elif ch == "{" and COUNTED.match(pattern, i):
+            after_quantifier = None   # until the closing brace
+        elif ch == "}" and after_quantifier is None:
+            after_quantifier = True
+        elif after_quantifier is not None:
+            after_quantifier = False
+        previous = ch
+    return False
+
+
 def portable(pattern):
     """Reject a PCRE the Rust regex crate cannot compile."""
     for rx, why in UNSUPPORTED_RE:
         if rx.search(pattern):
             return why
+    if has_possessive(pattern):
+        return "possessive quantifier"
     return None
 
 
@@ -463,6 +545,14 @@ def convert(paths, id_base, include_widened, set_id, set_name, max_paranoia=1):
                 stats["variables"] += 1
                 skipped.append((label, reason))
                 continue
+            loose = sorted({v.strip().lstrip("!").split(":", 1)[0].upper() for v in variables.split("|")
+                            if v.strip() and not v.strip().startswith("!")} - ANCHORS_HOLD)
+            if loose and is_anchored(pattern):
+                stats["anchored"] += 1
+                skipped.append((label, f"anchored with ^ or $ to one value of {loose[0]}, where EasyWAF "
+                                       "matches all of them as one text — the anchor would fall at its "
+                                       "start or end instead, and the rule would miss"))
+                continue
             if widened and not include_widened:
                 stats["would widen"] += 1
                 skipped.append((label, "would have to inspect more than the original "
@@ -593,6 +683,11 @@ SecRule REQUEST_HEADERS "@pm nikto nmap" \
 SecRule ARGS_NAMES "@rx ." \
     "id:100011,phase:2,pass,nolog,setvar:'tx.paramcounter_%{MATCHED_VAR_NAME}=+1'"
 
+# Refused: anchored to one argument's value, where EasyWAF's ARGS is the
+# whole query string. CRS 931120's shape.
+SecRule ARGS "@rx ^(?i:https?).*?\?+$" \
+    "id:100013,phase:2,block,t:none,msg:'Anchored',severity:'CRITICAL'"
+
 # Refused by the backstop even though it declares itself a detection.
 SecRule ARGS "@rx .*" \
     "id:100012,phase:2,block,t:none,msg:'Far too broad',severity:'CRITICAL'"
@@ -620,7 +715,8 @@ def self_test():
                          ("100004", "lookahead"), ("100005", "response phase"),
                          ("100006", "@detectSQLi"), ("100008", "widening"),
                          ("100011", "pass/setvar bookkeeping"),
-                         ("100012", "matches ordinary traffic")]:
+                         ("100012", "matches ordinary traffic"),
+                         ("100013", "anchored to one value")]:
             check(rid in refused, f"{rid} ({why}) should have been refused")
 
         check("'(?i)/etc/passwd'" in toml, "exact pattern not carried through verbatim")
@@ -644,6 +740,19 @@ def self_test():
         check('zone        = "ANY"' in wide, "two zones should widen to ANY")
         # t:lowercase becomes a regex flag rather than a lost transformation.
         check("'(?i)sqlmap'" in wide, "t:lowercase should fold into (?i)")
+
+        # Possessive quantifiers are refused, and quantified literals are not:
+        # CRS writes `\?+` for one or more question marks.
+        for p in ["a++", "a*+", "(?:ab)?+", "x{2,3}+", "[a-z]++"]:
+            check(has_possessive(p), f"{p!r} is possessive")
+        for p in [r"\?+$", r"\*+", r"\$+", "[*+]", "[?+]+", "a+?", "a*?b+", r"\x{ff}+",
+                  "(?i)a+", "a{2}", "a{,b}+"]:
+            check(not has_possessive(p), f"{p!r} is not possessive")
+
+        for p in ["^/admin", "x$", "(?:^|&)a=", "a|b$"]:
+            check(is_anchored(p), f"{p!r} is anchored")
+        for p in [r"\$+", "[^a-z]+", r"\^", "[$]", "a{2}"]:
+            check(not is_anchored(p), f"{p!r} is not anchored")
     finally:
         os.unlink(path)
 

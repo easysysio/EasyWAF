@@ -8,6 +8,9 @@ Version bumps and tags are created only after explicit approval.
 
 ## [1.1.3] — unreleased
 
+### Fixed
+- The ModSecurity converter (`scripts/modsec2easywaf.py`) refused rules for a possessive quantifier they did not have: `\?+` and `\*+` are one or more literal `?` and `*`. And it converted, as exact, rules anchored to one argument or header value, which EasyWAF's zones — the whole query string, every header joined — would have missed. Those are refused now.
+
 ### Changed
 - The documentation site counts visits with Google Analytics, for a visitor who accepts: it asks first, and loads nothing from Google until then. EasyWAF itself is unchanged and sends nothing anywhere.
 
