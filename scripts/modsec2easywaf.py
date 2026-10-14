@@ -295,7 +295,7 @@ VALID_QUANTIFIER = re.compile(r"\{\d+(?:,\d*)?\}")
 
 
 def escape_literal_braces(pattern):
-    """Escape braces that PCRE reads as literal and Rust's regex rejects.
+    r"""Escape braces that PCRE reads as literal and Rust's regex rejects.
 
     PCRE treats `{` as an ordinary character when what follows is not a valid
     repetition count — `{{.*?}}` and `\(\s*\)\s+{` both rely on that. Rust's

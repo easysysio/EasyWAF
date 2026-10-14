@@ -142,7 +142,7 @@ class Refuse(Exception):
 
 
 def split_options(body):
-    """`a:b; c; d:"x;y";` into (key, value) pairs, respecting quotes and `\;`."""
+    r"""`a:b; c; d:"x;y";` into (key, value) pairs, respecting quotes and `\;`."""
     out, cur, quoted, i = [], [], False, 0
     while i < len(body):
         ch = body[i]
@@ -209,7 +209,7 @@ def pcre_parts(value):
     value = value.lstrip("!").strip()
     if not (value.startswith('"') and value.endswith('"')):
         raise Refuse("a pcre that is not quoted")
-    s = value[1:-1].replace('\\"', '"').replace("\;", ";")
+    s = value[1:-1].replace('\\"', '"').replace("\\;", ";")
     if not s.startswith("/") or s.rfind("/") == 0:
         raise Refuse("a pcre without delimiters")
     end = s.rfind("/")
@@ -430,7 +430,9 @@ def convert_rule(line):
                 raise Refuse("a relative match with nothing before it in its buffer")
             conds[-1][1] += p.regex
             conds[-1][3] = conds[-1][3] or p.fast
-        else:
+        elif [zone, p.regex, p.negated] not in [c[:3] for c in conds]:
+            # Written once: several negated contents on one header each say
+            # that header must be there.
             conds.append([zone, p.regex, p.negated, p.fast])
     for zone, regex, negated, _ in conds:
         why = portable(regex)
@@ -555,6 +557,11 @@ def self_test():
         co = by.get(2059000)
         check(co and ["HEADER:Referer", "^", False] in [c[:3] for c in co["conds"]],
               "a negated content on a named header should require the header")
+        many = convert_rule('alert http any any -> $HOME_NET any (msg:"x"; flow:to_server; http.uri; '
+                            'content:"/a"; http.user_agent; content:!"b"; content:!"c"; '
+                            'metadata:created_at 2020_01_01, signature_severity Major; sid:2059001; rev:1;)')[1]
+        check(sum(c[:3] == ["HEADER:User-Agent", "^", False] for c in many["conds"]) == 1,
+              "the header's presence should be one condition, however many negated contents need it")
 
         ln = by.get(2060001)
         check(ln and any(c[1] == "^(?s:.{12})$" for c in ln["conds"]), "bsize should be a length condition")

@@ -6,6 +6,13 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
+## [1.3.1] — unreleased
+
+### Fixed
+- The CRS and ET converters installed with EasyWAF raised `SyntaxWarning: invalid escape sequence` under Python 3.12, which a later Python makes an error. And the ET converter wrote one condition several times where several negated contents on a header each required the header.
+
+---
+
 ## [1.3.0] — 2026-10-14
 
 ### Added
