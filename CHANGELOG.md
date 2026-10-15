@@ -6,7 +6,7 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
-## [1.3.3] — unreleased
+## [1.3.3] — 2026-10-15
 
 ### Security
 - **rustls updated to 0.23.46**, for RUSTSEC-2026-0346 to 0349: TLS secrets in client session `Debug` output, data sent to the outer server after an ECH rejection, a 1 GiB allocation from Brotli-compressed certificates before authentication, and an unauthenticated ServerHello downgrading later connections to classical key exchange. rustls is what EasyWAF serves and makes every TLS connection with.
