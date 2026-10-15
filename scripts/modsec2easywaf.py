@@ -463,6 +463,107 @@ def toml_string(value):
     return '"' + escaped + '"'
 
 
+def _refused(v, o, a, base_dir):
+    try:
+        link_condition(v, o, a, base_dir)
+        return False
+    except Refuse:
+        return True
+
+
+class Refuse(Exception):
+    """A rule, or one link of a chain, that cannot be converted faithfully."""
+    def __init__(self, key, why):
+        super().__init__(why)
+        self.key, self.why = key, why
+
+
+# Zones that hold one value, where ModSecurity's negated operator — true for a
+# variable whose value does not match — means what a negated condition does:
+# no value matches. On a collection the two differ, and are refused.
+SINGLE_VALUE = re.compile(r"^(?:METHOD|PATH|URL|ARGS|BODY|XML|(?:HEADER|ARG|COOKIE):.+)$")
+
+
+def operator_pattern(op, base_dir):
+    """An operator — @rx, @pm, and those that are a pattern in other words —
+    as a regex. Refused for one that is not."""
+    name, _, arg = op.partition(" ")
+    arg = arg.strip()
+    if "%{" in arg:
+        raise Refuse("a macro", f"{name} compares with a configured value (%{{...}}), which a "
+                                "pattern cannot read")
+    if name == "@rx":
+        return arg
+    if name in ("@pm", "@pmFromFile", "@pmf"):
+        pattern, why = pm_to_regex(op, base_dir)
+        if pattern is None:
+            raise Refuse("phrase list", why)
+        return pattern
+    if name == "@streq":
+        return f"^{re.escape(arg)}$"
+    if name == "@beginsWith":
+        return f"^{re.escape(arg)}"
+    if name == "@endsWith":
+        return f"{re.escape(arg)}$"
+    if name == "@contains":
+        return re.escape(arg)
+    if name == "@containsWord":
+        return rf"\b{re.escape(arg)}\b"
+    if name == "@within":
+        # True when the value is found in the list. Read as one of its words —
+        # what lists of methods, versions and types hold — which is stricter
+        # than ModSecurity only for a value that is part of a word.
+        words = [w for w in re.split(r"[\s|]+", arg) if w]
+        if not words:
+            raise Refuse("operator @within", "@within an empty list")
+        return "^(?:" + "|".join(re.escape(w) for w in words) + ")$"
+    raise Refuse(f"operator {name or '(none)'}", f"operator {name or '(none)'} has no EasyWAF equivalent")
+
+
+def link_condition(variables, operator, actions, base_dir):
+    """One SecRule — a rule, or one link of a chain — as the condition it is:
+    {zone, pattern, negate, widened, transforms}. Raises Refuse."""
+    op = operator.strip()
+    negate = op.startswith("!")
+    if negate:
+        op = op[1:].strip()
+    pattern = operator_pattern(op, base_dir)
+    if not pattern:
+        raise Refuse("empty pattern", "an empty pattern")
+
+    transforms = [t.strip().lower() for t in actions.get("t", [])]
+    unsafe = [t for t in transforms if t and t not in SAFE_TRANSFORMS and t not in CASE_TRANSFORMS]
+    if unsafe:
+        raise Refuse("transformation",
+                     f"needs t:{','.join(sorted(set(unsafe)))}, which EasyWAF does not "
+                     f"apply — the rule would be evadable by that encoding")
+
+    why = portable(pattern)
+    if why:
+        raise Refuse(f"regex: {why}", f"regex uses {why}, unsupported by Rust's regex")
+
+    zone, widened, reason = classify_vars(variables)
+    if zone is None:
+        raise Refuse("variables", reason)
+    # A zone that holds more than the variable holds more than one value of
+    # it, so an anchor falls somewhere else in it.
+    loose = sorted({v.strip().split(":", 1)[0].upper() for v in variables.split("|")
+                    if v.strip() and not v.strip().startswith("!") and not exact_var(v)})
+    if loose and is_anchored(pattern):
+        raise Refuse("anchored", f"anchored with ^ or $ to one value of {loose[0]}, which EasyWAF "
+                                 "reads as part of a larger text — the anchor would fall elsewhere "
+                                 "in it, and the rule would miss")
+    if negate and not SINGLE_VALUE.match(zone):
+        raise Refuse("negated on many values",
+                     f"negated on {zone}, which holds many values: ModSecurity fires when any one "
+                     f"of them fails to match, a negated condition when none matches")
+
+    if any(t in CASE_TRANSFORMS for t in transforms) and not pattern.startswith("(?i)"):
+        pattern = "(?i)" + pattern
+    return {"zone": zone, "pattern": escape_literal_braces(pattern), "negate": negate,
+            "widened": widened, "transforms": [t for t in transforms if t and t != "none"]}
+
+
 def convert(paths, id_base, include_widened, set_id, set_name, max_paranoia=1, score_scale=1):
     rules, skipped, stats = [], [], Counter()
     seen_ids = set()
@@ -472,22 +573,22 @@ def convert(paths, id_base, include_widened, set_id, set_name, max_paranoia=1, s
         with open(path, encoding="utf-8", errors="replace") as fh:
             text = fh.read()
 
-        chain_depth = 0
-        for variables, operator, actions in parse_rules(text):
+        pending = list(parse_rules(text))
+        at = 0
+        while at < len(pending):
+            variables, operator, actions = pending[at]
+            at += 1
+            # A chain's continuations are the SecRules after it, each with no
+            # id of their own, for as long as one says `chain` again.
+            links = [(variables, operator, actions)]
+            while "chain" in links[-1][2] and at < len(pending):
+                links.append(pending[at])
+                at += 1
             rid = (actions.get("id") or [None])[0]
             msg = (actions.get("msg") or [""])[0]
             label = f"{rid or '?'} {msg}".strip()
-
-            # A chained rule's continuations are separate SecRule lines with no
-            # id of their own. Swallow them with the rule that started the chain.
-            if chain_depth > 0:
-                chain_depth -= 1
-                continue
-            if "chain" in actions:
-                chain_depth = 1
-                stats["chain"] += 1
-                skipped.append((label, "chained: several conditions must all hold"))
-                continue
+            if len(links) > 1:
+                stats["chained"] += 1
 
             if not rid:
                 stats["no id"] += 1
@@ -537,82 +638,54 @@ def convert(paths, id_base, include_widened, set_id, set_name, max_paranoia=1, s
                                        "operator could review it by"))
                 continue
 
-            op = operator.strip()
-            if op.startswith("!"):
-                stats["negated operator"] += 1
-                skipped.append((label, "negated operator: fires when it does NOT match"))
+            # Each link a condition, all of which must hold — what a chain
+            # means.
+            try:
+                conds = [link_condition(v, o, a, base_dir) for v, o, a in links]
+            except Refuse as e:
+                stats[e.key] += 1
+                where = f" (in link {next(n for n, (v, o, a) in enumerate(links, 1) if _refused(v, o, a, base_dir))} of a chain of {len(links)})" if len(links) > 1 else ""
+                skipped.append((label, e.why + where))
                 continue
-
-            if op.startswith("@rx"):
-                pattern = op[3:].strip()
-            elif op.startswith("@pm"):
-                pattern, why = pm_to_regex(op, base_dir)
-                if pattern is None:
-                    stats["phrase list"] += 1
-                    skipped.append((label, why))
-                    continue
-            else:
-                name = op.split(None, 1)[0] if op else "(none)"
-                stats[f"operator {name}"] += 1
-                skipped.append((label, f"operator {name} has no EasyWAF equivalent"))
-                continue
-
-            if not pattern:
-                stats["empty pattern"] += 1
-                continue
-
-            transforms = [t.strip().lower() for t in actions.get("t", [])]
-            unsafe = [t for t in transforms
-                      if t and t not in SAFE_TRANSFORMS and t not in CASE_TRANSFORMS]
-            if unsafe:
-                stats["transformation"] += 1
-                skipped.append((
-                    label,
-                    f"needs t:{','.join(sorted(set(unsafe)))}, which EasyWAF does not "
-                    f"apply — the rule would be evadable by that encoding"))
-                continue
-
-            why = portable(pattern)
-            if why:
-                stats[f"regex: {why}"] += 1
-                skipped.append((label, f"regex uses {why}, unsupported by Rust's regex"))
-                continue
-
-            zone, widened, reason = classify_vars(variables)
-            if zone is None:
-                stats["variables"] += 1
-                skipped.append((label, reason))
-                continue
-            # A zone that holds more than the variable holds more than one
-            # value of it, so an anchor falls somewhere else in it.
-            loose = sorted({v.strip().split(":", 1)[0].upper() for v in variables.split("|")
-                            if v.strip() and not v.strip().startswith("!") and not exact_var(v)})
-            if loose and is_anchored(pattern):
-                stats["anchored"] += 1
-                skipped.append((label, f"anchored with ^ or $ to one value of {loose[0]}, which EasyWAF "
-                                       "reads as part of a larger text — the anchor would fall elsewhere "
-                                       "in it, and the rule would miss"))
-                continue
+            widened = any(c["widened"] for c in conds)
             if widened and not include_widened:
                 stats["would widen"] += 1
                 skipped.append((label, "would have to inspect more than the original "
                                        "(pass --include-widened to accept that)"))
                 continue
-
-            if any(t in CASE_TRANSFORMS for t in transforms) \
-               and not pattern.startswith("(?i)"):
-                pattern = "(?i)" + pattern
-
-            if matches_ordinary_traffic(pattern):
+            # ModSecurity does not evaluate a variable the request does not
+            # have; a negated condition on a named header that is absent holds.
+            # So such a link also requires its header to be there.
+            for c in list(conds):
+                if c["negate"] and re.match(r"^(?:HEADER|ARG|COOKIE):", c["zone"]):
+                    conds.append({"zone": c["zone"], "pattern": "^", "negate": False,
+                                  "widened": False, "transforms": [], "present": True})
+            # A negated condition holds wherever its zone has nothing, so on
+            # its own it must read something every request has — the method,
+            # the path — or be paired with its header being present. A rule of
+            # negations on a body would fire on every request without one.
+            present = {c["zone"] for c in conds if c.get("present")}
+            for c in conds:
+                if c["negate"] and c["zone"] not in ("METHOD", "PATH", "URL") and c["zone"] not in present \
+                        and not any(not d["negate"] for d in conds):
+                    break
+            else:
+                c = None
+            if c is not None:
+                stats["only negated"] += 1
+                skipped.append((label, f"only negated conditions, on {c['zone']}, which a request may "
+                                       "not have: it would fire on every one that lacks it"))
+                continue
+            # A rule that fires on ordinary requests is not a detection. Judged
+            # on the rule's own patterns as a whole: one link alone — a method —
+            # matches ordinary traffic by design, and a negated one cannot be
+            # judged on the strings below at all.
+            judged = [c for c in conds if not c["negate"] and not c.get("present")]
+            if judged and all(matches_ordinary_traffic(c["pattern"]) for c in judged):
                 stats["matches ordinary traffic"] += 1
                 skipped.append((label, "pattern matches ordinary traffic — it would "
                                        "score every request"))
                 continue
-
-            fixed = escape_literal_braces(pattern)
-            if fixed != pattern:
-                stats["brace escaped"] += 1
-                pattern = fixed
 
             severity = (actions.get("severity") or ["WARNING"])[0].upper()
             score = SEVERITY_SCORE.get(severity, 3) * score_scale
@@ -626,9 +699,9 @@ def convert(paths, id_base, include_widened, set_id, set_name, max_paranoia=1, s
             rules.append({
                 "paranoia": level,
                 "id": new_id, "orig": rid, "name": msg or f"ModSecurity {rid}",
-                "zone": zone, "pattern": pattern, "score": score,
+                "conds": conds, "score": score,
                 "severity": severity, "widened": widened,
-                "transforms": [t for t in transforms if t and t != "none"],
+                "transforms": sorted({t for c in conds for t in c["transforms"]}),
             })
             stats["converted"] += 1
 
@@ -664,17 +737,23 @@ def convert(paths, id_base, include_widened, set_id, set_name, max_paranoia=1, s
             note += f"; original transforms t:{','.join(r['transforms'])}"
         if r["widened"]:
             note += "; WIDENED — inspects more than the original did"
+        first, *more = r["conds"]
         out += [
             "[[rules]]",
             f"id          = {r['id']}",
             f"name        = {toml_string(r['name'][:120])}",
             f"description = {toml_string(note)}",
-            f'zone        = "{r["zone"]}"',
-            f"pattern     = {toml_string(r['pattern'])}",
-            f"score       = {r['score']}",
-            'action      = "score"',
-            "",
+            f'zone        = "{first["zone"]}"',
+            f"pattern     = {toml_string(first['pattern'])}",
         ]
+        if first["negate"]:
+            out.append("negate      = true")
+        out += [f"score       = {r['score']}", 'action      = "score"', ""]
+        for c in more:
+            out += ["[[rules.and]]", f'zone    = "{c["zone"]}"', f"pattern = {toml_string(c['pattern'])}"]
+            if c["negate"]:
+                out.append("negate  = true")
+            out.append("")
     return "\n".join(out), skipped, stats
 
 
@@ -683,10 +762,24 @@ SELF_TEST_CONF = r"""
 SecRule REQUEST_URI "@rx (?i)/etc/passwd" \
     "id:100001,phase:2,block,t:none,msg:'LFI',severity:'CRITICAL'"
 
-# Refused: chained. The continuation below must be swallowed with it.
+# Exact: chained — two conditions, both of which must hold.
 SecRule ARGS "@rx foo" \
-    "id:100002,phase:2,chain,msg:'Chained',severity:'ERROR'"
+    "id:100002,phase:2,block,chain,msg:'Chained',severity:'ERROR'"
     SecRule REQUEST_HEADERS:User-Agent "@rx bar"
+
+# Refused: a link re-testing the value the first matched.
+SecRule ARGS "@rx foo" \
+    "id:100016,phase:2,block,chain,msg:'Same value',severity:'ERROR'"
+    SecRule MATCHED_VARS "@rx bar"
+
+# Exact: a method not in a list, and a header that must be there and not say x.
+SecRule REQUEST_METHOD "!@within GET HEAD POST" \
+    "id:100017,phase:1,block,chain,msg:'Method',severity:'CRITICAL'"
+    SecRule REQUEST_HEADERS:X-Mode "!@streq safe"
+
+# Refused: negated on many values.
+SecRule ARGS "!@rx ^[a-z]+$" \
+    "id:100018,phase:2,block,msg:'Negated collection',severity:'ERROR'"
 
 # Refused: a transformation EasyWAF does not apply, which is what this case is
 # here to check.
@@ -762,8 +855,12 @@ def self_test():
         toml, skipped, stats = convert([path], 2000000, False, "t", "t")
         refused = {lbl.split()[0] for lbl, _ in skipped}
 
-        check(stats["converted"] == 6, f"expected 6 exact conversions, got {stats['converted']}")
-        for rid, why in [("100002", "chain"), ("100003", "transformation"),
+        check(stats["converted"] == 8, f"expected 8 exact conversions, got {stats['converted']}")
+        check('[[rules.and]]\nzone    = "HEADER:User-Agent"' in toml, "a chain's second link should be a condition")
+        check('negate      = true' in toml and 'pattern = \'^\'' in toml,
+              "a negated named header should need the header present")
+        check("^(?:GET|HEAD|POST)$" in toml, "@within should be a list of words")
+        for rid, why in [("100016", "same value"), ("100018", "negated collection"), ("100003", "transformation"),
                          ("100004", "lookahead"), ("100005", "response phase"),
                          ("100006", "@detectSQLi"), ("100014", "widening"),
                          ("100011", "pass/setvar bookkeeping"),
@@ -791,7 +888,7 @@ def self_test():
 
         # With widening allowed, the pattern selector converts too, and says so.
         wide, _, wstats = convert([path], 2000000, True, "t", "t")
-        check(wstats["converted"] == 7, f"expected 7 with widening, got {wstats['converted']}")
+        check(wstats["converted"] == 9, f"expected 9 with widening, got {wstats['converted']}")
         check("WIDENED" in wide, "a widened rule must say so in its description")
         check('zone        = "HEADER"' in wide, "headers chosen by a pattern should widen to every header")
         # Scaled scores, for a policy at EasyWAF's threshold of 10.
