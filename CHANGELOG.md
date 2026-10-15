@@ -6,7 +6,7 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
-## [1.4.0] — unreleased
+## [1.4.0] — 2026-10-15
 
 ### Added
 - **Three zones: `HEADER_BLOCK`, `REQUEST_LINE` and `PROTOCOL`.** `HEADER_BLOCK` is the headers as lines, `Name: value` and a line break each, for a rule about how headers sit together; `REQUEST_LINE` is `GET /path?query HTTP/1.1` with the path as it arrived; `PROTOCOL` is `HTTP/1.1`, `HTTP/2.0` or `HTTP/3.0`. A rule set using them requires EasyWAF 1.4.0.

@@ -39,7 +39,7 @@ next minor, so a release's notes stay about its feature.
 | 1.3.2 | XML and multipart bodies read for rules — `XML`, `XML_ATTR`, `FILE_NAME`, upload fields as arguments — and a body that does not parse read whole; CRS's rules that also read XML convert exactly, 83 at paranoia level 1 where 16 did — **released 2026-10-14** |
 | 1.3.3 | rustls updated to 0.23.46 for four advisories, quinn-proto updated, and CRS's tests read with a maintained YAML parser — **released 2026-10-15** |
 | 1.3.4 | CRS's chained rules converted as rules with several conditions, and its negated operators where the variable holds one value; four more protocol-enforcement rules reach the sets — **released 2026-10-15** |
-| 1.4.0 | The header block, the request line and the protocol as zones, and the ET Open and CRS rules that read them |
+| 1.4.0 | The header block, the request line and the protocol as zones, and the ET Open and CRS rules that read them — **released 2026-10-15** |
 | 1.5.0 | Configuration sync between nodes — HA (see [ha-config-sync.md](ha-config-sync.md)) |
 | 1.6.0 | Per-site rate limiting (see [rate-limiting.md](rate-limiting.md)) |
 | 1.7.0 | Learning and hardening modes — URL allowlisting (see [url-learning.md](url-learning.md)) |
