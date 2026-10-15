@@ -1,6 +1,6 @@
 # Design note — per-site rate limiting
 
-Status: planned for **1.5.0** — see [roadmap.md](roadmap.md), after IP
+Status: planned for **1.6.0** — see [roadmap.md](roadmap.md), after IP
 allow/block lists (0.10.0).
 
 The two were originally scheduled adjacent, being both identity/volume signals

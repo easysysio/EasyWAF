@@ -276,6 +276,9 @@ where on `ARGS` it would only be a query string that does.
 | `XML` | an XML body's text, as XPath's `/*` reads it |
 | `XML_ATTR` | each attribute's value in an XML body |
 | `FILE_NAME` | each uploaded file's name in a `multipart/form-data` body |
+| `HEADER_BLOCK` | the headers as one block of lines, `Name: value` and a line break (`\r\n`) each |
+| `REQUEST_LINE` | the request line, `GET /path?query HTTP/1.1`, with the path and query as they arrived |
+| `PROTOCOL` | the protocol: `HTTP/1.0`, `HTTP/1.1`, `HTTP/2.0` or `HTTP/3.0` |
 
 Names are compared without regard to case. In a JSON body every leaf is an
 argument named by its own key, so `ARG:password` finds
@@ -283,6 +286,13 @@ argument named by its own key, so `ARG:password` finds
 `multipart/form-data` upload's fields are arguments too. An XML body is read by
 `XML` and `XML_ATTR`: a DTD is read, no external entity is fetched, and entity
 expansion large enough to be a billion-laughs attack is refused.
+
+`HEADER_BLOCK` is for a rule about how headers sit together — their order, one
+following another, a value running onto the next line. Its headers are in the
+order their names first arrived, a repeated header's values together after its
+first, and each name is written as HTTP/1.1 clients write it, `User-Agent`, whatever
+case it came in. HTTP/2 and HTTP/3 have no request line on the wire; theirs is
+written as HTTP/1.1 would have sent it, ending `HTTP/2.0` or `HTTP/3.0`.
 
 **A body that says how it is written and cannot be read that way is read
 whole.** JSON or XML cut off at the inspection limit or malformed, and a

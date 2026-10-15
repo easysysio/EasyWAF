@@ -24,7 +24,7 @@ use axum::http::StatusCode;
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
 use bytes::Bytes;
-use axum::http::HeaderMap;
+use axum::http::{HeaderMap, Version};
 
 // ─── RequestContext ───────────────────────────────────────
 
@@ -36,6 +36,8 @@ pub struct RequestContext {
     pub method:     String,
     pub path:       String,
     pub query:      Option<String>,
+    /// The HTTP version the request came over.
+    pub version:    Version,
     pub headers:    HeaderMap,
     /// As much of the body as the rules inspect — see `proxy::inspection_limit`.
     pub body:       Bytes,

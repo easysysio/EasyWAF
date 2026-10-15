@@ -32,11 +32,10 @@ What is refused, and why
     dsize, isdataat, urilen, bsize, stream_size
                       lengths and positions; a condition is a pattern
     strip_whitespace and other transforms EasyWAF does not apply
-    http.request_line, http.start, http.protocol, http.stat_code and the
-    response buffers
+    http.start, http.stat_code and the response buffers
                       no zone holds them
-    a pcre on the raw header block, or a header content spanning lines
-                      no zone holds header lines with their names
+    a pcre on one header line (http.request_header)
+                      HEADER_BLOCK holds every line; no zone holds one
     bytes outside ASCII in a content
                       the engine reads text; such bytes are not there to match
     a pcre Rust's regex cannot compile, or one matching ordinary requests
@@ -63,6 +62,7 @@ BUFFERS = {
     "http.accept": "HEADER:Accept", "http.accept_enc": "HEADER:Accept-Encoding",
     "http.accept_lang": "HEADER:Accept-Language", "http.connection": "HEADER:Connection",
     "http.content_len": "HEADER:Content-Length",
+    "http.request_line": "REQUEST_LINE", "http.protocol": "PROTOCOL",
     # Read content by content, below: "Name: value" names its header.
     "http.header": "HEADER-BLOCK", "http.header.raw": "HEADER-BLOCK",
     "http.request_header": "HEADER-LINE", "http.header_names": "HEADER-NAMES",
@@ -74,7 +74,7 @@ LEGACY = {
     "http_raw_header": "http.header.raw", "http_cookie": "http.cookie",
     "http_user_agent": "http.user_agent", "http_host": "http.host", "http_raw_host": "http.host.raw",
 }
-NO_ZONE = {"http.request_line", "http.start", "http.protocol", "http.stat_code", "http.stat_msg",
+NO_ZONE = {"http.start", "http.stat_code", "http.stat_msg",
            "http.response_line", "http.response_body", "http.server", "http.location",
            "http.response_header"}
 REFUSED = {
@@ -91,6 +91,7 @@ REFUSED = {
 # Transforms the engine's forms already cover: every value is matched
 # percent-decoded, and a lowercased buffer is a case-insensitive match.
 COVERED_TRANSFORMS = {"url_decode", "to_lowercase", "header_lowercase", "strip_pseudo_headers"}
+LOWERCASING = {"to_lowercase", "header_lowercase"}
 IGNORED = {"msg", "flow", "reference", "classtype", "sid", "rev", "metadata", "target", "priority",
            "threshold", "gid", "fast_pattern", "nocase", "depth", "offset", "distance", "within",
            "startswith", "endswith", "rawbytes", "bsize", "urilen"}
@@ -230,15 +231,39 @@ def gap(distance, within, length):
 
 
 class Piece:
-    def __init__(self, regex, relative, negated, fast=False, length=1):
+    def __init__(self, regex, relative, negated, fast=False, length=1, named=None):
         self.regex, self.relative, self.negated, self.fast, self.length = regex, relative, negated, fast, length
+        # A content on the header block that is one header's value from its
+        # start, as (zone, regex) on that header: used unless a relative
+        # content follows it, which needs the block.
+        self.named = named
+
+
+HEADER_NAME_AT_LINE = re.compile(rb"^([A-Za-z0-9!#$%&'*+.^_`|~-]+):")
+
+
+def block_literal(data):
+    """A content on the header block as a regex, with each header name it
+    starts a line with matched whatever its case: EasyWAF writes names as
+    `User-Agent`, and a client may send `TE` or `SOAPAction`."""
+    out = []
+    for i, line in enumerate(data.split(b"\r\n")):
+        if i:
+            out.append(literal(b"\r\n"))
+        m = HEADER_NAME_AT_LINE.match(line)
+        if m:
+            out.append(f"(?i:{literal(m.group(1))})")
+            line = line[m.end(1):]
+        out.append(literal(line))
+    return "".join(out)
 
 
 def header_block(data, nocase):
-    """A content on the raw header block — `User-Agent: x` — as (zone, regex).
-    The block's lines are "Name: value\\r\\n"; a content naming one header
-    reads that header's value from its start, and one inside a line reads
-    every header's name and value."""
+    """A content on the raw header block — `User-Agent: x` — as (zone, regex)
+    outside the block. The block's lines are "Name: value\\r\\n"; a content
+    naming one header reads that header's value from its start, and one inside
+    a line reads every header's name and value. `None` for one spanning lines,
+    which only HEADER_BLOCK holds."""
     text = data.decode("ascii")
     m = re.match(r"^(?:\r\n)?([A-Za-z0-9!#$%&'*+.^_`|~-]+):[ \t]?(.*)$", text, re.S)
     if m and "\r\n" not in m.group(2).rstrip("\r\n"):
@@ -248,7 +273,7 @@ def header_block(data, nocase):
         regex = "^" + literal(value.encode()) + ("$" if anchored_end else "")
         return f"HEADER:{m.group(1)}", f"(?i:{regex})" if nocase else regex
     if "\r" in text or "\n" in text:
-        raise Refuse("a header content spanning lines")
+        return None
     regex = literal(data)
     return "HEADER|HEADER_NAME", f"(?i:{regex})" if nocase else regex
 
@@ -309,14 +334,18 @@ def convert_rule(line):
     buffer, pieces = None, []          # pieces: [(buffer, Piece)]
     last = None                        # the last content's piece, for its modifiers
     mods = {}
+    lowered = False                    # whether the buffer is lowercased first
     def finish():
         nonlocal last, mods
         if last is None:
             return
-        buf, data, negated, fast = last
+        buf, data, negated, fast, lower = last
         if buf is None:
             raise Refuse("a content outside an HTTP buffer")
-        nocase = "nocase" in mods
+        # A content matched against a lowercased buffer is matched without
+        # regard to case: written in lowercase, it finds `/ADMIN` as Suricata
+        # does.
+        nocase = "nocase" in mods or lower
         relative = "distance" in mods or "within" in mods
         if relative and negated:
             raise Refuse("a negated relative content")
@@ -326,13 +355,27 @@ def convert_rule(line):
             if not name or "\r" in name or "\n" in name:
                 raise Refuse("a header-names content that is not one name")
             pieces.append(("HEADER_NAME", Piece(f"(?i)^{literal(name.lower().encode())}$", False, negated, fast)))
-        elif zone in ("HEADER-BLOCK", "HEADER-LINE"):
+        elif zone == "HEADER-LINE":
             if relative:
-                raise Refuse("a relative content on the header block")
-            hz, regex = header_block(data if zone == "HEADER-BLOCK" else b"\r\n" + data, nocase)
-            pieces.append((hz, Piece(regex, False, negated, fast)))
+                raise Refuse("a relative content on one header line")
+            named = header_block(b"\r\n" + data, nocase)
+            if named is None:
+                raise Refuse("a content on one header line spanning lines")
+            pieces.append((named[0], Piece(named[1], False, negated, fast)))
         else:
-            regex = literal(data)
+            # The header block is HEADER_BLOCK, read as any buffer is. A content
+            # that is one header's value from its start reads that header
+            # instead, unless a relative content follows it; see `conds`. A
+            # negated one stays on the block, which every request has: "no
+            # header says this" holds where the header is absent, as it does
+            # in Suricata.
+            named = None
+            if zone == "HEADER-BLOCK":
+                zone = "HEADER_BLOCK"
+                positioned = any(k in mods for k in ("startswith", "endswith", "depth", "offset"))
+                if not relative and not positioned and not negated:
+                    named = header_block(data, nocase)
+            regex = block_literal(data) if zone == "HEADER_BLOCK" else literal(data)
             if nocase:
                 regex = f"(?i:{regex})"
             if relative:
@@ -351,7 +394,7 @@ def convert_rule(line):
                     regex = f"^(?s:.{{{lo},}})" + regex
             if "endswith" in mods:
                 regex += "$"
-            pieces.append((zone, Piece(regex, relative, negated, fast, len(data))))
+            pieces.append((zone, Piece(regex, relative, negated, fast, len(data), named)))
             # Suricata does not inspect a buffer the request does not have,
             # so a negated content on a named header holds only where the
             # header is there. In EasyWAF a negated condition on a header that
@@ -362,18 +405,20 @@ def convert_rule(line):
 
     for k, v in opts:
         if k in BUFFERS:
-            finish(); buffer = k
+            finish(); buffer = k; lowered = False
+        elif k in LOWERCASING:
+            finish(); lowered = True
         elif k in LEGACY:
             # The pre-sticky spelling modifies the content before it.
             if last is None:
                 raise Refuse("a buffer modifier with no content")
-            last = (LEGACY[k], last[1], last[2], last[3])
+            last = (LEGACY[k], last[1], last[2], last[3], False)
         elif k == "content":
             finish()
             data, negated = content_bytes(v)
-            last = (buffer, data, negated, False)
+            last = (buffer, data, negated, False, lowered)
         elif k == "fast_pattern" and last is not None:
-            last = (last[0], last[1], last[2], True)
+            last = (last[0], last[1], last[2], True, last[4])
         elif k == "bsize":
             # The length of the whole buffer: a condition of its own.
             finish()
@@ -396,9 +441,13 @@ def convert_rule(line):
                          ("W", "http.host")):
                 if f in flags:
                     buf = b
-            if "H" in flags or "D" in flags or (buf and BUFFERS.get(buf, "").startswith("HEADER-")):
-                raise Refuse("a pcre on the header block")
-            unknown = set(flags) - set("ismxUIPMCVWRBGO")
+            if "H" in flags or "D" in flags:
+                buf = "http.header"
+            if buf and BUFFERS.get(buf, "") in ("HEADER-LINE", "HEADER-NAMES"):
+                raise Refuse("a pcre on one header line, or on the header names")
+            if buf == buffer and lowered:
+                flags += "i"
+            unknown = set(flags) - set("ismxUIPMCVWHDRBGO")
             if unknown:
                 raise Refuse(f"pcre flags {''.join(sorted(unknown))}")
             if buf is None:
@@ -416,7 +465,8 @@ def convert_rule(line):
                 regex = (f"(?{inline}:{body})" if inline else body)
             else:
                 regex = f"(?{inline}:{pattern})" if inline else f"(?:{pattern})"
-            pieces.append((BUFFERS[buf], Piece(regex, relative, negated)))
+            zone = BUFFERS[buf]
+            pieces.append(("HEADER_BLOCK" if zone == "HEADER-BLOCK" else zone, Piece(regex, relative, negated)))
     finish()
 
     if not pieces:
@@ -424,7 +474,10 @@ def convert_rule(line):
     # Pieces into conditions: a relative piece joins the chain before it in
     # the same zone.
     conds = []      # [zone, regex, negated, fast]
-    for zone, p in pieces:
+    for i, (zone, p) in enumerate(pieces):
+        followed = i + 1 < len(pieces) and pieces[i + 1][1].relative and pieces[i + 1][0] == zone
+        if p.named and not followed:
+            zone, p = p.named[0], Piece(p.named[1], False, p.negated, p.fast)
         if p.relative:
             if not conds or conds[-1][0] != zone or conds[-1][2]:
                 raise Refuse("a relative match with nothing before it in its buffer")
@@ -538,6 +591,8 @@ alert http $EXTERNAL_NET any -> $HOME_NET any (msg:"GPL no date"; flow:to_server
 alert http $EXTERNAL_NET any -> $HOME_NET any (msg:"GPL low sid"; flow:to_server; http.uri; content:"/y"; sid:2001; rev:1;)
 alert http $HOME_NET any -> $EXTERNAL_NET any (msg:"ET outbound"; flow:to_server; http.uri; content:"/beacon"; sid:2040000; rev:1;)
 alert http any any -> [$HOME_NET,$HTTP_SERVERS] any (msg:"ET lengths"; flow:to_server; http.method; content:"GET"; http.uri; bsize:12; content:"/admin/x.cgi"; urilen:>8; metadata:created_at 2025_01_01, signature_severity Major; sid:2060001; rev:1;)
+alert http any any -> $HOME_NET any (msg:"ET header order"; flow:to_server; http.header; content:"TE|3a 20|deflate|0d 0a|Connection|3a 20|TE"; startswith; content:"User-Agent|3a 20|"; within:100; pcre:"/^[a-z]{3}\//R"; http.request_line; content:"GET //"; startswith; fast_pattern; http.protocol; content:"HTTP/1.0"; metadata:created_at 2022_01_01, signature_severity Major; sid:2060002; rev:1;)
+alert http any any -> $HOME_NET any (msg:"ET lowered"; flow:to_server; http.uri; to_lowercase; content:"/cgi-bin/admin"; pcre:"/\.cgi$/"; http.header; content:"X-Thing|3a 20|bad"; pcre:"/^Accept\x3a\x20[^\r\n]+evil/Hm"; metadata:created_at 2022_01_01, signature_severity Major; sid:2060003; rev:1;)
 '''
 
 
@@ -553,7 +608,22 @@ def self_test():
     try:
         rules, refused, stats = convert([path], 2015)
         by = {r["id"]: r for r in rules}
-        check(set(by) == {2018277, 2050001, 2034647, 2060001, 2059000}, f"converted {sorted(by)}")
+        check(set(by) == {2018277, 2050001, 2034647, 2060001, 2059000, 2060002, 2060003}, f"converted {sorted(by)}")
+        ho = {c[0]: c for c in by[2060002]["conds"]} if 2060002 in by else {}
+        check(ho.get("HEADER_BLOCK", [0, ""])[1].startswith("^(?i:TE): deflate\\x0d\\x0a(?i:Connection): TE(?s:.{0,"),
+              f"lines of the header block, names in any case, and the content within 100 after: {ho.get('HEADER_BLOCK')}")
+        check(ho.get("HEADER_BLOCK", [0, ""])[1].endswith("(?i:User\\-Agent): [a-z]{3}\\/"),
+              "a relative pcre continues the header block's pattern")
+        check(ho.get("REQUEST_LINE", [0, ""])[1] == "^GET //" and ho.get("PROTOCOL", [0, ""])[1] == "HTTP/1\\.0",
+              f"the request line and protocol are zones: {by.get(2060002)}")
+        lo = {c[0]: c[1] for c in by[2060003]["conds"]} if 2060003 in by else {}
+        check(any(c[0] == "URL" and c[1] == "(?i:/cgi\\-bin/admin)" for c in by.get(2060003, {"conds": []})["conds"]),
+              f"a lowercased buffer matches without case: {lo}")
+        check(any(c[0] == "URL" and c[1] == "(?i:\\.cgi$)" for c in by.get(2060003, {"conds": []})["conds"]),
+              "a pcre on a lowercased buffer matches without case")
+        check(lo.get("HEADER:X-Thing") == "^bad", "a content on the block that is one header's value reads that header")
+        check(any(c[0] == "HEADER_BLOCK" and c[1].startswith("(?m:^Accept") for c in by.get(2060003, {"conds": []})["conds"]),
+              "a pcre with H reads the header block")
         co = by.get(2059000)
         check(co and ["HEADER:Referer", "^", False] in [c[:3] for c in co["conds"]],
               "a negated content on a named header should require the header")

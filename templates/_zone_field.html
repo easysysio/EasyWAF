@@ -23,6 +23,9 @@
         <option value="COOKIE:">one cookie's value — add its name</option>
         <option value="COOKIE_NAME">each cookie's name</option>
         <option value="METHOD">the request method</option>
+        <option value="HEADER_BLOCK">the headers as lines, Name: value each</option>
+        <option value="REQUEST_LINE">GET /path?query HTTP/1.1</option>
+        <option value="PROTOCOL">HTTP/1.1, HTTP/2.0 …</option>
     </datalist>
     {% if not zone_readonly | default(value=false) %}
     <p class="help-block" style="margin-bottom:0">

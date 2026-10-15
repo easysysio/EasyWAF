@@ -6,6 +6,20 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
+## [1.4.0] — unreleased
+
+### Added
+- **Three zones: `HEADER_BLOCK`, `REQUEST_LINE` and `PROTOCOL`.** `HEADER_BLOCK` is the headers as lines, `Name: value` and a line break each, for a rule about how headers sit together; `REQUEST_LINE` is `GET /path?query HTTP/1.1` with the path as it arrived; `PROTOCOL` is `HTTP/1.1`, `HTTP/2.0` or `HTTP/3.0`. A rule set using them requires EasyWAF 1.4.0.
+- The ET Open converter reads Suricata's header block, request line and protocol buffers into these zones, and a pcre with the `H` or `D` flag; at the ET sets' scope this adds about 75 rules. The CRS converter reads `REQUEST_LINE` and `REQUEST_PROTOCOL`, adding CRS's invalid request line rule (920100) and its Shellshock rule on the request line (932170).
+
+### Fixed
+- **ET rules that lowercase a buffer before matching (`to_lowercase`, `header_lowercase`) were converted to match case-sensitively**, so `/ADMIN` passed a rule written for `/admin`. They now match without regard to case, as Suricata does.
+- The converters refuse a pattern using a named backreference (`(?P=name)`, `\k<name>`), which the engine cannot compile, rather than leaving it for the gate to find.
+- `easywaf check-set` sends a space in a `URL` case encoded, as a browser does; a raw one made a request no client sends, and CRS's request line rules fired on it.
+- The CRS converter's help no longer says chains are refused.
+
+---
+
 ## [1.3.4] — 2026-10-15
 
 ### Changed

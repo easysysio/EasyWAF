@@ -8,14 +8,17 @@ one is visible only to whoever finds the bypass. So a rule that cannot be
 represented faithfully is refused and listed, never approximated into silence.
 
 What converts
-    Single (unchained) @rx, @pm and @pmFromFile rules, in the request phases,
-    whose variables map onto an EasyWAF zone, whose transformations EasyWAF
-    already performs, and whose regex the Rust regex crate can compile.
+    @rx, @pm and @pmFromFile rules, and the operators that are a pattern in
+    other words (@streq, @beginsWith, @within…), in the request phases, whose
+    variables map onto an EasyWAF zone, whose transformations EasyWAF already
+    performs, and whose regex the Rust regex crate can compile. A chain is one
+    rule with a condition for each link. A negated operator converts where its
+    variable holds one value.
 
 What does not, and why
-    chain            EasyWAF has one pattern per rule. A chain is several
-                     conditions that must all hold; keeping only the first
-                     would fire on far more than the original.
+    a chain link on  A link re-testing what an earlier one matched, or
+    MATCHED_VARS     comparing with a configured value (%{tx...}), has no
+    or %{tx...}      condition to be.
     @detectSQLi      libinjection. A parser, not a pattern; nothing to port.
     @detectXSS
     TX variables     ModSecurity's own scoring machinery. EasyWAF scores in
@@ -23,14 +26,13 @@ What does not, and why
     RESPONSE_*       EasyWAF inspects requests.
     phase 3/4/5
     t:base64Decode, t:escapeSeqDecode, t:sqlHexDecode, t:cmdLine,
-    t:replaceComments, t:removeComments, t:removeWhitespace,
-    t:normalizePath
+    t:replaceComments, t:removeComments, t:removeWhitespace
                      A rule written against a decoded form is evadable by
                      using the encoding it was supposed to decode, so it is
                      refused rather than shipped looking intact. EasyWAF
                      applies htmlEntityDecode, jsDecode, cssDecode,
-                     urlDecodeUni and removeNulls itself, so rules naming
-                     those convert.
+                     urlDecodeUni, normalizePath and removeNulls itself, so
+                     rules naming those convert.
     lookaround,      Rust's regex crate has no (?=) (?!) (?<=) (?<!),
     backreferences   no \\1, no (?>), no possessive quantifiers. There is no
                      rewrite that preserves meaning, so these are refused.
@@ -93,8 +95,8 @@ ZONE_OF = {
     "REQUEST_COOKIES": ("COOKIE", True), "REQUEST_COOKIES_NAMES": ("COOKIE_NAME", True),
     "REQUEST_METHOD": ("METHOD", True),
     "USER_AGENT": ("HEADER:User-Agent", True),
-    # "GET /x HTTP/1.1" is no zone; the URL holds its middle.
-    "REQUEST_LINE": ("URL", False),
+    # "GET /x HTTP/1.1", and its last word. Both need EasyWAF 1.4.0.
+    "REQUEST_LINE": ("REQUEST_LINE", True), "REQUEST_PROTOCOL": ("PROTOCOL", True),
 }
 
 def exact_var(var):
@@ -140,6 +142,7 @@ UNSUPPORTED_RE = [
     (re.compile(r"\(\?<[A-Za-z_]"),    "named group in PCRE syntax"),
     (re.compile(r"\(\?>"),             "atomic group"),
     (re.compile(r"\\[1-9]"),           "backreference"),
+    (re.compile(r"\(\?P=|\\k<"),       "backreference"),
     (re.compile(r"\(\?R\)|\(\?[0-9]\)"), "recursion"),
     (re.compile(r"\\K"),               "\\K"),
     (re.compile(r"\(\?\("),            "conditional"),
@@ -155,7 +158,6 @@ UNSUPPORTED_VARS = {
     "PERF_ALL", "HIGHEST_SEVERITY", "INBOUND_DATA_ERROR", "MULTIPART_STRICT_ERROR",
     "REQBODY_ERROR", "REQBODY_PROCESSOR", "WEBSERVER_ERROR_LOG", "ENV",
     "GLOBAL", "RESOURCE", "UNIQUE_ID", "MULTIPART_UNMATCHED_BOUNDARY",
-    "REQUEST_PROTOCOL",
     "OUTBOUND_DATA_ERROR", "FULL_REQUEST", "FULL_REQUEST_LENGTH",
     "MULTIPART_PART_HEADERS", "ARGS_COMBINED_SIZE", "FILES_COMBINED_SIZE",
 }
@@ -481,7 +483,7 @@ class Refuse(Exception):
 # Zones that hold one value, where ModSecurity's negated operator — true for a
 # variable whose value does not match — means what a negated condition does:
 # no value matches. On a collection the two differ, and are refused.
-SINGLE_VALUE = re.compile(r"^(?:METHOD|PATH|URL|ARGS|BODY|XML|(?:HEADER|ARG|COOKIE):.+)$")
+SINGLE_VALUE = re.compile(r"^(?:METHOD|PATH|URL|ARGS|BODY|XML|REQUEST_LINE|PROTOCOL|(?:HEADER|ARG|COOKIE):.+)$")
 
 
 def operator_pattern(op, base_dir):
@@ -662,11 +664,11 @@ def convert(paths, id_base, include_widened, set_id, set_name, max_paranoia=1, s
                                   "widened": False, "transforms": [], "present": True})
             # A negated condition holds wherever its zone has nothing, so on
             # its own it must read something every request has — the method,
-            # the path — or be paired with its header being present. A rule of
+            # the path, the request line — or be paired with its header being present. A rule of
             # negations on a body would fire on every request without one.
             present = {c["zone"] for c in conds if c.get("present")}
             for c in conds:
-                if c["negate"] and c["zone"] not in ("METHOD", "PATH", "URL") and c["zone"] not in present \
+                if c["negate"] and c["zone"] not in ("METHOD", "PATH", "URL", "REQUEST_LINE", "PROTOCOL") and c["zone"] not in present \
                         and not any(not d["negate"] for d in conds):
                     break
             else:

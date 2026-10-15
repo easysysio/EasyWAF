@@ -175,6 +175,16 @@ fn request(input: &Yaml) -> Option<RequestContext> {
         Some((p, q)) => (p.to_string(), Some(q.to_string())),
         None => (uri, None),
     };
+    // A version no HTTP stack would hand on — `HTTP/1.11`, `HTTP/x` — is
+    // one only a test sends raw.
+    let version = match text("version").as_deref() {
+        None | Some("HTTP/1.1") => axum::http::Version::HTTP_11,
+        Some("HTTP/1.0")        => axum::http::Version::HTTP_10,
+        Some("HTTP/0.9")        => axum::http::Version::HTTP_09,
+        Some("HTTP/2" | "HTTP/2.0") => axum::http::Version::HTTP_2,
+        Some("HTTP/3" | "HTTP/3.0") => axum::http::Version::HTTP_3,
+        Some(_) => return None,
+    };
     let mut headers = axum::http::HeaderMap::new();
     if let Some(map) = input["headers"].as_hash() {
         for (k, v) in map {
@@ -203,6 +213,7 @@ fn request(input: &Yaml) -> Option<RequestContext> {
         method: text("method").unwrap_or_else(|| "GET".into()),
         path,
         query,
+        version,
         headers,
         body: bytes::Bytes::from(body),
     })

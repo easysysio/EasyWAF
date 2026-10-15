@@ -97,7 +97,8 @@ pub fn run(args: &[String]) -> i32 {
     if broken > 0 || !fired.is_empty() { 1 } else { 0 }
 }
 
-/// The request a case describes. `URL` is a path and query; `BODY` a body,
+/// The request a case describes. `URL` is a path and query, a space in it
+/// encoded; `BODY` a body,
 /// sent as JSON when it starts like JSON and as a form otherwise; `HEADERS`
 /// a header value, under a name no rule reads; `HEADER:Name` that header;
 /// `COOKIE` a Cookie header; `METHOD` the method.
@@ -113,7 +114,9 @@ pub(crate) fn case_request(arrives: &str, text: &str) -> Result<RequestContext, 
     let (mut path, mut query, mut body, mut method) = ("/".to_string(), None, String::new(), "GET".to_string());
     match arrives {
         "URL" => {
-            let (p, q) = text.split_once('?').map_or((text, None), |(p, q)| (p, Some(q)));
+            // A space, as a browser sends it: a request line cannot carry one.
+            let text = &text.replace(' ', "%20");
+            let (p, q) = text.split_once('?').map_or((text.as_str(), None), |(p, q)| (p, Some(q)));
             path = p.to_string();
             query = q.map(str::to_string);
         }
@@ -141,6 +144,7 @@ pub(crate) fn case_request(arrives: &str, text: &str) -> Result<RequestContext, 
         method,
         path,
         query,
+        version: axum::http::Version::HTTP_11,
         headers,
         body: bytes::Bytes::from(body),
     })

@@ -1926,6 +1926,7 @@ mod bench {
             method:     "POST".into(),
             path:       "/api/search".into(),
             query:      Some("q=red%20running%20shoes&size=42&sort=price%20asc".into()),
+            version:    axum::http::Version::HTTP_11,
             headers,
             body:       bytes::Bytes::from_static(
                 br#"{"user":"alice","comment":"looking for something in blue","items":[1,2,3]}"#,

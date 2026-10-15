@@ -53,6 +53,10 @@ Current as of **1.3.4**.
   read from one request; any beyond that are seen only by the zones that read
   whole text. An uploaded file's content is not an argument; `BODY` reads it
   as it arrived, up to the inspection limit.
+- **`HEADER_BLOCK` is rebuilt, not the bytes that arrived.** Header names are
+  written as `User-Agent` whatever case they came in, and a repeated header's
+  lines sit together after its first, so a rule about the exact case or the
+  interleaving of headers sees them as most clients send them.
 - **A condition is a pattern, not a count.** A rule can require several
   conditions, or that one does not match, but not "more than 255 arguments" or
   "this header twice". CRS's rules that count are still refused by the
@@ -93,14 +97,14 @@ Current as of **1.3.4**.
   Validation always arrives on port 80, so the host must be reachable there from
   the internet.
 - **No high availability.** No configuration sync between nodes. Scheduled for
-  **1.4.0**.
+  **1.5.0**.
 - **No list of proxy, VPN or hosting addresses.** Every credible dataset is
   commercial, and the cloud providers' own address files may not be
   redistributed. The [published lists](ip-lists.md#published-lists) cover
   hijacked netblocks, compromised hosts and Tor exits only.
 - **No feed of your own.** A published list comes from the signed channel; there
   is no way yet to point EasyWAF at another list's URL.
-- **No rate limiting.** Scheduled for **1.5.0**. An address that attacks
+- **No rate limiting.** Scheduled for **1.6.0**. An address that attacks
   repeatedly is handled by [Smart Protect](smart-protect.md), which counts
   refusals, not requests.
 - **Smart Protect blocks are per node and do not survive a restart.** They are
@@ -116,7 +120,7 @@ Current as of **1.3.4**.
   Protect's blocks are.
 - **No allowlist of an application's own URLs.** Every rule describes what an
   attack looks like; nothing yet learns what the application legitimately
-  exposes and refuses the rest. Scheduled for **1.6.0**.
+  exposes and refuses the rest. Scheduled for **1.7.0**.
 
 ## Decided, not missing
 

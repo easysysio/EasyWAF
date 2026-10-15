@@ -97,6 +97,12 @@ pub enum Target {
     XmlAttr,
     /// Each file's name in a `multipart/form-data` upload.
     FileName,
+    /// The headers as one block of lines, `Name: value\r\n` each.
+    HeaderBlock,
+    /// `GET /path?query HTTP/1.1`, without its line break.
+    RequestLine,
+    /// `HTTP/1.1`.
+    Protocol,
 }
 
 /// A zone as a rule writes it — one zone, or several joined by `|` — as the
@@ -125,6 +131,9 @@ pub fn parse_zone(zone: &str) -> Option<Vec<Target>> {
             ("XML", None)         => Target::Xml,
             ("XML_ATTR", None)    => Target::XmlAttr,
             ("FILE_NAME", None)   => Target::FileName,
+            ("HEADER_BLOCK", None) => Target::HeaderBlock,
+            ("REQUEST_LINE", None) => Target::RequestLine,
+            ("PROTOCOL", None)    => Target::Protocol,
             ("ARG", name)         => Target::Arg(named(name, false)?),
             ("HEADER", name)      => Target::Header(named(name, true)?),
             ("COOKIE", name)      => Target::Cookie(named(name, false)?),
@@ -191,6 +200,8 @@ pub struct Parts<'a> {
     xml:     OnceCell<(Vec<String>, Vec<Value>)>,
     /// A multipart body's fields, and its files' names.
     parts:   OnceCell<(Vec<Value>, Vec<Value>)>,
+    block:   OnceCell<Vec<String>>,
+    line:    OnceCell<Vec<String>>,
 }
 
 impl<'a> Parts<'a> {
@@ -204,6 +215,8 @@ impl<'a> Parts<'a> {
             cookies: OnceCell::new(),
             xml: OnceCell::new(),
             parts: OnceCell::new(),
+            block: OnceCell::new(),
+            line: OnceCell::new(),
         }
     }
 
@@ -228,6 +241,9 @@ impl<'a> Parts<'a> {
             Target::Xml         => self.xml().0.iter().any(|f| is_match(f)),
             Target::XmlAttr     => values(&self.xml().1, &None),
             Target::FileName    => values(&self.multipart().1, &None),
+            Target::HeaderBlock => self.header_block().iter().any(|f| is_match(f)),
+            Target::RequestLine => self.request_line().iter().any(|f| is_match(f)),
+            Target::Protocol    => is_match(protocol(self.ctx.version)),
             Target::Url | Target::Args | Target::Body | Target::Headers | Target::Any => false,
         }
     }
@@ -342,6 +358,36 @@ impl<'a> Parts<'a> {
         })
     }
 
+    /// The headers as the lines of a request's header block, in the order
+    /// their names first arrived; a repeated header has a line for each value,
+    /// together after its first. The header map holds names
+    /// lowercased, as HTTP/2 sends them; they are written as HTTP/1.1 clients
+    /// do, `User-Agent`, which is how the rules written for header blocks
+    /// spell them. The block has no blank line at its end.
+    fn header_block(&self) -> &[String] {
+        self.block.get_or_init(|| {
+            let mut block = String::new();
+            for (name, value) in self.ctx.headers.iter() {
+                block.push_str(&header_case(name.as_str()));
+                block.push_str(": ");
+                block.push_str(&String::from_utf8_lossy(value.as_bytes()));
+                block.push_str("\r\n");
+            }
+            zone_text(&block, false)
+        })
+    }
+
+    /// The request line: the method, the path and query as they arrived, and
+    /// the protocol. A request over HTTP/2 or HTTP/3 has none on the wire; it
+    /// is written as HTTP/1.1 would have sent it.
+    fn request_line(&self) -> &[String] {
+        self.line.get_or_init(|| {
+            let ctx = self.ctx;
+            let query = ctx.query.as_deref().map(|q| format!("?{q}")).unwrap_or_default();
+            zone_text(&format!("{} {}{query} {}", ctx.method, ctx.path, protocol(ctx.version)), false)
+        })
+    }
+
     /// The cookies, from every `Cookie` header, split on `;` and then on the
     /// first `=`. A cookie's value is often percent-encoded, and is decoded
     /// as a value; `+` stays a `+`.
@@ -368,6 +414,29 @@ impl<'a> Parts<'a> {
             out
         })
     }
+}
+
+/// A protocol as a request line names it.
+fn protocol(version: axum::http::Version) -> &'static str {
+    use axum::http::Version;
+    match version {
+        Version::HTTP_09 => "HTTP/0.9",
+        Version::HTTP_10 => "HTTP/1.0",
+        Version::HTTP_2  => "HTTP/2.0",
+        Version::HTTP_3  => "HTTP/3.0",
+        _                => "HTTP/1.1",
+    }
+}
+
+/// A header's name with each word capitalised: `user-agent` as `User-Agent`.
+fn header_case(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    let mut start = true;
+    for c in name.chars() {
+        out.push(if start { c.to_ascii_uppercase() } else { c.to_ascii_lowercase() });
+        start = c == '-';
+    }
+    out
 }
 
 enum BodyKind {
@@ -546,6 +615,7 @@ mod tests {
             method: "POST".into(),
             path: path.into(),
             query: query.map(str::to_string),
+            version: axum::http::Version::HTTP_11,
             headers: map,
             body: bytes::Bytes::from(body.to_string()),
         }
@@ -565,6 +635,30 @@ mod tests {
                    Some(vec![Target::Arg(None), Target::ArgName, Target::Cookie(None)]));
         assert_eq!(parse_zone("ARG:id|ARG:ID"), Some(vec![Target::Arg(Some("id".into()))]));
         assert_eq!(canonical("arg:id | header:X-Token"), Some("ARG:id|HEADER:X-Token".into()));
+    }
+
+    #[test]
+    fn the_header_block_is_its_lines_with_names_as_clients_write_them() {
+        let c = ctx("/", None, &[("user-agent", "curl/8.5"), ("x-forwarded-for", "10.0.0.1"),
+                                 ("accept", "*/*"), ("x-forwarded-for", "10.0.0.2")], "");
+        let p = Parts::new(&c, b"");
+        assert!(hits(&p, "header_block", "^User-Agent: curl/8\\.5\r\nX-Forwarded-For: 10\\.0\\.0\\.1\r\nX-Forwarded-For: 10\\.0\\.0\\.2\r\nAccept: \\*/\\*\r\n$"));
+        assert!(hits(&p, "HEADER_BLOCK", "(?m)^Accept: "));
+        assert!(!hits(&p, "HEADER_BLOCK", "user-agent"));
+    }
+
+    #[test]
+    fn the_request_line_is_as_it_arrived_and_the_protocol_on_its_own() {
+        let mut c = ctx("/api/../keys", Some("x=%3b"), &[], "");
+        let p = Parts::new(&c, b"");
+        assert!(hits(&p, "REQUEST_LINE", "^POST /api/\\.\\./keys\\?x=%3b HTTP/1\\.1$"));
+        assert!(hits(&p, "REQUEST_LINE", "\\?x=; "));
+        assert!(hits(&p, "PROTOCOL", "^HTTP/1\\.1$"));
+        c.version = axum::http::Version::HTTP_2;
+        c.query = None;
+        let p = Parts::new(&c, b"");
+        assert!(hits(&p, "REQUEST_LINE", "^POST /api/\\.\\./keys HTTP/2\\.0$"));
+        assert!(hits(&p, "protocol", "^HTTP/2\\.0$"));
     }
 
     /// A zone this version does not read is refused, not read as ANY.

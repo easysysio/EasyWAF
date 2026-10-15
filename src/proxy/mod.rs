@@ -1197,6 +1197,7 @@ struct Incoming {
     method:    Method,
     path:      String,
     query:     Option<String>,
+    version:   axum::http::Version,
     headers:   HeaderMap,
     /// Whether the client used HTTPS, on this listener or at a trusted proxy
     /// in front of it. What the backend is told, and whether cookies set here
@@ -1225,6 +1226,7 @@ impl Incoming {
             method: parts.method,
             path: parts.uri.path().to_string(),
             query: parts.uri.query().map(str::to_string),
+            version: parts.version,
             headers: parts.headers,
             https,
         };
@@ -1466,6 +1468,7 @@ async fn judge(
             method:    incoming.method.to_string(),
             path:      incoming.path.clone(),
             query:     incoming.query.clone(),
+            version:   incoming.version,
             headers:   incoming.headers.clone(),
             body:      inspected,
         }).await

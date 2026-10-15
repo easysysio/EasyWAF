@@ -1,6 +1,6 @@
 # Design note — learning and hardening modes (URL allowlisting)
 
-Status: planned for **1.6.0** — see [roadmap.md](roadmap.md).
+Status: planned for **1.7.0** — see [roadmap.md](roadmap.md).
 
 A positive security model: instead of describing what an attack looks like, as
 every rule so far does, describe what the application legitimately exposes and
