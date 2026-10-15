@@ -6,7 +6,7 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
-## [1.3.4] — unreleased
+## [1.3.4] — 2026-10-15
 
 ### Changed
 - The CRS converter turns a chained rule into one rule with several conditions, all of which must hold, and converts a negated operator where the variable holds one value — the method, the path, a named header — and a named header it negates must be present, as ModSecurity does not evaluate one a request lacks. `@streq`, `@beginsWith`, `@endsWith`, `@contains`, `@containsWord` and `@within` are converted as the patterns they are. Of CRS 4.30.0's paranoia-1 request rules this adds seven to the protocol enforcement band, four of which pass CRS's own tests. A link that re-tests the value an earlier one matched, reads CRS's own variables or counts is still refused.
