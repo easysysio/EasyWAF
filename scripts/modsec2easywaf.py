@@ -25,14 +25,18 @@ What does not, and why
                      the engine, so these are not needed rather than missing.
     RESPONSE_*       EasyWAF inspects requests.
     phase 3/4/5
-    t:base64Decode, t:escapeSeqDecode, t:sqlHexDecode, t:cmdLine,
-    t:replaceComments, t:removeComments, t:removeWhitespace
+    t:sqlHexDecode, t:removeComments, t:hexDecode and the others
+    EasyWAF does not apply
                      A rule written against a decoded form is evadable by
                      using the encoding it was supposed to decode, so it is
-                     refused rather than shipped looking intact. EasyWAF
-                     applies htmlEntityDecode, jsDecode, cssDecode,
-                     urlDecodeUni, normalizePath and removeNulls itself, so
-                     rules naming those convert.
+                     refused rather than shipped looking intact. The forms
+                     every value is matched in cover urlDecodeUni,
+                     htmlEntityDecode, jsDecode, cssDecode, normalizePath and
+                     removeNulls; from the first transformation they do not
+                     cover, the rest are named in the rule's `transforms` —
+                     cmdLine, replaceComments, removeWhitespace,
+                     base64Decode, escapeSeqDecode and the others in
+                     EASYWAF_TRANSFORM — and multiMatch with them.
     lookaround,      Rust's regex crate has no (?=) (?!) (?<=) (?<!),
     backreferences   no \\1, no (?>), no possessive quantifiers. There is no
                      rewrite that preserves meaning, so these are refused.
@@ -113,20 +117,33 @@ def exact_var(var):
 # that names it the same way.
 NAMED = {"ARGS": "ARG", "REQUEST_HEADERS": "HEADER", "REQUEST_COOKIES": "COOKIE"}
 
-# Transformations EasyWAF's own matching already covers, or that map onto a
-# regex flag. Anything outside this set changes what the pattern is matched
-# against, and is a refusal rather than a warning.
+# Transformations the forms EasyWAF matches every value in already cover, so
+# a rule declaring only these, or these before any other, is matched against
+# the text it was written against without naming them.
 SAFE_TRANSFORMS = {
-    "none", "urldecode", "urldecodeuni", "utf8tounicode",
-    "removenulls", "compresswhitespace", "trim", "length_none",
-    # zone_text applies these in the chains CRS declares, so a rule naming
-    # them is matched against the text it was written against.
+    "urldecode", "urldecodeuni", "utf8tounicode", "removenulls", "length_none",
+    # zone_text applies these in the chains CRS declares.
     "htmlentitydecode", "jsdecode", "cssdecode",
     # Each decoded form with a path to normalise is also read with backslashes
     # made slashes, slashes merged and dot segments resolved.
     "normalizepath", "normalisepath", "normalizepathwin", "normalisepathwin",
 }
 CASE_TRANSFORMS = {"lowercase", "uppercase"}
+# The decodings a rule can name for EasyWAF to apply, by ModSecurity's name
+# lowercased: from the first one the forms do not cover, every transformation
+# a rule declares has to be one of these, in its order. They need EasyWAF
+# 1.5.0, and a set using them says so with `requires`.
+EASYWAF_TRANSFORM = {
+    "cmdline": "cmdLine", "removewhitespace": "removeWhitespace",
+    "compresswhitespace": "compressWhitespace", "replacecomments": "replaceComments",
+    "removecommentschar": "removeCommentsChar", "base64decode": "base64Decode",
+    "escapeseqdecode": "escapeSeqDecode", "trim": "trim",
+    "urldecode": "urlDecode", "urldecodeuni": "urlDecodeUni",
+    "htmlentitydecode": "htmlEntityDecode", "jsdecode": "jsDecode", "cssdecode": "cssDecode",
+    "removenulls": "removeNulls", "normalizepath": "normalizePath", "normalisepath": "normalizePath",
+    "normalizepathwin": "normalizePathWin", "normalisepathwin": "normalizePathWin",
+    "lowercase": "lowercase",
+}
 
 SEVERITY_SCORE = {
     "CRITICAL": 5, "ERROR": 4, "WARNING": 3, "NOTICE": 2,
@@ -522,6 +539,11 @@ def operator_pattern(op, base_dir):
     raise Refuse(f"operator {name or '(none)'}", f"operator {name or '(none)'} has no EasyWAF equivalent")
 
 
+def toml_names(names):
+    """A list of names as a TOML array."""
+    return "[" + ", ".join(toml_string(n) for n in names) + "]"
+
+
 def link_condition(variables, operator, actions, base_dir):
     """One SecRule — a rule, or one link of a chain — as the condition it is:
     {zone, pattern, negate, widened, transforms}. Raises Refuse."""
@@ -533,12 +555,25 @@ def link_condition(variables, operator, actions, base_dir):
     if not pattern:
         raise Refuse("empty pattern", "an empty pattern")
 
-    transforms = [t.strip().lower() for t in actions.get("t", [])]
-    unsafe = [t for t in transforms if t and t not in SAFE_TRANSFORMS and t not in CASE_TRANSFORMS]
-    if unsafe:
+    transforms = [t.strip().lower() for t in actions.get("t", []) if t.strip()]
+    # t:none clears what came before it.
+    if "none" in transforms:
+        transforms = transforms[len(transforms) - transforms[::-1].index("none"):]
+    covered = 0
+    while covered < len(transforms) and (transforms[covered] in SAFE_TRANSFORMS
+                                         or transforms[covered] in CASE_TRANSFORMS):
+        covered += 1
+    unknown = [t for t in transforms[covered:] if t not in EASYWAF_TRANSFORM]
+    if unknown:
         raise Refuse("transformation",
-                     f"needs t:{','.join(sorted(set(unsafe)))}, which EasyWAF does not "
+                     f"needs t:{','.join(sorted(set(unknown)))}, which EasyWAF does not "
                      f"apply — the rule would be evadable by that encoding")
+    chain = [EASYWAF_TRANSFORM[t] for t in transforms[covered:]]
+    # multiMatch matches the value before each transformation and after it.
+    # Before the first the forms cover already; after the rest, EasyWAF does
+    # it when told.
+    if chain and any(k.lower() == "multimatch" for k in actions):
+        chain = ["multiMatch"] + chain
 
     why = portable(pattern)
     if why:
@@ -563,7 +598,7 @@ def link_condition(variables, operator, actions, base_dir):
     if any(t in CASE_TRANSFORMS for t in transforms) and not pattern.startswith("(?i)"):
         pattern = "(?i)" + pattern
     return {"zone": zone, "pattern": escape_literal_braces(pattern), "negate": negate,
-            "widened": widened, "transforms": [t for t in transforms if t and t != "none"]}
+            "widened": widened, "transforms": transforms, "chain": chain}
 
 
 def convert(paths, id_base, include_widened, set_id, set_name, max_paranoia=1, score_scale=1):
@@ -661,7 +696,7 @@ def convert(paths, id_base, include_widened, set_id, set_name, max_paranoia=1, s
             for c in list(conds):
                 if c["negate"] and re.match(r"^(?:HEADER|ARG|COOKIE):", c["zone"]):
                     conds.append({"zone": c["zone"], "pattern": "^", "negate": False,
-                                  "widened": False, "transforms": [], "present": True})
+                                  "widened": False, "transforms": [], "chain": [], "present": True})
             # A negated condition holds wherever its zone has nothing, so on
             # its own it must read something every request has — the method,
             # the path, the request line — or be paired with its header being present. A rule of
@@ -750,11 +785,15 @@ def convert(paths, id_base, include_widened, set_id, set_name, max_paranoia=1, s
         ]
         if first["negate"]:
             out.append("negate      = true")
+        if first["chain"]:
+            out.append(f"transforms  = {toml_names(first['chain'])}")
         out += [f"score       = {r['score']}", 'action      = "score"', ""]
         for c in more:
             out += ["[[rules.and]]", f'zone    = "{c["zone"]}"', f"pattern = {toml_string(c['pattern'])}"]
             if c["negate"]:
                 out.append("negate  = true")
+            if c["chain"]:
+                out.append(f"transforms = {toml_names(c['chain'])}")
             out.append("")
     return "\n".join(out), skipped, stats
 
@@ -783,10 +822,21 @@ SecRule REQUEST_METHOD "!@within GET HEAD POST" \
 SecRule ARGS "!@rx ^[a-z]+$" \
     "id:100018,phase:2,block,msg:'Negated collection',severity:'ERROR'"
 
-# Refused: a transformation EasyWAF does not apply, which is what this case is
-# here to check.
+# A transformation EasyWAF applies on request: the rule names it.
 SecRule ARGS "@rx /bin/sh" \
     "id:100003,phase:2,t:cmdLine,msg:'RCE',severity:'CRITICAL'"
+
+# The decodings the forms cover, before one they do not, are left to the
+# forms; one after it is named too.
+SecRule ARGS "@rx union select" \
+    "id:100020,phase:2,t:none,t:urlDecodeUni,t:replaceComments,t:compressWhitespace,msg:'SQLi',severity:'CRITICAL'"
+SecRule REQUEST_COOKIES "@rx <script" \
+    "id:100021,phase:2,t:none,t:base64Decode,t:urlDecodeUni,msg:'XSS in base64',severity:'CRITICAL'"
+
+# Refused: a transformation EasyWAF does not apply, which is what this case is
+# here to check.
+SecRule ARGS "@rx 0x41" \
+    "id:100019,phase:2,t:none,t:sqlHexDecode,msg:'Hex',severity:'CRITICAL'"
 
 # Refused: lookahead.
 SecRule ARGS "@rx (?!safe)attack" \
@@ -857,12 +907,17 @@ def self_test():
         toml, skipped, stats = convert([path], 2000000, False, "t", "t")
         refused = {lbl.split()[0] for lbl, _ in skipped}
 
-        check(stats["converted"] == 8, f"expected 8 exact conversions, got {stats['converted']}")
+        check(stats["converted"] == 11, f"expected 11 exact conversions, got {stats['converted']}")
+        check('id          = 2100003' in toml and 'transforms  = [\'cmdLine\']' in toml, "t:cmdLine should be named")
+        check("transforms  = ['replaceComments', 'compressWhitespace']" in toml,
+              "a covered decoding before the first applied one should be left to the forms")
+        check("transforms  = ['base64Decode', 'urlDecodeUni']" in toml,
+              "a covered decoding after an applied one should be named")
         check('[[rules.and]]\nzone    = "HEADER:User-Agent"' in toml, "a chain's second link should be a condition")
         check('negate      = true' in toml and 'pattern = \'^\'' in toml,
               "a negated named header should need the header present")
         check("^(?:GET|HEAD|POST)$" in toml, "@within should be a list of words")
-        for rid, why in [("100016", "same value"), ("100018", "negated collection"), ("100003", "transformation"),
+        for rid, why in [("100016", "same value"), ("100018", "negated collection"), ("100019", "transformation"),
                          ("100004", "lookahead"), ("100005", "response phase"),
                          ("100006", "@detectSQLi"), ("100014", "widening"),
                          ("100011", "pass/setvar bookkeeping"),
@@ -890,7 +945,7 @@ def self_test():
 
         # With widening allowed, the pattern selector converts too, and says so.
         wide, _, wstats = convert([path], 2000000, True, "t", "t")
-        check(wstats["converted"] == 9, f"expected 9 with widening, got {wstats['converted']}")
+        check(wstats["converted"] == 12, f"expected 12 with widening, got {wstats['converted']}")
         check("WIDENED" in wide, "a widened rule must say so in its description")
         check('zone        = "HEADER"' in wide, "headers chosen by a pattern should widen to every header")
         # Scaled scores, for a policy at EasyWAF's threshold of 10.

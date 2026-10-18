@@ -24,7 +24,8 @@
 // =========================================================
 
 use crate::modules::{Detection, Findings, RuleHit, InspectionModule, ModuleDecision, RequestContext};
-use crate::modules::targets::{parse_zone, read_conditions, Parts, Target};
+use crate::modules::targets::{parse_zone, read_conditions, transforms_from_column, Parts, Target};
+use crate::modules::transforms::{parse_list, Transform};
 use async_trait::async_trait;
 use axum::http::StatusCode;
 use regex::Regex;
@@ -103,14 +104,14 @@ impl WafModule {
     /// A negated condition holds when its pattern matches nothing. A rule with
     /// a pattern that does not compile holds nowhere.
     fn holds(&self, rule: &RuleRow, whole: &Whole, parts: &Parts) -> bool {
-        let first = (&rule.targets, &rule.pattern, rule.negate);
+        let first = (&rule.targets, &rule.pattern, rule.negate, &rule.chain);
         std::iter::once(first)
-            .chain(rule.and.iter().map(|c| (&c.targets, &c.pattern, c.negate)))
-            .all(|(targets, pattern, negate)| {
+            .chain(rule.and.iter().map(|c| (&c.targets, &c.pattern, c.negate, &c.chain)))
+            .all(|(targets, pattern, negate, chain)| {
                 let (Some(targets), Some(re)) = (targets, self.compiled_pattern(rule.id, pattern)) else {
                     return false;
                 };
-                reads(targets, whole, parts, &re) != negate
+                reads(targets, whole, parts, &re, chain) != negate
             })
     }
 
@@ -166,11 +167,13 @@ struct RuleRow {
     name:    String,
     zone:    String,
     /// What the zone reads, parsed once when the policy is loaded. `None` for a
-    /// zone this version does not know, which is never run.
+    /// zone or a decoding this version does not know, which is never run.
     targets: Option<Vec<Target>>,
     pattern: String,
     /// Whether the first condition holds when the pattern matches nothing.
     negate:  bool,
+    /// The decodings the first condition's values are matched after.
+    chain:   Vec<Transform>,
     /// The conditions after the first, all of which must hold too.
     and:     Vec<RuleCondition>,
     score:   i64,
@@ -182,6 +185,7 @@ struct RuleCondition {
     targets: Option<Vec<Target>>,
     pattern: String,
     negate:  bool,
+    chain:   Vec<Transform>,
 }
 
 /// Everything inspection needs to know about one site, read together so the
@@ -425,10 +429,35 @@ impl Whole {
     }
 }
 
+/// Every form `target` is read in, for decoding further.
+fn forms_of(target: &Target, whole: &Whole, parts: &Parts) -> Vec<String> {
+    match target {
+        Target::Url     => whole.url.clone(),
+        Target::Args    => whole.args.clone(),
+        Target::Body    => whole.body.clone(),
+        Target::Headers => whole.headers.clone(),
+        Target::Any     => [&whole.url, &whole.args, &whole.body, &whole.headers].into_iter().flatten().cloned().collect(),
+        other => {
+            let out = std::cell::RefCell::new(Vec::new());
+            parts.any(other, &|f| {
+                out.borrow_mut().push(f.to_string());
+                false
+            });
+            out.into_inner()
+        }
+    }
+}
+
 /// Whether a rule reading `targets` matches this request: its pattern matches
 /// one form of one value of one part it reads — never a concatenation. `ANY`
-/// is every form of the four other whole-text zones.
-pub(crate) fn reads(targets: &[Target], whole: &Whole, parts: &Parts, re: &Regex) -> bool {
+/// is every form of the four other whole-text zones. With a `chain` of
+/// decodings, each form is matched with them applied, and not as it is.
+pub(crate) fn reads(targets: &[Target], whole: &Whole, parts: &Parts, re: &Regex, chain: &[Transform]) -> bool {
+    if !chain.is_empty() {
+        return targets.iter().any(|t| {
+            parts.decoded(t, chain, || forms_of(t, whole, parts)).iter().any(|f| re.is_match(f))
+        });
+    }
     let any_of = |forms: &[String]| forms.iter().any(|f| re.is_match(f));
     targets.iter().any(|t| match t {
         Target::Url     => any_of(&whole.url),
@@ -591,8 +620,13 @@ pub(crate) fn normalised_paths(path: &str) -> Vec<String> {
 /// slashes made one, `.` segments dropped and each `..` taking the segment
 /// before it with it. A `..` with nothing before it to take is kept, as it
 /// is there: `../../etc/passwd` stays what it is.
-fn normalize_path_win(text: &str) -> String {
-    let text = text.replace('\\', "/");
+pub(crate) fn normalize_path_win(text: &str) -> String {
+    normalize_path(&text.replace('\\', "/"))
+}
+
+/// libmodsecurity's normalizePath: normalizePathWin with backslashes left as
+/// they are.
+pub(crate) fn normalize_path(text: &str) -> String {
     let absolute = text.starts_with('/');
     let trailing = text.ends_with('/') || text.ends_with("/.") || text.ends_with("/..");
     let mut kept: Vec<&str> = Vec::new();
@@ -747,7 +781,7 @@ fn fold_wide(code: u32) -> u8 {
 ///
 /// That form is IIS's rather than the URL standard's, and CRS still decodes it
 /// because the servers behind a WAF still accept it.
-fn url_decode_uni(s: &str) -> String {
+pub(crate) fn url_decode_uni(s: &str) -> String {
     let b = s.as_bytes();
     let mut out = Vec::with_capacity(b.len());
     let mut i = 0;
@@ -778,7 +812,7 @@ fn url_decode_uni(s: &str) -> String {
 }
 
 /// `htmlEntityDecode`: `&lt;`, `&#60;`, `&#x3c;` — and nothing else.
-fn html_entity_decode(s: &str) -> String {
+pub(crate) fn html_entity_decode(s: &str) -> String {
     if !s.contains('&') {
         return s.to_string();
     }
@@ -855,7 +889,7 @@ fn entity_at(rest: &[u8]) -> Option<(u8, usize)> {
 }
 
 /// `jsDecode`: the escapes a JavaScript string literal may carry.
-fn js_decode(s: &str) -> String {
+pub(crate) fn js_decode(s: &str) -> String {
     if !s.contains('\\') {
         return s.to_string();
     }
@@ -926,7 +960,7 @@ fn js_decode(s: &str) -> String {
 }
 
 /// `cssDecode`: the backslash-hex escape CSS allows, `\3c` for `<`.
-fn css_decode(s: &str) -> String {
+pub(crate) fn css_decode(s: &str) -> String {
     if !s.contains('\\') {
         return s.to_string();
     }
@@ -987,7 +1021,7 @@ fn css_decode(s: &str) -> String {
 
 /// `removeNulls`: a NUL byte inside a payload splits it for a rule while the
 /// application behind reads straight past it.
-fn remove_nulls(s: &str) -> String {
+pub(crate) fn remove_nulls(s: &str) -> String {
     if !s.contains('\0') {
         return s.to_string();
     }
@@ -1170,6 +1204,25 @@ async fn get_exclusions(db: &SqlitePool, policy_id: i64) -> Vec<Exclusion> {
     .collect()
 }
 
+/// A condition's zone and decodings as the engine runs them. No targets for
+/// one naming either a zone or a decoding this version does not know, which
+/// is never run.
+fn runnable(id: i64, name: &str, zone: &str, transforms: &[String]) -> (Option<Vec<Target>>, Vec<Transform>) {
+    let Some(targets) = parse_zone(zone) else {
+        tracing::warn!(rule_id = id, rule = %name, zone = %zone,
+                       "WAF rule reads a zone this version does not, and is not run");
+        return (None, Vec::new());
+    };
+    match parse_list(transforms) {
+        Ok(chain) => (Some(targets), chain),
+        Err(unknown) => {
+            tracing::warn!(rule_id = id, rule = %name, transform = %unknown,
+                           "WAF rule names a decoding this version does not apply, and is not run");
+            (None, Vec::new())
+        }
+    }
+}
+
 async fn get_rules(db: &SqlitePool, policy_id: i64) -> Vec<RuleRow> {
     let rows = sqlx::query!(
         "SELECT id       as \"id!\",
@@ -1180,7 +1233,8 @@ async fn get_rules(db: &SqlitePool, policy_id: i64) -> Vec<RuleRow> {
                 score    as \"score!\",
                 action,
                 negate   as \"negate!: bool\",
-                conditions as \"conditions!\"
+                conditions as \"conditions!\",
+                transforms as \"transforms!\"
          FROM   waf_rules
          WHERE  policy_id = ? AND enabled = 1
          ORDER  BY id",
@@ -1192,28 +1246,21 @@ async fn get_rules(db: &SqlitePool, policy_id: i64) -> Vec<RuleRow> {
 
     rows.into_iter()
         .map(|r| {
-            let targets = parse_zone(&r.zone);
-            if targets.is_none() {
-                // Once per change to the configuration, which is when this is
-                // read: not run, and said so, rather than read as everything.
-                tracing::warn!(rule_id = r.id, rule = %r.name, zone = %r.zone,
-                               "WAF rule names a zone this version does not read, and is not run");
-            }
+            // Once per change to the configuration, which is when this is
+            // read: a zone or a decoding this version does not know is not
+            // run, and said so, rather than read as everything or as nothing.
+            let (targets, chain) = runnable(r.id, &r.name, &r.zone, &transforms_from_column(&r.transforms));
             let and: Vec<RuleCondition> = match read_conditions(&r.conditions) {
                 Some(list) => list.into_iter().map(|c| {
-                    let targets = parse_zone(&c.zone);
-                    if targets.is_none() {
-                        tracing::warn!(rule_id = r.id, rule = %r.name, zone = %c.zone,
-                                       "WAF rule has a condition in a zone this version does not read, and is not run");
-                    }
-                    RuleCondition { targets, pattern: c.pattern, negate: c.negate }
+                    let (targets, chain) = runnable(r.id, &r.name, &c.zone, &c.transforms);
+                    RuleCondition { targets, pattern: c.pattern, negate: c.negate, chain }
                 }).collect(),
                 None => {
                     tracing::warn!(rule_id = r.id, rule = %r.name,
                                    "WAF rule's conditions cannot be read, and it is not run");
                     // One that never holds, so the rule does not run on its
                     // first condition alone.
-                    vec![RuleCondition { targets: None, pattern: String::new(), negate: false }]
+                    vec![RuleCondition { targets: None, pattern: String::new(), negate: false, chain: Vec::new() }]
                 }
             };
             RuleRow {
@@ -1224,6 +1271,7 @@ async fn get_rules(db: &SqlitePool, policy_id: i64) -> Vec<RuleRow> {
                 targets,
                 pattern:     r.pattern,
                 negate:      r.negate,
+                chain,
                 and,
                 score:       r.score,
                 action:      r.action,
@@ -1680,6 +1728,7 @@ mod tests {
             targets: Some(vec![crate::modules::targets::Target::Url]),
             pattern: ".".into(),
             negate:  false,
+            chain:   Vec::new(),
             and:     Vec::new(),
             score:   5,
             action:  "score".into(),
@@ -1982,6 +2031,64 @@ mod bench {
     }
 }
 
+/// A rule's decodings as the database holds them, loaded and run by the
+/// module, as a request meets them.
+#[cfg(test)]
+mod decoded_rules {
+    use super::*;
+    use crate::modules::InspectionModule;
+
+    #[tokio::test]
+    async fn a_rules_decodings_are_loaded_and_applied() {
+        let path = std::env::temp_dir().join(format!("easywaf-decoded-{}.db", std::process::id()));
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+        let db = crate::db::init(&format!("sqlite://{}", path.display())).await;
+        let policy = sqlx::query("INSERT INTO policies (name, rule_engine, score_threshold) VALUES ('d', 'On', 1000)")
+            .execute(&db).await.unwrap().last_insert_rowid();
+        let site = sqlx::query("INSERT INTO sites (name, server_name, waf_policy_id) VALUES ('d', 'd.example', ?)")
+            .bind(policy).execute(&db).await.unwrap().last_insert_rowid();
+        for (name, transforms, conditions) in [
+            ("decoded",     "cmdLine", "[]"),
+            ("as it is",    "",        "[]"),
+            ("unknown",     "rot13",   "[]"),
+            ("a condition", "",        r#"[{"zone":"ARG:cmd","pattern":"^cat/","transforms":["urlDecodeUni","cmdLine"]}]"#),
+        ] {
+            sqlx::query("INSERT INTO waf_rules (policy_id, name, zone, pattern, score, action, enabled, transforms, conditions)
+                         VALUES (?, ?, 'ARG', 'cat/etc/passwd', 1, 'score', 1, ?, ?)")
+                .bind(policy).bind(name).bind(transforms).bind(conditions)
+                .execute(&db).await.unwrap();
+        }
+        // The last one's first condition matches as it is, too: the decoding
+        // is on its second.
+        sqlx::query("UPDATE waf_rules SET pattern = 'pass' WHERE name = 'a condition'").execute(&db).await.unwrap();
+
+        let ctx = RequestContext {
+            site_id: site,
+            site_name: "d".into(),
+            client_ip: "203.0.113.9".parse().unwrap(),
+            method: "GET".into(),
+            path: "/run".into(),
+            query: Some("cmd=c%27a%27t+/etc/pass%22%22wd".into()),
+            version: axum::http::Version::HTTP_11,
+            headers: axum::http::HeaderMap::new(),
+            body: bytes::Bytes::new(),
+        };
+        let findings = match WafModule::new(db.clone()).inspect(&ctx).await {
+            ModuleDecision::Alert { findings, .. } => findings,
+            other => panic!("expected an alert, got {other:?}"),
+        };
+        let mut hit: Vec<&str> = findings.hits.iter().map(|h| h.name.as_str()).collect();
+        hit.sort();
+        assert_eq!(hit, ["a condition", "decoded"]);
+        db.close().await;
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+    }
+}
+
 #[cfg(test)]
 mod exclusion_path_tests {
     use super::{path_as_forwarded, under_prefix};
@@ -2032,20 +2139,18 @@ mod exclusion_path_tests {
 // zone covers that: a URL arrives in URL, in ARGS (its query) and in ANY.
 #[cfg(test)]
 mod set_cases {
-    use super::{reads, Parts, Whole};
-    use crate::modules::targets::parse_zone;
-    use regex::Regex;
+    use super::{Parts, Whole};
+    use crate::modules::targets::{Compiled, CompiledCondition};
 
     struct Rule {
         id:    i64,
-        /// Every condition: what it reads, its pattern, and whether negated.
-        conds: Vec<(Vec<crate::modules::targets::Target>, Regex, bool)>,
+        conds: Compiled,
     }
 
     impl Rule {
         /// As the engine decides it: every condition holds.
         fn holds(&self, whole: &Whole, parts: &Parts) -> bool {
-            self.conds.iter().all(|(t, re, negate)| reads(t, whole, parts, re) != *negate)
+            self.conds.iter().all(|c| c.holds(whole, parts))
         }
     }
 
@@ -2060,12 +2165,8 @@ mod set_cases {
                 let table = r.as_table().expect("a rule that is not a table");
                 let conds = crate::modules::targets::table_conditions(table)
                     .unwrap_or_else(|e| panic!("rule {id}: {e}"))
-                    .into_iter()
-                    .map(|(zone, pattern, negate)| (
-                        parse_zone(&zone).unwrap_or_else(|| panic!("rule {id}: {zone:?} is not a zone")),
-                        Regex::new(&pattern).unwrap_or_else(|e| panic!("rule {id} does not compile: {e}")),
-                        negate,
-                    ))
+                    .iter()
+                    .map(|c| CompiledCondition::new(c).unwrap_or_else(|e| panic!("rule {id}: {e}")))
                     .collect();
                 Rule { id, conds }
             })

@@ -40,9 +40,19 @@ next minor, so a release's notes stay about its feature.
 | 1.3.3 | rustls updated to 0.23.46 for four advisories, quinn-proto updated, and CRS's tests read with a maintained YAML parser — **released 2026-10-15** |
 | 1.3.4 | CRS's chained rules converted as rules with several conditions, and its negated operators where the variable holds one value; four more protocol-enforcement rules reach the sets — **released 2026-10-15** |
 | 1.4.0 | The header block, the request line and the protocol as zones, and the ET Open and CRS rules that read them — **released 2026-10-15** |
-| 1.5.0 | Configuration sync between nodes — HA (see [ha-config-sync.md](ha-config-sync.md)) |
-| 1.6.0 | Per-site rate limiting (see [rate-limiting.md](rate-limiting.md)) |
-| 1.7.0 | Learning and hardening modes — URL allowlisting (see [url-learning.md](url-learning.md)) |
+| 1.5.0 | Decodings a rule names — `cmdLine`, `replaceComments`, `base64Decode` and the rest — and the CRS and ET Open rules that need them |
+| 1.6.0 | Configuration sync between nodes — HA (see [ha-config-sync.md](ha-config-sync.md)) |
+| 1.7.0 | Per-site rate limiting (see [rate-limiting.md](rate-limiting.md)) |
+| 1.8.0 | Learning and hardening modes — URL allowlisting (see [url-learning.md](url-learning.md)) |
+
+## Decoding per rule before HA (Yariv, 2026-10-18)
+
+Of the engine features left that CRS and ET Open rules need, decoding gains
+most across both: 20 of CRS's paranoia-1 request rules were refused for a
+transformation (`cmdLine` for remote code execution, comment and whitespace
+removal for SQL injection), and about 60 of ET's in-scope rules for stripping
+whitespace or decoding base64. Put as 1.5.0; HA, rate limiting and URL learning
+move to 1.6.0, 1.7.0 and 1.8.0.
 
 ## The header block before HA (Yariv, 2026-10-15)
 

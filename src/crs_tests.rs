@@ -22,8 +22,8 @@
 // drops the failing rules and publishes the rest.
 // =========================================================
 
-use crate::modules::targets::{parse_zone, Parts, Target};
-use crate::modules::waf::{reads, Whole};
+use crate::modules::targets::{Compiled, CompiledCondition, Parts};
+use crate::modules::waf::Whole;
 use crate::modules::RequestContext;
 use std::collections::{BTreeMap, BTreeSet};
 use yaml_rust2::Yaml;
@@ -32,8 +32,7 @@ use std::path::Path;
 struct Rule {
     id:    i64,
     crs:   i64,
-    /// Every condition: what it reads, its pattern, and whether negated.
-    conds: Vec<(Vec<Target>, regex::Regex, bool)>,
+    conds: Compiled,
 }
 
 /// One request a CRS test sends, and what it says about which rules fire.
@@ -76,7 +75,7 @@ pub fn run(args: &[String]) -> i32 {
             } else {
                 continue;
             };
-            let fired = rule.conds.iter().all(|(t, re, negate)| reads(t, &whole, &parts, re) != *negate);
+            let fired = rule.conds.iter().all(|c| c.holds(&whole, &parts));
             let entry = checked.entry(rule.id).or_default();
             entry.0 += 1;
             if fired != wants {
@@ -110,14 +109,9 @@ fn rules(path: &Path) -> Result<Vec<Rule>, String> {
         let description = r.get("description").and_then(|v| v.as_str()).unwrap_or("");
         let Some(crs) = crs_id.captures(description).and_then(|c| c[1].parse().ok()) else { continue };
         let table = r.as_table().ok_or(format!("rule {id} is not a table"))?;
-        let mut conds = Vec::new();
-        for (zone, pattern, negate) in crate::modules::targets::table_conditions(table).map_err(|e| format!("rule {id}: {e}"))? {
-            conds.push((
-                parse_zone(&zone).ok_or(format!("rule {id}: {zone:?} is not a zone"))?,
-                regex::Regex::new(&pattern).map_err(|e| format!("rule {id}: {e}"))?,
-                negate,
-            ));
-        }
+        let conds = crate::modules::targets::table_conditions(table)
+            .and_then(|list| list.iter().map(CompiledCondition::new).collect::<Result<Compiled, String>>())
+            .map_err(|e| format!("rule {id}: {e}"))?;
         out.push(Rule { id, crs, conds });
     }
     Ok(out)

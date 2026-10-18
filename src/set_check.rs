@@ -24,8 +24,8 @@
 // rules drops what this reports and publishes the rest.
 // =========================================================
 
-use crate::modules::targets::{parse_zone, table_conditions, Compiled, Parts};
-use crate::modules::waf::{reads, Whole};
+use crate::modules::targets::{table_conditions, Compiled, CompiledCondition, Parts};
+use crate::modules::waf::Whole;
 use crate::modules::RequestContext;
 use std::collections::BTreeSet;
 
@@ -52,12 +52,7 @@ pub fn run(args: &[String]) -> i32 {
     for r in table.get("rules").and_then(|r| r.as_array()).into_iter().flatten() {
         let id = r.get("id").and_then(|v| v.as_integer()).unwrap_or(0);
         let loaded = r.as_table().ok_or_else(|| "not a table".to_string()).and_then(|t| {
-            table_conditions(t)?.into_iter().map(|(zone, pattern, negate)| {
-                let targets = parse_zone(&zone).ok_or(format!("the zone {zone:?} is not one this version reads"))?;
-                let re = regex::Regex::new(&pattern)
-                    .map_err(|e| format!("a pattern does not compile: {}", e.to_string().lines().last().unwrap_or("").trim()))?;
-                Ok((targets, re, negate))
-            }).collect::<Result<Vec<_>, String>>()
+            table_conditions(t)?.iter().map(CompiledCondition::new).collect::<Result<Vec<_>, String>>()
         });
         match loaded {
             Ok(conds) => rules.push((id, conds)),
@@ -85,7 +80,7 @@ pub fn run(args: &[String]) -> i32 {
             requests += 1;
             let (whole, parts) = (Whole::of(&ctx, &ctx.body), Parts::new(&ctx, &ctx.body));
             for (id, conds) in &rules {
-                if conds.iter().all(|(t, re, negate)| reads(t, &whole, &parts, re) != *negate) {
+                if conds.iter().all(|c| c.holds(&whole, &parts)) {
                     println!("FP {id} {}", n + 1);
                     fired.insert(*id);
                 }

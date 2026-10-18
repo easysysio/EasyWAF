@@ -157,6 +157,9 @@ pub struct Rule {
     /// Whether the first condition holds when the pattern matches nothing.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub negate: bool,
+    /// The decodings the first condition's values are matched after.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub transforms: Vec<String>,
     /// The conditions after the first, all of which must hold too.
     #[serde(default, rename = "and", skip_serializing_if = "Vec::is_empty")]
     pub and: Vec<crate::modules::targets::Condition>,
@@ -549,7 +552,7 @@ pub async fn build(db: &SqlitePool, opts: Options) -> Result<Document, sqlx::Err
         let mut row_ids: BTreeMap<i64, usize> = BTreeMap::new();
         for r in sqlx::query(
             "SELECT id, name, COALESCE(description, '') AS description, zone, pattern, score, action,
-                    negate, conditions, enabled, external_id, rule_set,
+                    negate, conditions, transforms, enabled, external_id, rule_set,
                     cloned_from_external_id, cloned_from_version, cloned_from_set
                FROM waf_rules WHERE policy_id = ?
               ORDER BY external_id IS NULL, external_id, name, id")
@@ -573,6 +576,7 @@ pub async fn build(db: &SqlitePool, opts: Options) -> Result<Document, sqlx::Err
                 zone: r.get("zone"),
                 pattern: r.get("pattern"),
                 negate: r.get::<i64, _>("negate") != 0,
+                transforms: crate::modules::targets::transforms_from_column(&r.get::<String, _>("transforms")),
                 and: crate::modules::targets::read_conditions(&r.get::<String, _>("conditions")).unwrap_or_default(),
                 score: r.get("score"),
                 action: r.get("action"),

@@ -6,6 +6,18 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
+## [1.5.0] — unreleased
+
+### Added
+- **A rule names the decodings it is matched after.** `transforms` on a rule, or on one of its conditions, applies `cmdLine`, `replaceComments`, `removeCommentsChar`, `removeWhitespace`, `compressWhitespace`, `trim`, `base64Decode`, `base64Runs`, `escapeSeqDecode`, `dotPrefix` and the decodings the forms already make, in order, to each form of each value; `multiMatch` also matches before the first and after each one. A rule set naming one requires EasyWAF 1.5.0. Shown on the rule's page, carried by clone, copy, rollback, export and import.
+- The CRS converter names the transformations a rule declares beyond what the forms cover, rather than refusing it: at paranoia level 1, 19 more CRS rules convert and pass CRS's tests — remote code execution (`cmdLine`), SQL injection (comment and whitespace removal), PHP, XSS, Node.js and Java, and none remains refused for a transformation.
+- The ET converter names `strip_whitespace`, `compress_whitespace` and `dotprefix`, and reads `base64_decode`/`base64_data` as each run of base64 in the buffer decoded: 48 more ET rules at the sets' scope.
+
+### Fixed
+- **Two CRS rules declaring `t:compressWhitespace` were matched without it**, so a payload with doubled spaces passed a pattern written for single ones. They now name the decoding.
+
+---
+
 ## [1.4.0] — 2026-10-15
 
 ### Added

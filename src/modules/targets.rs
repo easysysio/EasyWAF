@@ -12,9 +12,11 @@
 // See docs/design/targeted-zones.md.
 // =========================================================
 
-use super::waf::{normalised_paths, percent_decode, zone_text};
+use super::transforms::{apply_all, parse_list, Transform};
+use super::waf::{normalised_paths, percent_decode, reads, zone_text, Whole};
 use super::RequestContext;
-use std::cell::OnceCell;
+use std::cell::{OnceCell, RefCell};
+use std::rc::Rc;
 
 /// The most arguments, and separately the most cookies, read from one request.
 /// Beyond it a value is not read on its own; it is still in the whole-text
@@ -24,9 +26,9 @@ pub const MAX_VALUES: usize = 1024;
 /// The longest name a targeted zone accepts after its colon.
 const MAX_NAME: usize = 128;
 
-/// A condition a rule adds to its first: a zone and a pattern, and whether it
-/// holds when the pattern matches nothing instead. As a set file and the
-/// database's `conditions` column write it.
+/// A condition: a zone and a pattern, whether it holds when the pattern
+/// matches nothing instead, and the decodings its values are matched after.
+/// As a set file and the database's `conditions` column write it.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Condition {
@@ -34,6 +36,14 @@ pub struct Condition {
     pub pattern: String,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub negate:  bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub transforms: Vec<String>,
+}
+
+/// Decodings as the database's `transforms` column holds them: names joined
+/// with commas, none for the empty string.
+pub fn transforms_from_column(text: &str) -> Vec<String> {
+    text.split(',').map(str::trim).filter(|s| !s.is_empty()).map(str::to_string).collect()
 }
 
 /// The conditions stored in a rule's `conditions` column. `None` for text that
@@ -46,33 +56,66 @@ pub fn read_conditions(json: &str) -> Option<Vec<Condition>> {
 }
 
 /// A rule's conditions from a set file's TOML table — its zone and pattern
-/// first, then each of `and` — as (zone, pattern, negate). `Err` names what is
-/// missing.
-pub fn table_conditions(rule: &toml::Table) -> Result<Vec<(String, String, bool)>, String> {
+/// first, then each of `and`. `Err` names what is missing.
+pub fn table_conditions(rule: &toml::Table) -> Result<Vec<Condition>, String> {
     let text = |t: &toml::Table, k: &str| t.get(k).and_then(|v| v.as_str()).map(str::to_string);
     let flag = |t: &toml::Table| t.get("negate").and_then(|v| v.as_bool()).unwrap_or(false);
-    let mut out = vec![(
-        text(rule, "zone").unwrap_or_else(|| "ANY".into()),
-        text(rule, "pattern").ok_or("a rule without a pattern")?,
-        flag(rule),
-    )];
+    let decodings = |t: &toml::Table| -> Result<Vec<String>, String> {
+        match t.get("transforms") {
+            None => Ok(Vec::new()),
+            Some(v) => v.as_array()
+                .and_then(|a| a.iter().map(|n| n.as_str().map(str::to_string)).collect::<Option<Vec<_>>>())
+                .ok_or_else(|| "transforms that are not a list of names".to_string()),
+        }
+    };
+    let mut out = vec![Condition {
+        zone:       text(rule, "zone").unwrap_or_else(|| "ANY".into()),
+        pattern:    text(rule, "pattern").ok_or("a rule without a pattern")?,
+        negate:     flag(rule),
+        transforms: decodings(rule)?,
+    }];
     for c in rule.get("and").and_then(|v| v.as_array()).into_iter().flatten() {
         let c = c.as_table().ok_or("a condition that is not a table")?;
-        out.push((
-            text(c, "zone").ok_or("a condition without a zone")?,
-            text(c, "pattern").ok_or("a condition without a pattern")?,
-            flag(c),
-        ));
+        out.push(Condition {
+            zone:       text(c, "zone").ok_or("a condition without a zone")?,
+            pattern:    text(c, "pattern").ok_or("a condition without a pattern")?,
+            negate:     flag(c),
+            transforms: decodings(c)?,
+        });
     }
     Ok(out)
 }
 
-/// A rule's conditions, each compiled: what it reads, its pattern, and whether
-/// it is negated.
-pub type Compiled = Vec<(Vec<Target>, regex::Regex, bool)>;
+/// A condition ready to match: what it reads, its pattern, whether it is
+/// negated, and the decodings applied first.
+pub struct CompiledCondition {
+    pub targets: Vec<Target>,
+    pub re:      regex::Regex,
+    pub negate:  bool,
+    pub chain:   Vec<Transform>,
+}
+
+impl CompiledCondition {
+    /// `Err` says why the condition cannot be run by this version.
+    pub fn new(c: &Condition) -> Result<Self, String> {
+        let targets = parse_zone(&c.zone).ok_or(format!("the zone {:?} is not one this version reads", c.zone))?;
+        let chain = parse_list(&c.transforms)
+            .map_err(|name| format!("the decoding {name:?} is not one this version applies"))?;
+        let re = regex::Regex::new(&c.pattern)
+            .map_err(|e| format!("a pattern does not compile: {}", e.to_string().lines().last().unwrap_or("").trim()))?;
+        Ok(CompiledCondition { targets, re, negate: c.negate, chain })
+    }
+
+    pub fn holds(&self, whole: &Whole, parts: &Parts) -> bool {
+        reads(&self.targets, whole, parts, &self.re, &self.chain) != self.negate
+    }
+}
+
+/// A rule's conditions, each compiled.
+pub type Compiled = Vec<CompiledCondition>;
 
 /// One part of a request a rule reads.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Target {
     // The five whole-text zones.
     Url,
@@ -185,6 +228,10 @@ struct Value {
     value: Vec<String>,
 }
 
+/// A zone, a chain of decodings, and the forms the zone is read in with them
+/// applied.
+type Decoded = (Target, Vec<Transform>, Rc<Vec<String>>);
+
 /// The parts of one request the targeted zones read, each built the first
 /// time a rule asks for it and not again. A policy whose rules read none of
 /// them builds none.
@@ -202,6 +249,10 @@ pub struct Parts<'a> {
     parts:   OnceCell<(Vec<Value>, Vec<Value>)>,
     block:   OnceCell<Vec<String>>,
     line:    OnceCell<Vec<String>>,
+    /// The forms a zone is read in with a chain of decodings applied, made
+    /// once for each zone and chain however many rules ask. A list: a request
+    /// meets a few dozen pairs, and comparing in place costs no allocation.
+    decoded: RefCell<Vec<Decoded>>,
 }
 
 impl<'a> Parts<'a> {
@@ -217,7 +268,19 @@ impl<'a> Parts<'a> {
             parts: OnceCell::new(),
             block: OnceCell::new(),
             line: OnceCell::new(),
+            decoded: RefCell::new(Vec::new()),
         }
+    }
+
+    /// Each of `forms` — what `target` is read in — with `chain` applied,
+    /// from the cache when a rule has asked for the pair already.
+    pub fn decoded(&self, target: &Target, chain: &[Transform], forms: impl FnOnce() -> Vec<String>) -> Rc<Vec<String>> {
+        if let Some((_, _, found)) = self.decoded.borrow().iter().find(|(t, c, _)| t == target && c == chain) {
+            return found.clone();
+        }
+        let made: Rc<Vec<String>> = Rc::new(forms().iter().flat_map(|f| apply_all(chain, f)).collect());
+        self.decoded.borrow_mut().push((target.clone(), chain.to_vec(), made.clone()));
+        made
     }
 
     /// Whether `is_match` holds for any form of any value `target` reads.
@@ -645,6 +708,29 @@ mod tests {
         assert!(hits(&p, "header_block", "^User-Agent: curl/8\\.5\r\nX-Forwarded-For: 10\\.0\\.0\\.1\r\nX-Forwarded-For: 10\\.0\\.0\\.2\r\nAccept: \\*/\\*\r\n$"));
         assert!(hits(&p, "HEADER_BLOCK", "(?m)^Accept: "));
         assert!(!hits(&p, "HEADER_BLOCK", "user-agent"));
+    }
+
+    /// A condition naming decodings is matched against each value with them
+    /// applied, and not against the value as it is.
+    #[test]
+    fn a_condition_is_matched_after_its_decodings() {
+        let c = ctx("/run", Some("cmd=c%27a%27t+/etc/pass%22%22wd&q=UNION/**/SELECT"), &[], "");
+        let (whole, parts) = (Whole::of(&c, b""), Parts::new(&c, b""));
+        let cond = |zone: &str, pattern: &str, negate: bool, transforms: &[&str]| {
+            CompiledCondition::new(&Condition {
+                zone: zone.into(), pattern: pattern.into(), negate,
+                transforms: transforms.iter().map(|t| t.to_string()).collect(),
+            }).unwrap().holds(&whole, &parts)
+        };
+        assert!(cond("ARG", "cat/etc/passwd", false, &["cmdLine"]));
+        assert!(!cond("ARG", "cat/etc/passwd", false, &[]), "matched without the decoding");
+        assert!(cond("ARGS", "cat/etc/passwd", false, &["cmdLine"]), "a whole-text zone is decoded too");
+        assert!(cond("ARG:q", "^UNION SELECT$", false, &["replaceComments"]));
+        assert!(!cond("ARG:q", "\\*", false, &["replaceComments"]), "a decoded form still has the comment");
+        assert!(cond("ARG:q", "\\*", true, &["replaceComments"]), "negated: no decoded form matches");
+        assert!(CompiledCondition::new(&Condition {
+            zone: "ARG".into(), pattern: "x".into(), negate: false, transforms: vec!["rot13".into()],
+        }).is_err(), "an unknown decoding compiled");
     }
 
     #[test]

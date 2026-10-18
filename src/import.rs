@@ -286,6 +286,12 @@ async fn check(db: &SqlitePool, doc: &Document, gui_ports: &[u16], p: &mut Plan)
                 b.push(format!("{rw}: the pattern does not compile ({}) — the engine would skip it \
                                 silently", e.to_string().lines().last().unwrap_or("").trim()));
             }
+            for name in r.transforms.iter().chain(r.and.iter().flat_map(|c| &c.transforms)) {
+                if crate::modules::transforms::Transform::parse(name).is_none() {
+                    b.push(format!("{rw}: the decoding {name:?} is not one this EasyWAF applies, so the rule \
+                                    would never run — a misspelling, or a file from a newer EasyWAF"));
+                }
+            }
             for c in &r.and {
                 if crate::modules::targets::parse_zone(&c.zone).is_none() {
                     b.push(format!("{rw}: a condition's zone {:?} is not one this EasyWAF reads", c.zone));
@@ -763,12 +769,13 @@ pub async fn apply(work: &SqlitePool, doc: &Document, importer: &str) -> Result<
 
         for r in &p.rules {
             let row: i64 = sqlx::query(
-                "INSERT INTO waf_rules (policy_id, name, description, zone, pattern, negate, conditions, score,
-                                        action, enabled, external_id, rule_set, cloned_from_external_id,
+                "INSERT INTO waf_rules (policy_id, name, description, zone, pattern, negate, conditions, transforms,
+                                        score, action, enabled, external_id, rule_set, cloned_from_external_id,
                                         cloned_from_version, cloned_from_set)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
                 .bind(id).bind(&r.name).bind(&r.description).bind(&r.zone).bind(&r.pattern)
                 .bind(r.negate).bind(serde_json::to_string(&r.and).unwrap_or_else(|_| "[]".into()))
+                .bind(r.transforms.join(","))
                 .bind(r.score).bind(&r.action).bind(r.enabled)
                 .bind(r.external_id).bind(&r.rule_set)
                 .bind(r.cloned_from_external_id).bind(r.cloned_from_version).bind(&r.cloned_from_set)

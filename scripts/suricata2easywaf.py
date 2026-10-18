@@ -27,11 +27,15 @@ How a rule becomes conditions
 
 What is refused, and why
     flowbits, xbits   state across requests; one request cannot say it
-    byte_*, base64_*  arithmetic on bytes, and decoding EasyWAF does not do
+    byte_*            arithmetic on bytes
     detection_filter  alerts only after a count; a rule is not a counter
-    dsize, isdataat, urilen, bsize, stream_size
-                      lengths and positions; a condition is a pattern
-    strip_whitespace and other transforms EasyWAF does not apply
+    dsize, isdataat, stream_size
+                      sizes and positions in a packet or stream
+    pcrexform, xor and the other transforms EasyWAF does not apply.
+                      strip_whitespace, compress_whitespace and dotprefix are
+                      named in the rule's `transforms`; base64_decode and
+                      base64_data read every run of base64 in the buffer,
+                      decoded, wherever the match before them ended
     http.start, http.stat_code and the response buffers
                       no zone holds them
     a pcre on one header line (http.request_header)
@@ -48,7 +52,7 @@ import sys
 from collections import Counter
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from modsec2easywaf import escape_literal_braces, matches_ordinary_traffic, portable, toml_string  # noqa: E402
+from modsec2easywaf import escape_literal_braces, matches_ordinary_traffic, portable, toml_names, toml_string  # noqa: E402
 
 BSD_SIDS = range(2000000, 2800000)
 
@@ -80,11 +84,10 @@ NO_ZONE = {"http.start", "http.stat_code", "http.stat_msg",
 REFUSED = {
     "flowbits": "state across requests (flowbits)", "xbits": "state across requests (xbits)",
     "byte_test": "byte arithmetic", "byte_jump": "byte arithmetic", "byte_extract": "byte arithmetic",
-    "byte_math": "byte arithmetic", "base64_decode": "base64 decoding", "base64_data": "base64 decoding",
+    "byte_math": "byte arithmetic",
     "detection_filter": "alerts only after a count", "dsize": "a packet's size", "isdataat": "a position",
     "stream_size": "a stream's size", "noalert": "sets state only",
-    "lua": "a script", "luajit": "a script", "pcrexform": "a transform", "strip_whitespace": "a transform",
-    "compress_whitespace": "a transform", "dotprefix": "a transform", "xor": "a transform",
+    "lua": "a script", "luajit": "a script", "pcrexform": "a transform", "xor": "a transform",
     "http_stat_code": "a response", "ja3.hash": "TLS", "tls.sni": "TLS", "dns.query": "DNS",
     "entropy": "a statistic", "tag": "tags a session",
 }
@@ -92,6 +95,11 @@ REFUSED = {
 # percent-decoded, and a lowercased buffer is a case-insensitive match.
 COVERED_TRANSFORMS = {"url_decode", "to_lowercase", "header_lowercase", "strip_pseudo_headers"}
 LOWERCASING = {"to_lowercase", "header_lowercase"}
+# Transforms EasyWAF applies when a rule names them, by its own name; they
+# need EasyWAF 1.5.0. url_decode, which the forms cover, is named only after
+# one of these.
+APPLIED_TRANSFORMS = {"strip_whitespace": "removeWhitespace", "compress_whitespace": "compressWhitespace",
+                      "dotprefix": "dotPrefix"}
 IGNORED = {"msg", "flow", "reference", "classtype", "sid", "rev", "metadata", "target", "priority",
            "threshold", "gid", "fast_pattern", "nocase", "depth", "offset", "distance", "within",
            "startswith", "endswith", "rawbytes", "bsize", "urilen"}
@@ -231,8 +239,10 @@ def gap(distance, within, length):
 
 
 class Piece:
-    def __init__(self, regex, relative, negated, fast=False, length=1, named=None):
+    def __init__(self, regex, relative, negated, fast=False, length=1, named=None, chain=()):
         self.regex, self.relative, self.negated, self.fast, self.length = regex, relative, negated, fast, length
+        # The decodings the buffer is matched after, by EasyWAF's names.
+        self.chain = list(chain)
         # A content on the header block that is one header's value from its
         # start, as (zone, regex) on that header: used unless a relative
         # content follows it, which needs the block.
@@ -328,18 +338,20 @@ def convert_rule(line):
         if k in NO_ZONE:
             raise Refuse(f"{k}, which no zone holds")
         if k not in IGNORED and k not in BUFFERS and k not in LEGACY and k not in COVERED_TRANSFORMS \
-                and k not in ("content", "pcre"):
+                and k not in APPLIED_TRANSFORMS and k not in ("content", "pcre", "base64_decode", "base64_data"):
             raise Refuse(f"{k}, which this converter does not know")
 
     buffer, pieces = None, []          # pieces: [(buffer, Piece)]
     last = None                        # the last content's piece, for its modifiers
     mods = {}
     lowered = False                    # whether the buffer is lowercased first
+    chain = []                         # the decodings the buffer is matched after
+    decoded_from = None                # the buffer and chain base64_decode read
     def finish():
         nonlocal last, mods
         if last is None:
             return
-        buf, data, negated, fast, lower = last
+        buf, data, negated, fast, lower, decodings = last
         if buf is None:
             raise Refuse("a content outside an HTTP buffer")
         # A content matched against a lowercased buffer is matched without
@@ -361,7 +373,7 @@ def convert_rule(line):
             named = header_block(b"\r\n" + data, nocase)
             if named is None:
                 raise Refuse("a content on one header line spanning lines")
-            pieces.append((named[0], Piece(named[1], False, negated, fast)))
+            pieces.append((named[0], Piece(named[1], False, negated, fast, chain=decodings)))
         else:
             # The header block is HEADER_BLOCK, read as any buffer is. A content
             # that is one header's value from its start reads that header
@@ -373,7 +385,7 @@ def convert_rule(line):
             if zone == "HEADER-BLOCK":
                 zone = "HEADER_BLOCK"
                 positioned = any(k in mods for k in ("startswith", "endswith", "depth", "offset"))
-                if not relative and not positioned and not negated:
+                if not relative and not positioned and not negated and not decodings:
                     named = header_block(data, nocase)
             regex = block_literal(data) if zone == "HEADER_BLOCK" else literal(data)
             if nocase:
@@ -394,7 +406,7 @@ def convert_rule(line):
                     regex = f"^(?s:.{{{lo},}})" + regex
             if "endswith" in mods:
                 regex += "$"
-            pieces.append((zone, Piece(regex, relative, negated, fast, len(data), named)))
+            pieces.append((zone, Piece(regex, relative, negated, fast, len(data), named, decodings)))
             # Suricata does not inspect a buffer the request does not have,
             # so a negated content on a named header holds only where the
             # header is there. In EasyWAF a negated condition on a header that
@@ -405,26 +417,44 @@ def convert_rule(line):
 
     for k, v in opts:
         if k in BUFFERS:
-            finish(); buffer = k; lowered = False
+            finish(); buffer = k; lowered = False; chain = []
         elif k in LOWERCASING:
             finish(); lowered = True
+        elif k in APPLIED_TRANSFORMS:
+            finish(); chain = chain + [APPLIED_TRANSFORMS[k]]
+        elif k == "url_decode":
+            finish()
+            if chain:
+                chain = chain + ["urlDecode"]
+        elif k == "base64_decode":
+            # Where the base64 is: decoded in base64_data. Every run of base64
+            # in the buffer is decoded, wherever the match before it ended.
+            finish()
+            if buffer is None:
+                raise Refuse("a content outside an HTTP buffer")
+            decoded_from = (buffer, chain, lowered)
+        elif k == "base64_data":
+            finish()
+            if decoded_from is None:
+                raise Refuse("base64_data with no base64_decode before it")
+            buffer, chain, lowered = decoded_from[0], decoded_from[1] + ["base64Runs"], decoded_from[2]
         elif k in LEGACY:
             # The pre-sticky spelling modifies the content before it.
             if last is None:
                 raise Refuse("a buffer modifier with no content")
-            last = (LEGACY[k], last[1], last[2], last[3], False)
+            last = (LEGACY[k], last[1], last[2], last[3], False, [])
         elif k == "content":
             finish()
             data, negated = content_bytes(v)
-            last = (buffer, data, negated, False, lowered)
+            last = (buffer, data, negated, False, lowered, chain)
         elif k == "fast_pattern" and last is not None:
-            last = (last[0], last[1], last[2], True, last[4])
+            last = (last[0], last[1], last[2], True, last[4], last[5])
         elif k == "bsize":
             # The length of the whole buffer: a condition of its own.
             finish()
             if buffer is None or BUFFERS[buffer].startswith("HEADER-"):
                 raise Refuse("a length on no buffer, or on the header block")
-            pieces.append((BUFFERS[buffer], Piece(length(v, "bsize"), False, False)))
+            pieces.append((BUFFERS[buffer], Piece(length(v, "bsize"), False, False, chain=chain)))
         elif k == "urilen":
             finish()
             pieces.append(("URL", Piece(length(v, "urilen"), False, False)))
@@ -447,6 +477,7 @@ def convert_rule(line):
                 raise Refuse("a pcre on one header line, or on the header names")
             if buf == buffer and lowered:
                 flags += "i"
+            decodings = chain if buf == buffer else []
             unknown = set(flags) - set("ismxUIPMCVWHDRBGO")
             if unknown:
                 raise Refuse(f"pcre flags {''.join(sorted(unknown))}")
@@ -466,28 +497,29 @@ def convert_rule(line):
             else:
                 regex = f"(?{inline}:{pattern})" if inline else f"(?:{pattern})"
             zone = BUFFERS[buf]
-            pieces.append(("HEADER_BLOCK" if zone == "HEADER-BLOCK" else zone, Piece(regex, relative, negated)))
+            pieces.append(("HEADER_BLOCK" if zone == "HEADER-BLOCK" else zone,
+                           Piece(regex, relative, negated, chain=decodings)))
     finish()
 
     if not pieces:
         raise Refuse("nothing to match")
     # Pieces into conditions: a relative piece joins the chain before it in
     # the same zone.
-    conds = []      # [zone, regex, negated, fast]
+    conds = []      # [zone, regex, negated, fast, chain]
     for i, (zone, p) in enumerate(pieces):
         followed = i + 1 < len(pieces) and pieces[i + 1][1].relative and pieces[i + 1][0] == zone
         if p.named and not followed:
-            zone, p = p.named[0], Piece(p.named[1], False, p.negated, p.fast)
+            zone, p = p.named[0], Piece(p.named[1], False, p.negated, p.fast, chain=p.chain)
         if p.relative:
-            if not conds or conds[-1][0] != zone or conds[-1][2]:
+            if not conds or conds[-1][0] != zone or conds[-1][2] or conds[-1][4] != p.chain:
                 raise Refuse("a relative match with nothing before it in its buffer")
             conds[-1][1] += p.regex
             conds[-1][3] = conds[-1][3] or p.fast
-        elif [zone, p.regex, p.negated] not in [c[:3] for c in conds]:
+        elif [zone, p.regex, p.negated, p.chain] not in [c[:3] + [c[4]] for c in conds]:
             # Written once: several negated contents on one header each say
             # that header must be there.
-            conds.append([zone, p.regex, p.negated, p.fast])
-    for zone, regex, negated, _ in conds:
+            conds.append([zone, p.regex, p.negated, p.fast, p.chain])
+    for zone, regex, negated, _, _ in conds:
         why = portable(regex)
         if why:
             raise Refuse(f"a pattern using {why}")
@@ -564,17 +596,21 @@ def convert(paths, since):
 def write_set(rules, set_id, set_name):
     out = ["[set]", f'id      = "{set_id}"', f'name    = {toml_string(set_name)}', "version = 1", ""]
     for r in sorted(rules, key=lambda r: r["id"]):
-        (zone, pattern, negated, _), *more = r["conds"]
+        (zone, pattern, negated, _, chain), *more = r["conds"]
         out += ["[[rules]]", f"id          = {r['id']}", f"name        = {toml_string(r['name'][:120])}",
                 f"description = {toml_string(r['description'])}", f'zone        = "{zone}"',
                 f"pattern     = {toml_string(pattern)}"]
         if negated:
             out.append("negate      = true")
+        if chain:
+            out.append(f"transforms  = {toml_names(chain)}")
         out += [f"score       = {r['score']}", 'action      = "score"', ""]
-        for zone, pattern, negated, _ in more:
+        for zone, pattern, negated, _, chain in more:
             out += ["[[rules.and]]", f'zone    = "{zone}"', f"pattern = {toml_string(pattern)}"]
             if negated:
                 out.append("negate  = true")
+            if chain:
+                out.append(f"transforms = {toml_names(chain)}")
             out.append("")
     return "\n".join(out)
 
@@ -592,6 +628,8 @@ alert http $EXTERNAL_NET any -> $HOME_NET any (msg:"GPL low sid"; flow:to_server
 alert http $HOME_NET any -> $EXTERNAL_NET any (msg:"ET outbound"; flow:to_server; http.uri; content:"/beacon"; sid:2040000; rev:1;)
 alert http any any -> [$HOME_NET,$HTTP_SERVERS] any (msg:"ET lengths"; flow:to_server; http.method; content:"GET"; http.uri; bsize:12; content:"/admin/x.cgi"; urilen:>8; metadata:created_at 2025_01_01, signature_severity Major; sid:2060001; rev:1;)
 alert http any any -> $HOME_NET any (msg:"ET header order"; flow:to_server; http.header; content:"TE|3a 20|deflate|0d 0a|Connection|3a 20|TE"; startswith; content:"User-Agent|3a 20|"; within:100; pcre:"/^[a-z]{3}\//R"; http.request_line; content:"GET //"; startswith; fast_pattern; http.protocol; content:"HTTP/1.0"; metadata:created_at 2022_01_01, signature_severity Major; sid:2060002; rev:1;)
+alert http any any -> $HOME_NET any (msg:"ET stripped"; flow:to_server; http.request_body; strip_whitespace; content:"<java.lang.ProcessBuilder>"; fast_pattern; http.host; dotprefix; content:".evil.example"; endswith; metadata:created_at 2022_01_01, signature_severity Major; sid:2060004; rev:1;)
+alert http any any -> $HOME_NET any (msg:"ET base64"; flow:to_server; http.request_body; content:"SAMLResponse="; base64_decode:relative; base64_data; content:"<samlp:Response"; http.uri; content:"/saml/acs"; metadata:created_at 2022_01_01, signature_severity Major; sid:2060005; rev:1;)
 alert http any any -> $HOME_NET any (msg:"ET lowered"; flow:to_server; http.uri; to_lowercase; content:"/cgi-bin/admin"; pcre:"/\.cgi$/"; http.header; content:"X-Thing|3a 20|bad"; pcre:"/^Accept\x3a\x20[^\r\n]+evil/Hm"; metadata:created_at 2022_01_01, signature_severity Major; sid:2060003; rev:1;)
 '''
 
@@ -608,7 +646,19 @@ def self_test():
     try:
         rules, refused, stats = convert([path], 2015)
         by = {r["id"]: r for r in rules}
-        check(set(by) == {2018277, 2050001, 2034647, 2060001, 2059000, 2060002, 2060003}, f"converted {sorted(by)}")
+        check(set(by) == {2018277, 2050001, 2034647, 2060001, 2059000, 2060002, 2060003, 2060004, 2060005},
+              f"converted {sorted(by)}")
+        st = {c[0]: c for c in by[2060004]["conds"]} if 2060004 in by else {}
+        check(st.get("BODY", [0, 0, 0, 0, []])[4] == ["removeWhitespace"], f"strip_whitespace is named: {st}")
+        check(st.get("HEADER:Host", [0, 0, 0, 0, []])[4] == ["dotPrefix"], "dotprefix is named")
+        b6 = by[2060005]["conds"] if 2060005 in by else []
+        check(["BODY", "SAMLResponse=", False] in [c[:3] for c in b6 if not c[4]],
+              f"the content before base64_decode reads the body as it is: {b6}")
+        check(any(c[0] == "BODY" and c[1] == "<samlp:Response" and c[4] == ["base64Runs"] for c in b6),
+              "base64_data reads the body's base64, decoded")
+        text = write_set([by[2060004]], "t", "T") if 2060004 in by else ""
+        check("transforms  = ['removeWhitespace']" in text or "transforms = ['removeWhitespace']" in text,
+              f"the decodings are written: {text}")
         ho = {c[0]: c for c in by[2060002]["conds"]} if 2060002 in by else {}
         check(ho.get("HEADER_BLOCK", [0, ""])[1].startswith("^(?i:TE): deflate\\x0d\\x0a(?i:Connection): TE(?s:.{0,"),
               f"lines of the header block, names in any case, and the content within 100 after: {ho.get('HEADER_BLOCK')}")

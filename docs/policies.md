@@ -310,6 +310,42 @@ A zone EasyWAF does not recognise is refused when a rule is saved. A rule set
 written for a newer EasyWAF, using a zone this one does not read, is shown on
 the policy's rule sets as needing an upgrade and cannot be applied.
 
+### Decoding a rule names
+
+A rule written against text decoded further than that — a shell command with
+its quotes taken out, SQL with its comments replaced — names the decodings in
+`transforms`, and its pattern is matched against each form of each value with
+them applied, in order, and not against the forms themselves:
+
+```toml
+[[rules]]
+id         = 990100
+name       = "A shell, however it is quoted"
+zone       = "ARG|COOKIE"
+pattern    = '/bin/(?:ba|z)?sh'
+transforms = ["cmdLine"]
+score      = 10
+action     = "score"
+```
+
+| Decoding | What it does |
+|---|---|
+| `cmdLine` | a command as a shell runs it: quotes, `\` and `^` dropped, `,` `;` and runs of spaces one space, a space before `/` or `(` dropped, lowercased |
+| `replaceComments` | each `/* … */` one space |
+| `removeCommentsChar` | the markers `/*` `*/` `<!--` `-->` `--` `#` removed, what they enclosed kept |
+| `removeWhitespace`, `compressWhitespace`, `trim` | whitespace removed, made one space, or trimmed from the ends |
+| `base64Decode` | the value as base64; one that is not decodes to nothing |
+| `base64Runs` | every run of base64 in the value, decoded, one to a line |
+| `escapeSeqDecode` | C escapes — `\n`, `\x41`, `\101` — as what they stand for |
+| `urlDecode`, `urlDecodeUni`, `htmlEntityDecode`, `jsDecode`, `cssDecode`, `removeNulls`, `normalizePath`, `normalizePathWin`, `lowercase` | as the forms apply them, for a rule that needs one after another decoding |
+| `dotPrefix` | a `.` put in front, for matching a host and its subdomains |
+| `multiMatch` | not a decoding: the pattern is also matched before the first decoding and after each one |
+
+A condition in `[[rules.and]]` takes `transforms` too. The rules converted
+from OWASP CRS and ET Open name them where CRS's `t:` actions and Suricata's
+transforms go beyond the forms. A rule set naming a decoding this version does
+not apply is shown as needing an upgrade and cannot be applied.
+
 ### Several conditions
 
 A rule can have **more than one condition, and matches only when every one

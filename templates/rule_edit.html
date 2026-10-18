@@ -119,6 +119,13 @@
                         <span class="help-block" id="patternHelp" style="color:#999;font-size:11px">
                             Rust regex syntax. Case-insensitive flag: <code>(?i)</code>
                         </span>
+                        {% if transforms %}
+                        <p class="help-block" style="margin:6px 0 0">
+                            <i class="fa fa-filter"></i> <strong>Decoded first:</strong>
+                            {% for t in transforms %}<code>{{ t }}</code>{% if not loop.last %} → {% endif %}{% endfor %}.
+                            The pattern is matched against each value with these applied, in order.
+                        </p>
+                        {% endif %}
                         {% if negate %}
                         <p class="text-warning" style="margin:6px 0 0">
                             <i class="fa fa-exchange"></i> <strong>Negated:</strong> this condition holds when
@@ -131,12 +138,13 @@
                     <div class="form-group">
                         <label>And every one of these <small class="text-muted">(all must hold for the rule to match)</small></label>
                         <table class="table table-condensed" style="margin-bottom:0">
-                            <thead><tr><th style="width:30%">Zone</th><th>Pattern</th><th style="width:1%"></th></tr></thead>
+                            <thead><tr><th style="width:25%">Zone</th><th>Pattern</th><th style="width:20%">Decoded first</th><th style="width:1%"></th></tr></thead>
                             <tbody>
                                 {% for c in conditions %}
                                 <tr>
                                     <td><code>{{ c.zone }}</code></td>
                                     <td><code style="word-break:break-all">{{ c.pattern }}</code></td>
+                                    <td>{% for t in c.transforms %}<code>{{ t }}</code>{% if not loop.last %} → {% endif %}{% endfor %}</td>
                                     <td>{% if c.negate %}<span class="label label-warning" title="Holds when the pattern matches nothing">not</span>{% endif %}</td>
                                 </tr>
                                 {% endfor %}

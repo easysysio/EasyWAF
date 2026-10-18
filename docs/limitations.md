@@ -66,14 +66,18 @@ Current as of **1.4.0**.
 - **No exclusion by argument.** An exclusion silences a rule on a path or for a
   client, not on one argument, so a rich-text field that trips a rule is
   excluded with the whole path. Not scheduled; the obvious step after 1.2.0.
-- **Some rule transformations are still not implemented.** HTML entity,
-  JavaScript, CSS and `%uHHHH` decoding and path normalisation are applied, so
-  rules assuming those are matched against decoded text. Rules assuming
-  `cmdLine`, `replaceComments`, `removeWhitespace` or `escapeSeqDecode` are
-  still refused by the converter rather than shipped broken, so an attack
-  hidden behind one of *those* encodings is not caught. `base64Decode` is
-  excluded deliberately: decoding base64 anywhere in a request would match
-  ordinary payloads — an image upload, a JWT, a session blob.
+- **Some rule transformations are still not implemented.** Every value is
+  matched HTML-entity, JavaScript, CSS and `%uHHHH` decoded and with its path
+  normalised, and a rule can name `cmdLine`, `replaceComments`,
+  `removeWhitespace`, `base64Decode`, `escapeSeqDecode` and the rest of
+  [the decodings](policies.md#decoding-a-rule-names) to be matched after.
+  `sqlHexDecode`, `removeComments`, `hexDecode` and Suricata's `xor` and
+  `pcrexform` are not applied, so the rules assuming them are still refused by
+  the converters rather than shipped broken. Base64 is decoded only for a rule
+  that names it: decoding it everywhere would match ordinary payloads — an image
+  upload, a JWT, a session blob.
+- **A rule's decodings are not edited in the interface.** They are shown on its
+  page, beside its conditions.
 - **Traffic history holds no headers or bodies** — method, host, path, country
   and verdict only, and the path without its query string. A new rule cannot be
   replayed against past traffic to see what it would have matched. The
@@ -97,14 +101,14 @@ Current as of **1.4.0**.
   Validation always arrives on port 80, so the host must be reachable there from
   the internet.
 - **No high availability.** No configuration sync between nodes. Scheduled for
-  **1.5.0**.
+  **1.6.0**.
 - **No list of proxy, VPN or hosting addresses.** Every credible dataset is
   commercial, and the cloud providers' own address files may not be
   redistributed. The [published lists](ip-lists.md#published-lists) cover
   hijacked netblocks, compromised hosts and Tor exits only.
 - **No feed of your own.** A published list comes from the signed channel; there
   is no way yet to point EasyWAF at another list's URL.
-- **No rate limiting.** Scheduled for **1.6.0**. An address that attacks
+- **No rate limiting.** Scheduled for **1.7.0**. An address that attacks
   repeatedly is handled by [Smart Protect](smart-protect.md), which counts
   refusals, not requests.
 - **Smart Protect blocks are per node and do not survive a restart.** They are
@@ -120,7 +124,7 @@ Current as of **1.4.0**.
   Protect's blocks are.
 - **No allowlist of an application's own URLs.** Every rule describes what an
   attack looks like; nothing yet learns what the application legitimately
-  exposes and refuses the rest. Scheduled for **1.7.0**.
+  exposes and refuses the rest. Scheduled for **1.8.0**.
 
 ## Decided, not missing
 
