@@ -6,7 +6,7 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
-## [1.5.0] — unreleased
+## [1.5.0] — 2026-10-18
 
 ### Added
 - **A rule names the decodings it is matched after.** `transforms` on a rule, or on one of its conditions, applies `cmdLine`, `replaceComments`, `removeCommentsChar`, `removeWhitespace`, `compressWhitespace`, `trim`, `base64Decode`, `base64Runs`, `escapeSeqDecode`, `dotPrefix` and the decodings the forms already make, in order, to each form of each value; `multiMatch` also matches before the first and after each one. A rule set naming one requires EasyWAF 1.5.0. Shown on the rule's page, carried by clone, copy, rollback, export and import.
