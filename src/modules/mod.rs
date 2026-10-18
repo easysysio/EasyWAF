@@ -19,6 +19,7 @@ pub mod geoip;
 pub mod targets;
 pub mod traffic;
 pub mod transforms;
+pub mod values;
 pub mod waf;
 
 use axum::http::StatusCode;

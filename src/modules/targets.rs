@@ -96,12 +96,20 @@ pub struct CompiledCondition {
 }
 
 impl CompiledCondition {
-    /// `Err` says why the condition cannot be run by this version.
+    /// `Err` says why the condition cannot be run by this version. A list the
+    /// pattern names is read as its default; see `with_values`.
     pub fn new(c: &Condition) -> Result<Self, String> {
+        Self::with_values(c, &super::values::defaults())
+    }
+
+    /// As `new`, with the lists a policy sets.
+    pub fn with_values(c: &Condition, values: &std::collections::HashMap<String, String>) -> Result<Self, String> {
         let targets = parse_zone(&c.zone).ok_or(format!("the zone {:?} is not one this version reads", c.zone))?;
         let chain = parse_list(&c.transforms)
             .map_err(|name| format!("the decoding {name:?} is not one this version applies"))?;
-        let re = regex::Regex::new(&c.pattern)
+        let pattern = super::values::substitute(&c.pattern, values)
+            .map_err(|name| format!("the list {name:?} is not one this version knows"))?;
+        let re = regex::Regex::new(&pattern)
             .map_err(|e| format!("a pattern does not compile: {}", e.to_string().lines().last().unwrap_or("").trim()))?;
         Ok(CompiledCondition { targets, re, negate: c.negate, chain })
     }

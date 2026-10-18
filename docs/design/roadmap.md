@@ -41,9 +41,20 @@ next minor, so a release's notes stay about its feature.
 | 1.3.4 | CRS's chained rules converted as rules with several conditions, and its negated operators where the variable holds one value; four more protocol-enforcement rules reach the sets — **released 2026-10-15** |
 | 1.4.0 | The header block, the request line and the protocol as zones, and the ET Open and CRS rules that read them — **released 2026-10-15** |
 | 1.5.0 | Decodings a rule names — `cmdLine`, `replaceComments`, `base64Decode` and the rest — and the CRS and ET Open rules that need them — **released 2026-10-18** |
-| 1.6.0 | Configuration sync between nodes — HA (see [ha-config-sync.md](ha-config-sync.md)) |
-| 1.7.0 | Per-site rate limiting (see [rate-limiting.md](rate-limiting.md)) |
-| 1.8.0 | Learning and hardening modes — URL allowlisting (see [url-learning.md](url-learning.md)) |
+| 1.6.0 | Lists a policy sets — allowed methods, content types, charsets and HTTP versions, restricted extensions and headers — and CRS's rules on them as an optional request policy set |
+| 1.7.0 | Configuration sync between nodes — HA (see [ha-config-sync.md](ha-config-sync.md)) |
+| 1.8.0 | Per-site rate limiting (see [rate-limiting.md](rate-limiting.md)) |
+| 1.9.0 | Learning and hardening modes — URL allowlisting (see [url-learning.md](url-learning.md)) |
+
+## Policy lists for CRS's configured values before HA (Yariv, 2026-10-18)
+
+CRS's method allowlist, content type, charset and HTTP version checks, and its
+restricted extensions and headers compare a request with lists CRS configures
+(`tx.allowed_methods`); a pattern alone cannot read them. As lists each policy
+sets, the six rules convert, in an optional set: CRS's defaults refuse WebDAV's
+methods and an upload's `application/octet-stream`, which is what Yariv's own
+Nextcloud sends. Put as 1.6.0; HA, rate limiting and URL learning move to
+1.7.0, 1.8.0 and 1.9.0.
 
 ## Decoding per rule before HA (Yariv, 2026-10-18)
 

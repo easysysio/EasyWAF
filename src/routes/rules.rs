@@ -173,7 +173,7 @@ pub async fn post_rule_create(
     let redirect = format!("/policy/{}/rules", policy_name);
 
     // Validate the regex pattern before saving to avoid storing broken rules.
-    if regex::Regex::new(&form.pattern).is_err() {
+    if crate::modules::values::check(&form.pattern).is_err() {
         return Ok(Redirect::to(
             &format!("{}?error=Invalid+regex+pattern", redirect)
         ).into_response());
@@ -495,6 +495,13 @@ pub async fn install_set(
         return Err(AppError::Refused(format!(
             "{set_id} v{version} needs a newer EasyWAF: rule {id} reads the zone {zone:?}, which this \
              version ({}) does not. Upgrade, then apply it.",
+            env!("CARGO_PKG_VERSION")
+        )));
+    }
+    if let Some((id, name)) = file.rules.iter().find_map(|r| r.unknown_list().map(|t| (r.id, t))) {
+        return Err(AppError::Refused(format!(
+            "{set_id} v{version} needs a newer EasyWAF: rule {id} reads the list {name:?}, which this \
+             version ({}) does not know. Upgrade, then apply it.",
             env!("CARGO_PKG_VERSION")
         )));
     }
@@ -1085,6 +1092,15 @@ impl RuleFileDef {
             .join(",")
     }
 
+    /// The first list the rule's patterns name, its conditions' included, that
+    /// this version does not know.
+    fn unknown_list(&self) -> Option<&str> {
+        std::iter::once(self.pattern.as_str())
+            .chain(self.and.iter().map(|c| c.pattern.as_str()))
+            .flat_map(crate::modules::values::named_in)
+            .find(|n| crate::modules::values::find(n).is_none())
+    }
+
     /// The first decoding the rule names, its conditions' included, that this
     /// version does not apply.
     fn unknown_transform(&self) -> Option<&str> {
@@ -1106,7 +1122,7 @@ impl RuleFileDef {
     /// Whether this version reads every zone the rule names and applies every
     /// decoding.
     fn readable(&self) -> bool {
-        self.unreadable_zone().is_none() && self.unknown_transform().is_none()
+        self.unreadable_zone().is_none() && self.unknown_transform().is_none() && self.unknown_list().is_none()
     }
 }
 
@@ -2177,7 +2193,7 @@ pub async fn post_rule_update_global(
 ) -> Result<Response> {
 
     // Reject invalid regex so we never store a broken pattern.
-    if regex::Regex::new(&form.pattern).is_err() {
+    if crate::modules::values::check(&form.pattern).is_err() {
         return Ok(Redirect::to(
             &format!("/rules/{}/edit?error=Invalid+regex+pattern", id)
         ).into_response());
@@ -2549,7 +2565,7 @@ pub async fn post_custom_rule_create(
 ) -> Result<Response> {
 
     // Reject an invalid regex before saving.
-    if regex::Regex::new(&form.pattern).is_err() {
+    if crate::modules::values::check(&form.pattern).is_err() {
         return Ok(Redirect::to("/rules/new?error=Invalid+regex+pattern").into_response());
     }
     let Some(zone) = crate::modules::targets::canonical(&form.zone) else {

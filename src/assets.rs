@@ -763,12 +763,19 @@ mod tests {
         ctx.insert("candidates", &vec![serde_json::json!({
             "value": "e:913015", "label": "913015 — Scanner probe", "set": "owasp-scanners" })]);
 
+        ctx.insert("values", &vec![serde_json::json!({
+            "name": "allowed_methods", "label": "Allowed methods", "help": "Methods a request may use.",
+            "value": "GET HEAD POST OPTIONS PROPFIND", "changed": true })]);
+        ctx.insert("values_read_by", &6);
         let html = tera.render("policy_settings.html", &ctx)
             .unwrap_or_else(|e| panic!("policy_settings.html failed to render: {e:#?}"));
 
         for (what, why) in [
             ("tab-rules",       "no rules tab"),
             ("tab-countries",   "no countries tab"),
+            ("tab-request",     "no request policy tab"),
+            ("value_allowed_methods", "a list cannot be edited here"),
+            ("<code>%{allowed_methods}</code>", "a list's name is not shown as a rule names it"),
             ("tab-iplists",     "no IP lists tab"),
             ("tab-exclusions",  "no exclusions tab"),
             ("geoip_countries", "country rules cannot be edited here"),

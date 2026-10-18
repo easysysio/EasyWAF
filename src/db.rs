@@ -91,6 +91,7 @@ pub async fn init(database_url: &str) -> SqlitePool {
     run_migration_040(&pool).await;
     run_migration_041(&pool).await;
     run_migration_042(&pool).await;
+    run_migration_043(&pool).await;
 
     // After the migrations, so the version recorded is the one whose schema
     // this now is. A snapshot carries it, and a restore reads it.
@@ -98,6 +99,17 @@ pub async fn init(database_url: &str) -> SqlitePool {
 
     info!("Database ready: {}", database_url);
     pool
+}
+
+// ─── run_migration_043 ───────────────────────────────────
+
+/// The lists a policy sets for the rules that read them. Idempotent.
+async fn run_migration_043(pool: &SqlitePool) {
+    let sql = include_str!("../migrations/043_policy_values.sql");
+    sqlx::raw_sql(sql)
+        .execute(pool)
+        .await
+        .unwrap_or_else(|e| panic!("Migration 043 failed: {}", e));
 }
 
 // ─── run_migration_042 ───────────────────────────────────

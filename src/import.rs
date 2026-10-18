@@ -246,6 +246,12 @@ async fn check(db: &SqlitePool, doc: &Document, gui_ports: &[u16], p: &mut Plan)
         if pol.score_threshold < 1 { b.push(format!("{who}: the score threshold must be at least 1")); }
         if pol.challenge_threshold < 0 { b.push(format!("{who}: the challenge threshold cannot be negative")); }
         check_scope(&who, &pol.countries_mode, &pol.countries, &pol.addresses, &pol.lists, b, w);
+        for name in pol.values.keys() {
+            if crate::modules::values::find(name).is_none() {
+                b.push(format!("{who}: the list {name:?} is not one this EasyWAF knows — a misspelling, \
+                                or a file from a newer EasyWAF"));
+            }
+        }
 
         let mut held = HashSet::new();
         for s in &pol.rule_sets {
@@ -282,9 +288,8 @@ async fn check(db: &SqlitePool, doc: &Document, gui_ports: &[u16], p: &mut Plan)
             if !ACTIONS.contains(&r.action.as_str()) {
                 b.push(format!("{rw}: action {:?} is not score or block", r.action));
             }
-            if let Err(e) = regex::Regex::new(&r.pattern) {
-                b.push(format!("{rw}: the pattern does not compile ({}) — the engine would skip it \
-                                silently", e.to_string().lines().last().unwrap_or("").trim()));
+            if let Err(e) = crate::modules::values::check(&r.pattern) {
+                b.push(format!("{rw}: the pattern does not compile ({e}) — the engine would skip it silently"));
             }
             for name in r.transforms.iter().chain(r.and.iter().flat_map(|c| &c.transforms)) {
                 if crate::modules::transforms::Transform::parse(name).is_none() {
@@ -296,7 +301,7 @@ async fn check(db: &SqlitePool, doc: &Document, gui_ports: &[u16], p: &mut Plan)
                 if crate::modules::targets::parse_zone(&c.zone).is_none() {
                     b.push(format!("{rw}: a condition's zone {:?} is not one this EasyWAF reads", c.zone));
                 }
-                if regex::Regex::new(&c.pattern).is_err() {
+                if crate::modules::values::check(&c.pattern).is_err() {
                     b.push(format!("{rw}: a condition's pattern does not compile"));
                 }
             }
@@ -540,6 +545,8 @@ fn diff_policies(current: &Document, doc: &Document) -> Vec<Item> {
         field(&mut d, "countries", countries(&a.countries).as_str(), countries(&b.countries).as_str());
         let on_off = |on: bool| if on { "on" } else { "off" };
         field(&mut d, "Smart Protect", on_off(a.smart_protect), on_off(b.smart_protect));
+        let lists = |p: &export::Policy| p.values.iter().map(|(k, v)| format!("{k} = {v}")).collect::<Vec<_>>();
+        set_change(&mut d, "request policy lists", &lists(a), &lists(b), |s| s.split(" = ").next().unwrap_or("").to_string());
         let sets = |p: &export::Policy| p.rule_sets.iter().map(|s| (s.id.clone(), s.version)).collect::<Vec<_>>();
         set_change(&mut d, "rule sets", &sets(a), &sets(b), |(id, v)| format!("{id} v{v}"));
         set_change(&mut d, "rules switched off", &a.rules_off, &b.rules_off, |n| n.to_string());
@@ -749,9 +756,14 @@ pub async fn apply(work: &SqlitePool, doc: &Document, importer: &str) -> Result<
         // Emptied, then filled from the file: the policy is what the file
         // says, not what the file says added to what was here.
         for table in ["policy_rule_exclusions", "waf_rules", "policy_rule_sets",
-                      "policy_rule_set_previous", "ip_rules", "ip_list_feeds"] {
+                      "policy_rule_set_previous", "ip_rules", "ip_list_feeds", "policy_values"] {
             sqlx::query(&format!("DELETE FROM {table} WHERE policy_id = ?"))
                 .bind(id).execute(work).await.map_err(err)?;
+        }
+        for (name, value) in &p.values {
+            sqlx::query("INSERT INTO policy_values (policy_id, name, value) VALUES (?, ?, ?)")
+                .bind(id).bind(name).bind(crate::modules::values::tidy(value))
+                .execute(work).await.map_err(err)?;
         }
 
         // Sets through the verified path the Rule Sets page uses.

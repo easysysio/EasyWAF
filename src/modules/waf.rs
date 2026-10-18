@@ -1223,6 +1223,20 @@ fn runnable(id: i64, name: &str, zone: &str, transforms: &[String]) -> (Option<V
     }
 }
 
+/// A pattern with the policy's lists in it. No targets for one naming a list
+/// this version does not know, which is never run.
+fn with_values(id: i64, name: &str, targets: Option<Vec<Target>>, pattern: &str,
+               values: &std::collections::HashMap<String, String>) -> (Option<Vec<Target>>, String) {
+    match crate::modules::values::substitute(pattern, values) {
+        Ok(p) => (targets, p),
+        Err(list) => {
+            tracing::warn!(rule_id = id, rule = %name, list = %list,
+                           "WAF rule reads a list this version does not know, and is not run");
+            (None, pattern.to_string())
+        }
+    }
+}
+
 async fn get_rules(db: &SqlitePool, policy_id: i64) -> Vec<RuleRow> {
     let rows = sqlx::query!(
         "SELECT id       as \"id!\",
@@ -1243,6 +1257,7 @@ async fn get_rules(db: &SqlitePool, policy_id: i64) -> Vec<RuleRow> {
     .fetch_all(db)
     .await
     .unwrap_or_default();
+    let values = crate::modules::values::of_policy(db, policy_id).await;
 
     rows.into_iter()
         .map(|r| {
@@ -1250,10 +1265,12 @@ async fn get_rules(db: &SqlitePool, policy_id: i64) -> Vec<RuleRow> {
             // read: a zone or a decoding this version does not know is not
             // run, and said so, rather than read as everything or as nothing.
             let (targets, chain) = runnable(r.id, &r.name, &r.zone, &transforms_from_column(&r.transforms));
+            let (targets, pattern) = with_values(r.id, &r.name, targets, &r.pattern, &values);
             let and: Vec<RuleCondition> = match read_conditions(&r.conditions) {
                 Some(list) => list.into_iter().map(|c| {
                     let (targets, chain) = runnable(r.id, &r.name, &c.zone, &c.transforms);
-                    RuleCondition { targets, pattern: c.pattern, negate: c.negate, chain }
+                    let (targets, pattern) = with_values(r.id, &r.name, targets, &c.pattern, &values);
+                    RuleCondition { targets, pattern, negate: c.negate, chain }
                 }).collect(),
                 None => {
                     tracing::warn!(rule_id = r.id, rule = %r.name,
@@ -1269,7 +1286,7 @@ async fn get_rules(db: &SqlitePool, policy_id: i64) -> Vec<RuleRow> {
                 name:        r.name,
                 zone:        r.zone,
                 targets,
-                pattern:     r.pattern,
+                pattern,
                 negate:      r.negate,
                 chain,
                 and,
@@ -2086,6 +2103,61 @@ mod decoded_rules {
         for suffix in ["", "-wal", "-shm"] {
             let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
         }
+    }
+}
+
+/// A rule reading a list reads the policy's, and CRS's default where the
+/// policy sets none.
+#[cfg(test)]
+mod policy_lists {
+    use super::*;
+    use crate::modules::InspectionModule;
+
+    #[tokio::test]
+    async fn a_rule_reads_its_policys_list() {
+        let path = std::env::temp_dir().join(format!("easywaf-lists-{}.db", std::process::id()));
+        let remove = || for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        };
+        remove();
+        let db = crate::db::init(&format!("sqlite://{}", path.display())).await;
+        let policy = sqlx::query("INSERT INTO policies (name, rule_engine, score_threshold) VALUES ('l', 'On', 1000)")
+            .execute(&db).await.unwrap().last_insert_rowid();
+        let site = sqlx::query("INSERT INTO sites (name, server_name, waf_policy_id) VALUES ('l', 'l.example', ?)")
+            .bind(policy).execute(&db).await.unwrap().last_insert_rowid();
+        sqlx::query("INSERT INTO waf_rules (policy_id, name, zone, pattern, negate, score, action, enabled)
+                     VALUES (?, 'method', 'METHOD', '^%{allowed_methods}$', 1, 1, 'score', 1),
+                            (?, 'unknown list', 'METHOD', '^%{allowed_cheeses}$', 0, 1, 'score', 1)")
+            .bind(policy).bind(policy).execute(&db).await.unwrap();
+
+        let waf = WafModule::new(db.clone());
+        let ctx = |method: &str| RequestContext {
+            site_id: site,
+            site_name: "l".into(),
+            client_ip: "203.0.113.9".parse().unwrap(),
+            method: method.into(),
+            path: "/remote.php/dav".into(),
+            query: None,
+            version: axum::http::Version::HTTP_11,
+            headers: axum::http::HeaderMap::new(),
+            body: bytes::Bytes::new(),
+        };
+        let hits = |d: ModuleDecision| match d {
+            ModuleDecision::Alert { findings, .. } => findings.hits.into_iter().map(|h| h.name).collect::<Vec<_>>(),
+            ModuleDecision::Pass => Vec::new(),
+            other => panic!("unexpected {other:?}"),
+        };
+        assert_eq!(hits(waf.inspect(&ctx("PROPFIND")).await), ["method"], "CRS's default allows no PROPFIND");
+        assert!(hits(waf.inspect(&ctx("GET")).await).is_empty());
+
+        sqlx::query("INSERT INTO policy_values (policy_id, name, value) VALUES (?, 'allowed_methods', 'GET PROPFIND')")
+            .bind(policy).execute(&db).await.unwrap();
+        // The configuration is read again once its generation has moved on.
+        tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+        assert!(hits(waf.inspect(&ctx("PROPFIND")).await).is_empty(), "the policy's own list was not read");
+        assert_eq!(hits(waf.inspect(&ctx("POST")).await), ["method"]);
+        db.close().await;
+        remove();
     }
 }
 

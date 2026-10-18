@@ -119,6 +119,10 @@ pub struct Policy {
     /// from before the switch existed.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub smart_protect: bool,
+    /// The lists it sets for the rules that read them, by name: only those it
+    /// changed from CRS's default.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub values: BTreeMap<String, String>,
     /// Catalogue numbers of rules from installed sets that are switched off.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub rules_off: Vec<i64>,
@@ -633,6 +637,9 @@ pub async fn build(db: &SqlitePool, opts: Options) -> Result<Document, sqlx::Err
             countries_mode: p.get("geoip_mode"),
             countries: split_countries(&p.get::<String, _>("geoip_countries")),
             smart_protect: p.get::<bool, _>("smart_protect"),
+            values: sqlx::query_as::<_, (String, String)>(
+                "SELECT name, value FROM policy_values WHERE policy_id = ? ORDER BY name")
+                .bind(id).fetch_all(db).await?.into_iter().collect(),
             rules_off,
             rule_sets,
             rules,
@@ -939,6 +946,7 @@ pub(crate) mod tests {
                  VALUES (1, 1, '/admin' || char(10) || '/settings', '/admin/health', 1, 1);
             INSERT OR REPLACE INTO settings (key, value) VALUES ('traffic_retention_days', '30');
             INSERT OR REPLACE INTO settings (key, value) VALUES ('syslog_host', 'logs.example.com');
+            INSERT INTO policy_values (policy_id, name, value) VALUES (1, 'allowed_methods', 'GET POST PROPFIND');
         "#).execute(&db).await.expect("estate");
         db
     }
@@ -956,6 +964,8 @@ pub(crate) mod tests {
         assert_eq!(p.rule_sets, [RuleSetRef { id: "owasp-sqli".into(), version: 2 }]);
         assert_eq!(p.rules_off, [942002], "the set rule switched off was not recorded");
         assert_eq!(p.countries, ["CN", "RU"]);
+        assert_eq!(p.values.get("allowed_methods").map(String::as_str), Some("GET POST PROPFIND"),
+                   "the policy's own list did not travel with it");
         // The set's rules travel as the set; the other three in full.
         let names: Vec<&str> = p.rules.iter().map(|r| r.name.as_str()).collect();
         assert_eq!(names, ["XSS script tag", "Block the old admin", "Pingback without a referer"],

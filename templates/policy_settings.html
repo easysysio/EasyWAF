@@ -35,6 +35,9 @@
         <a href="#tab-rules" data-toggle="tab" role="tab">
             <i class="fa fa-book"></i> Rules
             <span class="badge">{{ rule_count }}</span></a></li>
+    <li role="presentation" {% if tab == "request" %}class="active"{% endif %}>
+        <a href="#tab-request" data-toggle="tab" role="tab">
+            <i class="fa fa-sliders"></i> Request policy</a></li>
     <li role="presentation" {% if tab == "countries" %}class="active"{% endif %}>
         <a href="#tab-countries" data-toggle="tab" role="tab">
             <i class="fa fa-globe"></i> Countries</a></li>
@@ -195,6 +198,57 @@
                 </div>
             </div>
         </form>
+    </div>
+
+    <!-- ── Request policy ─────────────────────────────────── -->
+    <div role="tabpanel" class="tab-pane {% if tab == "request" %}active{% endif %}" id="tab-request">
+        <div class="row">
+            <div class="col-lg-8">
+                <div class="panel panel-default">
+                    <div class="panel-heading"><strong><i class="fa fa-sliders"></i> Request policy</strong></div>
+                    <div class="panel-body">
+                        <form method="post" action="/policy/{{ policy.name }}/update">
+                            <input type="hidden" name="back" value="{{ back }}?tab=request">
+                            <input type="hidden" name="request_values" value="1">
+
+                            <p class="help-block" style="margin-top:0">
+                                The methods, content types, charsets and HTTP versions this policy
+                                allows, and the file extensions and headers it refuses. They are read
+                                by the rules of the <strong>OWASP CRS: request policy</strong> set, and
+                                by any rule whose pattern names one as <code>%{allowed_methods}</code>;
+                                nothing else does.
+                                {% if values_read_by == 0 %}
+                                <strong>No enabled rule in this policy reads them</strong>, so
+                                changing them changes nothing until one does.
+                                {% else %}
+                                {{ values_read_by }} enabled rule(s) in this policy read them.
+                                {% endif %}
+                            </p>
+                            <p class="help-block">
+                                Words separated by spaces, matched as written. Each starts as OWASP
+                                CRS's default; empty a box to go back to it.
+                            </p>
+
+                            {% for v in values %}
+                            <div class="form-group">
+                                <label for="value_{{ v.name }}">{{ v.label }}
+                                    {% if v.changed %}<span class="label label-info">changed</span>{% else %}<small class="text-muted">(CRS default)</small>{% endif %}
+                                </label>
+                                <textarea class="form-control" id="value_{{ v.name }}" name="value_{{ v.name }}"
+                                          rows="{% if v.value | length > 120 %}4{% else %}1{% endif %}"
+                                          spellcheck="false" style="font-family:monospace;font-size:12px">{{ v.value }}</textarea>
+                                <p class="help-block" style="margin-bottom:0">{{ v.help }} <code>%{ {{- v.name -}} }</code></p>
+                            </div>
+                            {% endfor %}
+
+                            <button type="submit" class="btn btn-success admin-only">
+                                <i class="fa fa-save"></i> Save
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- ── Countries ──────────────────────────────────────── -->

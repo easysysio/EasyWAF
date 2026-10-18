@@ -346,6 +346,33 @@ from OWASP CRS and ET Open name them where CRS's `t:` actions and Suricata's
 transforms go beyond the forms. A rule set naming a decoding this version does
 not apply is shown as needing an upgrade and cannot be applied.
 
+### Lists a policy sets
+
+A pattern can name one of the policy's lists as `%{allowed_methods}`. When the
+policy's rules are loaded it becomes the list as an alternation of its words,
+each matched as written, so `^%{allowed_methods}$` on `METHOD` is
+`^(?:GET|HEAD|POST|OPTIONS)$` on a policy that has not changed it. The lists are
+on the policy's **Request policy** tab; each starts as OWASP CRS's default, and
+an emptied box goes back to it.
+
+| List | CRS's default |
+|---|---|
+| `allowed_methods` | `GET HEAD POST OPTIONS` |
+| `allowed_content_types` | form, multipart, XML, SOAP and JSON types, AWS's JSON types and `application/*+json` |
+| `allowed_charsets` | `utf-8 iso-8859-1 iso-8859-15 windows-1252` |
+| `allowed_http_versions` | `HTTP/1.0` to `HTTP/3.0` |
+| `restricted_extensions` | about ninety: backups, configuration, keys, databases, scripts — `bak`, `config`, `key`, `sql`, `sh` |
+| `restricted_headers` | `content-encoding proxy lock-token content-range if x-http-method-override x-http-method x-method-override x-middleware-subrequest expect` |
+
+A `*` in a word stands for any run of the characters a media type's name may
+hold: `application/*+json`. The **OWASP CRS: request policy** set is the one
+that reads them: CRS's method allowlist (911100), its content type, charset and
+HTTP version checks (920420, 920480, 920430), and its restricted extensions and
+headers (920440, 920450). It is optional, and CRS's defaults refuse what a
+WebDAV server or a REST API is for — `PUT`, `PROPFIND`, an upload sent as
+`application/octet-stream`, a file ending `.log` — so set the lists before
+applying it to such a site, or run its policy in DetectionOnly first.
+
 ### Several conditions
 
 A rule can have **more than one condition, and matches only when every one

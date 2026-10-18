@@ -17,8 +17,11 @@ What converts
 
 What does not, and why
     a chain link on  A link re-testing what an earlier one matched, or
-    MATCHED_VARS     comparing with a configured value (%{tx...}), has no
-    or %{tx...}      condition to be.
+    MATCHED_VARS     comparing with a configured value (%{tx...}) other than
+    or %{tx...}      the lists a policy sets, has no condition to be. @within
+                     one of those lists reads the policy's (%{allowed_methods}),
+                     and CRS's rules capturing a value to compare with one are
+                     written out in LIST_RULES.
     @detectSQLi      libinjection. A parser, not a pattern; nothing to port.
     @detectXSS
     TX variables     ModSecurity's own scoring machinery. EasyWAF scores in
@@ -349,6 +352,10 @@ def escape_literal_braces(pattern):
     for m in VALID_QUANTIFIER.finditer(pattern):
         keep.add(m.start())
         keep.add(m.end() - 1)
+    # A policy's list, which EasyWAF puts in when it loads the rule.
+    for m in re.finditer(r"%\{[a-z_]+\}", pattern):
+        keep.add(m.start() + 1)
+        keep.add(m.end() - 1)
 
     out, i, in_class = [], 0, False
     while i < len(pattern):
@@ -503,11 +510,71 @@ class Refuse(Exception):
 SINGLE_VALUE = re.compile(r"^(?:METHOD|PATH|URL|ARGS|BODY|XML|REQUEST_LINE|PROTOCOL|(?:HEADER|ARG|COOKIE):.+)$")
 
 
+# CRS's configured lists that an EasyWAF policy sets, by CRS's name and the
+# policy's. A pattern names the policy's as `%{allowed_methods}`; EasyWAF puts
+# in the policy's list when it loads the rule, and CRS's default where the
+# policy sets none. They need EasyWAF 1.6.0.
+POLICY_LISTS = {
+    "allowed_methods": "allowed_methods",
+    "allowed_request_content_type": "allowed_content_types",
+    "allowed_request_content_type_charset": "allowed_charsets",
+    "allowed_http_versions": "allowed_http_versions",
+    "restricted_extensions": "restricted_extensions",
+    "restricted_headers_basic": "restricted_headers",
+}
+
+# CRS's rules that capture a value into a variable and compare the variable
+# with a configured list, each as the conditions it comes to — written out,
+# since a capture is no condition. Each holds only for the links it was written
+# against: a rule CRS has since changed is refused, not converted from the
+# rule it was. As (links as (variables, operator), conditions as (zone,
+# pattern, negated)).
+LIST_RULES = {
+    # The Content-Type's type, up to its parameters, is not an allowed one.
+    "920420": ([("REQUEST_HEADERS:Content-Type", r"@rx ^[^;\s]+"),
+                ("TX:content_type", "!@within %{tx.allowed_request_content_type}")],
+               [("HEADER:Content-Type", r"^[^;\s]", False),
+                ("HEADER:Content-Type", r"(?i)^%{allowed_content_types}(?:[;\s]|$)", True)]),
+    # Its first charset is not an allowed one. What comes before the first is
+    # text without "charset" in it, as a pattern without lookahead can say it:
+    # each "c" that does not go on to spell the word.
+    "920480": ([("REQUEST_HEADERS:Content-Type", r"""@rx charset\s*=\s*[\"']?([^;\"'\s]+)"""),
+                ("TX:content_type_charset", "!@within %{tx.allowed_request_content_type_charset}")],
+               [("HEADER:Content-Type", r"""(?i)charset\s*=\s*["']?[^;"'\s]""", False),
+                ("HEADER:Content-Type",
+                 r"""(?i)^(?:[^c]|c(?:(?:h(?:a(?:r(?:se?)?)?)?)?c)*(?:[^ch]|h[^ac]|ha[^rc]|har[^sc]|hars[^ec]|harse[^tc]))*"""
+                 r"""(?:c(?:(?:h(?:a(?:r(?:se?)?)?)?)?c)*(?:h(?:a(?:r(?:se?)?)?)?)?)?"""
+                 r"""charset\s*=\s*["']?%{allowed_charsets}(?:[;"'\s]|$)""", True)]),
+    # The path's file extension is a restricted one.
+    "920440": ([("REQUEST_BASENAME", r"@rx \.([^.]+)$"),
+                ("TX:EXTENSION", "@within %{tx.restricted_extensions}")],
+               [("PATH", r"(?i)\.%{restricted_extensions}$", False)]),
+    # A header's name is a restricted one.
+    "920450": ([("REQUEST_HEADERS_NAMES", "@rx ^.*$"),
+                ("TX:/^header_name_920450_/", "@within %{tx.restricted_headers_basic}")],
+               [("HEADER_NAME", "(?i)^%{restricted_headers}$", False)]),
+}
+
+
+def list_rule(rid, links):
+    """A LIST_RULES rule's conditions, or Refuse when its links are not the
+    ones the conditions were written from."""
+    expected, conds = LIST_RULES[rid]
+    if [(v.strip(), o.strip()) for v, o, _ in links] != expected:
+        raise Refuse("changed upstream", "compares a captured value with a configured list, and its "
+                                         "links are not the ones EasyWAF's conditions were written for")
+    return [{"zone": z, "pattern": p, "negate": n, "widened": False, "transforms": [], "chain": []}
+            for z, p, n in conds]
+
+
 def operator_pattern(op, base_dir):
     """An operator — @rx, @pm, and those that are a pattern in other words —
     as a regex. Refused for one that is not."""
     name, _, arg = op.partition(" ")
     arg = arg.strip()
+    listed = re.fullmatch(r"%\{tx\.(\w+)\}", arg)
+    if name == "@within" and listed and listed.group(1).lower() in POLICY_LISTS:
+        return "^%{" + POLICY_LISTS[listed.group(1).lower()] + "}$"
     if "%{" in arg:
         raise Refuse("a macro", f"{name} compares with a configured value (%{{...}}), which a "
                                 "pattern cannot read")
@@ -678,7 +745,10 @@ def convert(paths, id_base, include_widened, set_id, set_name, max_paranoia=1, s
             # Each link a condition, all of which must hold — what a chain
             # means.
             try:
-                conds = [link_condition(v, o, a, base_dir) for v, o, a in links]
+                if rid in LIST_RULES:
+                    conds = list_rule(rid, links)
+                else:
+                    conds = [link_condition(v, o, a, base_dir) for v, o, a in links]
             except Refuse as e:
                 stats[e.key] += 1
                 where = f" (in link {next(n for n, (v, o, a) in enumerate(links, 1) if _refused(v, o, a, base_dir))} of a chain of {len(links)})" if len(links) > 1 else ""
@@ -717,8 +787,11 @@ def convert(paths, id_base, include_widened, set_id, set_name, max_paranoia=1, s
             # on the rule's own patterns as a whole: one link alone — a method —
             # matches ordinary traffic by design, and a negated one cannot be
             # judged on the strings below at all.
+            # A rule on a policy's list is judged by the gate, with the lists'
+            # defaults: its patterns alone do not say what it matches.
             judged = [c for c in conds if not c["negate"] and not c.get("present")]
-            if judged and all(matches_ordinary_traffic(c["pattern"]) for c in judged):
+            if judged and not any("%{" in c["pattern"] for c in conds) \
+                    and all(matches_ordinary_traffic(c["pattern"]) for c in judged):
                 stats["matches ordinary traffic"] += 1
                 skipped.append((label, "pattern matches ordinary traffic — it would "
                                        "score every request"))
@@ -735,7 +808,10 @@ def convert(paths, id_base, include_widened, set_id, set_name, max_paranoia=1, s
 
             rules.append({
                 "paranoia": level,
-                "id": new_id, "orig": rid, "name": msg or f"ModSecurity {rid}",
+                # Without what ModSecurity puts in at logging time — the value
+                # that matched — which a rule's name cannot hold.
+                "id": new_id, "orig": rid,
+                "name": re.sub(r"\s*\(?%\{[^}]*\}\)?", "", msg).strip() or f"ModSecurity {rid}",
                 "conds": conds, "score": score,
                 "severity": severity, "widened": widened,
                 "transforms": sorted({t for c in conds for t in c["transforms"]}),

@@ -703,7 +703,7 @@ pub async fn get_policy_edit(
     // Which tab the page opens on. Only the names it has, so a query cannot
     // ask for anything else.
     let tab = flash.tab.as_deref()
-        .filter(|t| matches!(*t, "rules" | "countries" | "iplists" | "exclusions"))
+        .filter(|t| matches!(*t, "rules" | "request" | "countries" | "iplists" | "exclusions"))
         .unwrap_or("policy");
 
     let mut ctx = Context::new();
@@ -802,6 +802,33 @@ pub async fn get_policy_edit(
     ctx.insert("msg",    &flash.msg.unwrap_or_default());
 
     ctx.insert("smart_protect_rule", &crate::smart_protect::rule_text());
+
+    // The lists its rules may read, each as the policy has it, and which of
+    // them it has set rather than taken from CRS.
+    let set: HashMap<String, String> = sqlx::query_as::<_, (String, String)>(
+        "SELECT name, value FROM policy_values WHERE policy_id = ?")
+        .bind(policy_id)
+        .fetch_all(&state.db)
+        .await?
+        .into_iter()
+        .collect();
+    let values: Vec<serde_json::Value> = crate::modules::values::VALUES.iter().map(|v| {
+        let default = crate::modules::values::tidy(v.default);
+        let own = set.get(v.name).map(|s| crate::modules::values::tidy(s));
+        serde_json::json!({
+            "name": v.name, "label": v.label, "help": v.help,
+            "value": own.clone().unwrap_or_else(|| default.clone()),
+            "changed": own.is_some_and(|o| o != default),
+        })
+    }).collect();
+    ctx.insert("values", &values);
+    let reading: i64 = sqlx::query_scalar(
+        r"SELECT COUNT(*) FROM waf_rules WHERE policy_id = ? AND enabled = 1
+           AND (pattern LIKE '%\%{%' ESCAPE '\' OR conditions LIKE '%\%{%' ESCAPE '\')")
+        .bind(policy_id)
+        .fetch_one(&state.db)
+        .await?;
+    ctx.insert("values_read_by", &reading);
 
     Ok((jar, Html(state.tera.render("policy_settings.html", &ctx)?)).into_response())
 }
@@ -921,6 +948,28 @@ pub async fn post_policy_update(
                 .flatten()
         {
             crate::smart_protect::forget_policy(id);
+        }
+    }
+
+    // The lists, each written only where it differs from CRS's default: a
+    // policy that never changed one follows the default a later EasyWAF
+    // carries. An emptied box is the default too — an empty list of allowed
+    // methods would refuse every request.
+    if raw.contains_key("request_values") {
+        let policy_id: i64 = sqlx::query_scalar!(r#"SELECT id as "id!" FROM policies WHERE name = ?"#, name)
+            .fetch_optional(&state.db)
+            .await?
+            .ok_or_else(|| AppError::NotFound(format!("Policy '{name}' not found")))?;
+        for v in crate::modules::values::VALUES {
+            let given = crate::modules::values::tidy(raw.get(&format!("value_{}", v.name)).map(String::as_str).unwrap_or(""));
+            if given.is_empty() || given == crate::modules::values::tidy(v.default) {
+                sqlx::query("DELETE FROM policy_values WHERE policy_id = ? AND name = ?")
+                    .bind(policy_id).bind(v.name).execute(&state.db).await?;
+            } else {
+                sqlx::query("INSERT INTO policy_values (policy_id, name, value) VALUES (?, ?, ?)
+                             ON CONFLICT(policy_id, name) DO UPDATE SET value = excluded.value")
+                    .bind(policy_id).bind(v.name).bind(&given).execute(&state.db).await?;
+            }
         }
     }
 
