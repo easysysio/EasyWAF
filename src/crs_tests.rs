@@ -75,7 +75,7 @@ pub fn run(args: &[String]) -> i32 {
             } else {
                 continue;
             };
-            let fired = rule.conds.iter().all(|c| c.holds(&whole, &parts));
+            let fired = crate::modules::targets::all_hold(&rule.conds, &whole, &parts);
             let entry = checked.entry(rule.id).or_default();
             entry.0 += 1;
             if fired != wants {
@@ -208,6 +208,10 @@ fn request(input: &Yaml) -> Option<RequestContext> {
     if autocomplete && !body.is_empty() && !headers.contains_key(axum::http::header::CONTENT_LENGTH) {
         headers.insert(axum::http::header::CONTENT_LENGTH, axum::http::HeaderValue::from(body.len()));
     }
+    // A body with neither a length nor a transfer coding is one no HTTP/1.1
+    // server reads, and none reaches the rules behind it.
+    let body = if headers.contains_key(axum::http::header::CONTENT_LENGTH)
+        || headers.contains_key(axum::http::header::TRANSFER_ENCODING) { body } else { String::new() };
     Some(RequestContext {
         site_id: 0,
         site_name: "crs".into(),

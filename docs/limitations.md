@@ -57,10 +57,10 @@ Current as of **1.5.0**.
   written as `User-Agent` whatever case they came in, and a repeated header's
   lines sit together after its first, so a rule about the exact case or the
   interleaving of headers sees them as most clients send them.
-- **A condition is a pattern, not a count.** A rule can require several
-  conditions, or that one does not match, but not "more than 255 arguments" or
-  "this header twice". CRS's rules that count are still refused by the
-  converter, as are ET's that need state across requests.
+- **A rule sees one request.** A condition can count what a request holds
+  (`&ARG`) and compare a number, but nothing carries from one request to the
+  next, so ET's rules that need state across requests are refused by the
+  converter. So are CRS's rules comparing one captured value with another.
 - **A rule's conditions are not edited in the interface.** They are shown on
   its page; one with several comes from a rule set or an import.
 - **No exclusion by argument.** An exclusion silences a rule on a path or for a

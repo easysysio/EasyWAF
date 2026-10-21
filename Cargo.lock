@@ -293,6 +293,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "barbacane-libinjection"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "836db2b79f5f4133d5e64aa99254833016ea0e8b74b306bee79db3c9716c8fba"
+dependencies = [
+ "bitflags 2.11.1",
+ "serde_json",
+ "smallvec",
+]
+
+[[package]]
 name = "base16ct"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1077,6 +1088,7 @@ dependencies = [
  "axum",
  "axum-extra",
  "axum-server",
+ "barbacane-libinjection",
  "base64 0.22.1",
  "bcrypt",
  "bytes",

@@ -105,14 +105,18 @@ impl WafModule {
     /// a pattern that does not compile holds nowhere.
     fn holds(&self, rule: &RuleRow, whole: &Whole, parts: &Parts) -> bool {
         let first = (&rule.targets, &rule.pattern, rule.negate, &rule.chain);
-        std::iter::once(first)
+        let mut res = Vec::with_capacity(1 + rule.and.len());
+        for (targets, pattern, negate, chain) in std::iter::once(first)
             .chain(rule.and.iter().map(|c| (&c.targets, &c.pattern, c.negate, &c.chain)))
-            .all(|(targets, pattern, negate, chain)| {
-                let (Some(targets), Some(re)) = (targets, self.compiled_pattern(rule.id, pattern)) else {
-                    return false;
-                };
-                reads(targets, whole, parts, &re, chain) != negate
-            })
+        {
+            let (Some(targets), Some(re)) = (targets, self.compiled_pattern(rule.id, pattern)) else {
+                return false;
+            };
+            res.push((targets.as_slice(), re, negate, chain.as_slice()));
+        }
+        let list: Vec<(&[Target], &Regex, bool, &[Transform])> =
+            res.iter().map(|(t, re, n, c)| (*t, re.as_ref(), *n, *c)).collect();
+        all_hold(&list, whole, parts)
     }
 
     /// This site's configuration, from the cache unless it has changed.
@@ -427,6 +431,60 @@ impl Whole {
             ),
         }
     }
+}
+
+/// Whether each of a rule's conditions holds, in order. A `MATCHED`
+/// condition reads the values the one before it matched, after that one's
+/// decodings and its own; negated, it holds when one of them does not match,
+/// and either way passes on the values it kept to a `MATCHED` after it.
+pub(crate) fn all_hold(conds: &[(&[Target], &Regex, bool, &[Transform])], whole: &Whole, parts: &Parts) -> bool {
+    let mut matched: Option<Vec<String>> = None;
+    for (i, (targets, re, negate, chain)) in conds.iter().enumerate() {
+        let passes_on = conds.get(i + 1).is_some_and(|c| c.0 == [Target::Matched]);
+        if *targets == [Target::Matched] {
+            let Some(before) = matched.take() else { return false };
+            let own: Vec<Transform> = chain.iter().copied().filter(|t| *t != Transform::Parsed).collect();
+            let kept: Vec<String> = before.iter()
+                .flat_map(|v| crate::modules::transforms::apply_all(&own, v))
+                .filter(|v| re.is_match(v) != *negate)
+                .collect();
+            if kept.is_empty() {
+                return false;
+            }
+            matched = Some(kept);
+        } else if passes_on {
+            // A negated condition matched nothing, so has nothing to pass on.
+            if *negate {
+                return false;
+            }
+            let hits = matching(targets, whole, parts, re, chain);
+            if hits.is_empty() {
+                return false;
+            }
+            matched = Some(hits);
+        } else if reads(targets, whole, parts, re, chain) == *negate {
+            return false;
+        }
+    }
+    true
+}
+
+/// The forms of the values `targets` reads that `re` matches, after `chain`.
+fn matching(targets: &[Target], whole: &Whole, parts: &Parts, re: &Regex, chain: &[Transform]) -> Vec<String> {
+    let except: Vec<Target> = targets.iter().filter(|t| matches!(t, Target::Except(_))).cloned().collect();
+    let parsed = chain.first() == Some(&Transform::Parsed);
+    targets.iter()
+        .filter(|t| !matches!(t, Target::Except(_)))
+        .flat_map(|t| {
+            let forms = forms_of(t, &except, parsed, whole, parts);
+            if chain.is_empty() {
+                forms
+            } else {
+                parts.decoded(t, &except, chain, || forms).to_vec()
+            }
+        })
+        .filter(|f| re.is_match(f))
+        .collect()
 }
 
 /// Every form `target` is read in, less `except`, for decoding further; with
@@ -776,6 +834,16 @@ fn hex_value(digits: &[u8]) -> Option<u32> {
 /// `＜` the `<` an XSS rule is looking for rather than an unrelated byte.
 /// Everything else keeps its low byte, as libmodsecurity does.
 fn fold_wide(code: u32) -> u8 {
+    // The best fit ModSecurity's code page 20127 map gives the guillemets
+    // and the typographic quotes, which an XSS or SQL payload uses as angle
+    // brackets and quotes.
+    match code {
+        0x00AB | 0x2039 => return b'<',
+        0x00BB | 0x203A => return b'>',
+        0x2018 | 0x2019 => return b'\'',
+        0x201C | 0x201D => return b'"',
+        _ => {}
+    }
     if code & 0xFF00 == 0xFF00 {
         ((code & 0xFF) as u8).wrapping_add(0x20)
     } else {
@@ -2228,7 +2296,7 @@ mod set_cases {
     impl Rule {
         /// As the engine decides it: every condition holds.
         fn holds(&self, whole: &Whole, parts: &Parts) -> bool {
-            self.conds.iter().all(|c| c.holds(whole, parts))
+            crate::modules::targets::all_hold(&self.conds, whole, parts)
         }
     }
 

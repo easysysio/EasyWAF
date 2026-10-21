@@ -30,6 +30,8 @@
         <option value="HEADER_LINE">each header as a line, Name: value</option>
         <option value="REQUEST">the whole request as one text</option>
         <option value="HEADER|!HEADER:Cookie">every header but one — ! takes a name out</option>
+        <option value="&amp;ARG">how many arguments there are, as a number</option>
+        <option value="BASENAME">the path's last segment</option>
     </datalist>
     {% if not zone_readonly | default(value=false) %}
     <p class="help-block" style="margin-bottom:0">

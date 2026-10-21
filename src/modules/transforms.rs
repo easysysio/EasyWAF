@@ -20,6 +20,10 @@
 // Nor is `none`: first in a chain, it says the chain starts
 // from each value as ModSecurity's parsers hand it over —
 // once, rather than in every form — as `t:none` does.
+// `length` is a value's length in bytes, as a number a
+// pattern compares; `detectSQLi` and `detectXSS` are
+// libinjection's verdict on it — the injection's fingerprint,
+// or nothing — so the pattern `.` is ModSecurity's operator.
 // =========================================================
 
 use super::waf::{css_decode, html_entity_decode, js_decode, normalize_path, normalize_path_win,
@@ -48,6 +52,9 @@ pub enum Transform {
     Trim,
     DotPrefix,
     Utf8ToUnicode,
+    Length,
+    DetectSqli,
+    DetectXss,
     MultiMatch,
     /// `none`: the chain starts from each value as parsed.
     Parsed,
@@ -77,6 +84,9 @@ const NAMES: &[(&str, Transform)] = &[
     ("trim", Trim),
     ("dotPrefix", DotPrefix),
     ("utf8toUnicode", Utf8ToUnicode),
+    ("length", Length),
+    ("detectSQLi", DetectSqli),
+    ("detectXSS", DetectXss),
     ("multiMatch", MultiMatch),
     ("none", Parsed),
 ];
@@ -116,6 +126,19 @@ impl Transform {
             Trim               => s.trim_matches(is_space).to_string(),
             DotPrefix          => format!(".{s}"),
             Utf8ToUnicode      => utf8_to_unicode(s),
+            Length             => s.len().to_string(),
+            DetectSqli         => {
+                let found = libinjectionrs::detect_sqli(s.as_bytes());
+                match found.fingerprint {
+                    Some(fp) if found.is_injection() => fp.to_string(),
+                    _ => String::new(),
+                }
+            }
+            DetectXss          => if libinjectionrs::detect_xss(s.as_bytes()).is_injection() {
+                "xss".to_string()
+            } else {
+                String::new()
+            },
             MultiMatch | Parsed => s.to_string(),
         }
     }
@@ -132,6 +155,12 @@ pub fn parse_list(names: &[String]) -> Result<Vec<Transform>, String> {
 /// what each decoding leaves too.
 pub fn apply_all(chain: &[Transform], s: &str) -> Vec<String> {
     let every = chain.contains(&MultiMatch);
+    // A measure at the end of a chain — a length, libinjection's verdict — is
+    // of each value the multiMatch decodings leave, not one more of them.
+    if every && matches!(chain.last(), Some(Length | DetectSqli | DetectXss)) {
+        let (measure, rest) = chain.split_last().map(|(m, r)| (*m, r)).unwrap_or((Parsed, &[]));
+        return apply_all(rest, s).iter().map(|v| measure.apply(v)).collect();
+    }
     let mut out = if every { vec![s.to_string()] } else { Vec::new() };
     let mut text = s.to_string();
     for t in chain.iter().filter(|t| !matches!(t, MultiMatch | Parsed)) {
@@ -430,6 +459,20 @@ mod tests {
         assert_eq!(t("escapeSeqDecode", r"\x41\102\n\q\\"), "AB\nq\\");
         assert_eq!(t("escapeSeqDecode", r"\x4"), "x4");
         assert_eq!(t("escapeSeqDecode", "plain"), "plain");
+    }
+
+    #[test]
+    fn libinjection_says_what_it_found_and_a_length_is_a_number() {
+        assert!(!t("detectSQLi", "1' OR '1'='1").is_empty());
+        assert_eq!(t("detectSQLi", "hello world"), "");
+        assert_eq!(t("detectSQLi", "O'Reilly bought 3 books"), "", "an apostrophe in prose");
+        assert_eq!(t("detectXSS", "<script>alert(1)</script>"), "xss");
+        assert_eq!(t("detectXSS", "a < b and c > d"), "");
+        assert_eq!(t("length", "héllo"), "6", "bytes, as ModSecurity counts");
+        // With multiMatch, libinjection reads every step, and nothing else is matched.
+        let steps = apply_all(&[Parsed, MultiMatch, UrlDecodeUni, DetectSqli], "1%27%20OR%20%271%27%3D%271");
+        assert!(steps.iter().any(|f| !f.is_empty()) && steps.iter().all(|f| !f.contains('%')), "{steps:?}");
+        assert!(apply_all(&[Parsed, MultiMatch, UrlDecodeUni, DetectSqli], "alice@example.com").iter().all(String::is_empty));
     }
 
     #[test]

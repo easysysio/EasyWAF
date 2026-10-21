@@ -16,14 +16,15 @@ What converts
     variable holds one value.
 
 What does not, and why
-    a chain link on  A link re-testing what an earlier one matched, or
-    MATCHED_VARS     comparing with a configured value (%{tx...}) other than
-    or %{tx...}      the lists a policy sets, has no condition to be. @within
-                     one of those lists reads the policy's (%{allowed_methods}),
-                     and CRS's rules capturing a value to compare with one are
-                     written out in LIST_RULES.
-    @detectSQLi      libinjection. A parser, not a pattern; nothing to port.
-    @detectXSS
+    a configured     A link comparing with a configured value (%{tx...})
+    value or a       other than the lists a policy sets, or with what an
+    capture          earlier link captured (TX:1), has no condition to be.
+                     @within one of those lists reads the policy's
+                     (%{allowed_methods}), and CRS's rules capturing a value to
+                     compare with one are written out in LIST_RULES.
+                     MATCHED_VARS is the MATCHED zone, a count (&ARGS) a count
+                     zone, @eq/@gt/@lt a pattern on the number, and
+                     @detectSQLi/@detectXSS libinjection's decodings.
     TX variables     ModSecurity's own scoring machinery. EasyWAF scores in
                      the engine, so these are not needed rather than missing.
     RESPONSE_*       EasyWAF inspects requests.
@@ -90,8 +91,8 @@ from collections import Counter
 ZONE_OF = {
     "REQUEST_URI": ("URL", True), "REQUEST_URI_RAW": ("URL", True),
     "REQUEST_FILENAME": ("PATH", True),
-    # The last segment of the path. PATH holds it, and more.
-    "REQUEST_BASENAME": ("PATH", False),
+    # The last segment of the path.
+    "REQUEST_BASENAME": ("BASENAME", True),
     "QUERY_STRING": ("ARGS", True),
     "ARGS": ("ARG", True), "ARGS_GET": ("ARG", False), "ARGS_POST": ("ARG", False),
     "ARGS_NAMES": ("ARG_NAME", True),
@@ -99,6 +100,8 @@ ZONE_OF = {
     # Held by ModSecurity for a form or a body of no type it parses, not for
     # JSON, XML or multipart, which it reads as their parts.
     "REQUEST_BODY": ("BODY_UNPARSED", True),
+    # The body's length: the body, measured. See link_condition.
+    "REQUEST_BODY_LENGTH": ("BODY", True),
     # XML by its XPath, below: /* is the document's text, //@* its attributes'
     # values. Any other path is a part of the document, which XML holds.
     "XML": ("XML", False),
@@ -147,7 +150,7 @@ EASYWAF_TRANSFORM = {
     "htmlentitydecode": "htmlEntityDecode", "jsdecode": "jsDecode", "cssdecode": "cssDecode",
     "removenulls": "removeNulls", "normalizepath": "normalizePath", "normalisepath": "normalizePath",
     "normalizepathwin": "normalizePathWin", "normalisepathwin": "normalizePathWin",
-    "lowercase": "lowercase", "utf8tounicode": "utf8toUnicode",
+    "lowercase": "lowercase", "utf8tounicode": "utf8toUnicode", "length": "length",
 }
 
 SEVERITY_SCORE = {
@@ -176,7 +179,7 @@ UNSUPPORTED_RE = [
 UNSUPPORTED_VARS = {
     "TX", "RESPONSE_BODY", "RESPONSE_HEADERS", "RESPONSE_STATUS",
     "RESPONSE_CONTENT_TYPE", "RESPONSE_PROTOCOL", "GEO", "IP", "SESSION",
-    "USER", "MATCHED_VAR", "MATCHED_VARS", "MATCHED_VAR_NAME", "DURATION",
+    "USER", "MATCHED_VAR", "MATCHED_VAR_NAME", "DURATION",
     "PERF_ALL", "HIGHEST_SEVERITY", "INBOUND_DATA_ERROR", "MULTIPART_STRICT_ERROR",
     "REQBODY_ERROR", "REQBODY_PROCESSOR", "WEBSERVER_ERROR_LOG", "ENV",
     "GLOBAL", "RESOURCE", "UNIQUE_ID", "MULTIPART_UNMATCHED_BOUNDARY",
@@ -286,8 +289,21 @@ def classify_vars(variables):
             else:
                 widened = True
             continue
+        if var.upper() == "MATCHED_VARS":
+            # The values the link before matched: a zone of its own, read alone.
+            if len([v for v in variables.split("|") if v.strip()]) > 1:
+                return None, False, "MATCHED_VARS beside other variables, which no zone holds together"
+            return "MATCHED", False, None
         if var.startswith("&"):
-            return None, False, "counts a variable rather than matching it"
+            # How many of a variable there are: the count of a zone read a
+            # value at a time.
+            zone, wide, why = classify_vars(var[1:])
+            if zone is None or "|" in zone or not re.match(r"^(?:ARG|HEADER|COOKIE|FILE_NAME|XML_ATTR)", zone):
+                return None, False, why or f"counts {var[1:]}, which no zone counts"
+            widened |= wide
+            if "&" + zone not in zones:
+                zones.append("&" + zone)
+            continue
         name, _, selector = var.partition(":")
         name = name.upper()
         if name in UNSUPPORTED_VARS:
@@ -537,7 +553,7 @@ class Refuse(Exception):
 # Zones that hold one value, where ModSecurity's negated operator — true for a
 # variable whose value does not match — means what a negated condition does:
 # no value matches. On a collection the two differ, and are refused.
-SINGLE_VALUE = re.compile(r"^(?:METHOD|PATH|URL|ARGS|BODY|XML|REQUEST_LINE|PROTOCOL|(?:HEADER|ARG|COOKIE):.+)$")
+SINGLE_VALUE = re.compile(r"^(?:METHOD|PATH|BASENAME|URL|ARGS|BODY|XML|REQUEST_LINE|PROTOCOL|MATCHED|&.+|(?:HEADER|ARG|COOKIE):.+)$")
 
 
 # CRS's configured lists that an EasyWAF policy sets, by CRS's name and the
@@ -604,6 +620,42 @@ def list_rule(rid, links):
     return [{"zone": c[0], "pattern": c[1], "negate": c[2], "widened": False, "transforms": [],
              "chain": ["none"] + (c[3] if len(c) > 3 else [])}
             for c in conds]
+
+
+def numeric_pattern(name, n):
+    """A comparison with a whole number — @eq, @gt, @ge, @lt, @le — as a
+    pattern on a value written in decimal, leading zeros allowed. A count, a
+    length and a header holding a number are all written that way."""
+    def above(k):
+        # Every number greater than k: more digits, or as many and greater at
+        # the first digit that differs.
+        s = str(k)
+        alts = [f"[1-9][0-9]{{{len(s)},}}"]
+        for i, c in enumerate(s):
+            if c != "9":
+                d = int(c) + 1
+                cls = "9" if d == 9 else f"[{d}-9]"
+                alts.append(s[:i] + cls + (f"[0-9]{{{len(s) - i - 1}}}" if len(s) - i - 1 else ""))
+        return alts
+
+    def below(k):
+        # Every number less than k, nought included.
+        s = str(k)
+        alts = [f"[0-9]{{1,{len(s) - 1}}}"] if len(s) > 1 else []
+        for i, c in enumerate(s):
+            if c != "0" and not (i == 0 and c == "1" and len(s) > 1):
+                d = int(c) - 1
+                lo = 1 if i == 0 and len(s) > 1 else 0
+                cls = str(d) if d == lo else f"[{lo}-{d}]"
+                alts.append(s[:i] + cls + (f"[0-9]{{{len(s) - i - 1}}}" if len(s) - i - 1 else ""))
+        return alts
+
+    exact = [str(n)]
+    alts = {"@eq": exact, "@gt": above(n), "@ge": exact + above(n),
+            "@lt": below(n), "@le": exact + below(n)}[name]
+    if not alts:
+        raise Refuse(f"operator {name}", f"{name} {n}, which no number is")
+    return "^0*(?:" + "|".join(alts) + ")$"
 
 
 def byte_range_pattern(arg):
@@ -678,6 +730,11 @@ def operator_pattern(op, base_dir):
         if not words:
             raise Refuse("operator @within", "@within an empty list")
         return "^(?:" + "|".join(re.escape(w) for w in words) + ")$"
+    if name in ("@eq", "@gt", "@ge", "@lt", "@le") and re.fullmatch(r"\d+", arg):
+        return numeric_pattern(name, int(arg))
+    if name in ("@detectSQLi", "@detectXSS"):
+        # libinjection's verdict is a decoding; any fingerprint is a match.
+        return "."
     raise Refuse(f"operator {name or '(none)'}", f"operator {name or '(none)'} has no EasyWAF equivalent")
 
 
@@ -717,6 +774,15 @@ def link_condition(variables, operator, actions, base_dir):
     # with multiMatch before each and after the last.
     chain = ["none"] + (["multiMatch"] if any(k.lower() == "multimatch" for k in actions) else []) \
         + [EASYWAF_TRANSFORM[t] for t in transforms]
+    # libinjection reads the value its transformations leave; REQUEST_BODY_LENGTH
+    # is the body's length.
+    op_name = op.partition(" ")[0]
+    if op_name == "@detectSQLi":
+        chain.append("detectSQLi")
+    elif op_name == "@detectXSS":
+        chain.append("detectXSS")
+    if variables.strip().upper() == "REQUEST_BODY_LENGTH":
+        chain.append("length")
 
     why = portable(pattern)
     if why:
@@ -744,7 +810,7 @@ def link_condition(variables, operator, actions, base_dir):
             "widened": widened, "transforms": transforms, "chain": chain}
 
 
-def convert(paths, id_base, include_widened, set_id, set_name, max_paranoia=1, score_scale=1):
+def convert(paths, id_base, include_widened, set_id, set_name, max_paranoia=1, score_scale=1, min_paranoia=1):
     rules, skipped, stats = [], [], Counter()
     seen_ids = set()
 
@@ -789,6 +855,11 @@ def convert(paths, id_base, include_widened, set_id, set_name, max_paranoia=1, s
                 skipped.append((label, f"CRS paranoia level {level}; this conversion "
                                        f"takes up to {max_paranoia}, which is what CRS "
                                        f"runs by default"))
+                continue
+            if level < min_paranoia:
+                stats[f"paranoia level {level}"] += 1
+                skipped.append((label, f"CRS paranoia level {level}; this conversion takes "
+                                       f"{min_paranoia} and up, the lower levels being another set's"))
                 continue
 
             phases = actions.get("phase") or ["2"]
@@ -852,7 +923,8 @@ def convert(paths, id_base, include_widened, set_id, set_name, max_paranoia=1, s
             # negations on a body would fire on every request without one.
             present = {c["zone"] for c in conds if c.get("present")}
             for c in conds:
-                if c["negate"] and c["zone"] not in ("METHOD", "PATH", "URL", "REQUEST_LINE", "PROTOCOL") and c["zone"] not in present \
+                if c["negate"] and c["zone"] not in ("METHOD", "PATH", "URL", "REQUEST_LINE", "PROTOCOL") \
+                        and not c["zone"].startswith("&") and c["zone"] not in present \
                         and not any(not d["negate"] for d in conds):
                     break
             else:
@@ -868,8 +940,12 @@ def convert(paths, id_base, include_widened, set_id, set_name, max_paranoia=1, s
             # judged on the strings below at all.
             # A rule on a policy's list is judged by the gate, with the lists'
             # defaults: its patterns alone do not say what it matches.
+            # A count, a second look at a matched value and libinjection's
+            # verdict are judged by the gate too.
             judged = [c for c in conds if not c["negate"] and not c.get("present")]
-            if judged and not any("%{" in c["pattern"] for c in conds) \
+            special = any("%{" in c["pattern"] or c["zone"].startswith("&") or c["zone"] == "MATCHED"
+                          or {"length", "detectSQLi", "detectXSS"} & set(c["chain"]) for c in conds)
+            if judged and not special \
                     and all(matches_ordinary_traffic(c["pattern"]) for c in judged):
                 stats["matches ordinary traffic"] += 1
                 skipped.append((label, "pattern matches ordinary traffic — it would "
@@ -966,7 +1042,7 @@ SecRule ARGS "@rx foo" \
 # Refused: a link re-testing the value the first matched.
 SecRule ARGS "@rx foo" \
     "id:100016,phase:2,block,chain,msg:'Same value',severity:'ERROR'"
-    SecRule MATCHED_VARS "@rx bar"
+    SecRule MATCHED_VARS|REQUEST_HEADERS "@rx bar"
 
 # Exact: a method not in a list, and a header that must be there and not say x.
 SecRule REQUEST_METHOD "!@within GET HEAD POST" \
@@ -1005,9 +1081,18 @@ SecRule ARGS "@rx (?!safe)attack" \
 SecRule RESPONSE_BODY "@rx secret" \
     "id:100005,phase:4,t:none,msg:'Leak',severity:'ERROR'"
 
-# Refused: no pattern operator EasyWAF can use.
+# libinjection, as a decoding whose fingerprint the pattern finds.
 SecRule ARGS "@detectSQLi" \
-    "id:100006,phase:2,t:none,msg:'SQLi',severity:'CRITICAL'"
+    "id:100006,phase:2,t:none,t:urlDecodeUni,msg:'SQLi',severity:'CRITICAL'"
+
+# A count, a length, and a second look at the matched value.
+SecRule &REQUEST_HEADERS:Host "@eq 0" \
+    "id:100024,phase:1,t:none,msg:'No Host',severity:'WARNING'"
+SecRule REQUEST_HEADERS:Accept-Encoding "@gt 100" \
+    "id:100025,phase:1,t:none,t:lowercase,t:length,msg:'Long Accept-Encoding',severity:'WARNING'"
+SecRule ARGS "@rx evil" \
+    "id:100026,phase:2,t:none,chain,msg:'Evil with a slash',severity:'CRITICAL'"
+    SecRule MATCHED_VARS "@rx /" "t:none"
 
 # Exact: one header, by name, with t:lowercase folded into a flag.
 SecRule REQUEST_HEADERS:User-Agent "@rx sqlmap" \
@@ -1071,7 +1156,11 @@ def self_test():
         toml, skipped, stats = convert([path], 2000000, False, "t", "t")
         refused = {lbl.split()[0] for lbl, _ in skipped}
 
-        check(stats["converted"] == 13, f"expected 13 exact conversions, got {stats['converted']}")
+        check(stats["converted"] == 17, f"expected 17 exact conversions, got {stats['converted']}")
+        check("transforms  = ['none', 'urlDecodeUni', 'detectSQLi']" in toml, "@detectSQLi is libinjection's decoding")
+        check('zone        = "&HEADER:Host"' in toml and "pattern     = '^0*(?:0)$'" in toml, "a count of nought")
+        check("transforms  = ['none', 'lowercase', 'length']" in toml, "t:length is the length decoding")
+        check('[[rules.and]]\nzone    = "MATCHED"' in toml, "MATCHED_VARS reads the values matched")
         check(byte_range_pattern("1-255") == r"[\x00]", byte_range_pattern("1-255"))
         check(byte_range_pattern("9,10,13,32-126,128-255") == r"[\x00-\x08\x0b-\x0c\x0e-\x1f\x7f]",
               byte_range_pattern("9,10,13,32-126,128-255"))
@@ -1087,9 +1176,9 @@ def self_test():
         check('negate      = true' in toml and 'pattern = \'^\'' in toml,
               "a negated named header should need the header present")
         check("^(?:GET|HEAD|POST)$" in toml, "@within should be a list of words")
-        for rid, why in [("100016", "same value"), ("100018", "negated collection"), ("100019", "transformation"),
-                         ("100004", "lookahead"), ("100005", "response phase"),
-                         ("100006", "@detectSQLi"), ("100014", "widening"),
+        for rid, why in [("100016", "MATCHED_VARS beside others"), ("100018", "negated collection"),
+                         ("100019", "transformation"), ("100004", "lookahead"), ("100005", "response phase"),
+                         ("100014", "widening"),
                          ("100011", "pass/setvar bookkeeping"),
                          ("100012", "matches ordinary traffic"),
                          ("100015", "anchored in a zone holding more")]:
@@ -1115,7 +1204,7 @@ def self_test():
 
         # With widening allowed, the pattern selector converts too, and says so.
         wide, _, wstats = convert([path], 2000000, True, "t", "t")
-        check(wstats["converted"] == 14, f"expected 14 with widening, got {wstats['converted']}")
+        check(wstats["converted"] == 18, f"expected 18 with widening, got {wstats['converted']}")
         check("WIDENED" in wide, "a widened rule must say so in its description")
         check('zone        = "HEADER"' in wide, "headers chosen by a pattern should widen to every header")
         # Scaled scores, for a policy at EasyWAF's threshold of 10.
@@ -1161,6 +1250,9 @@ def main():
     ap.add_argument("--max-paranoia", type=int, default=1, metavar="N",
                     help="highest CRS paranoia level to convert (default 1, which "
                          "is what CRS itself runs unless told otherwise)")
+    ap.add_argument("--min-paranoia", type=int, default=1, metavar="N",
+                    help="lowest CRS paranoia level to convert (default 1), for a set holding "
+                         "only a higher level's rules")
     ap.add_argument("--score-scale", type=int, default=1, metavar="N",
                     help="multiply CRS's severity scores by N; 2 makes EasyWAF's default "
                          "threshold of 10 block what CRS's 5 does")
@@ -1173,7 +1265,7 @@ def main():
 
     toml, skipped, stats = convert(args.files, args.id_base, args.include_widened,
                                    args.set_id, args.set_name, args.max_paranoia,
-                                   args.score_scale)
+                                   args.score_scale, args.min_paranoia)
 
     if args.out:
         with open(args.out, "w", encoding="utf-8") as fh:

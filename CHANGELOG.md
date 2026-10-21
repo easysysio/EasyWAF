@@ -15,6 +15,10 @@ Version bumps and tags are created only after explicit approval.
 - **Zones narrow by a pattern of names and take exceptions:** `COOKIE:/^__utm/`, `HEADER|!HEADER:Cookie`, `ARG_NAME|!ARG_NAME:/^json\./`. CRS's rules excluding a header or matching names by pattern convert exactly, where they read more than CRS did: one rule at paranoia level 1 is still widened, where ten were.
 - **`BODY_UNPARSED`**, the body unless it is read as JSON, XML or multipart — what ModSecurity holds as `REQUEST_BODY`, which CRS's rules now read. 920540 also holds only off JSON, as CRS's 920539 makes it.
 - `utf8toUnicode`, CRS's decoding of full-width and other characters beyond ASCII for `urlDecodeUni` to fold.
+- **Counts, numbers and a second look at a matched value.** `&ARG`, `&HEADER:Host` and every zone read a value at a time give how many values it has as one number; `length` gives a value's length; and the CRS converter writes `@eq`, `@gt`, `@ge`, `@lt` and `@le` as patterns on the number. `MATCHED` reads the values the condition before it matched, as ModSecurity's `MATCHED_VARS`. CRS's rules on a missing Host, a POST without a length, two Content-Types, a GET with Transfer-Encoding and PHP function names called convert, among them.
+- **libinjection**, as the decodings `detectSQLi` and `detectXSS`, through `barbacane-libinjection`, a pure Rust port: CRS's 942100 and 941100, its strongest SQL injection and XSS rules, convert and pass CRS's tests.
+- **`BASENAME`**, the path's last segment, which CRS's REQUEST_BASENAME rules read.
+- **Optional rule sets of CRS's paranoia level 2**, one beside each band's level-1 set — protocol, protocol attack, file inclusion, RCE, PHP, generic, XSS, SQL injection — holding that level's rules alone, for a site that wants stricter checks and accepts more false positives.
 - **`HEADER_LINE`**, each header as a line of its own, and **`REQUEST`**, the request as one text: request line, header block and body. The ET converter reads Suricata's `http.request_header`, its contents outside any buffer and `http.start` into them, and its `isdataat` as a length after the match before; with the CRS converter's `@validateByteRange` as a character class, 39 more ET rules and five more CRS rules, among them 920270's null byte at paranoia level 1.
 
 ### Changed
@@ -22,7 +26,8 @@ Version bumps and tags are created only after explicit approval.
 - A CRS pattern on bytes is read as one on characters where it means the same — a range to `\xff` is every character beyond ASCII — and refused where it does not: one matching UTF-8 a byte at a time, as seven rules above paranoia level 1 do, never matches text.
 
 ### Fixed
-- `easywaf test-crs` sends a request with a body with its Content-Length, as CRS's test runner does, and reports a rule that does not compile instead of stopping. `easywaf check-set` leaves a URL case's fragment out, as a browser does.
+- `easywaf test-crs` sends a request with a body with its Content-Length, as CRS's test runner does, gives the rules no body a request carries with neither a length nor a transfer coding, as no HTTP/1.1 server reads one, and reports a rule that does not compile instead of stopping. `easywaf check-set` leaves a URL case's fragment out, and sends a Host and a POST's Content-Length, as a browser does.
+- `%u00AB`, `%u2039`, `%u2019` and the other guillemets and typographic quotes decode to `<`, `>`, `'` and `"`, as ModSecurity's best-fit map has them; and an AWS JSON body (`application/x-amz-json-1.1`) is read as JSON, as CRS reads it.
 
 ---
 

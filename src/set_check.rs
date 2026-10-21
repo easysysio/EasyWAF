@@ -80,7 +80,7 @@ pub fn run(args: &[String]) -> i32 {
             requests += 1;
             let (whole, parts) = (Whole::of(&ctx, &ctx.body), Parts::new(&ctx, &ctx.body));
             for (id, conds) in &rules {
-                if conds.iter().all(|c| c.holds(&whole, &parts)) {
+                if crate::modules::targets::all_hold(conds, &whole, &parts) {
                     println!("FP {id} {}", n + 1);
                     fired.insert(*id);
                 }
@@ -92,8 +92,9 @@ pub fn run(args: &[String]) -> i32 {
     if broken > 0 || !fired.is_empty() { 1 } else { 0 }
 }
 
-/// The request a case describes. `URL` is a path and query, a space in it
-/// encoded and a fragment left out; `BODY` a body,
+/// The request a case describes, with a Host and a body's Content-Length as a
+/// browser sends them. `URL` is a path and query, a space in it encoded and a
+/// fragment left out; `BODY` a body,
 /// sent as JSON when it starts like JSON and as a form otherwise; `HEADERS`
 /// a header value, under a name no rule reads; `HEADER:Name` that header;
 /// `COOKIE` a Cookie header; `METHOD` the method.
@@ -129,6 +130,15 @@ pub(crate) fn case_request(arrives: &str, text: &str) -> Result<RequestContext, 
             Some(name) => put(name, text),
             None => return Err(format!("{other:?} is not a way a case arrives")),
         },
+    }
+    // What every browser sends besides: the site's name, and a body's length.
+    if !headers.contains_key(axum::http::header::HOST) {
+        headers.insert(axum::http::header::HOST, axum::http::HeaderValue::from_static("www.example.com"));
+    }
+    if (!body.is_empty() || matches!(method.as_str(), "POST" | "PUT" | "PATCH"))
+        && !headers.contains_key(axum::http::header::CONTENT_LENGTH)
+    {
+        headers.insert(axum::http::header::CONTENT_LENGTH, axum::http::HeaderValue::from(body.len()));
     }
     if let Some(e) = bad {
         return Err(e);

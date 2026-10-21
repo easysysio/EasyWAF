@@ -51,6 +51,9 @@ yaml-rust2 = "0.13"
 # XML request bodies, read for rules. Pure Rust; it fetches no external entity,
 # and refuses entity expansion deep or wide enough to be a billion-laughs attack.
 roxmltree = "0.21"
+# libinjection, the parser behind CRS's @detectSQLi and @detectXSS, as a pure
+# Rust port: no C toolchain in the package builds.
+barbacane-libinjection = "0.1.1"
 
 # Templates
 tera = "1.20"

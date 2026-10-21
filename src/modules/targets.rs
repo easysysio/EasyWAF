@@ -13,7 +13,7 @@
 // =========================================================
 
 use super::transforms::{apply_all, parse_list, Transform};
-use super::waf::{normalised_paths, percent_decode, reads, zone_text, Whole};
+use super::waf::{normalised_paths, percent_decode, zone_text, Whole};
 use super::RequestContext;
 use std::cell::{OnceCell, RefCell};
 use std::rc::Rc;
@@ -114,13 +114,18 @@ impl CompiledCondition {
         Ok(CompiledCondition { targets, re, negate: c.negate, chain })
     }
 
-    pub fn holds(&self, whole: &Whole, parts: &Parts) -> bool {
-        reads(&self.targets, whole, parts, &self.re, &self.chain) != self.negate
-    }
 }
 
 /// A rule's conditions, each compiled.
 pub type Compiled = Vec<CompiledCondition>;
+
+/// Whether every one of a rule's conditions holds, in order.
+pub fn all_hold(conds: &Compiled, whole: &Whole, parts: &Parts) -> bool {
+    let list: Vec<(&[Target], &regex::Regex, bool, &[Transform])> = conds.iter()
+        .map(|c| (c.targets.as_slice(), &c.re, c.negate, c.chain.as_slice()))
+        .collect();
+    super::waf::all_hold(&list, whole, parts)
+}
 
 /// One part of a request a rule reads.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -162,9 +167,18 @@ pub enum Target {
     BodyUnparsed,
     /// Each header as a line of its own, `Name: value`, without its line break.
     HeaderLine,
+    /// The path's last segment: `index.php` in `/app/index.php`.
+    Basename,
     /// The request as one text: its request line, its header block, a blank
     /// line, and its body as inspected.
     Request,
+    /// `&HEADER:Host`: how many values a zone has, less its exceptions, as
+    /// one value — a number a pattern compares.
+    Count(Box<Target>),
+    /// The values the condition before matched, after its decodings: what a
+    /// second look at the same value reads. Negated, it holds when one of them
+    /// does not match, as ModSecurity's negated operator does on MATCHED_VARS.
+    Matched,
 }
 
 /// The name a zone narrows to: one name, or each name matching a pattern.
@@ -218,8 +232,25 @@ impl std::hash::Hash for NamePattern {
 /// rule written for a newer EasyWAF is not run rather than read as `ANY`.
 pub fn parse_zone(zone: &str) -> Option<Vec<Target>> {
     let mut out: Vec<Target> = Vec::new();
+    if zone.trim().eq_ignore_ascii_case("MATCHED") {
+        return Some(vec![Target::Matched]);
+    }
     for part in zone.split('|') {
         let part = part.trim();
+        // A count of what a zone reads: one of the zones read a value at a time.
+        if let Some(rest) = part.strip_prefix('&') {
+            let inner = parse_zone(rest)?.pop()?;
+            if rest.contains('|') || matches!(inner, Target::Url | Target::Args | Target::Body | Target::Headers
+                | Target::Any | Target::Except(_) | Target::Count(_) | Target::Matched)
+            {
+                return None;
+            }
+            let target = Target::Count(Box::new(inner));
+            if !out.contains(&target) {
+                out.push(target);
+            }
+            continue;
+        }
         // An exception: a named zone, taken out of what the rest read.
         if let Some(rest) = part.strip_prefix('!') {
             let except = parse_zone(rest)?.pop()?;
@@ -255,6 +286,7 @@ pub fn parse_zone(zone: &str) -> Option<Vec<Target>> {
             ("PROTOCOL", None)    => Target::Protocol,
             ("BODY_UNPARSED", None) => Target::BodyUnparsed,
             ("HEADER_LINE", None) => Target::HeaderLine,
+            ("BASENAME", None)    => Target::Basename,
             ("REQUEST", None)     => Target::Request,
             ("ARG", name)         => Target::Arg(named(name, false)?),
             ("ARG_NAME", name)    => Target::ArgName(named(name, false)?),
@@ -440,7 +472,24 @@ impl<'a> Parts<'a> {
             Target::Protocol    => is_match(protocol(self.ctx.version)),
             Target::BodyUnparsed => text(self.unparsed_body()),
             Target::HeaderLine  => self.header_lines().iter().any(|forms| text(forms)),
+            Target::Basename    => {
+                let last = |p: &str| p.rsplit('/').next().unwrap_or("").to_string();
+                if parsed {
+                    is_match(&last(&percent_decode(&self.ctx.path)))
+                } else {
+                    zone_text(&last(&self.ctx.path), false).iter().any(|f| is_match(f))
+                }
+            }
             Target::Request     => text(self.raw_request()),
+            Target::Count(inner) => {
+                let n = std::cell::Cell::new(0usize);
+                self.any(inner, except, true, &|_| {
+                    n.set(n.get() + 1);
+                    false
+                });
+                is_match(&n.get().to_string())
+            }
+            Target::Matched     => false,
             Target::Except(_) | Target::Url | Target::Args | Target::Body | Target::Headers | Target::Any => false,
         }
     }
@@ -691,7 +740,7 @@ fn body_kind(headers: &axum::http::HeaderMap) -> Option<BodyKind> {
     let mime = ct.split(';').next()?.trim().to_ascii_lowercase();
     if mime == "application/x-www-form-urlencoded" {
         Some(BodyKind::Form)
-    } else if mime == "application/json" || mime.ends_with("+json") {
+    } else if mime == "application/json" || mime.ends_with("+json") || mime.starts_with("application/x-amz-json-1.") {
         Some(BodyKind::Json)
     } else if mime.ends_with("/xml") || mime.ends_with("+xml") {
         Some(BodyKind::Xml)
@@ -915,8 +964,36 @@ mod tests {
         let c = ctx("/x", Some("a=1"), &[("user-agent", "curl/8"), ("x-token", "abc")], "body=1");
         let p = Parts::new(&c, c.body.as_ref());
         assert!(hits(&p, "HEADER_LINE", "^X-Token: abc$"));
+        let b = ctx("/post/1234%20OR%201=1", None, &[], "");
+        let bp = Parts::new(&b, b"");
+        assert!(hits_as(&bp, "BASENAME", "^1234 OR 1=1$", true) && !hits_as(&bp, "BASENAME", "post", true));
         assert!(!hits(&p, "HEADER_LINE", "curl/8\r\nX-Token"), "a line ran into the next");
         assert!(hits(&p, "REQUEST", "^POST /x\\?a=1 HTTP/1\\.1\r\nUser-Agent: curl/8\r\nX-Token: abc\r\n\r\nbody=1$"));
+    }
+
+    /// A count is one value, the number; MATCHED reads what the condition
+    /// before matched, and narrows it.
+    #[test]
+    fn a_count_is_a_number_and_matched_reads_the_value_before() {
+        let c = ctx("/", Some("a=x/y+z&b=x/y&c=plain"), &[("content-type", "a"), ("content-type", "b")], "");
+        let (whole, parts) = (Whole::of(&c, b""), Parts::new(&c, b""));
+        let cond = |zone: &str, pattern: &str, negate: bool| CompiledCondition::new(&Condition {
+            zone: zone.into(), pattern: pattern.into(), negate, transforms: vec!["none".into()],
+        }).unwrap();
+        let holds = |list: Vec<CompiledCondition>| all_hold(&list, &whole, &parts);
+        assert!(holds(vec![cond("&HEADER:Content-Type", "^2$", false)]));
+        assert!(holds(vec![cond("&HEADER:Host", "^0$", false)]), "a header absent is a count of nought");
+        assert!(holds(vec![cond("&ARG|!ARG:c", "^2$", false)]), "a count is less its exceptions");
+        // One value with a slash and a space: a's.
+        assert!(holds(vec![cond("ARG", "/", false), cond("MATCHED", " ", false)]));
+        assert!(!holds(vec![cond("ARG:b", "/", false), cond("MATCHED", " ", false)]),
+                "MATCHED read a value the condition before did not match");
+        // Negated: one of the values matched does not match.
+        assert!(holds(vec![cond("ARG", "/", false), cond("MATCHED", " ", true)]), "b has no space");
+        assert!(!holds(vec![cond("ARG:a", "/", false), cond("MATCHED", " ", true)]));
+        assert!(!holds(vec![cond("MATCHED", ".", false)]), "MATCHED with nothing before it held");
+        assert_eq!(parse_zone("&URL"), None, "a whole text has no values to count");
+        assert_eq!(parse_zone("MATCHED|ARG"), None);
     }
 
     #[test]
@@ -957,10 +1034,11 @@ mod tests {
         let c = ctx("/run", Some("cmd=c%27a%27t+/etc/pass%22%22wd&q=UNION/**/SELECT"), &[], "");
         let (whole, parts) = (Whole::of(&c, b""), Parts::new(&c, b""));
         let cond = |zone: &str, pattern: &str, negate: bool, transforms: &[&str]| {
-            CompiledCondition::new(&Condition {
+            let compiled = CompiledCondition::new(&Condition {
                 zone: zone.into(), pattern: pattern.into(), negate,
                 transforms: transforms.iter().map(|t| t.to_string()).collect(),
-            }).unwrap().holds(&whole, &parts)
+            }).unwrap();
+            all_hold(&vec![compiled], &whole, &parts)
         };
         assert!(cond("ARG", "cat/etc/passwd", false, &["cmdLine"]));
         assert!(!cond("ARG", "cat/etc/passwd", false, &[]), "matched without the decoding");

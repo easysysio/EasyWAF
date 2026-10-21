@@ -281,6 +281,9 @@ where on `ARGS` it would only be a query string that does.
 | `PROTOCOL` | the protocol: `HTTP/1.0`, `HTTP/1.1`, `HTTP/2.0` or `HTTP/3.0` |
 | `BODY_UNPARSED` | the body, unless it is JSON, XML or multipart, which are read as their parts — what ModSecurity holds as `REQUEST_BODY` |
 | `HEADER_LINE` | each header as a line of its own, `Name: value` |
+| `BASENAME` | the path's last segment: `index.php` in `/app/index.php` |
+| `&ARG`, `&HEADER:Host` … | how many values the zone after `&` has, less its exceptions, as one number |
+| `MATCHED` | the values the condition before matched, after its decodings — a second look at the same value |
 | `REQUEST` | the request as one text: its request line, header block, a blank line and its body |
 
 A name between slashes is a pattern: `COOKIE:/^__utm/` reads every cookie whose
@@ -348,6 +351,8 @@ action     = "score"
 | `escapeSeqDecode` | C escapes — `\n`, `\x41`, `\101` — as what they stand for |
 | `urlDecode`, `urlDecodeUni`, `htmlEntityDecode`, `jsDecode`, `cssDecode`, `removeNulls`, `normalizePath`, `normalizePathWin`, `lowercase` | as the forms apply them, for a rule that needs one after another decoding |
 | `dotPrefix` | a `.` put in front, for matching a host and its subdomains |
+| `length` | the value's length in bytes, as a number |
+| `detectSQLi`, `detectXSS` | libinjection's verdict: the SQL injection's fingerprint, or `xss`, and nothing for a clean value — so the pattern `.` finds one |
 | `utf8toUnicode` | each character beyond ASCII as `%uHHHH`, which `urlDecodeUni` folds: a full-width `＜` becomes `<` |
 | `multiMatch` | not a decoding: the pattern is also matched before the first decoding and after each one |
 | `none` | not a decoding: first in the list, the decodings start from each value once, as ModSecurity's parsers hand it over, rather than from every form |
@@ -364,6 +369,13 @@ A condition in `[[rules.and]]` takes `transforms` too. The rules converted
 from OWASP CRS and ET Open name them where CRS's `t:` actions and Suricata's
 transforms go beyond the forms. A rule set naming a decoding this version does
 not apply is shown as needing an upgrade and cannot be applied.
+
+A count and a length are numbers written in decimal, compared by a pattern:
+`^0*(?:[2-9]|[1-9][0-9]+)$` on `&HEADER:Content-Type` is "more than one
+Content-Type". A `MATCHED` condition follows another and reads what it
+matched: `ARG` matching `/` then `MATCHED` matching `\s` is one argument
+holding both. Negated, `MATCHED` holds when one of those values does not
+match.
 
 ### Lists a policy sets
 
