@@ -429,17 +429,19 @@ impl Whole {
     }
 }
 
-/// Every form `target` is read in, for decoding further.
-fn forms_of(target: &Target, whole: &Whole, parts: &Parts) -> Vec<String> {
+/// Every form `target` is read in, less `except`, for decoding further; with
+/// `parsed`, each value once as it was parsed, and a whole text as it arrived.
+fn forms_of(target: &Target, except: &[Target], parsed: bool, whole: &Whole, parts: &Parts) -> Vec<String> {
+    let all = |forms: &Vec<String>| if parsed { forms.iter().take(1).cloned().collect() } else { forms.clone() };
     match target {
-        Target::Url     => whole.url.clone(),
-        Target::Args    => whole.args.clone(),
-        Target::Body    => whole.body.clone(),
-        Target::Headers => whole.headers.clone(),
-        Target::Any     => [&whole.url, &whole.args, &whole.body, &whole.headers].into_iter().flatten().cloned().collect(),
+        Target::Url     => all(&whole.url),
+        Target::Args    => all(&whole.args),
+        Target::Body    => all(&whole.body),
+        Target::Headers => all(&whole.headers),
+        Target::Any     => [&whole.url, &whole.args, &whole.body, &whole.headers].into_iter().flat_map(all).collect(),
         other => {
             let out = std::cell::RefCell::new(Vec::new());
-            parts.any(other, &|f| {
+            parts.any(other, except, parsed, &|f| {
                 out.borrow_mut().push(f.to_string());
                 false
             });
@@ -453,20 +455,24 @@ fn forms_of(target: &Target, whole: &Whole, parts: &Parts) -> Vec<String> {
 /// is every form of the four other whole-text zones. With a `chain` of
 /// decodings, each form is matched with them applied, and not as it is.
 pub(crate) fn reads(targets: &[Target], whole: &Whole, parts: &Parts, re: &Regex, chain: &[Transform]) -> bool {
+    let except: Vec<Target> = targets.iter().filter(|t| matches!(t, Target::Except(_))).cloned().collect();
+    let mut read = targets.iter().filter(|t| !matches!(t, Target::Except(_)));
     if !chain.is_empty() {
-        return targets.iter().any(|t| {
-            parts.decoded(t, chain, || forms_of(t, whole, parts)).iter().any(|f| re.is_match(f))
+        let parsed = chain.first() == Some(&Transform::Parsed);
+        return read.any(|t| {
+            parts.decoded(t, &except, chain, || forms_of(t, &except, parsed, whole, parts))
+                .iter().any(|f| re.is_match(f))
         });
     }
     let any_of = |forms: &[String]| forms.iter().any(|f| re.is_match(f));
-    targets.iter().any(|t| match t {
+    read.any(|t| match t {
         Target::Url     => any_of(&whole.url),
         Target::Args    => any_of(&whole.args),
         Target::Body    => any_of(&whole.body),
         Target::Headers => any_of(&whole.headers),
         Target::Any     => any_of(&whole.url) || any_of(&whole.args)
                            || any_of(&whole.body) || any_of(&whole.headers),
-        other           => parts.any(other, &|f| re.is_match(f)),
+        other           => parts.any(other, &except, false, &|f| re.is_match(f)),
     })
 }
 

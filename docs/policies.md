@@ -279,6 +279,13 @@ where on `ARGS` it would only be a query string that does.
 | `HEADER_BLOCK` | the headers as one block of lines, `Name: value` and a line break (`\r\n`) each |
 | `REQUEST_LINE` | the request line, `GET /path?query HTTP/1.1`, with the path and query as they arrived |
 | `PROTOCOL` | the protocol: `HTTP/1.0`, `HTTP/1.1`, `HTTP/2.0` or `HTTP/3.0` |
+| `BODY_UNPARSED` | the body, unless it is JSON, XML or multipart, which are read as their parts — what ModSecurity holds as `REQUEST_BODY` |
+
+A name between slashes is a pattern: `COOKIE:/^__utm/` reads every cookie whose
+name matches, and `ARG_NAME:/^json\./` the names that do. A zone written with
+`!` is taken out of the others: `HEADER|!HEADER:Cookie` reads every header but
+the Cookie header, and `ARG|!ARG:/^token/` every argument but those. An
+exception names a header, an argument or a cookie, or a pattern of their names.
 
 Names are compared without regard to case. In a JSON body every leaf is an
 argument named by its own key, so `ARG:password` finds
@@ -339,7 +346,17 @@ action     = "score"
 | `escapeSeqDecode` | C escapes — `\n`, `\x41`, `\101` — as what they stand for |
 | `urlDecode`, `urlDecodeUni`, `htmlEntityDecode`, `jsDecode`, `cssDecode`, `removeNulls`, `normalizePath`, `normalizePathWin`, `lowercase` | as the forms apply them, for a rule that needs one after another decoding |
 | `dotPrefix` | a `.` put in front, for matching a host and its subdomains |
+| `utf8toUnicode` | each character beyond ASCII as `%uHHHH`, which `urlDecodeUni` folds: a full-width `＜` becomes `<` |
 | `multiMatch` | not a decoding: the pattern is also matched before the first decoding and after each one |
+| `none` | not a decoding: first in the list, the decodings start from each value once, as ModSecurity's parsers hand it over, rather than from every form |
+
+`none` is how a rule is matched exactly as ModSecurity matches it, and the
+rules converted from OWASP CRS begin with it. A query's or a form's argument
+is then decoded once, `+` a space; the path is decoded once; everything else —
+cookies, headers, the URL, the body — is as it arrived, and the rule's own
+decodings do the rest. Without `none`, every form is matched, which is what a
+rule written for EasyWAF wants: an encoding the rule did not think of cannot
+hide what it looks for.
 
 A condition in `[[rules.and]]` takes `transforms` too. The rules converted
 from OWASP CRS and ET Open name them where CRS's `t:` actions and Suricata's

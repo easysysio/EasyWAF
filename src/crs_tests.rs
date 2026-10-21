@@ -109,10 +109,14 @@ fn rules(path: &Path) -> Result<Vec<Rule>, String> {
         let description = r.get("description").and_then(|v| v.as_str()).unwrap_or("");
         let Some(crs) = crs_id.captures(description).and_then(|c| c[1].parse().ok()) else { continue };
         let table = r.as_table().ok_or(format!("rule {id} is not a table"))?;
-        let conds = crate::modules::targets::table_conditions(table)
+        // One that cannot run is said so and left out, as check-set does,
+        // rather than keeping every other rule from being tested.
+        match crate::modules::targets::table_conditions(table)
             .and_then(|list| list.iter().map(CompiledCondition::new).collect::<Result<Compiled, String>>())
-            .map_err(|e| format!("rule {id}: {e}"))?;
-        out.push(Rule { id, crs, conds });
+        {
+            Ok(conds) => out.push(Rule { id, crs, conds }),
+            Err(why) => println!("BROKEN {id} {crs} {why}"),
+        }
     }
     Ok(out)
 }
@@ -194,11 +198,15 @@ fn request(input: &Yaml) -> Option<RequestContext> {
     };
     // go-ftw, which CRS's tests are written for, completes a request's headers
     // unless told not to: a body sent without a Content-Type is sent as a form,
-    // and the rules are tested reading it that way.
+    // and the rules are tested reading it that way; and one is sent with its
+    // Content-Length, which the rules on a GET with a body read.
     let autocomplete = input["autocomplete_headers"].as_bool().unwrap_or(true);
     if autocomplete && !body.is_empty() && !headers.contains_key(axum::http::header::CONTENT_TYPE) {
         headers.insert(axum::http::header::CONTENT_TYPE,
                        axum::http::HeaderValue::from_static("application/x-www-form-urlencoded"));
+    }
+    if autocomplete && !body.is_empty() && !headers.contains_key(axum::http::header::CONTENT_LENGTH) {
+        headers.insert(axum::http::header::CONTENT_LENGTH, axum::http::HeaderValue::from(body.len()));
     }
     Some(RequestContext {
         site_id: 0,

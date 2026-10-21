@@ -41,7 +41,7 @@ next minor, so a release's notes stay about its feature.
 | 1.3.4 | CRS's chained rules converted as rules with several conditions, and its negated operators where the variable holds one value; four more protocol-enforcement rules reach the sets — **released 2026-10-15** |
 | 1.4.0 | The header block, the request line and the protocol as zones, and the ET Open and CRS rules that read them — **released 2026-10-15** |
 | 1.5.0 | Decodings a rule names — `cmdLine`, `replaceComments`, `base64Decode` and the rest — and the CRS and ET Open rules that need them — **released 2026-10-18** |
-| 1.6.0 | Lists a policy sets — allowed methods, content types, charsets and HTTP versions, restricted extensions and headers — and CRS's rules on them as an optional request policy set |
+| 1.6.0 | Lists a policy sets — allowed methods, content types, charsets and HTTP versions, restricted extensions and headers — and CRS's rules on them as an optional request policy set; and CRS's rules matched as ModSecurity matches them: from each value as parsed, zones with exceptions and names by pattern, the body ModSecurity holds |
 | 1.7.0 | Configuration sync between nodes — HA (see [ha-config-sync.md](ha-config-sync.md)) |
 | 1.8.0 | Per-site rate limiting (see [rate-limiting.md](rate-limiting.md)) |
 | 1.9.0 | Learning and hardening modes — URL allowlisting (see [url-learning.md](url-learning.md)) |
@@ -55,6 +55,13 @@ sets, the six rules convert, in an optional set: CRS's defaults refuse WebDAV's
 methods and an upload's `application/octet-stream`, which is what Yariv's own
 Nextcloud sends. Put as 1.6.0; HA, rate limiting and URL learning move to
 1.7.0, 1.8.0 and 1.9.0.
+
+Added to 1.6.0 before it was cut (Yariv, 2026-10-21): matching CRS's rules
+as ModSecurity does. Every rule was matched against every decoded form of a
+value, so a CRS rule saw decodings it never declared — `&lt;?` as `<?` — and
+its exceptions (`!REQUEST_HEADERS:Cookie`) widened it. Ten of the 126 at
+paranoia level 1 failed CRS's own tests; with the value as parsed, exceptions
+and ModSecurity's REQUEST_BODY, one does.
 
 ## Decoding per rule before HA (Yariv, 2026-10-18)
 

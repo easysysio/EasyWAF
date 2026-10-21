@@ -133,14 +133,17 @@ pub enum Target {
     Any,
     // One value at a time.
     Path,
-    /// Argument values; with a name, those of arguments called that. Names
-    /// are held lowercased and compared that way.
-    Arg(Option<String>),
-    ArgName,
-    Header(Option<String>),
-    HeaderName,
-    Cookie(Option<String>),
-    CookieName,
+    /// Argument values; with a name, those of arguments called that, or whose
+    /// name matches `/a pattern/`. Names are compared without regard to case.
+    Arg(Option<Name>),
+    ArgName(Option<Name>),
+    Header(Option<Name>),
+    HeaderName(Option<Name>),
+    Cookie(Option<Name>),
+    CookieName(Option<Name>),
+    /// Not read: `!HEADER:Cookie` in `HEADER|!HEADER:Cookie` takes that
+    /// header out of what the others read.
+    Except(Box<Target>),
     Method,
     /// An XML body's text, as XPath's `/*` reads it: the whole document's.
     Xml,
@@ -154,6 +157,55 @@ pub enum Target {
     RequestLine,
     /// `HTTP/1.1`.
     Protocol,
+    /// The body, unless it is JSON, XML or multipart, which are read as their
+    /// parts: what ModSecurity holds as `REQUEST_BODY`.
+    BodyUnparsed,
+}
+
+/// The name a zone narrows to: one name, or each name matching a pattern.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Name {
+    /// Lowercased.
+    Is(String),
+    Matches(NamePattern),
+}
+
+impl Target {
+    /// The name a named zone narrows to.
+    pub fn name(&self) -> Option<&Name> {
+        match self {
+            Target::Arg(n) | Target::ArgName(n) | Target::Header(n) | Target::HeaderName(n)
+            | Target::Cookie(n) | Target::CookieName(n) => n.as_ref(),
+            _ => None,
+        }
+    }
+}
+
+impl Name {
+    /// Whether a name, lowercased, is this one.
+    pub fn fits(&self, key: &str) -> bool {
+        match self {
+            Name::Is(n) => n == key,
+            Name::Matches(p) => p.0.is_match(key),
+        }
+    }
+}
+
+/// A pattern names are matched against, compiled once, without regard to case.
+/// Compared by its text.
+#[derive(Debug, Clone)]
+pub struct NamePattern(regex::Regex);
+
+impl PartialEq for NamePattern {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.as_str() == other.0.as_str()
+    }
+}
+impl Eq for NamePattern {}
+impl std::hash::Hash for NamePattern {
+    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+        self.0.as_str().hash(h)
+    }
 }
 
 /// A zone as a rule writes it — one zone, or several joined by `|` — as the
@@ -163,6 +215,20 @@ pub fn parse_zone(zone: &str) -> Option<Vec<Target>> {
     let mut out: Vec<Target> = Vec::new();
     for part in zone.split('|') {
         let part = part.trim();
+        // An exception: a named zone, taken out of what the rest read.
+        if let Some(rest) = part.strip_prefix('!') {
+            let except = parse_zone(rest)?.pop()?;
+            let named = matches!(&except, Target::Arg(Some(_)) | Target::ArgName(Some(_)) | Target::Header(Some(_))
+                | Target::HeaderName(Some(_)) | Target::Cookie(Some(_)) | Target::CookieName(Some(_)));
+            if !named || rest.contains('|') {
+                return None;
+            }
+            let target = Target::Except(Box::new(except));
+            if !out.contains(&target) {
+                out.push(target);
+            }
+            continue;
+        }
         let (kind, name) = match part.split_once(':') {
             Some((kind, name)) => (kind.trim(), Some(name.trim())),
             None => (part, None),
@@ -175,9 +241,6 @@ pub fn parse_zone(zone: &str) -> Option<Vec<Target>> {
             ("HEADERS", None)     => Target::Headers,
             ("ANY", None)         => Target::Any,
             ("PATH", None)        => Target::Path,
-            ("ARG_NAME", None)    => Target::ArgName,
-            ("HEADER_NAME", None) => Target::HeaderName,
-            ("COOKIE_NAME", None) => Target::CookieName,
             ("METHOD", None)      => Target::Method,
             ("XML", None)         => Target::Xml,
             ("XML_ATTR", None)    => Target::XmlAttr,
@@ -185,28 +248,40 @@ pub fn parse_zone(zone: &str) -> Option<Vec<Target>> {
             ("HEADER_BLOCK", None) => Target::HeaderBlock,
             ("REQUEST_LINE", None) => Target::RequestLine,
             ("PROTOCOL", None)    => Target::Protocol,
+            ("BODY_UNPARSED", None) => Target::BodyUnparsed,
             ("ARG", name)         => Target::Arg(named(name, false)?),
+            ("ARG_NAME", name)    => Target::ArgName(named(name, false)?),
             ("HEADER", name)      => Target::Header(named(name, true)?),
+            ("HEADER_NAME", name) => Target::HeaderName(named(name, true)?),
             ("COOKIE", name)      => Target::Cookie(named(name, false)?),
+            ("COOKIE_NAME", name) => Target::CookieName(named(name, false)?),
             _ => return None,
         };
         if !out.contains(&target) {
             out.push(target);
         }
     }
-    (!out.is_empty()).then_some(out)
+    // Something has to be read for an exception to be taken out of.
+    out.iter().any(|t| !matches!(t, Target::Except(_))).then_some(out)
 }
 
-/// The name after a zone's colon, lowercased; `Some(None)` for no colon, and
-/// `None` for a name that cannot be one. A header's name has to be an HTTP
-/// token; an argument's or a cookie's anything without spaces or a `|`.
-fn named(name: Option<&str>, header: bool) -> Option<Option<String>> {
+/// The name after a zone's colon; `Some(None)` for no colon, and `None` for a
+/// name that cannot be one. `/a pattern/` matches names; anything else is one
+/// name, lowercased. A header's name has to be an HTTP token; an argument's or
+/// a cookie's anything without spaces or a `|`.
+fn named(name: Option<&str>, header: bool) -> Option<Option<Name>> {
     let Some(name) = name else { return Some(None) };
+    if name.chars().count() > MAX_NAME || name.contains('|') {
+        return None;
+    }
+    if let Some(pattern) = name.strip_prefix('/').and_then(|n| n.strip_suffix('/')).filter(|p| !p.is_empty()) {
+        let re = regex::RegexBuilder::new(pattern).case_insensitive(true).size_limit(1 << 20).build().ok()?;
+        return Some(Some(Name::Matches(NamePattern(re))));
+    }
     let fits = !name.is_empty()
-        && name.chars().count() <= MAX_NAME
-        && !name.chars().any(|c| c.is_whitespace() || c.is_control() || c == '|')
+        && !name.chars().any(|c| c.is_whitespace() || c.is_control())
         && (!header || axum::http::HeaderName::from_bytes(name.as_bytes()).is_ok());
-    fits.then(|| Some(name.to_lowercase()))
+    fits.then(|| Some(Name::Is(name.to_lowercase())))
 }
 
 /// A zone written the way the interface and an export show it: kinds in
@@ -234,11 +309,17 @@ struct Value {
     /// The name's own forms, for `*_NAME` zones.
     name:  Vec<String>,
     value: Vec<String>,
+    /// The name and value as ModSecurity's parsers hand them to a rule: a
+    /// query's or a form's decoded once, `+` a space; every other as it was
+    /// written. What a rule whose decodings begin with `none` is matched
+    /// against. No value for a name that has none.
+    parsed_name: String,
+    parsed:      Option<String>,
 }
 
-/// A zone, a chain of decodings, and the forms the zone is read in with them
-/// applied.
-type Decoded = (Target, Vec<Transform>, Rc<Vec<String>>);
+/// A zone, the exceptions it is read less, a chain of decodings, and the forms
+/// the zone is read in with them applied.
+type Decoded = (Target, Vec<Target>, Vec<Transform>, Rc<Vec<String>>);
 
 /// The parts of one request the targeted zones read, each built the first
 /// time a rule asks for it and not again. A policy whose rules read none of
@@ -257,6 +338,7 @@ pub struct Parts<'a> {
     parts:   OnceCell<(Vec<Value>, Vec<Value>)>,
     block:   OnceCell<Vec<String>>,
     line:    OnceCell<Vec<String>>,
+    unparsed: OnceCell<Vec<String>>,
     /// The forms a zone is read in with a chain of decodings applied, made
     /// once for each zone and chain however many rules ask. A list: a request
     /// meets a few dozen pairs, and comparing in place costs no allocation.
@@ -276,47 +358,88 @@ impl<'a> Parts<'a> {
             parts: OnceCell::new(),
             block: OnceCell::new(),
             line: OnceCell::new(),
+            unparsed: OnceCell::new(),
             decoded: RefCell::new(Vec::new()),
         }
     }
 
     /// Each of `forms` — what `target` is read in — with `chain` applied,
     /// from the cache when a rule has asked for the pair already.
-    pub fn decoded(&self, target: &Target, chain: &[Transform], forms: impl FnOnce() -> Vec<String>) -> Rc<Vec<String>> {
-        if let Some((_, _, found)) = self.decoded.borrow().iter().find(|(t, c, _)| t == target && c == chain) {
+    pub fn decoded(&self, target: &Target, except: &[Target], chain: &[Transform],
+                   forms: impl FnOnce() -> Vec<String>) -> Rc<Vec<String>> {
+        if let Some((_, _, _, found)) = self.decoded.borrow().iter()
+            .find(|(t, x, c, _)| t == target && x == except && c == chain)
+        {
             return found.clone();
         }
         let made: Rc<Vec<String>> = Rc::new(forms().iter().flat_map(|f| apply_all(chain, f)).collect());
-        self.decoded.borrow_mut().push((target.clone(), chain.to_vec(), made.clone()));
+        self.decoded.borrow_mut().push((target.clone(), except.to_vec(), chain.to_vec(), made.clone()));
         made
     }
 
-    /// Whether `is_match` holds for any form of any value `target` reads.
-    /// Only for the targeted zones; the whole-text ones are the caller's.
-    pub fn any(&self, target: &Target, is_match: &dyn Fn(&str) -> bool) -> bool {
-        let values = |list: &[Value], name: &Option<String>| {
-            list.iter()
-                .filter(|v| name.as_ref().is_none_or(|n| &v.key == n))
-                .any(|v| v.value.iter().any(|f| is_match(f)))
+    /// Whether `is_match` holds for any form of any value `target` reads, less
+    /// the values `except` takes out of it. With `parsed`, each value once, as
+    /// ModSecurity's parsers hand it over, rather than in every form. Only for
+    /// the targeted zones; the whole-text ones are the caller's.
+    pub fn any(&self, target: &Target, except: &[Target], parsed: bool, is_match: &dyn Fn(&str) -> bool) -> bool {
+        // Taken out: an exception of the same kind naming this one.
+        let excepted = |v: &Value| except.iter().any(|e| match e {
+            Target::Except(inner) if std::mem::discriminant(&**inner) == std::mem::discriminant(target) => {
+                inner.name().is_some_and(|n| n.fits(&v.key))
+            }
+            _ => false,
+        });
+        let chosen = |v: &Value, name: &Option<Name>| name.as_ref().is_none_or(|n| n.fits(&v.key)) && !excepted(v);
+        let values = |list: &[Value], name: &Option<Name>| {
+            list.iter().filter(|v| chosen(v, name)).any(|v| if parsed {
+                v.parsed.as_deref().is_some_and(is_match)
+            } else {
+                v.value.iter().any(|f| is_match(f))
+            })
         };
-        let names = |list: &[Value]| list.iter().any(|v| v.name.iter().any(|f| is_match(f)));
+        let names = |list: &[Value], name: &Option<Name>| {
+            list.iter().filter(|v| chosen(v, name)).any(|v| if parsed {
+                is_match(&v.parsed_name)
+            } else {
+                v.name.iter().any(|f| is_match(f))
+            })
+        };
+        // A text read whole: as it is, or in every form.
+        let text = |forms: &[String]| if parsed {
+            forms.first().is_some_and(|f| is_match(f))
+        } else {
+            forms.iter().any(|f| is_match(f))
+        };
         match target {
-            Target::Path        => self.path().iter().any(|f| is_match(f)),
+            // The path as the server behind ModSecurity hands it over:
+            // decoded once, `+` a `+`.
+            Target::Path        => if parsed { is_match(&percent_decode(&self.ctx.path)) } else { text(self.path()) },
             Target::Arg(name)   => values(self.args(), name),
-            Target::ArgName     => names(self.args()),
+            Target::ArgName(name) => names(self.args(), name),
             Target::Header(name) => values(self.headers(), name),
-            Target::HeaderName  => names(self.headers()),
+            Target::HeaderName(name) => names(self.headers(), name),
             Target::Cookie(name) => values(self.cookies(), name),
-            Target::CookieName  => names(self.cookies()),
+            Target::CookieName(name) => names(self.cookies(), name),
             Target::Method      => is_match(&self.ctx.method),
-            Target::Xml         => self.xml().0.iter().any(|f| is_match(f)),
+            Target::Xml         => text(&self.xml().0),
             Target::XmlAttr     => values(&self.xml().1, &None),
             Target::FileName    => values(&self.multipart().1, &None),
-            Target::HeaderBlock => self.header_block().iter().any(|f| is_match(f)),
-            Target::RequestLine => self.request_line().iter().any(|f| is_match(f)),
+            Target::HeaderBlock => text(self.header_block()),
+            Target::RequestLine => text(self.request_line()),
             Target::Protocol    => is_match(protocol(self.ctx.version)),
-            Target::Url | Target::Args | Target::Body | Target::Headers | Target::Any => false,
+            Target::BodyUnparsed => text(self.unparsed_body()),
+            Target::Except(_) | Target::Url | Target::Args | Target::Body | Target::Headers | Target::Any => false,
         }
+    }
+
+    /// The body in its forms when it is not one read as its parts — JSON,
+    /// XML, multipart — and nothing when it is.
+    fn unparsed_body(&self) -> &[String] {
+        self.unparsed.get_or_init(|| match body_kind(&self.ctx.headers) {
+            Some(BodyKind::Json | BodyKind::Xml | BodyKind::Multipart(_)) => Vec::new(),
+            _ if self.body.is_empty() => Vec::new(),
+            _ => zone_text(&String::from_utf8_lossy(self.body), true),
+        })
     }
 
     /// The path alone, raw and decoded, and as a backend reads it. `+` is a
@@ -387,6 +510,8 @@ impl<'a> Parts<'a> {
                                 key:   a.name().to_lowercase(),
                                 name:  vec![a.name().to_string()],
                                 value: zone_text(a.value(), false),
+                                parsed_name: a.name().to_string(),
+                                parsed: Some(a.value().to_string()),
                             });
                         }
                     }
@@ -420,10 +545,15 @@ impl<'a> Parts<'a> {
     fn headers(&self) -> &[Value] {
         self.headers.get_or_init(|| {
             self.ctx.headers.iter()
-                .map(|(name, value)| Value {
-                    key:   name.as_str().to_string(),
-                    name:  vec![name.as_str().to_string()],
-                    value: zone_text(&String::from_utf8_lossy(value.as_bytes()), false),
+                .map(|(name, value)| {
+                    let text = String::from_utf8_lossy(value.as_bytes()).into_owned();
+                    Value {
+                        key:   name.as_str().to_string(),
+                        name:  vec![name.as_str().to_string()],
+                        value: zone_text(&text, false),
+                        parsed_name: name.as_str().to_string(),
+                        parsed: Some(text),
+                    }
                 })
                 .collect()
         })
@@ -479,6 +609,8 @@ impl<'a> Parts<'a> {
                         key:   percent_decode(name.trim()).to_lowercase(),
                         name:  zone_text(name.trim(), false),
                         value: zone_text(value.trim(), false),
+                        parsed_name: name.trim().to_string(),
+                        parsed: Some(value.trim().to_string()),
                     });
                 }
             }
@@ -546,7 +678,9 @@ fn body_kind(headers: &axum::http::HeaderMap) -> Option<BodyKind> {
 /// of a body that says how it is written and cannot be read that way.
 fn whole_body(body: &[u8], out: &mut Vec<Value>) {
     if !body.is_empty() {
-        out.push(Value { key: String::new(), name: Vec::new(), value: zone_text(&String::from_utf8_lossy(body), true) });
+        let text = String::from_utf8_lossy(body).into_owned();
+        out.push(Value { key: String::new(), name: Vec::new(), value: zone_text(&text, true),
+                         parsed_name: String::new(), parsed: Some(text) });
     }
 }
 
@@ -587,16 +721,19 @@ fn multipart(body: &[u8], boundary: &str) -> Option<(Vec<Value>, Vec<Value>)> {
         match param("filename") {
             Some(file) => {
                 if files.len() < MAX_VALUES {
-                    files.push(Value { key: name.to_lowercase(), name: zone_text(&name, false), value: zone_text(&file, false) });
+                    files.push(Value { key: name.to_lowercase(), name: zone_text(&name, false), value: zone_text(&file, false),
+                                       parsed_name: name.clone(), parsed: Some(file.clone()) });
                 }
                 // A file's field is an argument's name, without a value.
                 if fields.len() < MAX_VALUES {
-                    fields.push(Value { key: name.to_lowercase(), name: zone_text(&name, false), value: Vec::new() });
+                    fields.push(Value { key: name.to_lowercase(), name: zone_text(&name, false), value: Vec::new(),
+                                        parsed_name: name.clone(), parsed: None });
                 }
             }
             None => {
                 if fields.len() < MAX_VALUES {
-                    fields.push(Value { key: name.to_lowercase(), name: zone_text(&name, false), value: zone_text(content, false) });
+                    fields.push(Value { key: name.to_lowercase(), name: zone_text(&name, false), value: zone_text(content, false),
+                                        parsed_name: name.clone(), parsed: Some(content.to_string()) });
                 }
             }
         }
@@ -615,10 +752,13 @@ fn pairs(text: &str, out: &mut Vec<Value>) {
             continue;
         }
         let (name, value) = pair.split_once('=').unwrap_or((pair, ""));
+        let parsed_name = percent_decode(&name.replace('+', " "));
         out.push(Value {
-            key:   percent_decode(&name.replace('+', " ")).to_lowercase(),
+            key:   parsed_name.to_lowercase(),
             name:  zone_text(name, true),
             value: zone_text(value, true),
+            parsed_name,
+            parsed: Some(percent_decode(&value.replace('+', " "))),
         });
     }
 }
@@ -639,6 +779,8 @@ fn json(body: &[u8], out: &mut Vec<Value>) -> bool {
             key:   key.to_lowercase(),
             name:  zone_text(&key, false),
             value: zone_text(&text, false),
+            parsed_name: key.clone(),
+            parsed: Some(text),
         };
         match node {
             J::Object(map) => {
@@ -650,7 +792,8 @@ fn json(body: &[u8], out: &mut Vec<Value>) -> bool {
                 // of its own; its leaves are named by their own keys.
                 for (k, v) in map {
                     if v.is_object() || v.is_array() {
-                        out.push(Value { key: k.to_lowercase(), name: zone_text(k, false), value: Vec::new() });
+                        out.push(Value { key: k.to_lowercase(), name: zone_text(k, false), value: Vec::new(),
+                                         parsed_name: k.clone(), parsed: None });
                     }
                 }
             }
@@ -693,18 +836,64 @@ mod tests {
     }
 
     fn hits(parts: &Parts, zone: &str, pattern: &str) -> bool {
+        hits_as(parts, zone, pattern, false)
+    }
+
+    /// As the engine reads a zone: less its exceptions, and with `parsed`
+    /// each value once as parsed.
+    fn hits_as(parts: &Parts, zone: &str, pattern: &str, parsed: bool) -> bool {
         let re = regex::Regex::new(pattern).unwrap();
-        parse_zone(zone).unwrap().iter().any(|t| parts.any(t, &|s| re.is_match(s)))
+        let targets = parse_zone(zone).unwrap();
+        let (except, read): (Vec<Target>, Vec<Target>) = targets.into_iter().partition(|t| matches!(t, Target::Except(_)));
+        read.iter().any(|t| parts.any(t, &except, parsed, &|s| re.is_match(s)))
+    }
+
+    #[test]
+    fn a_zone_names_by_pattern_and_takes_exceptions_out() {
+        let c = ctx("/", Some("json.a=1&keep=evil"), &[("cookie", "$Version=1; MyVersion=1"), ("referer", "evil"),
+                                                       ("user-agent", "fine")], "");
+        let p = Parts::new(&c, b"");
+        assert!(hits(&p, "HEADER", "evil"));
+        assert!(!hits(&p, "HEADER|!HEADER:Referer", "evil"), "the excepted header was read");
+        assert!(hits(&p, "HEADER|!HEADER:Referer", "fine"));
+        assert!(hits(&p, "COOKIE:/^\\$version$/", "^1$"));
+        assert!(!hits(&p, "COOKIE_NAME:/^\\$version$/", "^MyVersion$"), "a pattern took a name it does not match");
+        assert!(!hits(&p, "ARG_NAME|!ARG_NAME:/^json\\./", "^json"), "an excepted name by pattern was read");
+        assert!(hits(&p, "ARG_NAME|!ARG_NAME:/^json\\./", "^keep$"));
+        assert_eq!(parse_zone("!HEADER:Referer"), None, "a zone of exceptions alone reads nothing");
+        assert_eq!(parse_zone("HEADER|!PATH"), None, "an exception names one value");
+        assert_eq!(canonical("header|!header:cookie"), Some("HEADER|!HEADER:cookie".into()));
+    }
+
+    #[test]
+    fn a_parsed_value_is_decoded_once_where_modsecurity_decodes_it() {
+        let c = ctx("/a%20b", Some("q=%26lt%3B+x"), &[("cookie", "c=%41")], "");
+        let p = Parts::new(&c, b"");
+        assert!(hits_as(&p, "ARG:q", "^&lt; x$", true), "a query argument is decoded once, + a space");
+        assert!(!hits_as(&p, "ARG:q", "<", true), "a parsed value was HTML-decoded too");
+        assert!(hits(&p, "ARG:q", "<"), "a rule matched in every form sees it HTML-decoded");
+        assert!(hits_as(&p, "COOKIE:c", "^%41$", true), "a cookie is read as written");
+        assert!(hits_as(&p, "PATH", "^/a b$", true), "the path is decoded once, as a server hands it over");
+    }
+
+    #[test]
+    fn the_unparsed_body_is_one_modsecurity_holds_as_request_body() {
+        for (ct, read) in [("application/x-www-form-urlencoded", true), ("text/plain", true),
+                           ("application/json", false), ("application/xml", false), ("multipart/form-data; boundary=x", false)] {
+            let c = ctx("/", None, &[("content-type", ct)], "java.lang.Runtime");
+            let p = Parts::new(&c, c.body.as_ref());
+            assert_eq!(hits(&p, "BODY_UNPARSED", "java"), read, "{ct}");
+        }
     }
 
     #[test]
     fn the_five_zones_parse_as_before_and_the_new_ones_alongside() {
         assert_eq!(parse_zone("ANY"), Some(vec![Target::Any]));
         assert_eq!(parse_zone("headers"), Some(vec![Target::Headers]));
-        assert_eq!(parse_zone("HEADER:User-Agent"), Some(vec![Target::Header(Some("user-agent".into()))]));
+        assert_eq!(parse_zone("HEADER:User-Agent"), Some(vec![Target::Header(Some(Name::Is("user-agent".into())))]));
         assert_eq!(parse_zone("ARG|ARG_NAME|COOKIE"),
-                   Some(vec![Target::Arg(None), Target::ArgName, Target::Cookie(None)]));
-        assert_eq!(parse_zone("ARG:id|ARG:ID"), Some(vec![Target::Arg(Some("id".into()))]));
+                   Some(vec![Target::Arg(None), Target::ArgName(None), Target::Cookie(None)]));
+        assert_eq!(parse_zone("ARG:id|ARG:ID"), Some(vec![Target::Arg(Some(Name::Is("id".into())))]));
         assert_eq!(canonical("arg:id | header:X-Token"), Some("ARG:id|HEADER:X-Token".into()));
     }
 

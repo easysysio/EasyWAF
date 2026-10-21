@@ -93,7 +93,7 @@ pub fn run(args: &[String]) -> i32 {
 }
 
 /// The request a case describes. `URL` is a path and query, a space in it
-/// encoded; `BODY` a body,
+/// encoded and a fragment left out; `BODY` a body,
 /// sent as JSON when it starts like JSON and as a form otherwise; `HEADERS`
 /// a header value, under a name no rule reads; `HEADER:Name` that header;
 /// `COOKIE` a Cookie header; `METHOD` the method.
@@ -109,8 +109,9 @@ pub(crate) fn case_request(arrives: &str, text: &str) -> Result<RequestContext, 
     let (mut path, mut query, mut body, mut method) = ("/".to_string(), None, String::new(), "GET".to_string());
     match arrives {
         "URL" => {
-            // A space, as a browser sends it: a request line cannot carry one.
-            let text = &text.replace(' ', "%20");
+            // As a browser sends it: a space encoded, since a request line
+            // cannot carry one, and no fragment, which stays in the browser.
+            let text = &text.split('#').next().unwrap_or("").replace(' ', "%20");
             let (p, q) = text.split_once('?').map_or((text.as_str(), None), |(p, q)| (p, Some(q)));
             path = p.to_string();
             query = q.map(str::to_string);

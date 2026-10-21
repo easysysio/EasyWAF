@@ -52,7 +52,8 @@ import sys
 from collections import Counter
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from modsec2easywaf import escape_literal_braces, matches_ordinary_traffic, portable, toml_names, toml_string  # noqa: E402
+from modsec2easywaf import (escape_literal_braces, matches_ordinary_traffic, portable,  # noqa: E402
+                            toml_names, toml_string, wide_classes)
 
 BSD_SIDS = range(2000000, 2800000)
 
@@ -483,6 +484,7 @@ def convert_rule(line):
                 raise Refuse(f"pcre flags {''.join(sorted(unknown))}")
             if buf is None:
                 raise Refuse("a pcre outside an HTTP buffer")
+            pattern = wide_classes(pattern)
             why = portable(pattern)
             if why:
                 raise Refuse(f"a pcre using {why}")

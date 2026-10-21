@@ -44,14 +44,20 @@ What does not, and why
     backreferences   no \\1, no (?>), no possessive quantifiers. There is no
                      rewrite that preserves meaning, so these are refused.
 
+Matching
+    Each rule is matched as ModSecurity matches it: its decodings begin with
+    `none`, so they start from each value as ModSecurity's parsers hand it
+    over, and every transformation it declares follows in order. An exception
+    — REQUEST_HEADERS|!REQUEST_HEADERS:Cookie — is one in the zone, and a name
+    by pattern — REQUEST_COOKIES:/__utm/ — is one too.
+
 Widening
-    ModSecurity can say "these variables except that one"; EasyWAF's zone is a
-    single choice. A rule targeting several zones, or excluding one variable,
-    can only be converted by widening what it inspects — which does not create
-    a hole but does create false positives, and CRS excludes things like
-    REQUEST_HEADERS:Referer precisely because they cause them. Widened rules
-    are therefore left out unless --include-widened is given, and are marked
-    in the output when they are included.
+    A variable no zone holds apart from others — ARGS_GET, the query's
+    arguments only — or an exception of a kind no zone takes can only be
+    converted by widening what the rule inspects. That does not create a hole
+    but does create false positives, so widened rules are left out unless
+    --include-widened is given, and are marked in the output when they are
+    included.
 
 Scoring
     CRS scores CRITICAL 5 / ERROR 4 / WARNING 3 / NOTICE 2 against a default
@@ -90,7 +96,9 @@ ZONE_OF = {
     "ARGS": ("ARG", True), "ARGS_GET": ("ARG", False), "ARGS_POST": ("ARG", False),
     "ARGS_NAMES": ("ARG_NAME", True),
     "ARGS_GET_NAMES": ("ARG_NAME", False), "ARGS_POST_NAMES": ("ARG_NAME", False),
-    "REQUEST_BODY": ("BODY", True),
+    # Held by ModSecurity for a form or a body of no type it parses, not for
+    # JSON, XML or multipart, which it reads as their parts.
+    "REQUEST_BODY": ("BODY_UNPARSED", True),
     # XML by its XPath, below: /* is the document's text, //@* its attributes'
     # values. Any other path is a part of the document, which XML holds.
     "XML": ("XML", False),
@@ -117,25 +125,19 @@ def exact_var(var):
 
 
 # The variables a name after a colon narrows to one value of, and the zone
-# that names it the same way.
+# that names it the same way; and their names', narrowed by name the same way.
+# A name between slashes is a pattern names are matched against, as in
+# ModSecurity. Narrowing names, and exceptions, need EasyWAF 1.6.0.
 NAMED = {"ARGS": "ARG", "REQUEST_HEADERS": "HEADER", "REQUEST_COOKIES": "COOKIE"}
+NAMES_OF = {"ARGS_NAMES": "ARG_NAME", "REQUEST_HEADERS_NAMES": "HEADER_NAME",
+            "REQUEST_COOKIES_NAMES": "COOKIE_NAME"}
 
-# Transformations the forms EasyWAF matches every value in already cover, so
-# a rule declaring only these, or these before any other, is matched against
-# the text it was written against without naming them.
-SAFE_TRANSFORMS = {
-    "urldecode", "urldecodeuni", "utf8tounicode", "removenulls", "length_none",
-    # zone_text applies these in the chains CRS declares.
-    "htmlentitydecode", "jsdecode", "cssdecode",
-    # Each decoded form with a path to normalise is also read with backslashes
-    # made slashes, slashes merged and dot segments resolved.
-    "normalizepath", "normalisepath", "normalizepathwin", "normalisepathwin",
-}
 CASE_TRANSFORMS = {"lowercase", "uppercase"}
-# The decodings a rule can name for EasyWAF to apply, by ModSecurity's name
-# lowercased: from the first one the forms do not cover, every transformation
-# a rule declares has to be one of these, in its order. They need EasyWAF
-# 1.5.0, and a set using them says so with `requires`.
+# The decodings EasyWAF applies, by ModSecurity's name lowercased. A rule is
+# matched as ModSecurity matches it — `none`, each value as parsed, then every
+# transformation it declares in order — so each has to be one of these. A
+# chain beginning with `none` needs EasyWAF 1.6.0, and a set using one says so
+# with `requires`.
 EASYWAF_TRANSFORM = {
     "cmdline": "cmdLine", "removewhitespace": "removeWhitespace",
     "compresswhitespace": "compressWhitespace", "replacecomments": "replaceComments",
@@ -145,7 +147,7 @@ EASYWAF_TRANSFORM = {
     "htmlentitydecode": "htmlEntityDecode", "jsdecode": "jsDecode", "cssdecode": "cssDecode",
     "removenulls": "removeNulls", "normalizepath": "normalizePath", "normalisepath": "normalizePath",
     "normalizepathwin": "normalizePathWin", "normalisepathwin": "normalizePathWin",
-    "lowercase": "lowercase",
+    "lowercase": "lowercase", "utf8tounicode": "utf8toUnicode",
 }
 
 SEVERITY_SCORE = {
@@ -274,9 +276,15 @@ def classify_vars(variables):
         if not var:
             continue
         if var.startswith("!"):
-            # "everything except this" — EasyWAF cannot exclude, so keeping the
-            # rule means inspecting what CRS deliberately left out.
-            widened = True
+            # "Everything except this": a named header, argument or cookie, or
+            # names matching a pattern, which an exception in the zone takes
+            # out. Any other is kept by inspecting what CRS left out.
+            name, _, selector = var[1:].partition(":")
+            kind = NAMED.get(name.upper()) or NAMES_OF.get(name.upper())
+            if kind and selector and "|" not in selector:
+                zones.append(f"!{kind}:{selector}")
+            else:
+                widened = True
             continue
         if var.startswith("&"):
             return None, False, "counts a variable rather than matching it"
@@ -293,9 +301,10 @@ def classify_vars(variables):
             zone, exact = "XML_ATTR", True
         elif name == "XML":
             pass
-        elif selector and name in NAMED and not selector.startswith("/") and "|" not in selector:
-            # ARGS:foo — one named parameter, which ARG:foo reads.
-            zone = f"{NAMED[name]}:{selector}"
+        elif selector and (name in NAMED or name in NAMES_OF) and "|" not in selector:
+            # ARGS:foo — one named parameter, which ARG:foo reads; ARGS:/^id_/
+            # those whose names match, which ARG:/^id_/ does.
+            zone = f"{NAMED.get(name) or NAMES_OF[name]}:{selector}"
         elif selector:
             # ARGS:/^id_/ — names chosen by a pattern. The zone holds them all.
             widened = True
@@ -360,6 +369,12 @@ def escape_literal_braces(pattern):
     out, i, in_class = [], 0, False
     while i < len(pattern):
         ch = pattern[i]
+        # `\x{e2}`, `\p{L}`: braces of an escape, which are no brace at all.
+        if ch == "\\" and pattern[i + 1:i + 3] in ("x{", "p{", "P{") and "}" in pattern[i:]:
+            end = pattern.index("}", i)
+            out.append(pattern[i:end + 1])
+            i = end + 1
+            continue
         if ch == "\\" and i + 1 < len(pattern):
             out.append(pattern[i:i + 2])
             i += 2
@@ -469,8 +484,23 @@ def has_possessive(pattern):
     return False
 
 
+def wide_classes(pattern):
+    """A PCRE matching bytes, as one matching characters. A class range running
+    to byte 0xff from ASCII — `[\\x7f-\\xff]`, any byte beyond ASCII — is every
+    character beyond it. Any other byte beyond ASCII is one byte of a UTF-8
+    character, which a pattern on characters never sees: `portable` refuses it."""
+    return re.sub(r"(\\x(?:\{[0-7]?[0-9a-fA-F]\}|[0-7][0-9a-fA-F])|\\x\{?80\}?)-\\x(?:\{0*[fF]{2}\}|[fF]{2})",
+                  r"\1-\\x{10FFFF}", pattern)
+
+
+HIGH_BYTE = re.compile(r"\\x(?:\{0*[89a-fA-F][0-9a-fA-F]\}|[89a-fA-F][0-9a-fA-F])")
+
+
 def portable(pattern):
-    """Reject a PCRE the Rust regex crate cannot compile."""
+    """Reject a PCRE the Rust regex crate cannot compile, or one that would
+    compile and match something else."""
+    if HIGH_BYTE.search(re.sub(r"\\x(?:\{[0-9a-fA-F]+\}|[0-9a-fA-F]{2})-\\x\{10FFFF\}", "", pattern)):
+        return "a byte beyond ASCII, one byte of a UTF-8 character where EasyWAF reads characters"
     for rx, why in UNSUPPORTED_RE:
         if rx.search(pattern):
             return why
@@ -528,7 +558,7 @@ POLICY_LISTS = {
 # since a capture is no condition. Each holds only for the links it was written
 # against: a rule CRS has since changed is refused, not converted from the
 # rule it was. As (links as (variables, operator), conditions as (zone,
-# pattern, negated)).
+# pattern, negated, and the decodings after `none` where there are any)).
 LIST_RULES = {
     # The Content-Type's type, up to its parameters, is not an allowed one.
     "920420": ([("REQUEST_HEADERS:Content-Type", r"@rx ^[^;\s]+"),
@@ -548,11 +578,19 @@ LIST_RULES = {
     # The path's file extension is a restricted one.
     "920440": ([("REQUEST_BASENAME", r"@rx \.([^.]+)$"),
                 ("TX:EXTENSION", "@within %{tx.restricted_extensions}")],
-               [("PATH", r"(?i)\.%{restricted_extensions}$", False)]),
+               [("PATH", r"(?i)\.%{restricted_extensions}$", False, ["urlDecodeUni"])]),
     # A header's name is a restricted one.
     "920450": ([("REQUEST_HEADERS_NAMES", "@rx ^.*$"),
                 ("TX:/^header_name_920450_/", "@within %{tx.restricted_headers_basic}")],
                [("HEADER_NAME", "(?i)^%{restricted_headers}$", False)]),
+}
+
+
+# Conditions a CRS rule holds under that another rule sets, which a chain of
+# its own does not show: 920539 removes 920540 when the body is read as JSON.
+# Each holds where the header is absent, as the removal then does not happen.
+EXTRA_CONDITIONS = {
+    "920540": [("HEADER:Content-Type", r"(?i)^\s*(?:application/json|[^;\s]+\+json)\s*(?:;|$)", True)],
 }
 
 
@@ -563,8 +601,9 @@ def list_rule(rid, links):
     if [(v.strip(), o.strip()) for v, o, _ in links] != expected:
         raise Refuse("changed upstream", "compares a captured value with a configured list, and its "
                                          "links are not the ones EasyWAF's conditions were written for")
-    return [{"zone": z, "pattern": p, "negate": n, "widened": False, "transforms": [], "chain": []}
-            for z, p, n in conds]
+    return [{"zone": c[0], "pattern": c[1], "negate": c[2], "widened": False, "transforms": [],
+             "chain": ["none"] + (c[3] if len(c) > 3 else [])}
+            for c in conds]
 
 
 def operator_pattern(op, base_dir):
@@ -606,6 +645,12 @@ def operator_pattern(op, base_dir):
     raise Refuse(f"operator {name or '(none)'}", f"operator {name or '(none)'} has no EasyWAF equivalent")
 
 
+def zone_string(zone):
+    """A zone as TOML: double-quoted, as every zone was before a name could be
+    a pattern, unless it holds what would need escaping there."""
+    return f'"{zone}"' if not re.search(r'["\\]', zone) else toml_string(zone)
+
+
 def toml_names(names):
     """A list of names as a TOML array."""
     return "[" + ", ".join(toml_string(n) for n in names) + "]"
@@ -618,7 +663,7 @@ def link_condition(variables, operator, actions, base_dir):
     negate = op.startswith("!")
     if negate:
         op = op[1:].strip()
-    pattern = operator_pattern(op, base_dir)
+    pattern = wide_classes(operator_pattern(op, base_dir))
     if not pattern:
         raise Refuse("empty pattern", "an empty pattern")
 
@@ -626,21 +671,16 @@ def link_condition(variables, operator, actions, base_dir):
     # t:none clears what came before it.
     if "none" in transforms:
         transforms = transforms[len(transforms) - transforms[::-1].index("none"):]
-    covered = 0
-    while covered < len(transforms) and (transforms[covered] in SAFE_TRANSFORMS
-                                         or transforms[covered] in CASE_TRANSFORMS):
-        covered += 1
-    unknown = [t for t in transforms[covered:] if t not in EASYWAF_TRANSFORM]
+    unknown = [t for t in transforms if t not in EASYWAF_TRANSFORM]
     if unknown:
         raise Refuse("transformation",
                      f"needs t:{','.join(sorted(set(unknown)))}, which EasyWAF does not "
                      f"apply — the rule would be evadable by that encoding")
-    chain = [EASYWAF_TRANSFORM[t] for t in transforms[covered:]]
-    # multiMatch matches the value before each transformation and after it.
-    # Before the first the forms cover already; after the rest, EasyWAF does
-    # it when told.
-    if chain and any(k.lower() == "multimatch" for k in actions):
-        chain = ["multiMatch"] + chain
+    # Matched as ModSecurity matches it: each value as its parser hands it
+    # over — `none` — with the rule's transformations applied in order, and
+    # with multiMatch before each and after the last.
+    chain = ["none"] + (["multiMatch"] if any(k.lower() == "multimatch" for k in actions) else []) \
+        + [EASYWAF_TRANSFORM[t] for t in transforms]
 
     why = portable(pattern)
     if why:
@@ -754,6 +794,9 @@ def convert(paths, id_base, include_widened, set_id, set_name, max_paranoia=1, s
                 where = f" (in link {next(n for n, (v, o, a) in enumerate(links, 1) if _refused(v, o, a, base_dir))} of a chain of {len(links)})" if len(links) > 1 else ""
                 skipped.append((label, e.why + where))
                 continue
+            for z, p, n in EXTRA_CONDITIONS.get(rid, []):
+                conds.append({"zone": z, "pattern": p, "negate": n, "widened": False, "transforms": [],
+                              "chain": ["none"], "absent_holds": True})
             widened = any(c["widened"] for c in conds)
             if widened and not include_widened:
                 stats["would widen"] += 1
@@ -764,7 +807,7 @@ def convert(paths, id_base, include_widened, set_id, set_name, max_paranoia=1, s
             # have; a negated condition on a named header that is absent holds.
             # So such a link also requires its header to be there.
             for c in list(conds):
-                if c["negate"] and re.match(r"^(?:HEADER|ARG|COOKIE):", c["zone"]):
+                if c["negate"] and not c.get("absent_holds") and re.match(r"^(?:HEADER|ARG|COOKIE):", c["zone"]):
                     conds.append({"zone": c["zone"], "pattern": "^", "negate": False,
                                   "widened": False, "transforms": [], "chain": [], "present": True})
             # A negated condition holds wherever its zone has nothing, so on
@@ -856,7 +899,7 @@ def convert(paths, id_base, include_widened, set_id, set_name, max_paranoia=1, s
             f"id          = {r['id']}",
             f"name        = {toml_string(r['name'][:120])}",
             f"description = {toml_string(note)}",
-            f'zone        = "{first["zone"]}"',
+            f"zone        = {zone_string(first['zone'])}",
             f"pattern     = {toml_string(first['pattern'])}",
         ]
         if first["negate"]:
@@ -865,7 +908,7 @@ def convert(paths, id_base, include_widened, set_id, set_name, max_paranoia=1, s
             out.append(f"transforms  = {toml_names(first['chain'])}")
         out += [f"score       = {r['score']}", 'action      = "score"', ""]
         for c in more:
-            out += ["[[rules.and]]", f'zone    = "{c["zone"]}"', f"pattern = {toml_string(c['pattern'])}"]
+            out += ["[[rules.and]]", f"zone    = {zone_string(c['zone'])}", f"pattern = {toml_string(c['pattern'])}"]
             if c["negate"]:
                 out.append("negate  = true")
             if c["chain"]:
@@ -934,9 +977,14 @@ SecRule REQUEST_HEADERS:User-Agent "@rx sqlmap" \
 SecRule ARGS|REQUEST_HEADERS "@rx evil" \
     "id:100008,phase:2,t:none,msg:'Two zones',severity:'WARNING'"
 
-# Widened: headers chosen by a pattern, which no zone names.
-SecRule REQUEST_HEADERS:/^x-/ "@rx evil" \
+# Widened: the query string's arguments alone, which no zone holds apart from
+# the body's.
+SecRule ARGS_GET "@rx evil" \
     "id:100014,phase:2,t:none,msg:'Widened',severity:'WARNING'"
+
+# Exact: headers chosen by a pattern, less one by name.
+SecRule REQUEST_HEADERS:/^x-/|!REQUEST_HEADERS:X-Trace "@rx evil" \
+    "id:100022,phase:2,t:none,msg:'Named by pattern',severity:'WARNING'"
 
 # Literal brace: legal in PCRE, rejected by Rust's regex until escaped.
 SecRule ARGS "@rx {{.*?}}" \
@@ -983,12 +1031,14 @@ def self_test():
         toml, skipped, stats = convert([path], 2000000, False, "t", "t")
         refused = {lbl.split()[0] for lbl, _ in skipped}
 
-        check(stats["converted"] == 11, f"expected 11 exact conversions, got {stats['converted']}")
-        check('id          = 2100003' in toml and 'transforms  = [\'cmdLine\']' in toml, "t:cmdLine should be named")
-        check("transforms  = ['replaceComments', 'compressWhitespace']" in toml,
-              "a covered decoding before the first applied one should be left to the forms")
-        check("transforms  = ['base64Decode', 'urlDecodeUni']" in toml,
-              "a covered decoding after an applied one should be named")
+        check(stats["converted"] == 12, f"expected 12 exact conversions, got {stats['converted']}")
+        check("transforms  = ['none', 'cmdLine']" in toml, "t:cmdLine should be named, from the value as parsed")
+        check("transforms  = ['none', 'urlDecodeUni', 'replaceComments', 'compressWhitespace']" in toml,
+              "every transformation a rule declares should be named, in order")
+        check("transforms  = ['none', 'base64Decode', 'urlDecodeUni']" in toml,
+              "a decoding after base64Decode should be named")
+        check('zone        = "HEADER:/^x-/|!HEADER:X-Trace"' in toml,
+              "headers by a pattern, less one, should be one zone with an exception")
         check('[[rules.and]]\nzone    = "HEADER:User-Agent"' in toml, "a chain's second link should be a condition")
         check('negate      = true' in toml and 'pattern = \'^\'' in toml,
               "a negated named header should need the header present")
@@ -1021,7 +1071,7 @@ def self_test():
 
         # With widening allowed, the pattern selector converts too, and says so.
         wide, _, wstats = convert([path], 2000000, True, "t", "t")
-        check(wstats["converted"] == 12, f"expected 12 with widening, got {wstats['converted']}")
+        check(wstats["converted"] == 13, f"expected 13 with widening, got {wstats['converted']}")
         check("WIDENED" in wide, "a widened rule must say so in its description")
         check('zone        = "HEADER"' in wide, "headers chosen by a pattern should widen to every header")
         # Scaled scores, for a policy at EasyWAF's threshold of 10.

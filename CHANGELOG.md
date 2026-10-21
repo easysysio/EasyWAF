@@ -11,9 +11,17 @@ Version bumps and tags are created only after explicit approval.
 ### Added
 - **Lists a policy sets for its rules.** A pattern names one as `%{allowed_methods}` and reads the policy's list as an alternation of its words: allowed methods, content types, charsets and HTTP versions, restricted file extensions and headers, each starting as OWASP CRS's default, set on the policy's new Request policy tab. A `*` in a word stands for a type name's characters, as in `application/*+json`. A rule set or import naming a list this version does not know is refused. Carried by export and import.
 - **An optional rule set, OWASP CRS: request policy**, with CRS's method allowlist (911100), content type, charset and HTTP version checks (920420, 920480, 920430), and restricted extensions and headers (920440, 920450), all passing CRS's tests. It requires EasyWAF 1.6.0, and is optional because CRS's defaults refuse WebDAV's methods and file uploads sent by PUT.
+- **A rule can be matched exactly as ModSecurity matches it.** `none` first among its decodings starts them from each value once, as ModSecurity's parsers hand it over — a query or form argument and the path decoded once, everything else as it arrived — rather than from every form. CRS's rules are converted that way: at paranoia level 1, 125 of 126 pass CRS's tests, where 116 did, and 933100, 920610, 942240 and 941110 no longer match, or miss, what CRS's tests say.
+- **Zones narrow by a pattern of names and take exceptions:** `COOKIE:/^__utm/`, `HEADER|!HEADER:Cookie`, `ARG_NAME|!ARG_NAME:/^json\./`. CRS's rules excluding a header or matching names by pattern convert exactly, where they read more than CRS did: one rule at paranoia level 1 is still widened, where ten were.
+- **`BODY_UNPARSED`**, the body unless it is read as JSON, XML or multipart — what ModSecurity holds as `REQUEST_BODY`, which CRS's rules now read. 920540 also holds only off JSON, as CRS's 920539 makes it.
+- `utf8toUnicode`, CRS's decoding of full-width and other characters beyond ASCII for `urlDecodeUni` to fold.
 
 ### Changed
 - A converted CRS rule's name leaves out what ModSecurity fills in when it logs, such as `(%{MATCHED_VAR})`.
+- A CRS pattern on bytes is read as one on characters where it means the same — a range to `\xff` is every character beyond ASCII — and refused where it does not: one matching UTF-8 a byte at a time, as seven rules above paranoia level 1 do, never matches text.
+
+### Fixed
+- `easywaf test-crs` sends a request with a body with its Content-Length, as CRS's test runner does, and reports a rule that does not compile instead of stopping. `easywaf check-set` leaves a URL case's fragment out, as a browser does.
 
 ---
 

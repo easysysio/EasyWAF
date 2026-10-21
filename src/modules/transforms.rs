@@ -17,6 +17,9 @@
 // `multiMatch` is not a decoding: named among them, the
 // pattern is matched against each form before the first and
 // after every one, as ModSecurity's multiMatch action does.
+// Nor is `none`: first in a chain, it says the chain starts
+// from each value as ModSecurity's parsers hand it over —
+// once, rather than in every form — as `t:none` does.
 // =========================================================
 
 use super::waf::{css_decode, html_entity_decode, js_decode, normalize_path, normalize_path_win,
@@ -44,7 +47,10 @@ pub enum Transform {
     Lowercase,
     Trim,
     DotPrefix,
+    Utf8ToUnicode,
     MultiMatch,
+    /// `none`: the chain starts from each value as parsed.
+    Parsed,
 }
 
 use Transform::*;
@@ -70,7 +76,9 @@ const NAMES: &[(&str, Transform)] = &[
     ("lowercase", Lowercase),
     ("trim", Trim),
     ("dotPrefix", DotPrefix),
+    ("utf8toUnicode", Utf8ToUnicode),
     ("multiMatch", MultiMatch),
+    ("none", Parsed),
 ];
 
 impl Transform {
@@ -107,7 +115,8 @@ impl Transform {
             Lowercase          => s.to_lowercase(),
             Trim               => s.trim_matches(is_space).to_string(),
             DotPrefix          => format!(".{s}"),
-            MultiMatch         => s.to_string(),
+            Utf8ToUnicode      => utf8_to_unicode(s),
+            MultiMatch | Parsed => s.to_string(),
         }
     }
 }
@@ -125,7 +134,7 @@ pub fn apply_all(chain: &[Transform], s: &str) -> Vec<String> {
     let every = chain.contains(&MultiMatch);
     let mut out = if every { vec![s.to_string()] } else { Vec::new() };
     let mut text = s.to_string();
-    for t in chain.iter().filter(|t| **t != MultiMatch) {
+    for t in chain.iter().filter(|t| !matches!(t, MultiMatch | Parsed)) {
         text = t.apply(&text);
         if every && !out.contains(&text) {
             out.push(text.clone());
@@ -133,6 +142,21 @@ pub fn apply_all(chain: &[Transform], s: &str) -> Vec<String> {
     }
     if !every {
         out.push(text);
+    }
+    out
+}
+
+/// `utf8toUnicode`: each character beyond ASCII as `%uHHHH`, which
+/// `urlDecodeUni` then reads, folding a full-width `＜` to `<`. One beyond the
+/// first 65,536 is left as it is.
+fn utf8_to_unicode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c as u32 {
+            0..=0x7f => out.push(c),
+            code @ 0x80..=0xffff => out.push_str(&format!("%u{code:04x}")),
+            _ => out.push(c),
+        }
     }
     out
 }
@@ -415,6 +439,8 @@ mod tests {
         assert_eq!(apply_all(&[MultiMatch, UrlDecodeUni, CmdLine], "c%27a%27t+/etc/passwd"),
                    ["c%27a%27t+/etc/passwd", "c'a't /etc/passwd", "cat/etc/passwd"]);
         assert_eq!(t("dotPrefix", "evil.com"), ".evil.com");
+        assert_eq!(apply_all(&[Parsed, Utf8ToUnicode, UrlDecodeUni], "＜script＞é"), ["<script>\u{fffd}"],
+                   "é decodes to its low byte, as libmodsecurity's does, which alone is no character");
         assert_eq!(t("normalizePath", "/a/./b/../c\\..\\d"), "/a/c\\..\\d");
         assert_eq!(t("normalizePathWin", "/a/./b/../c\\..\\d"), "/a/d");
     }
