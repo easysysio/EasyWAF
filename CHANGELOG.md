@@ -15,6 +15,7 @@ Version bumps and tags are created only after explicit approval.
 - **Zones narrow by a pattern of names and take exceptions:** `COOKIE:/^__utm/`, `HEADER|!HEADER:Cookie`, `ARG_NAME|!ARG_NAME:/^json\./`. CRS's rules excluding a header or matching names by pattern convert exactly, where they read more than CRS did: one rule at paranoia level 1 is still widened, where ten were.
 - **`BODY_UNPARSED`**, the body unless it is read as JSON, XML or multipart — what ModSecurity holds as `REQUEST_BODY`, which CRS's rules now read. 920540 also holds only off JSON, as CRS's 920539 makes it.
 - `utf8toUnicode`, CRS's decoding of full-width and other characters beyond ASCII for `urlDecodeUni` to fold.
+- **`HEADER_LINE`**, each header as a line of its own, and **`REQUEST`**, the request as one text: request line, header block and body. The ET converter reads Suricata's `http.request_header`, its contents outside any buffer and `http.start` into them, and its `isdataat` as a length after the match before; with the CRS converter's `@validateByteRange` as a character class, 39 more ET rules and five more CRS rules, among them 920270's null byte at paranoia level 1.
 
 ### Changed
 - A converted CRS rule's name leaves out what ModSecurity fills in when it logs, such as `(%{MATCHED_VAR})`.

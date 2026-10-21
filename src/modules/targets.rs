@@ -160,6 +160,11 @@ pub enum Target {
     /// The body, unless it is JSON, XML or multipart, which are read as their
     /// parts: what ModSecurity holds as `REQUEST_BODY`.
     BodyUnparsed,
+    /// Each header as a line of its own, `Name: value`, without its line break.
+    HeaderLine,
+    /// The request as one text: its request line, its header block, a blank
+    /// line, and its body as inspected.
+    Request,
 }
 
 /// The name a zone narrows to: one name, or each name matching a pattern.
@@ -249,6 +254,8 @@ pub fn parse_zone(zone: &str) -> Option<Vec<Target>> {
             ("REQUEST_LINE", None) => Target::RequestLine,
             ("PROTOCOL", None)    => Target::Protocol,
             ("BODY_UNPARSED", None) => Target::BodyUnparsed,
+            ("HEADER_LINE", None) => Target::HeaderLine,
+            ("REQUEST", None)     => Target::Request,
             ("ARG", name)         => Target::Arg(named(name, false)?),
             ("ARG_NAME", name)    => Target::ArgName(named(name, false)?),
             ("HEADER", name)      => Target::Header(named(name, true)?),
@@ -339,6 +346,8 @@ pub struct Parts<'a> {
     block:   OnceCell<Vec<String>>,
     line:    OnceCell<Vec<String>>,
     unparsed: OnceCell<Vec<String>>,
+    lines:   OnceCell<Vec<Vec<String>>>,
+    request: OnceCell<Vec<String>>,
     /// The forms a zone is read in with a chain of decodings applied, made
     /// once for each zone and chain however many rules ask. A list: a request
     /// meets a few dozen pairs, and comparing in place costs no allocation.
@@ -359,6 +368,8 @@ impl<'a> Parts<'a> {
             block: OnceCell::new(),
             line: OnceCell::new(),
             unparsed: OnceCell::new(),
+            lines: OnceCell::new(),
+            request: OnceCell::new(),
             decoded: RefCell::new(Vec::new()),
         }
     }
@@ -428,8 +439,31 @@ impl<'a> Parts<'a> {
             Target::RequestLine => text(self.request_line()),
             Target::Protocol    => is_match(protocol(self.ctx.version)),
             Target::BodyUnparsed => text(self.unparsed_body()),
+            Target::HeaderLine  => self.header_lines().iter().any(|forms| text(forms)),
+            Target::Request     => text(self.raw_request()),
             Target::Except(_) | Target::Url | Target::Args | Target::Body | Target::Headers | Target::Any => false,
         }
+    }
+
+    /// Each header as its own line, in the forms a value is read in; the
+    /// header block's lines, one at a time.
+    fn header_lines(&self) -> &[Vec<String>] {
+        self.lines.get_or_init(|| {
+            self.ctx.headers.iter()
+                .map(|(name, value)| zone_text(
+                    &format!("{}: {}", header_case(name.as_str()), String::from_utf8_lossy(value.as_bytes())), false))
+                .collect()
+        })
+    }
+
+    /// The request as one text, as it would have crossed the wire over
+    /// HTTP/1.1: the request line, the header block, a blank line, the body.
+    fn raw_request(&self) -> &[String] {
+        self.request.get_or_init(|| {
+            let line = self.request_line().first().cloned().unwrap_or_default();
+            let block = self.header_block().first().cloned().unwrap_or_default();
+            zone_text(&format!("{line}\r\n{block}\r\n{}", String::from_utf8_lossy(self.body)), false)
+        })
     }
 
     /// The body in its forms when it is not one read as its parts — JSON,
@@ -874,6 +908,15 @@ mod tests {
         assert!(hits(&p, "ARG:q", "<"), "a rule matched in every form sees it HTML-decoded");
         assert!(hits_as(&p, "COOKIE:c", "^%41$", true), "a cookie is read as written");
         assert!(hits_as(&p, "PATH", "^/a b$", true), "the path is decoded once, as a server hands it over");
+    }
+
+    #[test]
+    fn a_header_line_is_one_header_and_the_request_is_all_of_it() {
+        let c = ctx("/x", Some("a=1"), &[("user-agent", "curl/8"), ("x-token", "abc")], "body=1");
+        let p = Parts::new(&c, c.body.as_ref());
+        assert!(hits(&p, "HEADER_LINE", "^X-Token: abc$"));
+        assert!(!hits(&p, "HEADER_LINE", "curl/8\r\nX-Token"), "a line ran into the next");
+        assert!(hits(&p, "REQUEST", "^POST /x\\?a=1 HTTP/1\\.1\r\nUser-Agent: curl/8\r\nX-Token: abc\r\n\r\nbody=1$"));
     }
 
     #[test]

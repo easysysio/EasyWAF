@@ -606,6 +606,40 @@ def list_rule(rid, links):
             for c in conds]
 
 
+def byte_range_pattern(arg):
+    """@validateByteRange, which holds for a value with a byte outside the
+    ranges, as a pattern finding one: a character class of the ASCII bytes it
+    leaves out, and any character beyond ASCII unless it allows every byte
+    beyond ASCII. One allowing some of those and not others cannot be said on
+    characters, which are several bytes each there."""
+    allowed = set()
+    for part in arg.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        lo, _, hi = part.partition("-")
+        if not lo.strip().isdigit() or (hi and not hi.strip().isdigit()):
+            raise Refuse("operator @validateByteRange", f"@validateByteRange {arg}, a range this converter does not read")
+        allowed |= set(range(int(lo), int(hi or lo) + 1))
+    high = allowed & set(range(128, 256))
+    if high and high != set(range(128, 256)):
+        raise Refuse("operator @validateByteRange",
+                     "@validateByteRange allowing some bytes beyond ASCII and not others, which a pattern on "
+                     "characters cannot tell apart")
+    left_out = [b for b in range(128) if b not in allowed]
+    runs, start = [], None
+    for b in range(129):
+        if b < 128 and b in left_out:
+            start = b if start is None else start
+        elif start is not None:
+            runs.append(f"\\x{start:02x}" if start == b - 1 else f"\\x{start:02x}-\\x{b - 1:02x}")
+            start = None
+    alternatives = (["[" + "".join(runs) + "]"] if runs else []) + ([] if high else ["[^\\x00-\\x7f]"])
+    if not alternatives:
+        raise Refuse("operator @validateByteRange", "@validateByteRange allowing every byte, which nothing fails")
+    return "|".join(alternatives)
+
+
 def operator_pattern(op, base_dir):
     """An operator — @rx, @pm, and those that are a pattern in other words —
     as a regex. Refused for one that is not."""
@@ -634,6 +668,8 @@ def operator_pattern(op, base_dir):
         return re.escape(arg)
     if name == "@containsWord":
         return rf"\b{re.escape(arg)}\b"
+    if name == "@validateByteRange":
+        return byte_range_pattern(arg)
     if name == "@within":
         # True when the value is found in the list. Read as one of its words —
         # what lists of methods, versions and types hold — which is stricter
@@ -952,6 +988,10 @@ SecRule ARGS "@rx union select" \
 SecRule REQUEST_COOKIES "@rx <script" \
     "id:100021,phase:2,t:none,t:base64Decode,t:urlDecodeUni,msg:'XSS in base64',severity:'CRITICAL'"
 
+# A byte range: what it leaves out, found.
+SecRule ARGS "@validateByteRange 1-255" \
+    "id:100023,phase:2,t:none,t:urlDecodeUni,msg:'Null byte',severity:'CRITICAL'"
+
 # Refused: a transformation EasyWAF does not apply, which is what this case is
 # here to check.
 SecRule ARGS "@rx 0x41" \
@@ -1031,7 +1071,11 @@ def self_test():
         toml, skipped, stats = convert([path], 2000000, False, "t", "t")
         refused = {lbl.split()[0] for lbl, _ in skipped}
 
-        check(stats["converted"] == 12, f"expected 12 exact conversions, got {stats['converted']}")
+        check(stats["converted"] == 13, f"expected 13 exact conversions, got {stats['converted']}")
+        check(byte_range_pattern("1-255") == r"[\x00]", byte_range_pattern("1-255"))
+        check(byte_range_pattern("9,10,13,32-126,128-255") == r"[\x00-\x08\x0b-\x0c\x0e-\x1f\x7f]",
+              byte_range_pattern("9,10,13,32-126,128-255"))
+        check(byte_range_pattern("32-126") == r"[\x00-\x1f\x7f]|[^\x00-\x7f]", byte_range_pattern("32-126"))
         check("transforms  = ['none', 'cmdLine']" in toml, "t:cmdLine should be named, from the value as parsed")
         check("transforms  = ['none', 'urlDecodeUni', 'replaceComments', 'compressWhitespace']" in toml,
               "every transformation a rule declares should be named, in order")
@@ -1071,7 +1115,7 @@ def self_test():
 
         # With widening allowed, the pattern selector converts too, and says so.
         wide, _, wstats = convert([path], 2000000, True, "t", "t")
-        check(wstats["converted"] == 13, f"expected 13 with widening, got {wstats['converted']}")
+        check(wstats["converted"] == 14, f"expected 14 with widening, got {wstats['converted']}")
         check("WIDENED" in wide, "a widened rule must say so in its description")
         check('zone        = "HEADER"' in wide, "headers chosen by a pattern should widen to every header")
         # Scaled scores, for a policy at EasyWAF's threshold of 10.

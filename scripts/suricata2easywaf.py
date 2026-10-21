@@ -29,15 +29,18 @@ What is refused, and why
     flowbits, xbits   state across requests; one request cannot say it
     byte_*            arithmetic on bytes
     detection_filter  alerts only after a count; a rule is not a counter
-    dsize, isdataat, stream_size
-                      sizes and positions in a packet or stream
+    dsize, stream_size
+                      sizes of a packet or stream
     pcrexform, xor and the other transforms EasyWAF does not apply.
                       strip_whitespace, compress_whitespace and dotprefix are
                       named in the rule's `transforms`; base64_decode and
                       base64_data read every run of base64 in the buffer,
                       decoded, wherever the match before them ended
-    http.start, http.stat_code and the response buffers
-                      no zone holds them
+    http.stat_code and the response buffers
+                      no zone holds them; a content in no buffer and
+                      http.start read REQUEST, the request as one text, and
+                      http.request_header reads HEADER_LINE, a header at a
+                      time; isdataat is a length after the match before
     a pcre on one header line (http.request_header)
                       HEADER_BLOCK holds every line; no zone holds one
     bytes outside ASCII in a content
@@ -68,6 +71,8 @@ BUFFERS = {
     "http.accept_lang": "HEADER:Accept-Language", "http.connection": "HEADER:Connection",
     "http.content_len": "HEADER:Content-Length",
     "http.request_line": "REQUEST_LINE", "http.protocol": "PROTOCOL",
+    # The request line and header block, which REQUEST holds with the body after.
+    "http.start": "REQUEST",
     # Read content by content, below: "Name: value" names its header.
     "http.header": "HEADER-BLOCK", "http.header.raw": "HEADER-BLOCK",
     "http.request_header": "HEADER-LINE", "http.header_names": "HEADER-NAMES",
@@ -79,14 +84,14 @@ LEGACY = {
     "http_raw_header": "http.header.raw", "http_cookie": "http.cookie",
     "http_user_agent": "http.user_agent", "http_host": "http.host", "http_raw_host": "http.host.raw",
 }
-NO_ZONE = {"http.start", "http.stat_code", "http.stat_msg",
+NO_ZONE = {"http.stat_code", "http.stat_msg",
            "http.response_line", "http.response_body", "http.server", "http.location",
            "http.response_header"}
 REFUSED = {
     "flowbits": "state across requests (flowbits)", "xbits": "state across requests (xbits)",
     "byte_test": "byte arithmetic", "byte_jump": "byte arithmetic", "byte_extract": "byte arithmetic",
     "byte_math": "byte arithmetic",
-    "detection_filter": "alerts only after a count", "dsize": "a packet's size", "isdataat": "a position",
+    "detection_filter": "alerts only after a count", "dsize": "a packet's size",
     "stream_size": "a stream's size", "noalert": "sets state only",
     "lua": "a script", "luajit": "a script", "pcrexform": "a transform", "xor": "a transform",
     "http_stat_code": "a response", "ja3.hash": "TLS", "tls.sni": "TLS", "dns.query": "DNS",
@@ -339,7 +344,7 @@ def convert_rule(line):
         if k in NO_ZONE:
             raise Refuse(f"{k}, which no zone holds")
         if k not in IGNORED and k not in BUFFERS and k not in LEGACY and k not in COVERED_TRANSFORMS \
-                and k not in APPLIED_TRANSFORMS and k not in ("content", "pcre", "base64_decode", "base64_data"):
+                and k not in APPLIED_TRANSFORMS and k not in ("content", "pcre", "base64_decode", "base64_data", "isdataat"):
             raise Refuse(f"{k}, which this converter does not know")
 
     buffer, pieces = None, []          # pieces: [(buffer, Piece)]
@@ -353,8 +358,6 @@ def convert_rule(line):
         if last is None:
             return
         buf, data, negated, fast, lower, decodings = last
-        if buf is None:
-            raise Refuse("a content outside an HTTP buffer")
         # A content matched against a lowercased buffer is matched without
         # regard to case: written in lowercase, it finds `/ADMIN` as Suricata
         # does.
@@ -362,19 +365,13 @@ def convert_rule(line):
         relative = "distance" in mods or "within" in mods
         if relative and negated:
             raise Refuse("a negated relative content")
-        zone = BUFFERS[buf]
+        # One in no buffer reads the stream: the request as it arrived.
+        zone = BUFFERS[buf] if buf is not None else "REQUEST"
         if zone == "HEADER-NAMES":
             name = data.decode("ascii").strip("\r\n")
             if not name or "\r" in name or "\n" in name:
                 raise Refuse("a header-names content that is not one name")
             pieces.append(("HEADER_NAME", Piece(f"(?i)^{literal(name.lower().encode())}$", False, negated, fast)))
-        elif zone == "HEADER-LINE":
-            if relative:
-                raise Refuse("a relative content on one header line")
-            named = header_block(b"\r\n" + data, nocase)
-            if named is None:
-                raise Refuse("a content on one header line spanning lines")
-            pieces.append((named[0], Piece(named[1], False, negated, fast, chain=decodings)))
         else:
             # The header block is HEADER_BLOCK, read as any buffer is. A content
             # that is one header's value from its start reads that header
@@ -382,13 +379,17 @@ def convert_rule(line):
             # negated one stays on the block, which every request has: "no
             # header says this" holds where the header is absent, as it does
             # in Suricata.
+            # One header line, HEADER_LINE, is read the same way: a line holds
+            # no line break, so a content spanning one never matches there.
             named = None
-            if zone == "HEADER-BLOCK":
-                zone = "HEADER_BLOCK"
+            if zone in ("HEADER-BLOCK", "HEADER-LINE"):
+                if zone == "HEADER-LINE" and (b"\r" in data or b"\n" in data):
+                    raise Refuse("a content on one header line spanning lines")
+                zone = "HEADER_BLOCK" if zone == "HEADER-BLOCK" else "HEADER_LINE"
                 positioned = any(k in mods for k in ("startswith", "endswith", "depth", "offset"))
                 if not relative and not positioned and not negated and not decodings:
                     named = header_block(data, nocase)
-            regex = block_literal(data) if zone == "HEADER_BLOCK" else literal(data)
+            regex = block_literal(data) if zone in ("HEADER_BLOCK", "HEADER_LINE") else literal(data)
             if nocase:
                 regex = f"(?i:{regex})"
             if relative:
@@ -456,6 +457,29 @@ def convert_rule(line):
             if buffer is None or BUFFERS[buffer].startswith("HEADER-"):
                 raise Refuse("a length on no buffer, or on the header block")
             pieces.append((BUFFERS[buffer], Piece(length(v, "bsize"), False, False, chain=chain)))
+        elif k == "isdataat":
+            # Whether data follows a position: `N,relative` N bytes or more
+            # after the match before, `!N,relative` fewer; `N` more than N
+            # bytes in the buffer, `!N` N or fewer.
+            finish()
+            spec = v.strip()
+            negated = spec.startswith("!")
+            parts = [p.strip() for p in spec.lstrip("!").split(",")]
+            if not parts[0].isdigit() or any(p not in ("relative", "rawbytes") for p in parts[1:]):
+                raise Refuse(f"isdataat:{spec}, a position this converter does not read")
+            n, relative = int(parts[0]), "relative" in parts[1:]
+            zone = {"HEADER-BLOCK": "HEADER_BLOCK", "HEADER-LINE": "HEADER_LINE"}.get(BUFFERS.get(buffer, ""), BUFFERS.get(buffer)) \
+                if buffer is not None else "REQUEST"
+            if zone == "HEADER-NAMES":
+                raise Refuse("a position in the header names")
+            if relative:
+                if negated and n == 0:
+                    raise Refuse("isdataat:!0,relative, which nothing satisfies")
+                regex = f"(?s:.{{0,{n - 1}}})$" if negated else f"(?s:.{{{n}}})"
+                pieces.append((zone, Piece(regex, True, False, chain=chain)))
+            else:
+                regex = f"^(?s:.{{0,{n}}})$" if negated else f"^(?s:.{{{n + 1}}})"
+                pieces.append((zone, Piece(regex, False, False, chain=chain)))
         elif k == "urilen":
             finish()
             pieces.append(("URL", Piece(length(v, "urilen"), False, False)))
@@ -474,16 +498,14 @@ def convert_rule(line):
                     buf = b
             if "H" in flags or "D" in flags:
                 buf = "http.header"
-            if buf and BUFFERS.get(buf, "") in ("HEADER-LINE", "HEADER-NAMES"):
-                raise Refuse("a pcre on one header line, or on the header names")
+            if buf and BUFFERS.get(buf, "") == "HEADER-NAMES":
+                raise Refuse("a pcre on the header names")
             if buf == buffer and lowered:
                 flags += "i"
             decodings = chain if buf == buffer else []
             unknown = set(flags) - set("ismxUIPMCVWHDRBGO")
             if unknown:
                 raise Refuse(f"pcre flags {''.join(sorted(unknown))}")
-            if buf is None:
-                raise Refuse("a pcre outside an HTTP buffer")
             pattern = wide_classes(pattern)
             why = portable(pattern)
             if why:
@@ -498,9 +520,9 @@ def convert_rule(line):
                 regex = (f"(?{inline}:{body})" if inline else body)
             else:
                 regex = f"(?{inline}:{pattern})" if inline else f"(?:{pattern})"
-            zone = BUFFERS[buf]
-            pieces.append(("HEADER_BLOCK" if zone == "HEADER-BLOCK" else zone,
-                           Piece(regex, relative, negated, chain=decodings)))
+            zone = {"HEADER-BLOCK": "HEADER_BLOCK", "HEADER-LINE": "HEADER_LINE"}.get(BUFFERS.get(buf, ""), BUFFERS.get(buf)) \
+                if buf is not None else "REQUEST"
+            pieces.append((zone, Piece(regex, relative, negated, chain=decodings)))
     finish()
 
     if not pieces:
@@ -632,6 +654,7 @@ alert http any any -> [$HOME_NET,$HTTP_SERVERS] any (msg:"ET lengths"; flow:to_s
 alert http any any -> $HOME_NET any (msg:"ET header order"; flow:to_server; http.header; content:"TE|3a 20|deflate|0d 0a|Connection|3a 20|TE"; startswith; content:"User-Agent|3a 20|"; within:100; pcre:"/^[a-z]{3}\//R"; http.request_line; content:"GET //"; startswith; fast_pattern; http.protocol; content:"HTTP/1.0"; metadata:created_at 2022_01_01, signature_severity Major; sid:2060002; rev:1;)
 alert http any any -> $HOME_NET any (msg:"ET stripped"; flow:to_server; http.request_body; strip_whitespace; content:"<java.lang.ProcessBuilder>"; fast_pattern; http.host; dotprefix; content:".evil.example"; endswith; metadata:created_at 2022_01_01, signature_severity Major; sid:2060004; rev:1;)
 alert http any any -> $HOME_NET any (msg:"ET base64"; flow:to_server; http.request_body; content:"SAMLResponse="; base64_decode:relative; base64_data; content:"<samlp:Response"; http.uri; content:"/saml/acs"; metadata:created_at 2022_01_01, signature_severity Major; sid:2060005; rev:1;)
+alert http any any -> $HOME_NET any (msg:"ET raw"; flow:to_server; content:"|24 7b|jndi|3a|ldap|3a 2f 2f|"; nocase; fast_pattern; http.request_header; header_lowercase; content:"authorization|3a 20|bearer"; startswith; http.uri; content:"/api/v1/x?id="; isdataat:3,relative; http.request_body; isdataat:!10; metadata:created_at 2022_01_01, signature_severity Major; sid:2060006; rev:1;)
 alert http any any -> $HOME_NET any (msg:"ET lowered"; flow:to_server; http.uri; to_lowercase; content:"/cgi-bin/admin"; pcre:"/\.cgi$/"; http.header; content:"X-Thing|3a 20|bad"; pcre:"/^Accept\x3a\x20[^\r\n]+evil/Hm"; metadata:created_at 2022_01_01, signature_severity Major; sid:2060003; rev:1;)
 '''
 
@@ -648,8 +671,14 @@ def self_test():
     try:
         rules, refused, stats = convert([path], 2015)
         by = {r["id"]: r for r in rules}
-        check(set(by) == {2018277, 2050001, 2034647, 2060001, 2059000, 2060002, 2060003, 2060004, 2060005},
+        check(set(by) == {2018277, 2050001, 2034647, 2060001, 2059000, 2060002, 2060003, 2060004, 2060005, 2060006},
               f"converted {sorted(by)}")
+        rw = by[2060006]["conds"] if 2060006 in by else []
+        check(any(c[0] == "REQUEST" and "jndi" in c[1] for c in rw), f"a content in no buffer reads REQUEST: {rw}")
+        check(any(c[0] == "HEADER_LINE" and c[1] == "^(?i:(?i:authorization): bearer)" for c in rw),
+              "http.request_header reads HEADER_LINE")
+        check(any(c[0] == "URL" and c[1].endswith("(?s:.{3})") for c in rw), "isdataat:3,relative is three more bytes")
+        check(any(c[0] == "BODY" and c[1] == "^(?s:.{0,10})$" for c in rw), "isdataat:!10 is ten bytes or fewer")
         st = {c[0]: c for c in by[2060004]["conds"]} if 2060004 in by else {}
         check(st.get("BODY", [0, 0, 0, 0, []])[4] == ["removeWhitespace"], f"strip_whitespace is named: {st}")
         check(st.get("HEADER:Host", [0, 0, 0, 0, []])[4] == ["dotPrefix"], "dotprefix is named")

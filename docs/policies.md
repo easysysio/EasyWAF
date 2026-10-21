@@ -280,6 +280,8 @@ where on `ARGS` it would only be a query string that does.
 | `REQUEST_LINE` | the request line, `GET /path?query HTTP/1.1`, with the path and query as they arrived |
 | `PROTOCOL` | the protocol: `HTTP/1.0`, `HTTP/1.1`, `HTTP/2.0` or `HTTP/3.0` |
 | `BODY_UNPARSED` | the body, unless it is JSON, XML or multipart, which are read as their parts — what ModSecurity holds as `REQUEST_BODY` |
+| `HEADER_LINE` | each header as a line of its own, `Name: value` |
+| `REQUEST` | the request as one text: its request line, header block, a blank line and its body |
 
 A name between slashes is a pattern: `COOKIE:/^__utm/` reads every cookie whose
 name matches, and `ARG_NAME:/^json\./` the names that do. A zone written with

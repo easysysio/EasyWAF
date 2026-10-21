@@ -27,6 +27,8 @@
         <option value="REQUEST_LINE">GET /path?query HTTP/1.1</option>
         <option value="PROTOCOL">HTTP/1.1, HTTP/2.0 …</option>
         <option value="BODY_UNPARSED">the body, unless read as JSON, XML or multipart</option>
+        <option value="HEADER_LINE">each header as a line, Name: value</option>
+        <option value="REQUEST">the whole request as one text</option>
         <option value="HEADER|!HEADER:Cookie">every header but one — ! takes a name out</option>
     </datalist>
     {% if not zone_readonly | default(value=false) %}
