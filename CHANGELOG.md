@@ -6,7 +6,7 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
-## [1.6.0] — unreleased
+## [1.6.0] — 2026-10-22
 
 ### Security
 - **rustls-webpki updated to 0.103.16**, for RUSTSEC-2026-0382: certificate verification could accept a distrusted intermediate. And **webpki-roots and webpki-root-certs to 1.0.10**, for RUSTSEC-2026-0381 and 0383: the bundled roots still trusted emSign's distrusted intermediates. Both are what EasyWAF verifies backends and Let's Encrypt with.
