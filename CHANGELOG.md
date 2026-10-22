@@ -8,6 +8,9 @@ Version bumps and tags are created only after explicit approval.
 
 ## [1.6.0] — unreleased
 
+### Security
+- **rustls-webpki updated to 0.103.16**, for RUSTSEC-2026-0382: certificate verification could accept a distrusted intermediate. And **webpki-roots and webpki-root-certs to 1.0.10**, for RUSTSEC-2026-0381 and 0383: the bundled roots still trusted emSign's distrusted intermediates. Both are what EasyWAF verifies backends and Let's Encrypt with.
+
 ### Added
 - **Lists a policy sets for its rules.** A pattern names one as `%{allowed_methods}` and reads the policy's list as an alternation of its words: allowed methods, content types, charsets and HTTP versions, restricted file extensions and headers, each starting as OWASP CRS's default, set on the policy's new Request policy tab. A `*` in a word stands for a type name's characters, as in `application/*+json`. A rule set or import naming a list this version does not know is refused. Carried by export and import.
 - **An optional rule set, OWASP CRS: request policy**, with CRS's method allowlist (911100), content type, charset and HTTP version checks (920420, 920480, 920430), and restricted extensions and headers (920440, 920450), all passing CRS's tests. It requires EasyWAF 1.6.0, and is optional because CRS's defaults refuse WebDAV's methods and file uploads sent by PUT.
