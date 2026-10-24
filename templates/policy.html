@@ -2,7 +2,9 @@
 
 {% block content %}
 
-{% if rule_updates | length > 0 %}
+{% set ready = rule_updates | filter(attribute="needs_upgrade", value=false) %}
+{% set later = rule_updates | filter(attribute="needs_upgrade", value=true) %}
+{% if ready | length > 0 %}
 <div class="alert alert-info">
     <i class="fa fa-arrow-circle-up"></i>
     <strong>Rule set updates are available.</strong>
@@ -11,7 +13,7 @@
     <table class="table table-condensed" style="margin:10px 0 0 0; background:transparent">
         <thead><tr><th>Policy</th><th>Rule set</th><th>Installed</th><th>Available</th><th></th></tr></thead>
         <tbody>
-        {% for u in rule_updates %}
+        {% for u in ready %}
             <tr>
                 <td>{{ u.policy_name }}</td>
                 <td>{{ u.set_name }} <small class="text-muted">{{ u.set_id }}</small></td>
@@ -33,6 +35,17 @@
         or break one, so it is a decision rather than a background task.
     </small>
 </div>
+{% endif %}
+
+{% if later | length > 0 %}
+<p class="help-block">
+    <i class="fa fa-arrow-circle-up"></i>
+    {{ later | length }} rule set update(s) are written for a newer EasyWAF and wait
+    for an upgrade:
+    {% for u in later %}{{ u.set_name }} v{{ u.offered }} for {{ u.policy_name }}
+    <small>(needs {{ u.requires }})</small>{% if not loop.last %}, {% endif %}{% endfor %}.
+    The policies keep the versions they hold until then.
+</p>
 {% endif %}
 
 {% if rule_check_error %}

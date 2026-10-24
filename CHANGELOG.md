@@ -6,6 +6,14 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
+## [1.6.1] — unreleased
+
+### Changed
+- **The menu shows rule set updates where they are applied:** Security Policy and its Policy Manager carry the number of updates a policy can take, as Settings and Updates do.
+- **An update written for a newer EasyWAF is no longer counted as waiting.** The menus' numbers are of what can be applied here; an update needing an upgrade is marked with the version it needs on Updates (and on Settings when nothing else waits), listed apart under the Policy Manager's banner, and shown as needing that version on the Updates page, where it was offered an Apply button the update then refused.
+
+---
+
 ## [1.6.0] — 2026-10-22
 
 ### Security

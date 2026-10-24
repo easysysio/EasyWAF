@@ -144,9 +144,16 @@
                     </ul>
                 </li>
                 <li>
-                    <a href="#"><i class="fa fa-shield fa-fw"></i> Security Policy <span class="fa arrow"></span></a>
+                    <a href="#"><i class="fa fa-shield fa-fw"></i> Security Policy
+                        {% if rule_updates_waiting | default(value=0) > 0 %}
+                        <span class="label label-warning" title="Rule set updates a policy can take">{{ rule_updates_waiting }}</span>
+                        {% endif %}
+                        <span class="fa arrow"></span></a>
                     <ul class="nav nav-second-level">
-                        <li><a href="/policy"><i class="fa fa-shield"></i> Policy Manager</a></li>
+                        <li><a href="/policy"><i class="fa fa-shield"></i> Policy Manager
+                            {% if rule_updates_waiting | default(value=0) > 0 %}
+                            <span class="label label-warning" title="Rule set updates a policy can take">{{ rule_updates_waiting }}</span>
+                            {% endif %}</a></li>
                         <li><a href="/rules"><i class="fa fa-list-alt"></i> Rule Editor</a></li>
                         <li><a href="/exclusions"><i class="fa fa-ban"></i> Rule Exclusions</a></li>
                         <li><a href="/geoip"><i class="fa fa-flag"></i> GeoLocation Rules</a></li>
@@ -157,6 +164,8 @@
                     <a href="#"><i class="fa fa-cog fa-fw"></i> Settings
                         {% if updates_waiting | default(value=0) > 0 %}
                         <span class="label label-warning">{{ updates_waiting }}</span>
+                        {% elif upgrade_waiting | default(value=0) > 0 %}
+                        <span class="label label-default" title="Rule set updates that need EasyWAF {{ upgrade_to }}"><i class="fa fa-arrow-up"></i></span>
                         {% endif %}
                         <span class="fa arrow"></span></a>
                     <ul class="nav nav-second-level">
@@ -170,6 +179,10 @@
                         <li><a href="/updates"><i class="fa fa-download"></i> Updates
                             {% if updates_waiting | default(value=0) > 0 %}
                             <span class="label label-warning">{{ updates_waiting }}</span>
+                            {% endif %}
+                            {% if upgrade_waiting | default(value=0) > 0 %}
+                            <span class="label label-default"
+                                  title="{{ upgrade_waiting }} rule set update(s) need EasyWAF {{ upgrade_to }}: upgrade to apply them"><i class="fa fa-arrow-up"></i> {{ upgrade_to }}</span>
                             {% endif %}</a></li>
                         <li><a href="/backup"><i class="fa fa-hdd-o"></i> Backup</a></li>
                         {% endif %}

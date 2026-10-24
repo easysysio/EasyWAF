@@ -41,7 +41,7 @@ pub const KEY_AUTO_RULES: &str = "auto_apply_rules";
 
 // ─── What is waiting for a person ────────────────────────
 
-/// How many updates have arrived and not been applied.
+/// How many updates have arrived and can be applied, and not been.
 ///
 /// Held in memory rather than counted per page: every page in the interface
 /// renders the navigation, and a query on each of them to draw a badge would
@@ -59,6 +59,24 @@ pub fn waiting() -> i64 {
     waiting_cell().load(Ordering::Relaxed)
 }
 
+/// Of those, the rule set updates a policy can take: what the Policy Manager
+/// shows its number for.
+static RULES_WAITING: AtomicI64 = AtomicI64::new(0);
+
+pub fn rules_waiting() -> i64 {
+    RULES_WAITING.load(Ordering::Relaxed)
+}
+
+/// Rule set updates that wait for a newer EasyWAF rather than for a person,
+/// and the newest version they need. Not in the count above: a number is for
+/// something that can be done here and now.
+static UPGRADE_WAITING: AtomicI64 = AtomicI64::new(0);
+static UPGRADE_TO: std::sync::RwLock<String> = std::sync::RwLock::new(String::new());
+
+pub fn upgrade_waiting() -> (i64, String) {
+    (UPGRADE_WAITING.load(Ordering::Relaxed), UPGRADE_TO.read().map(|v| v.clone()).unwrap_or_default())
+}
+
 /// Count what is waiting, and remember it.
 ///
 /// Rule sets a policy holds at an older version than the mirror offers, plus a
@@ -68,10 +86,21 @@ pub fn waiting() -> i64 {
 /// a badge that meant "something is wrong somewhere" would be ignored within a
 /// week.
 pub async fn refresh_waiting(db: &sqlx::SqlitePool) {
-    let behind = crate::rules_update::available(db).await.map(|v| v.len()).unwrap_or(0) as i64;
+    let all = crate::rules_update::available(db).await.unwrap_or_default();
+    let (later, now): (Vec<_>, Vec<_>) = all.into_iter().partition(|u| u.needs_upgrade);
+    let behind = now.len() as i64;
     let lists  = i64::from(crate::iplist_feeds::held_bundle().is_some());
     let geo    = i64::from(crate::geo_update::held().is_some());
     waiting_cell().store(behind + lists + geo, Ordering::Relaxed);
+    RULES_WAITING.store(behind, Ordering::Relaxed);
+    UPGRADE_WAITING.store(later.len() as i64, Ordering::Relaxed);
+    let newest = later.iter()
+        .max_by_key(|u| crate::backup::version(&u.requires))
+        .map(|u| u.requires.clone())
+        .unwrap_or_default();
+    if let Ok(mut to) = UPGRADE_TO.write() {
+        *to = newest;
+    }
 }
 
 /// The flash a write leaves behind.

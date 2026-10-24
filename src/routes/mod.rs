@@ -44,6 +44,10 @@ pub fn who_context(ctx: &mut tera::Context, session: &crate::auth::SessionData) 
     // memory, not counted here: every page renders the navigation, and this
     // changes a few times a day.
     ctx.insert("updates_waiting", &crate::routes::updates::waiting());
+    ctx.insert("rule_updates_waiting", &crate::routes::updates::rules_waiting());
+    let (upgrade, to) = crate::routes::updates::upgrade_waiting();
+    ctx.insert("upgrade_waiting", &upgrade);
+    ctx.insert("upgrade_to", &to);
 }
 
 // ─── flash_redirect ──────────────────────────────────────

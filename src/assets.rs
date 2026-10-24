@@ -850,6 +850,32 @@ mod tests {
 
     /// The page that replaced a panel named after one of the three kinds it
     /// governed, and the one that showed nothing at all about the third.
+    /// The Policy Manager lists the updates a policy can take, and says which
+    /// wait for an upgrade instead of offering them.
+    #[test]
+    fn the_policy_manager_separates_updates_waiting_for_an_upgrade() {
+        let tera = tera().expect("templates should build");
+        let mut ctx = tera::Context::new();
+        for (k, v) in [("username", "t"), ("title", "Policy Manager"), ("url", "/policy"),
+                       ("result", ""), ("msg", ""), ("rule_check_error", "")] {
+            ctx.insert(k, v);
+        }
+        ctx.insert("rule_check_fetched", &serde_json::Value::Null);
+        ctx.insert("policies", &Vec::<serde_json::Value>::new());
+        ctx.insert("rule_updates", &vec![
+            serde_json::json!({ "policy_id": 1, "policy_name": "websites", "set_id": "owasp-rfi",
+                "set_name": "Remote file inclusion", "have": 1, "offered": 2, "requires": "", "needs_upgrade": false }),
+            serde_json::json!({ "policy_id": 1, "policy_name": "websites", "set_id": "owasp-sqli",
+                "set_name": "SQL injection", "have": 7, "offered": 8, "requires": "9.0.0", "needs_upgrade": true }),
+        ]);
+        let html = tera.render("policy.html", &ctx)
+            .unwrap_or_else(|e| panic!("policy.html failed to render: {e:#?}"));
+        assert!(html.contains("Rule set updates are available"));
+        assert_eq!(html.matches(">Review</a>").count(), 1, "an update needing an upgrade was offered for review");
+        assert!(html.contains("SQL injection v8 for websites") && html.contains("(needs 9.0.0)"),
+                "the update waiting for an upgrade is not named");
+    }
+
     #[test]
     fn the_updates_page_shows_all_three_kinds() {
         let tera = tera().expect("templates should build");
@@ -871,9 +897,20 @@ mod tests {
         ctx.insert("offered_sets", &vec![serde_json::json!({
             "id": "owasp-rfi", "name": "Remote file inclusion", "version": 2,
             "tier": "basic", "description": "Remote file inclusion." })]);
-        ctx.insert("behind", &vec![serde_json::json!({
-            "policy_id": 1, "policy_name": "websites", "set_id": "owasp-rfi",
-            "set_name": "Remote file inclusion", "have": 1, "offered": 2 })]);
+        ctx.insert("behind", &vec![
+            serde_json::json!({
+                "policy_id": 1, "policy_name": "websites", "set_id": "owasp-rfi",
+                "set_name": "Remote file inclusion", "have": 1, "offered": 2,
+                "requires": "", "needs_upgrade": false }),
+            serde_json::json!({
+                "policy_id": 1, "policy_name": "websites", "set_id": "owasp-sqli",
+                "set_name": "SQL injection", "have": 7, "offered": 8,
+                "requires": "9.0.0", "needs_upgrade": true }),
+        ]);
+        ctx.insert("rule_updates_waiting", &1);
+        ctx.insert("upgrade_waiting", &1);
+        ctx.insert("upgrade_to", &"9.0.0");
+        ctx.insert("is_admin", &true);
         ctx.insert("lists", &vec![serde_json::json!({
             "id": "tor-exits", "name": "Tor exit nodes", "description": "Relays.",
             "licence": "CC0", "attribution": "The Tor Project", "version": "2026092201",
@@ -891,6 +928,16 @@ mod tests {
 
         let html = tera.render("updates.html", &ctx)
             .unwrap_or_else(|e| panic!("updates.html failed to render: {e:#?}"));
+
+        // One update applied from here, one that waits for an upgrade and says so.
+        assert_eq!(html.matches("Apply to websites").count(), 1, "an update needing an upgrade was offered to apply");
+        assert!(html.contains("needs EasyWAF 9.0.0"), "an update needing an upgrade did not say so");
+        // The navigation: a number on the Policy Manager, and the upgrade waiting.
+        assert!(html.contains("title=\"Rule set updates a policy can take\">1</span>"),
+                "the Policy Manager does not show the rule set updates waiting");
+        assert!(html.contains("1 rule set update(s) need EasyWAF 9.0.0"), "the upgrade waiting is not shown");
+        assert!(html.contains("title=\"Rule set updates that need EasyWAF 9.0.0\""),
+                "Settings does not mark an upgrade waiting when nothing else is");
 
         for (what, why) in [
             // The three kinds, in one place.

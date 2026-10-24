@@ -161,6 +161,11 @@
                             <td>v{{ u.have }}</td>
                             <td><strong>v{{ u.offered }}</strong></td>
                             <td class="admin-only">
+                                {% if u.needs_upgrade %}
+                                <span class="label label-default"
+                                      title="v{{ u.offered }} is written for a newer EasyWAF than this one">
+                                    <i class="fa fa-arrow-up"></i> needs EasyWAF {{ u.requires }}</span>
+                                {% else %}
                                 <form method="post"
                                       action="/policy/{{ u.policy_name }}/rules/update/{{ u.set_id }}"
                                       style="margin:0">
@@ -169,6 +174,7 @@
                                         Apply to {{ u.policy_name }}
                                     </button>
                                 </form>
+                                {% endif %}
                             </td>
                         </tr>
                     {% endfor %}

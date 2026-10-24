@@ -218,6 +218,11 @@ pub struct AvailableUpdate {
     pub set_name:    String,
     pub have:        i64,
     pub offered:     i64,
+    /// The oldest EasyWAF the offered version is written for, or empty.
+    pub requires:    String,
+    /// Whether that is newer than this one: the update waits for an upgrade,
+    /// not for a person.
+    pub needs_upgrade: bool,
 }
 
 /// Everything out of date, one row per policy and set.
@@ -255,6 +260,8 @@ pub async fn available(db: &SqlitePool) -> Result<Vec<AvailableUpdate>> {
                 set_name:    o.name.clone(),
                 have:        h.version,
                 offered:     o.version,
+                requires:    o.requires.clone(),
+                needs_upgrade: needs_newer(&o.requires),
             });
         }
     }
