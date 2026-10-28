@@ -6,7 +6,7 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
-## [1.6.1] — unreleased
+## [1.6.1] — 2026-10-28
 
 ### Security
 - **tokio updated to 1.54.1**, for RUSTSEC-2026-0386: `AsyncFd`'s safe constructors could reach a use-after-free. EasyWAF does not call them; a netlink library it depends on does.
