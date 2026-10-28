@@ -16,4 +16,17 @@
 # and no RSA code reaches the binary.
 #
 # Re-check when sqlx's dependency changes or a fixed `rsa` is published.
-ignore = ["RUSTSEC-2023-0071"]
+#
+# RUSTSEC-2026-0387 — timing variability in `crypto-bigint` 0.5's operations
+# meant to be constant-time.
+#
+# The fix is crypto-bigint 0.7.6, which no release of `pgp` uses yet: 0.20.0
+# and 0.21.0 both reach 0.5.5 through `elliptic-curve` 0.13 and `cx448`. The
+# leak is of secret integers, and EasyWAF holds none here: `pgp` only verifies
+# detached signatures on rule sets, lists and the country database
+# (src/pgp_verify.rs), and the key, the signature and the signed file are all
+# public. A timing difference in arithmetic on public values tells an
+# observer nothing they could not compute.
+#
+# Re-check when `pgp` moves to crypto-bigint 0.7, or if EasyWAF ever signs.
+ignore = ["RUSTSEC-2023-0071", "RUSTSEC-2026-0387"]

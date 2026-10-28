@@ -8,6 +8,10 @@ Version bumps and tags are created only after explicit approval.
 
 ## [1.6.1] — unreleased
 
+### Security
+- **tokio updated to 1.54.1**, for RUSTSEC-2026-0386: `AsyncFd`'s safe constructors could reach a use-after-free. EasyWAF does not call them; a netlink library it depends on does.
+- RUSTSEC-2026-0387, timing variability in `crypto-bigint`, is recorded as not applying: it leaks secret integers, and EasyWAF's only use of it, through `pgp`, is verifying public signatures. No release of `pgp` takes the fixed version yet.
+
 ### Changed
 - **The menu shows rule set updates where they are applied:** Security Policy and its Policy Manager carry the number of updates a policy can take, as Settings and Updates do.
 - **An update written for a newer EasyWAF is no longer counted as waiting.** The menus' numbers are of what can be applied here; an update needing an upgrade is marked with the version it needs on Updates (and on Settings when nothing else waits), listed apart under the Policy Manager's banner, and shown as needing that version on the Updates page, where it was offered an Apply button the update then refused.
