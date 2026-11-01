@@ -152,7 +152,7 @@
                     <tr>
                         <!-- Select-all checkbox -->
                         <th style="width:34px;text-align:center">
-                            <input type="checkbox" id="chkAll" title="Select all">
+                            <input aria-label="Select every rule" type="checkbox" id="chkAll" title="Select all">
                         </th>
                         <th style="width:20px">#</th>
                         <th>Name</th>
@@ -169,7 +169,7 @@
                         <td class="text-center">
                             <!-- data-id used by JS to build the ids field; no name= so it
                                  is not submitted as a form field -->
-                            <input type="checkbox" class="rule-chk" data-id="{{ r.id }}">
+                            <input aria-label="Select rule {{ r.id }}" type="checkbox" class="rule-chk" data-id="{{ r.id }}">
                         </td>
                         <td class="text-muted">{{ r.id }}</td>
                         <td>

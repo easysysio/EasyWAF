@@ -95,21 +95,21 @@
                 <form method="post" action="/sites/create">
                     <input type="hidden" name="back" value="/tutorial?step=1">
                     <div class="form-group">
-                        <label>Site name <small class="text-muted">— a label for you</small></label>
-                        <input type="text" class="form-control" name="name" placeholder="shop" required>
+                        <label for="fName">Site name <small class="text-muted">— a label for you</small></label>
+                        <input id="fName" type="text" class="form-control" name="name" placeholder="shop" required>
                     </div>
                     <div class="form-group">
-                        <label>Hostname <small class="text-muted">— what visitors type, with no http:// and no port</small></label>
-                        <input type="text" class="form-control" name="server_name" placeholder="shop.example.com" required>
+                        <label for="fServerName">Hostname <small class="text-muted">— what visitors type, with no http:// and no port</small></label>
+                        <input id="fServerName" type="text" class="form-control" name="server_name" placeholder="shop.example.com" required>
                     </div>
                     <div class="form-group">
-                        <label>Your application <small class="text-muted">— where EasyWAF forwards to, as a full URL</small></label>
-                        <input type="text" class="form-control" name="target" placeholder="http://10.0.0.20:3000" required
+                        <label for="fTarget">Your application <small class="text-muted">— where EasyWAF forwards to, as a full URL</small></label>
+                        <input id="fTarget" type="text" class="form-control" name="target" placeholder="http://10.0.0.20:3000" required
                                spellcheck="false" style="font-family:monospace">
                     </div>
                     <div class="form-group">
-                        <label>HTTP port</label>
-                        <input type="text" class="form-control" name="listen_port" value="80" style="max-width:120px" required>
+                        <label for="fListenPort">HTTP port</label>
+                        <input id="fListenPort" type="text" class="form-control" name="listen_port" value="80" style="max-width:120px" required>
                         <p class="help-block">Bound as soon as you save. HTTPS comes in step 3.</p>
                     </div>
                     <button type="submit" class="btn btn-success">
@@ -197,8 +197,8 @@
                 <form method="post" action="/tutorial/https">
                     <input type="hidden" name="site" value="{{ site.name }}">
                     <div class="form-group">
-                        <label>Contact email <small class="text-muted">— Let's Encrypt sends notices about the certificate here</small></label>
-                        <input type="email" class="form-control" name="email" value="{{ acme_email }}"
+                        <label for="fEmail">Contact email <small class="text-muted">— Let's Encrypt sends notices about the certificate here</small></label>
+                        <input id="fEmail" type="email" class="form-control" name="email" value="{{ acme_email }}"
                                placeholder="you@example.com" required>
                     </div>
                     <button type="submit" class="btn btn-success">
@@ -253,8 +253,8 @@
                     <input type="hidden" name="geoip_mode"          value="off">
                     <input type="hidden" name="set_ids"             value="{{ set_ids }}">
                     <div class="form-group">
-                        <label>Policy name <small class="text-muted">— sites that face the same traffic can share it</small></label>
-                        <input type="text" class="form-control" name="name" value="{{ policy_name }}" required style="max-width:320px">
+                        <label for="fName2">Policy name <small class="text-muted">— sites that face the same traffic can share it</small></label>
+                        <input id="fName2" type="text" class="form-control" name="name" value="{{ policy_name }}" required style="max-width:320px">
                     </div>
                     <p>
                         <i class="fa fa-check text-success"></i>
@@ -269,13 +269,14 @@
                         </label>
                     </div>
                     {% if lists %}
-                    <label style="margin-top:8px">Published lists of known-bad addresses</label>
-                    <table class="table table-condensed" style="max-width:520px">
+                    <p id="listsHeading" style="font-weight:bold;margin:8px 0 5px">Published lists of known-bad addresses</p>
+                    <table class="table table-condensed" style="max-width:520px" aria-labelledby="listsHeading">
+                        <thead class="sr-only"><tr><th>List</th><th>Response</th></tr></thead>
                         {% for l in lists %}
                         <tr>
                             <td style="vertical-align:middle">{{ l.name }}</td>
                             <td style="width:1%">
-                                <select class="form-control input-sm" name="list:{{ l.id }}" style="min-width:130px">
+                                <select aria-label="Response to {{ l.name }}" class="form-control input-sm" name="list:{{ l.id }}" style="min-width:130px">
                                     <option value="off">Off</option>
                                     <option value="challenge" {% if l.choice == "challenge" %}selected{% endif %}>Challenge</option>
                                     <option value="block" {% if l.choice == "block" %}selected{% endif %}>Block</option>

@@ -36,14 +36,14 @@
                 <div class="panel-body">
 
                     <div class="form-group">
-                        <label>Policy Name</label>
-                        <input type="text" class="form-control" name="name"
+                        <label for="fName">Policy Name</label>
+                        <input id="fName" type="text" class="form-control" name="name"
                                placeholder="my-policy" required>
                     </div>
 
                     <div class="form-group">
-                        <label>Rule Engine Mode</label>
-                        <select class="form-control" name="rule_engine">
+                        <label for="fRuleEngine">Rule Engine Mode</label>
+                        <select id="fRuleEngine" class="form-control" name="rule_engine">
                             <option value="DetectionOnly">DetectionOnly — log alerts, never block</option>
                             <option value="On">On — enforce rules, block when threshold exceeded</option>
                             <option value="Off">Off — WAF disabled for this policy</option>
@@ -51,23 +51,23 @@
                     </div>
 
                     <div class="form-group">
-                        <label>Score Threshold
+                        <label for="fScoreThreshold">Score Threshold
                             <small class="text-muted">
                                 (block request when accumulated rule scores reach this value)
                             </small>
                         </label>
-                        <input type="number" class="form-control" name="score_threshold"
+                        <input id="fScoreThreshold" type="number" class="form-control" name="score_threshold"
                                value="10" min="1" max="1000" required>
                     </div>
 
                     <div class="form-group">
-                        <label>Challenge Threshold
+                        <label for="fChallengeThreshold">Challenge Threshold
                             <small class="text-muted">
                                 (show a CAPTCHA when score reaches this, below the block threshold;
                                 0 disables score-based challenges)
                             </small>
                         </label>
-                        <input type="number" class="form-control" name="challenge_threshold"
+                        <input id="fChallengeThreshold" type="number" class="form-control" name="challenge_threshold"
                                value="0" min="0" max="1000">
                     </div>
 
@@ -97,7 +97,7 @@
                 <div class="panel-heading"><strong><i class="fa fa-copy"></i> Start from an existing policy</strong></div>
                 <div class="panel-body">
                     <div class="form-group" style="margin-bottom:8px">
-                        <select class="form-control" name="copy_from">
+                        <select aria-label="Start from an existing policy" class="form-control" name="copy_from">
                             <option value="">— start empty —</option>
                             {% for p in policies %}
                             <option value="{{ p.name }}">{{ p.name }} ({{ p.rule_count }} rules)</option>
@@ -150,8 +150,8 @@
                     {% endif %}
 
                     <div class="form-group">
-                        <label>Mode</label>
-                        <select class="form-control" name="geoip_mode">
+                        <label for="fGeoipMode">Mode</label>
+                        <select id="fGeoipMode" class="form-control" name="geoip_mode">
                             <option value="off">Off — no country filtering</option>
                             <option value="block">Block listed — deny these countries, allow the rest</option>
                             <option value="allow">Allow listed only — deny every other country</option>
@@ -159,12 +159,12 @@
                     </div>
 
                     <div class="form-group">
-                        <label>Countries
+                        <label for="fGeoipCountries">Countries
                             <small class="text-muted">
                                 (ISO 3166-1 alpha-2 codes, e.g. <code>CN, RU, KP</code>)
                             </small>
                         </label>
-                        <input type="text" class="form-control" name="geoip_countries"
+                        <input id="fGeoipCountries" type="text" class="form-control" name="geoip_countries"
                                placeholder="CN, RU">
                         <p class="help-block">
                             An empty list matches nothing in either mode, so choosing a mode
@@ -197,17 +197,17 @@
                     </p>
 
                     <div class="form-group">
-                        <label>Blocked <small class="text-muted">— refused before any rule runs</small></label>
-                        <textarea class="form-control" name="ip_block" rows="3"
+                        <label for="fIpBlock">Blocked <small class="text-muted">— refused before any rule runs</small></label>
+                        <textarea id="fIpBlock" class="form-control" name="ip_block" rows="3"
                                   spellcheck="false" placeholder="203.0.113.9
 198.51.100.0/24  # a netblock that only ever scans"></textarea>
                     </div>
 
                     <div class="form-group">
-                        <label>Allowed
+                        <label for="fIpAllow">Allowed
                             <small class="text-muted">— skips the rules, the country rules, the published lists and the CAPTCHA</small>
                         </label>
-                        <textarea class="form-control" name="ip_allow" rows="3"
+                        <textarea id="fIpAllow" class="form-control" name="ip_allow" rows="3"
                                   spellcheck="false" placeholder="192.0.2.4  # the office"></textarea>
                         <p class="help-block">
                             Wide, deliberately: an allowed address is never inspected here at
@@ -246,6 +246,7 @@
                         the channel is reachable again, whatever is chosen here.
                     </p>
                     <table class="table table-condensed">
+                        <thead class="sr-only"><tr><th>List</th><th>Entries</th><th>State</th><th>Response</th></tr></thead>
                         <tbody>
                         {% for l in lists %}
                         <tr {% if l.error %}class="warning"{% endif %}>
@@ -272,7 +273,7 @@
                                 {% endif %}
                             </td>
                             <td style="white-space:nowrap;width:1%">
-                                <select class="form-control input-sm" name="list:{{ l.id }}">
+                                <select aria-label="Response to {{ l.name }}" class="form-control input-sm" name="list:{{ l.id }}">
                                     <option value="off">Off</option>
                                     <option value="challenge" {% if l.response == "challenge" %}data-suggested="1"{% endif %}>Challenge</option>
                                     <option value="block" {% if l.response == "block" %}data-suggested="1"{% endif %}>Block</option>

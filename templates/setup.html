@@ -26,20 +26,20 @@
                     <form role="form" method="post" action="/setup" autocomplete="off">
 
                         <div class="form-group">
-                            <label>Username</label>
-                            <input type="text" class="form-control" name="username"
+                            <label for="fUsername">Username</label>
+                            <input id="fUsername" type="text" class="form-control" name="username"
                                    value="admin" autocomplete="username" required>
                         </div>
 
                         <div class="form-group">
-                            <label>Password <small class="text-muted">(at least {{ min_length }} characters)</small></label>
-                            <input type="password" class="form-control" name="password"
+                            <label for="fPassword">Password <small class="text-muted">(at least {{ min_length }} characters)</small></label>
+                            <input id="fPassword" type="password" class="form-control" name="password"
                                    autocomplete="new-password" required>
                         </div>
 
                         <div class="form-group">
-                            <label>Confirm Password</label>
-                            <input type="password" class="form-control" name="confirm_password"
+                            <label for="fConfirmPassword">Confirm Password</label>
+                            <input id="fConfirmPassword" type="password" class="form-control" name="confirm_password"
                                    autocomplete="new-password" required>
                         </div>
 

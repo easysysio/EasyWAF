@@ -11,14 +11,14 @@
                 <form method="post" action="/policy/{{ policy.name }}/rules/create">
 
                     <div class="form-group">
-                        <label>Rule Name</label>
-                        <input type="text" class="form-control" name="name"
+                        <label for="fName">Rule Name</label>
+                        <input id="fName" type="text" class="form-control" name="name"
                                placeholder="e.g. SQLi: UNION SELECT" required>
                     </div>
 
                     <div class="form-group">
-                        <label>Description <small class="text-muted">(optional)</small></label>
-                        <input type="text" class="form-control" name="description"
+                        <label for="fDescription">Description <small class="text-muted">(optional)</small></label>
+                        <input id="fDescription" type="text" class="form-control" name="description"
                                placeholder="Brief explanation of what this rule detects">
                     </div>
 
@@ -28,15 +28,15 @@
                         </div>
                         <div class="col-sm-4">
                             <div class="form-group">
-                                <label>Score <small class="text-muted">(added when matched)</small></label>
-                                <input type="number" class="form-control" name="score"
+                                <label for="fScore">Score <small class="text-muted">(added when matched)</small></label>
+                                <input id="fScore" type="number" class="form-control" name="score"
                                        value="5" min="1" max="100">
                             </div>
                         </div>
                         <div class="col-sm-4">
                             <div class="form-group">
-                                <label>Action</label>
-                                <select class="form-control" name="action">
+                                <label for="fAction">Action</label>
+                                <select id="fAction" class="form-control" name="action">
                                     <option value="score">score — add to total</option>
                                     <option value="challenge">challenge — show CAPTCHA</option>
                                     <option value="block">block — instant 403</option>
@@ -46,7 +46,7 @@
                     </div>
 
                     <div class="form-group">
-                        <label>Regex Pattern</label>
+                        <label for="patternInput">Regex Pattern</label>
                         <input type="text" class="form-control" name="pattern" id="patternInput"
                                placeholder="(?i)union[\s\S]{0,30}select" required
                                oninput="testPattern()">
@@ -65,7 +65,7 @@
                         </div>
                         <div class="panel-body" style="padding:10px 12px">
                             <div class="form-group" style="margin-bottom:6px">
-                                <input type="text" class="form-control input-sm"
+                                <input type="text" class="form-control input-sm" aria-label="Sample value to test the pattern against"
                                        id="testInput" placeholder="e.g.  ' UNION SELECT * FROM users--"
                                        oninput="testPattern()">
                             </div>

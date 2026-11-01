@@ -57,10 +57,10 @@
                             <td style="white-space:nowrap">
                                 <form method="post" style="display:inline-block"
                                       action="/realms/{{ name | urlencode }}/accounts/{{ a.username | urlencode }}/password">
-                                    <input type="password" name="password" class="form-control input-sm"
+                                    <input aria-label="New password for {{ a.username }}" type="password" name="password" class="form-control input-sm"
                                            style="display:inline-block;width:130px" placeholder="new password"
                                            minlength="{{ min_length }}" autocomplete="new-password" required>
-                                    <input type="password" name="confirm_password" class="form-control input-sm"
+                                    <input aria-label="The new password for {{ a.username }} again" type="password" name="confirm_password" class="form-control input-sm"
                                            style="display:inline-block;width:130px" placeholder="again"
                                            minlength="{{ min_length }}" autocomplete="new-password" required>
                                     <button type="submit" class="btn btn-default btn-sm">Set password</button>
@@ -93,11 +93,11 @@
                 {% endif %}
 
                 <form method="post" action="/realms/{{ name | urlencode }}/accounts/add" class="form-inline">
-                    <input type="text" name="username" class="form-control" placeholder="name" required maxlength="64"
+                    <input aria-label="Name" type="text" name="username" class="form-control" placeholder="name" required maxlength="64"
                            autocomplete="off" autocapitalize="none" spellcheck="false">
-                    <input type="password" name="password" class="form-control" placeholder="password"
+                    <input aria-label="Password" type="password" name="password" class="form-control" placeholder="password"
                            minlength="{{ min_length }}" autocomplete="new-password" required>
-                    <input type="password" name="confirm_password" class="form-control" placeholder="password again"
+                    <input aria-label="Password again" type="password" name="confirm_password" class="form-control" placeholder="password again"
                            minlength="{{ min_length }}" autocomplete="new-password" required>
                     <button type="submit" class="btn btn-success"><i class="fa fa-plus"></i> Add account</button>
                     <span class="text-muted" style="margin-left:8px">At least {{ min_length }} characters.</span>
@@ -117,15 +117,15 @@
                     <div class="row">
                         <div class="col-sm-4">
                             <div class="form-group">
-                                <label>A sign-in lasts <small class="text-muted">(minutes)</small></label>
-                                <input type="number" class="form-control" name="session_minutes"
+                                <label for="fSessionMinutes">A sign-in lasts <small class="text-muted">(minutes)</small></label>
+                                <input id="fSessionMinutes" type="number" class="form-control" name="session_minutes"
                                        value="{{ session_minutes }}" min="5" max="43200" required>
                             </div>
                         </div>
                         <div class="col-sm-4">
                             <div class="form-group">
-                                <label>… or this long unused <small class="text-muted">(minutes)</small></label>
-                                <input type="number" class="form-control" name="idle_minutes"
+                                <label for="fIdleMinutes">… or this long unused <small class="text-muted">(minutes)</small></label>
+                                <input id="fIdleMinutes" type="number" class="form-control" name="idle_minutes"
                                        value="{{ idle_minutes }}" min="5" max="43200" required>
                             </div>
                         </div>
@@ -152,6 +152,7 @@
             <div class="panel-body">
                 {% if tested %}
                 <table class="table table-condensed" style="margin-bottom:15px">
+                    <thead class="sr-only"><tr><th>Result</th><th>Step</th></tr></thead>
                     <tbody>
                         {% for s in tested %}
                         <tr class="{% if s.ok %}success{% else %}danger{% endif %}">
@@ -180,9 +181,9 @@
                     </span>
                 </form>
                 <form method="post" action="/realms/{{ name | urlencode }}/test#test" class="form-inline">
-                    <input type="text" name="username" class="form-control" placeholder="name" required
+                    <input aria-label="Name to try" type="text" name="username" class="form-control" placeholder="name" required
                            autocomplete="off" autocapitalize="none" spellcheck="false">
-                    <input type="password" name="password" class="form-control" placeholder="password (optional)"
+                    <input aria-label="Password to try" type="password" name="password" class="form-control" placeholder="password (optional)"
                            autocomplete="off">
                     <button type="submit" class="btn btn-default"><i class="fa fa-user"></i> Try a sign-in</button>
                     <span class="help-block" style="display:inline;margin-left:8px">

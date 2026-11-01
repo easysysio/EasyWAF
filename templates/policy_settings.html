@@ -64,8 +64,8 @@
                             <input type="hidden" name="back" value="{{ back }}">
 
                             <div class="form-group">
-                                <label>Policy Name</label>
-                                <input type="text" class="form-control" value="{{ policy.name }}" disabled>
+                                <label for="fPolicyName">Policy Name</label>
+                                <input id="fPolicyName" type="text" class="form-control" value="{{ policy.name }}" disabled>
                                 <p class="help-block">
                                     Everything on these tabs applies on {{ reach }}.
                                     {% if sites %}
@@ -76,8 +76,8 @@
                             </div>
 
                             <div class="form-group">
-                                <label>Rule Engine Mode</label>
-                                <select class="form-control" name="rule_engine">
+                                <label for="fRuleEngine">Rule Engine Mode</label>
+                                <select id="fRuleEngine" class="form-control" name="rule_engine">
                                     <option value="DetectionOnly"
                                         {% if policy.rule_engine == "DetectionOnly" %}selected{% endif %}>
                                         DetectionOnly — log alerts, never block
@@ -100,23 +100,23 @@
                             </div>
 
                             <div class="form-group">
-                                <label>Score Threshold
+                                <label for="fScoreThreshold">Score Threshold
                                     <small class="text-muted">
                                         (block request when accumulated rule scores reach this value)
                                     </small>
                                 </label>
-                                <input type="number" class="form-control" name="score_threshold"
+                                <input id="fScoreThreshold" type="number" class="form-control" name="score_threshold"
                                        value="{{ policy.score_threshold }}" min="1" max="1000" required>
                             </div>
 
                             <div class="form-group">
-                                <label>Challenge Threshold
+                                <label for="fChallengeThreshold">Challenge Threshold
                                     <small class="text-muted">
                                         (show a CAPTCHA when score reaches this — must be below the block
                                         threshold; 0 disables score-based challenges)
                                     </small>
                                 </label>
-                                <input type="number" class="form-control" name="challenge_threshold"
+                                <input id="fChallengeThreshold" type="number" class="form-control" name="challenge_threshold"
                                        value="{{ policy.challenge_threshold }}" min="0" max="1000">
                             </div>
 
@@ -283,8 +283,8 @@
                             {% endif %}
 
                             <div class="form-group">
-                                <label>Mode</label>
-                                <select class="form-control" name="geoip_mode">
+                                <label for="fGeoipMode">Mode</label>
+                                <select id="fGeoipMode" class="form-control" name="geoip_mode">
                                     <option value="off"   {% if policy.geoip_mode == "off" %}selected{% endif %}>
                                         Off — no country filtering
                                     </option>
@@ -298,12 +298,12 @@
                             </div>
 
                             <div class="form-group">
-                                <label>Countries
+                                <label for="fGeoipCountries">Countries
                                     <small class="text-muted">
                                         (ISO 3166-1 alpha-2 codes, e.g. <code>CN, RU, KP</code>)
                                     </small>
                                 </label>
-                                <input type="text" class="form-control" name="geoip_countries"
+                                <input id="fGeoipCountries" type="text" class="form-control" name="geoip_countries"
                                        value="{{ policy.geoip_countries }}" placeholder="CN, RU">
                                 <p class="help-block">
                                     An empty list matches nothing in either mode, so turning the mode on

@@ -90,26 +90,26 @@
                     <div class="row">
                         <div class="col-sm-4">
                             <div class="form-group">
-                                <label>Name</label>
-                                <input type="text" class="form-control" name="name" placeholder="staff" required maxlength="64">
+                                <label for="fName">Name</label>
+                                <input id="fName" type="text" class="form-control" name="name" placeholder="staff" required maxlength="64">
                             </div>
                         </div>
                         <div class="col-sm-4">
                             <div class="form-group">
-                                <label>A sign-in lasts <small class="text-muted">(minutes)</small></label>
-                                <input type="number" class="form-control" name="session_minutes" value="480" min="5" max="43200" required>
+                                <label for="fSessionMinutes">A sign-in lasts <small class="text-muted">(minutes)</small></label>
+                                <input id="fSessionMinutes" type="number" class="form-control" name="session_minutes" value="480" min="5" max="43200" required>
                             </div>
                         </div>
                         <div class="col-sm-4">
                             <div class="form-group">
-                                <label>… or this long unused <small class="text-muted">(minutes)</small></label>
-                                <input type="number" class="form-control" name="idle_minutes" value="60" min="5" max="43200" required>
+                                <label for="fIdleMinutes">… or this long unused <small class="text-muted">(minutes)</small></label>
+                                <input id="fIdleMinutes" type="number" class="form-control" name="idle_minutes" value="60" min="5" max="43200" required>
                             </div>
                         </div>
                     </div>
 
-                    <div class="form-group">
-                        <label>Identities come from</label>
+                    <div class="form-group" role="radiogroup" aria-labelledby="kindHeading">
+                        <p id="kindHeading" style="font-weight:bold;margin-bottom:5px">Identities come from</p>
                         <div class="radio" style="margin-top:0">
                             <label>
                                 <input type="radio" name="kind" value="local" checked id="kindLocal">

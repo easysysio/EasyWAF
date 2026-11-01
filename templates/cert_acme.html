@@ -27,8 +27,8 @@
                 <form method="post" action="/certs/acme">
 
                     <div class="form-group">
-                        <label>Domain</label>
-                        <input type="text" class="form-control" name="domain"
+                        <label for="fDomain">Domain</label>
+                        <input id="fDomain" type="text" class="form-control" name="domain"
                                placeholder="www.example.com" required>
                         <p class="help-block">
                             One fully-qualified name. Wildcards need a DNS-01 challenge,
@@ -38,8 +38,8 @@
                     </div>
 
                     <div class="form-group">
-                        <label>Store as <small class="text-muted">(optional — defaults to the domain)</small></label>
-                        <input type="text" class="form-control" name="name">
+                        <label for="fName">Store as <small class="text-muted">(optional — defaults to the domain)</small></label>
+                        <input id="fName" type="text" class="form-control" name="name">
                     </div>
 
                     <button type="submit" class="btn btn-primary" {% if not acme_configured %}disabled{% endif %}>

@@ -69,7 +69,7 @@
                                 <form method="post" action="/accounts/{{ a.id }}/role"
                                       style="display:inline"
                                       onsubmit="return confirm('Change {{ a.username }} to the selected role?\n\nThat account will be signed out everywhere.');">
-                                    <select name="role" class="form-control input-sm"
+                                    <select aria-label="Role of {{ a.username }}" name="role" class="form-control input-sm"
                                             style="width:auto;display:inline-block"
                                             onchange="this.form.submit()">
                                         {% for r in roles %}
@@ -138,9 +138,9 @@
                                       onsubmit="return confirm('Set a new password for {{ a.username }}?\n\nThat account will be signed out everywhere.');">
                                     <span style="margin-right:8px">New password for
                                         <strong>{{ a.username }}</strong>:</span>
-                                    <input type="password" name="password" class="form-control input-sm"
+                                    <input aria-label="New password for {{ a.username }}" type="password" name="password" class="form-control input-sm"
                                            placeholder="at least {{ min_length }} characters" required>
-                                    <input type="password" name="confirm_password" class="form-control input-sm"
+                                    <input aria-label="The new password for {{ a.username }} again" type="password" name="confirm_password" class="form-control input-sm"
                                            placeholder="confirm" required style="margin-left:6px">
                                     <button type="submit" class="btn btn-primary btn-sm" style="margin-left:6px">
                                         Set password
@@ -160,13 +160,13 @@
                 <hr>
                 <h5><i class="fa fa-user-plus"></i> Add an account</h5>
                 <form method="post" action="/accounts/create" class="form-inline" style="margin-top:10px">
-                    <input type="text" name="username" class="form-control input-sm"
+                    <input aria-label="Username" type="text" name="username" class="form-control input-sm"
                            placeholder="username" required>
-                    <input type="password" name="password" class="form-control input-sm"
+                    <input aria-label="Password" type="password" name="password" class="form-control input-sm"
                            placeholder="at least {{ min_length }} characters" required style="margin-left:6px">
-                    <input type="password" name="confirm_password" class="form-control input-sm"
+                    <input aria-label="Password again" type="password" name="confirm_password" class="form-control input-sm"
                            placeholder="confirm" required style="margin-left:6px">
-                    <select name="role" class="form-control input-sm" style="margin-left:6px">
+                    <select aria-label="Role" name="role" class="form-control input-sm" style="margin-left:6px">
                         {% for r in roles %}
                         <option value="{{ r }}">{{ r }}</option>
                         {% endfor %}

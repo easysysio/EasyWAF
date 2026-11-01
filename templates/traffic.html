@@ -33,8 +33,8 @@
     {# Carried through the form so changing site or verdict keeps the hour. #}
     {% if sel_hour %}<input type="hidden" name="hour" value="{{ sel_hour }}">{% endif %}
     <div class="form-group" style="margin-right:8px">
-        <label class="sr-only">Site</label>
-        <select class="form-control input-sm" name="site">
+        <label for="fSite" class="sr-only">Site</label>
+        <select id="fSite" class="form-control input-sm" name="site">
             <option value="">All Sites</option>
             {% for s in sites %}
             <option value="{{ s.name }}" {% if sel_site == s.name %}selected{% endif %}>{{ s.name }}</option>
@@ -43,8 +43,8 @@
     </div>
 
     <div class="form-group" style="margin-right:8px">
-        <label class="sr-only">Status</label>
-        <select class="form-control input-sm" name="blocked">
+        <label for="fBlocked" class="sr-only">Status</label>
+        <select id="fBlocked" class="form-control input-sm" name="blocked">
             <option value=""  {% if sel_blocked == "" %}selected{% endif %}>All Traffic</option>
             <option value="1" {% if sel_blocked == "1" %}selected{% endif %}>Blocked Only</option>
             <option value="0" {% if sel_blocked == "0" %}selected{% endif %}>Allowed Only</option>
@@ -56,8 +56,8 @@
     </div>
 
     <div class="form-group" style="margin-right:8px">
-        <label class="sr-only">Time Window</label>
-        <select class="form-control input-sm" name="hours">
+        <label for="fHours" class="sr-only">Time Window</label>
+        <select id="fHours" class="form-control input-sm" name="hours">
             <option value="1"   {% if sel_hours == 1   %}selected{% endif %}>Last 1 hour</option>
             <option value="6"   {% if sel_hours == 6   %}selected{% endif %}>Last 6 hours</option>
             <option value="24"  {% if sel_hours == 24  %}selected{% endif %}>Last 24 hours</option>

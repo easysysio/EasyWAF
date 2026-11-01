@@ -23,20 +23,20 @@
                 <form method="post" action="/certs/create">
 
                     <div class="form-group">
-                        <label>Certificate Name</label>
-                        <input type="text" class="form-control" name="name" placeholder="mysite" required>
+                        <label for="fName">Certificate Name</label>
+                        <input id="fName" type="text" class="form-control" name="name" placeholder="mysite" required>
                     </div>
 
                     <div class="form-group">
-                        <label>Certificate (PEM)</label>
-                        <textarea class="form-control" name="cert_pem" rows="10"
+                        <label for="fCertPem">Certificate (PEM)</label>
+                        <textarea id="fCertPem" class="form-control" name="cert_pem" rows="10"
                                   placeholder="-----BEGIN CERTIFICATE-----&#10;...&#10;-----END CERTIFICATE-----"
                                   required></textarea>
                     </div>
 
                     <div class="form-group">
-                        <label>Private Key (PEM)</label>
-                        <textarea class="form-control" name="key_pem" rows="10"
+                        <label for="fKeyPem">Private Key (PEM)</label>
+                        <textarea id="fKeyPem" class="form-control" name="key_pem" rows="10"
                                   placeholder="-----BEGIN PRIVATE KEY-----&#10;...&#10;-----END PRIVATE KEY-----"
                                   required></textarea>
                     </div>

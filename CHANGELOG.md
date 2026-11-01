@@ -20,7 +20,7 @@ Version bumps and tags are created only after explicit approval.
 ### Fixed
 - **Panels that fold open can be opened from the keyboard:** the rule picker's sets and the policy's *Use these custom rules in another policy* panel; and no page moves the focus by itself on loading.
 - Snapshots, restores, imports and update-channel downloads read and write their files without holding up the server's other work while the disk responds.
-- Every field on the exclusion, IP list, rule picker, directory sign-in and site forms has a label a screen reader announces, and tables with no visible headings have hidden ones.
+- Every form field has a label a screen reader announces, and every table has headings, hidden where the page shows none.
 - `modsec2easywaf.py` takes a rule message's macros out in linear time, so a message with a long run of spaces no longer slows it down.
 
 ### Security

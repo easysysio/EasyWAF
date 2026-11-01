@@ -49,8 +49,8 @@
                 <div class="panel-heading"><h4>Traffic</h4></div>
                 <div class="panel-body">
                     <div class="form-group">
-                        <label>Traffic Retention <small class="text-muted">(days of request history to keep — 0 keeps everything)</small></label>
-                        <input type="number" class="form-control" name="traffic_retention_days"
+                        <label for="fTrafficRetentionDays">Traffic Retention <small class="text-muted">(days of request history to keep — 0 keeps everything)</small></label>
+                        <input id="fTrafficRetentionDays" type="number" class="form-control" name="traffic_retention_days"
                                value="{{ retention_days }}" min="0" max="3650" required>
                         <p class="help-block">
                             EasyWAF records one row per proxied request. With retention off the
@@ -66,8 +66,8 @@
                 <div class="panel-heading"><h4>Maintenance</h4></div>
                 <div class="panel-body">
                     <div class="form-group">
-                        <label>Maintenance Message <small class="text-muted">(shown to visitors of a disabled site)</small></label>
-                        <textarea class="form-control" name="maintenance_message" rows="3"
+                        <label for="fMaintenanceMessage">Maintenance Message <small class="text-muted">(shown to visitors of a disabled site)</small></label>
+                        <textarea id="fMaintenanceMessage" class="form-control" name="maintenance_message" rows="3"
                                   maxlength="500">{{ maintenance_message }}</textarea>
                         <p class="help-block">
                             Disabling a site under <a href="/sites">Sites</a> stops EasyWAF
@@ -88,8 +88,8 @@
                 <div class="panel-heading"><h4>TLS</h4></div>
                 <div class="panel-body">
                     <div class="form-group">
-                        <label>Management Certificate <small class="text-muted">(what the GUI on this port presents)</small></label>
-                        <select class="form-control" name="management_cert">
+                        <label for="fManagementCert">Management Certificate <small class="text-muted">(what the GUI on this port presents)</small></label>
+                        <select id="fManagementCert" class="form-control" name="management_cert">
                             {% if management_cert_missing %}
                             <option value="{{ management_cert }}" selected>
                                 {{ management_cert }} — not found
@@ -126,8 +126,8 @@
                     </div>
 
                     <div class="form-group">
-                        <label>TLS Profile <small class="text-muted">(applies to every HTTPS listener)</small></label>
-                        <select class="form-control" name="tls_profile">
+                        <label for="fTlsProfile">TLS Profile <small class="text-muted">(applies to every HTTPS listener)</small></label>
+                        <select id="fTlsProfile" class="form-control" name="tls_profile">
                             <option value="compatible" {% if tls_profile == "compatible" %}selected{% endif %}>
                                 Compatible — TLS 1.2 and 1.3
                             </option>
@@ -152,8 +152,8 @@
                     </div>
 
                     <div class="form-group">
-                        <label>Cipher Suites <small class="text-muted">(space-separated; the ones offered to clients)</small></label>
-                        <input type="text" class="form-control" name="tls_ciphers"
+                        <label for="fTlsCiphers">Cipher Suites <small class="text-muted">(space-separated; the ones offered to clients)</small></label>
+                        <input id="fTlsCiphers" type="text" class="form-control" name="tls_ciphers"
                                value="{{ tls_ciphers }}" spellcheck="false"
                                style="font-family: monospace; font-size: 12px;">
                         <p class="help-block">
@@ -185,8 +185,8 @@
                 <div class="panel-heading"><h4>Let's Encrypt (ACME)</h4></div>
                 <div class="panel-body">
                     <div class="form-group">
-                        <label>Contact Address</label>
-                        <input type="email" class="form-control" name="acme_email"
+                        <label for="fAcmeEmail">Contact Address</label>
+                        <input id="fAcmeEmail" type="email" class="form-control" name="acme_email"
                                value="{{ acme_email }}" placeholder="you@example.com">
                         <p class="help-block">
                             Where the CA sends expiry warnings. Setting it registers an
@@ -196,8 +196,8 @@
                     </div>
 
                     <div class="form-group">
-                        <label>Directory</label>
-                        <select class="form-control" name="acme_directory">
+                        <label for="fAcmeDirectory">Directory</label>
+                        <select id="fAcmeDirectory" class="form-control" name="acme_directory">
                             <option value="{{ acme_staging }}" {% if acme_directory == acme_staging %}selected{% endif %}>
                                 Staging — for testing; certificates are not trusted
                             </option>
@@ -236,9 +236,9 @@
                 <div class="panel-heading"><h4>Request Body Inspection</h4></div>
                 <div class="panel-body">
                     <div class="form-group">
-                        <label>Inspect the first
+                        <label for="fBodyInspectKb">Inspect the first
                             <small class="text-muted">(KB of each request body, 1 to 32768)</small></label>
-                        <input type="number" class="form-control" name="body_inspect_kb"
+                        <input id="fBodyInspectKb" type="number" class="form-control" name="body_inspect_kb"
                                value="{{ body_inspect_kb }}" min="1" max="32768"
                                style="max-width:200px">
                         <p class="help-block">
@@ -264,9 +264,9 @@
                 <div class="panel-heading"><h4>Trusted Proxies</h4></div>
                 <div class="panel-body">
                     <div class="form-group">
-                        <label>Addresses whose <code>X-Forwarded-For</code> is believed
+                        <label for="fTrustedProxies">Addresses whose <code>X-Forwarded-For</code> is believed
                             <small class="text-muted">(one per line, or comma-separated)</small></label>
-                        <textarea class="form-control" name="trusted_proxies" rows="3"
+                        <textarea id="fTrustedProxies" class="form-control" name="trusted_proxies" rows="3"
                                   spellcheck="false" style="font-family: monospace; font-size: 12px;"
                                   placeholder="10.0.0.0/8&#10;192.168.1.5">{{ trusted_proxies }}</textarea>
                         <p class="help-block">
@@ -332,8 +332,8 @@
                     <div class="row">
                         <div class="col-sm-8">
                             <div class="form-group">
-                                <label>Collector</label>
-                                <input type="text" class="form-control" name="syslog_host"
+                                <label for="fSyslogHost">Collector</label>
+                                <input id="fSyslogHost" type="text" class="form-control" name="syslog_host"
                                        value="{{ syslog_host }}" spellcheck="false"
                                        placeholder="10.0.0.9">
                                 <p class="help-block">
@@ -344,8 +344,8 @@
                         </div>
                         <div class="col-sm-4">
                             <div class="form-group">
-                                <label>Port</label>
-                                <input type="number" class="form-control" name="syslog_port"
+                                <label for="fSyslogPort">Port</label>
+                                <input id="fSyslogPort" type="number" class="form-control" name="syslog_port"
                                        value="{{ syslog_port }}" min="1" max="65535">
                                 <p class="help-block">514 unless the collector says otherwise.</p>
                             </div>

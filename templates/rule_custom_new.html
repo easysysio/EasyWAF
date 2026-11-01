@@ -13,8 +13,8 @@
                 <form method="post" action="/rules/create">
 
                     <div class="form-group">
-                        <label>Policy <small class="text-muted">(which policy this rule belongs to)</small></label>
-                        <select class="form-control" name="policy" required>
+                        <label for="fPolicy">Policy <small class="text-muted">(which policy this rule belongs to)</small></label>
+                        <select id="fPolicy" class="form-control" name="policy" required>
                             {% for p in policies %}
                             <option value="{{ p }}">{{ p }}</option>
                             {% endfor %}
@@ -22,14 +22,14 @@
                     </div>
 
                     <div class="form-group">
-                        <label>Rule Name</label>
-                        <input type="text" class="form-control" name="name"
+                        <label for="fName">Rule Name</label>
+                        <input id="fName" type="text" class="form-control" name="name"
                                placeholder="e.g. Block my-internal-path" required>
                     </div>
 
                     <div class="form-group">
-                        <label>Description <small class="text-muted">(optional)</small></label>
-                        <input type="text" class="form-control" name="description"
+                        <label for="fDescription">Description <small class="text-muted">(optional)</small></label>
+                        <input id="fDescription" type="text" class="form-control" name="description"
                                placeholder="What this rule detects">
                     </div>
 
@@ -39,15 +39,15 @@
                         </div>
                         <div class="col-sm-4">
                             <div class="form-group">
-                                <label>Score</label>
-                                <input type="number" class="form-control" name="score"
+                                <label for="fScore">Score</label>
+                                <input id="fScore" type="number" class="form-control" name="score"
                                        value="5" min="1" max="100">
                             </div>
                         </div>
                         <div class="col-sm-4">
                             <div class="form-group">
-                                <label>Action</label>
-                                <select class="form-control" name="action">
+                                <label for="fAction">Action</label>
+                                <select id="fAction" class="form-control" name="action">
                                     <option value="score">score — add to total</option>
                                     <option value="challenge">challenge — show CAPTCHA</option>
                                     <option value="block">block — instant 403</option>
@@ -57,7 +57,7 @@
                     </div>
 
                     <div class="form-group">
-                        <label>Regex Pattern</label>
+                        <label for="patternInput">Regex Pattern</label>
                         <input type="text" class="form-control" name="pattern" id="patternInput"
                                placeholder="(?i)your-pattern-here" required oninput="testPattern()">
                         <span class="help-block" id="patternHelp" style="color:#999;font-size:11px">
@@ -71,7 +71,7 @@
                             <strong><i class="fa fa-flask"></i> Pattern Tester</strong>
                         </div>
                         <div class="panel-body" style="padding:10px 12px">
-                            <input type="text" class="form-control input-sm" id="testInput"
+                            <input aria-label="Sample value to test the pattern against" type="text" class="form-control input-sm" id="testInput"
                                    placeholder="Paste a sample value to test the regex"
                                    oninput="testPattern()" style="margin-bottom:6px">
                             <div id="testResult" style="font-size:12px;min-height:18px"></div>

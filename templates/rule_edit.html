@@ -76,14 +76,14 @@
                 <form class="admin-only" method="post" action="/rules/{{ rule.id }}/update">
 
                     <div class="form-group">
-                        <label>Rule Name</label>
-                        <input type="text" class="form-control" name="name"
+                        <label for="fName">Rule Name</label>
+                        <input id="fName" type="text" class="form-control" name="name"
                                value="{{ rule.name }}" required {% if imported %}readonly{% endif %}>
                     </div>
 
                     <div class="form-group">
-                        <label>Description <small class="text-muted">(optional)</small></label>
-                        <input type="text" class="form-control" name="description"
+                        <label for="fDescription">Description <small class="text-muted">(optional)</small></label>
+                        <input id="fDescription" type="text" class="form-control" name="description"
                                value="{{ rule.description }}" {% if imported %}readonly{% endif %}>
                     </div>
 
@@ -94,15 +94,15 @@
                         </div>
                         <div class="col-sm-4">
                             <div class="form-group">
-                                <label>Score</label>
-                                <input type="number" class="form-control" name="score"
+                                <label for="fScore">Score</label>
+                                <input id="fScore" type="number" class="form-control" name="score"
                                        value="{{ rule.score }}" min="1" max="100" {% if imported %}readonly{% endif %}>
                             </div>
                         </div>
                         <div class="col-sm-4">
                             <div class="form-group">
-                                <label>Action</label>
-                                <select class="form-control" name="action" {% if imported %}disabled{% endif %}>
+                                <label for="fAction">Action</label>
+                                <select id="fAction" class="form-control" name="action" {% if imported %}disabled{% endif %}>
                                     <option value="score" {% if rule.action == "score" %}selected{% endif %}>score — add to total</option>
                                     <option value="challenge" {% if rule.action == "challenge" %}selected{% endif %}>challenge — show CAPTCHA</option>
                                     <option value="block" {% if rule.action == "block" %}selected{% endif %}>block — instant 403</option>
@@ -112,7 +112,7 @@
                     </div>
 
                     <div class="form-group">
-                        <label>Regex Pattern</label>
+                        <label for="patternInput">Regex Pattern</label>
                         <input type="text" class="form-control" name="pattern" id="patternInput"
                                value="{{ rule.pattern }}" required oninput="testPattern()"
                                {% if imported %}readonly{% endif %}>
@@ -136,8 +136,8 @@
 
                     {% if conditions %}
                     <div class="form-group">
-                        <label>And every one of these <small class="text-muted">(all must hold for the rule to match)</small></label>
-                        <table class="table table-condensed" style="margin-bottom:0">
+                        <p id="conditionsHeading" style="font-weight:bold;margin-bottom:5px">And every one of these <small class="text-muted">(all must hold for the rule to match)</small></p>
+                        <table class="table table-condensed" style="margin-bottom:0" aria-labelledby="conditionsHeading">
                             <thead><tr><th style="width:25%">Zone</th><th>Pattern</th><th style="width:20%">Decoded first</th><th style="width:1%"></th></tr></thead>
                             <tbody>
                                 {% for c in conditions %}
@@ -170,7 +170,7 @@
                             <strong><i class="fa fa-flask"></i> Pattern Tester</strong>
                         </div>
                         <div class="panel-body" style="padding:10px 12px">
-                            <input type="text" class="form-control input-sm" id="testInput"
+                            <input aria-label="Sample value to test the pattern against" type="text" class="form-control input-sm" id="testInput"
                                    placeholder="Paste a sample value to test the regex"
                                    oninput="testPattern()" style="margin-bottom:6px">
                             <div id="testResult" style="font-size:12px;min-height:18px"></div>

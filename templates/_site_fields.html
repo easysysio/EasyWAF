@@ -21,16 +21,16 @@
                     </div>
 
                     <div class="form-group">
-                        <label>Hostname <small class="text-muted">(routes requests by Host: header — bare name, no http:// and no port)</small></label>
-                        <input type="text" class="form-control" name="server_name"
+                        <label for="fServerName">Hostname <small class="text-muted">(routes requests by Host: header — bare name, no http:// and no port)</small></label>
+                        <input id="fServerName" type="text" class="form-control" name="server_name"
                                value="{{ site.server_name | default(value='') }}"
                                placeholder="example.com" required>
                     </div>
 
                     <div class="form-group">
-                        <label>Aliases
+                        <label for="fAliases">Aliases
                             <small class="text-muted">(other hostnames this same site answers for — one per line)</small></label>
-                        <textarea class="form-control" name="aliases" rows="2" spellcheck="false"
+                        <textarea id="fAliases" class="form-control" name="aliases" rows="2" spellcheck="false"
                                   style="font-family: monospace; font-size: 12px"
                                   placeholder="www.example.com&#10;example.net">{{ site.aliases | default(value='') }}</textarea>
                         <p class="help-block">
@@ -49,9 +49,9 @@
                     </div>
 
                     <div class="form-group">
-                        <label>Upstream
+                        <label for="fTarget">Upstream
                             <small class="text-muted">(where requests are forwarded — full URL, including scheme)</small></label>
-                        <textarea class="form-control" name="target" rows="3" required
+                        <textarea id="fTarget" class="form-control" name="target" rows="3" required
                                   spellcheck="false"
                                   style="font-family: monospace; font-size: 12px"
                                   placeholder="http://127.0.0.1:3000&#10;http://127.0.0.1:3001 3">{% for u in site.upstreams | default(value=[]) %}{{ u.url }}{% if u.weight != 1 %} {{ u.weight }}{% endif %}{% if not u.enabled %} off{% endif %}
@@ -148,8 +148,8 @@
                     <h4 style="margin-top:0"><i class="fa fa-id-badge"></i> Sign-in</h4>
                     {% if realms %}
                     <div class="form-group">
-                        <label>Ask visitors to sign in with</label>
-                        <select class="form-control" name="auth_realm" style="max-width:360px">
+                        <label for="fAuthRealm">Ask visitors to sign in with</label>
+                        <select id="fAuthRealm" class="form-control" name="auth_realm" style="max-width:360px">
                             <option value="">— nobody is asked —</option>
                             {% for r in realms %}
                             <option value="{{ r }}" {% if sign_in and sign_in.realm == r %}selected{% endif %}>{{ r }}</option>
@@ -176,18 +176,18 @@
                     <div class="row">
                         <div class="col-sm-6">
                             <div class="form-group">
-                                <label>Paths that need a sign-in
+                                <label for="fAuthPaths">Paths that need a sign-in
                                     <small class="text-muted">(one per line — empty means the whole site)</small></label>
-                                <textarea class="form-control" name="auth_paths" rows="3" spellcheck="false"
+                                <textarea id="fAuthPaths" class="form-control" name="auth_paths" rows="3" spellcheck="false"
                                           style="font-family: monospace; font-size: 12px"
                                           placeholder="/admin&#10;/settings">{{ sign_in.paths | default(value='') }}</textarea>
                             </div>
                         </div>
                         <div class="col-sm-6">
                             <div class="form-group">
-                                <label>Paths left open
+                                <label for="fAuthBypass">Paths left open
                                     <small class="text-muted">(never asked, whatever is on the left)</small></label>
-                                <textarea class="form-control" name="auth_bypass" rows="3" spellcheck="false"
+                                <textarea id="fAuthBypass" class="form-control" name="auth_bypass" rows="3" spellcheck="false"
                                           style="font-family: monospace; font-size: 12px"
                                           placeholder="/api&#10;/remote.php&#10;/.well-known">{{ sign_in.bypass | default(value='') }}</textarea>
                             </div>
@@ -221,15 +221,15 @@
                     <div class="row">
                         <div class="col-sm-6">
                             <div class="form-group">
-                                <label>Tell the application the visitor's name in</label>
-                                <input type="text" class="form-control" name="auth_user_header" spellcheck="false"
+                                <label for="fAuthUserHeader">Tell the application the visitor's name in</label>
+                                <input id="fAuthUserHeader" type="text" class="form-control" name="auth_user_header" spellcheck="false"
                                        value="{{ sign_in.user_header | default(value='X-Forwarded-User') }}">
                             </div>
                         </div>
                         <div class="col-sm-6">
                             <div class="form-group">
-                                <label>… and their groups in <small class="text-muted">(a directory's, when it gives them)</small></label>
-                                <input type="text" class="form-control" name="auth_groups_header" spellcheck="false"
+                                <label for="fAuthGroupsHeader">… and their groups in <small class="text-muted">(a directory's, when it gives them)</small></label>
+                                <input id="fAuthGroupsHeader" type="text" class="form-control" name="auth_groups_header" spellcheck="false"
                                        value="{{ sign_in.groups_header | default(value='X-Forwarded-Groups') }}">
                             </div>
                         </div>
@@ -265,7 +265,7 @@
                     <div class="row">
                         <div class="col-sm-3">
                             <div class="form-group">
-                                <label>Mode</label>
+                                <label for="rate-mode">Mode</label>
                                 <select class="form-control" name="rate_mode" id="rate-mode">
                                     <option value="Off" {% if rate_limit.mode == "Off" %}selected{% endif %}>Off</option>
                                     <option value="DetectionOnly" {% if rate_limit.mode == "DetectionOnly" %}selected{% endif %}>DetectionOnly</option>
@@ -275,14 +275,14 @@
                         </div>
                         <div class="col-sm-3">
                             <div class="form-group">
-                                <label>Requests</label>
+                                <label for="rate-requests">Requests</label>
                                 <input type="number" class="form-control" name="rate_requests" id="rate-requests"
                                        min="1" max="1000000" value="{{ rate_limit.requests }}">
                             </div>
                         </div>
                         <div class="col-sm-3">
                             <div class="form-group">
-                                <label>Within</label>
+                                <label for="rate-window">Within</label>
                                 <select class="form-control" name="rate_window" id="rate-window">
                                     <option value="10" {% if rate_limit.window == 10 %}selected{% endif %}>10 seconds</option>
                                     <option value="60" {% if rate_limit.window == 60 %}selected{% endif %}>a minute</option>
@@ -293,8 +293,8 @@
                         </div>
                         <div class="col-sm-3">
                             <div class="form-group">
-                                <label>Then</label>
-                                <select class="form-control" name="rate_action">
+                                <label for="fRateAction">Then</label>
+                                <select id="fRateAction" class="form-control" name="rate_action">
                                     <option value="block" {% if rate_limit.action == "block" %}selected{% endif %}>Refuse (429)</option>
                                     <option value="challenge" {% if rate_limit.action == "challenge" %}selected{% endif %}>Show a CAPTCHA</option>
                                 </select>
@@ -320,7 +320,7 @@
 
                     {% if site %}
                     <div class="form-inline" style="margin-bottom:10px">
-                        <select class="form-control input-sm" id="rate-hours">
+                        <select aria-label="Traffic to preview against" class="form-control input-sm" id="rate-hours">
                             <option value="24">over the last 24 hours</option>
                             <option value="168">over the last 7 days</option>
                         </select>

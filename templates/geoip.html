@@ -45,12 +45,12 @@
                 <form class="admin-only" method="post" action="/geoip/all"
                       style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start"
                       onsubmit="return this.mode.value === 'off' || this.countries.value.trim() === '' || confirm('Apply this to every policy?\n\nIt is on top of what each policy already refuses, on {% if all_sites == 1 %}the one site that has a policy{% else %}{{ all_sites }} site(s) with a policy{% endif %}.');">
-                    <select name="mode" class="form-control" style="width:auto">
+                    <select aria-label="Rule for every policy" name="mode" class="form-control" style="width:auto">
                         <option value="off"   {% if all_mode == "off" %}selected{% endif %}>Off — no every-policy rule</option>
                         <option value="block" {% if all_mode == "block" %}selected{% endif %}>Block listed countries</option>
                         <option value="allow" {% if all_mode == "allow" %}selected{% endif %}>Allow only listed countries</option>
                     </select>
-                    <input type="text" name="countries" value="{{ all_countries }}"
+                    <input aria-label="Countries" type="text" name="countries" value="{{ all_countries }}"
                            class="form-control" style="width:320px" spellcheck="false"
                            placeholder="CN, RU, KP — two-letter codes">
                     <button type="submit" class="btn btn-primary">
