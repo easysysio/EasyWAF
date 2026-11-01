@@ -83,7 +83,13 @@
         <!-- Clicking the header toggles the rule list open/closed -->
         <div class="panel-heading cat-toggle"
              style="display:flex;align-items:center;gap:8px;cursor:pointer">
-            <i class="fa fa-chevron-right cat-chevron" style="width:12px"></i>
+            {# The whole heading opens the set for a mouse; this button is the
+               same toggle for a keyboard or a screen reader, its click reaching
+               the heading's handler. #}
+            <button type="button" class="btn btn-link btn-xs cat-open" aria-expanded="false"
+                    aria-label="Show the rules of {{ cat.title }}" style="padding:0;color:inherit">
+                <i class="fa fa-chevron-right cat-chevron" style="width:12px" aria-hidden="true"></i>
+            </button>
             <!-- stopPropagation so ticking the box does not also toggle the panel -->
             <label style="margin:0;font-weight:bold;cursor:pointer"
                    onclick="event.stopPropagation()">
@@ -321,6 +327,7 @@ function setCatOpen(toggle, open) {
     body.style.display = open ? '' : 'none';
     chev.className = 'fa cat-chevron ' + (open ? 'fa-chevron-down' : 'fa-chevron-right');
     chev.style.width = '12px';
+    toggle.querySelector('.cat-open').setAttribute('aria-expanded', open ? 'true' : 'false');
 }
 
 document.querySelectorAll('.cat-toggle').forEach(function (toggle) {

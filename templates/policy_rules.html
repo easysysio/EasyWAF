@@ -17,19 +17,18 @@
 
 {# Custom rules belong to one policy, because every rule does. Someone who has
    written or cloned a few usually wants them on their other policies too, and
-   copying is how a set reaches a policy anyway. #}
+   copying is how a set reaches a policy anyway. Folded by default, in a
+   <details> so the heading opens it from the keyboard as well as the mouse. #}
 {% if custom_count > 0 and other_policies %}
-<div class="panel panel-default" style="margin-bottom:12px">
-    <div class="panel-heading" style="cursor:pointer" onclick="
-        var b = document.getElementById('shareBody');
-        b.style.display = b.style.display === 'none' ? '' : 'none';">
+<details class="panel panel-default" style="margin-bottom:12px">
+    <summary class="panel-heading" style="cursor:pointer">
         <strong><i class="fa fa-share-square-o"></i> Use these custom rules in another policy</strong>
         <span class="text-muted" style="font-size:12px;margin-left:8px">
             {{ custom_count }} custom rule{% if custom_count != 1 %}s{% endif %} in
             <code>{{ policy.name }}</code>
         </span>
-    </div>
-    <div class="panel-body" id="shareBody" style="display:none">
+    </summary>
+    <div class="panel-body">
         <p class="help-block" style="margin-top:0">
             Copies them in, the same way installing a set copies its rules — after
             which the two policies are independent and can be edited apart. A rule
@@ -52,7 +51,7 @@
             </div>
         </form>
     </div>
-</div>
+</details>
 {% endif %}
 
 <!-- ── Top toolbar ────────────────────────────────────────── -->

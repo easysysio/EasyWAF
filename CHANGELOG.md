@@ -17,6 +17,9 @@ Version bumps and tags are created only after explicit approval.
 ### Changed
 - **Rate limiting is 1.7.0 and configuration sync between nodes 1.8.0**, swapped; a limit counts on each node, which the documentation says.
 
+### Fixed
+- **Panels that fold open can be opened from the keyboard:** the rule picker's sets and the policy's *Use these custom rules in another policy* panel; and no page moves the focus by itself on loading.
+
 ### Security
 - **The rule converters refuse a `@pmFromFile` that is not a plain `.data` name beside the rules**, which could have copied any readable file into a converted set; they also read only `.conf` or `.rules` files and write only `.toml` sets and `.txt` reports, never through a link.
 - **The release workflow pins every action to a full commit**, and only the job that publishes the release can write to the repository.
