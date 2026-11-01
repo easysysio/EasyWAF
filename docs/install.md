@@ -96,15 +96,6 @@ Multi-arch (amd64 and arm64). The database lives in `/data`, so mount a volume
 there or it goes with the container. Publish whichever ports your sites listen
 on — 8443 is the management interface and 8080 redirects to it.
 
-The container runs as the user `easywaf`, uid and gid 10001, not root. A new
-volume is owned by it already; a host directory mounted at `/data` must be
-writable by 10001. A volume made by an image before 1.7.0 is root's, and is
-given to the account once, with the container stopped:
-
-```bash
-docker run --rm -v easywaf-data:/data debian:bookworm-slim chown -R 10001:10001 /data
-```
-
 To change ports or put the database elsewhere, mount your own configuration file
 or set the environment variable:
 

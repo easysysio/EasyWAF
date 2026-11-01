@@ -61,23 +61,8 @@ The database holds everything: sites, policies, rules, certificates, users and s
 `DATABASE_URL=sqlite:///data/easywaf.db`; point it elsewhere with `-e DATABASE_URL=...` if
 you mount the volume somewhere else.
 
-EasyWAF runs as the user `easywaf`, uid and gid **10001**, not root. A new volume is owned by
-it already. A host directory mounted instead (`-v ./data:/data`) has to be writable by that
-id:
-
-```
-sudo chown -R 10001:10001 ./data
-```
-
-**Upgrading from an image before 1.7.0**, whose volume root owned: give the volume to the
-account once, with the container stopped, or EasyWAF cannot open its database.
-
-```
-docker run --rm -v easywaf-data:/data debian:bookworm-slim chown -R 10001:10001 /data
-```
-
-Backups are taken from the GUI, under **Settings → Backup**, and kept in the volume beside the
-database.
+There is no backup or export yet — to take a copy, stop the container and copy the file out
+of the volume.
 
 ---
 
