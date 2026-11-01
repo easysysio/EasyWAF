@@ -885,18 +885,18 @@ pub async fn backfill_rule_sets(db: &SqlitePool) -> Result<()> {
         .fetch_all(db)
         .await?;
 
-    let entries = match std::fs::read_dir(dir) {
+    let mut entries = match tokio::fs::read_dir(dir).await {
         Ok(e)  => e,
         Err(_) => return Ok(()),
     };
 
     let mut adopted = 0usize;
-    for entry in entries.flatten() {
+    while let Ok(Some(entry)) = entries.next_entry().await {
         let path = entry.path();
         if !is_rule_file(&path) {
             continue;
         }
-        let Ok(text) = std::fs::read_to_string(&path) else { continue };
+        let Ok(text) = tokio::fs::read_to_string(&path).await else { continue };
         let Ok(file) = toml::from_str::<RuleFile>(&text) else { continue };
         let Some(set) = file.set.as_ref() else { continue };
         if file.rules.is_empty() {

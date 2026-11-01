@@ -206,22 +206,22 @@ pub async fn sync(db: &SqlitePool) -> Result<usize, String> {
     }
 
     let held = cache_dir().with_extension("held");
-    let _ = std::fs::remove_dir_all(&held);
-    std::fs::create_dir_all(held.join(FILES)).map_err(|e| format!("{}: {e}", held.display()))?;
+    let _ = tokio::fs::remove_dir_all(&held).await;
+    tokio::fs::create_dir_all(held.join(FILES)).await.map_err(|e| format!("{}: {e}", held.display()))?;
     for list in &offered {
         if let Some(body) = files.get(&list.id) {
             // Checked before it is written, even though it is not in force: a
             // held bundle that cannot verify is not worth keeping.
             if crate::channel::sha256_hex(body) != list.sha256 {
-                let _ = std::fs::remove_dir_all(&held);
+                let _ = tokio::fs::remove_dir_all(&held).await;
                 return Err(format!("{} does not match the signed manifest", list.file));
             }
-            std::fs::write(local_file(&held, &list.id), body)
+            tokio::fs::write(local_file(&held, &list.id), body).await
                 .map_err(|e| format!("{}: {e}", list.id))?;
         }
     }
-    std::fs::write(held.join(MANIFEST), &manifest).map_err(|e| format!("{MANIFEST}: {e}"))?;
-    std::fs::write(held.join(SIGNATURE), signature.as_bytes())
+    tokio::fs::write(held.join(MANIFEST), &manifest).await.map_err(|e| format!("{MANIFEST}: {e}"))?;
+    tokio::fs::write(held.join(SIGNATURE), signature.as_bytes()).await
         .map_err(|e| format!("{SIGNATURE}: {e}"))?;
 
     tracing::info!(lists = offered.len(),

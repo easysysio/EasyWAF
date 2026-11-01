@@ -14,7 +14,7 @@
             <span class="text-muted" style="font-size:12px">
                 <span id="selCount">0</span> of {{ total_available }} rules selected
             </span>
-            <input type="text" class="form-control input-sm" id="ruleSearch"
+            <input type="text" class="form-control input-sm" id="ruleSearch" aria-label="Filter rules"
                    placeholder="Filter rules…" style="width:180px;margin-left:auto"
                    oninput="filterRules()">
             <button type="button" class="btn btn-primary btn-sm" onclick="selectBasic()">
@@ -124,6 +124,9 @@
         <!-- Collapsed by default; toggled by the header -->
         <div class="table-responsive cat-body" data-cat="{{ cat.code }}" style="display:none">
             <table class="table table-condensed table-hover" style="font-size:12px;margin-bottom:0">
+                <thead class="sr-only">
+                    <tr><th>Selected</th><th>Rule</th><th>Zone</th><th>Action</th><th>Pattern</th></tr>
+                </thead>
                 <tbody>
                 {% for r in cat.rules %}
                     <tr class="rule-row"
@@ -135,7 +138,7 @@
                                and ticking it switches it back on. Held rules
                                carry their own class so the counts can tell a
                                selection from what is already true. #}
-                            <input type="checkbox"
+                            <input type="checkbox" aria-label="{{ r.name }}"
                                    class="{% if r.added %}cat-held{% else %}cat-chk{% endif %}"
                                    data-cat="{{ cat.code }}" data-id="{{ r.external_id }}"
                                    {% if r.added %}checked

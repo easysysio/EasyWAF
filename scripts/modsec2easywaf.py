@@ -862,6 +862,19 @@ def link_condition(variables, operator, actions, base_dir):
             "widened": widened, "transforms": transforms, "chain": chain}
 
 
+
+MACRO = re.compile(r"\(?%\{[^}]*\}\)?")
+
+
+def without_macros(msg):
+    """A rule message without its %{...} macros and the space before each.
+
+    Split rather than one pattern with a leading \\s*, which rescans a run of
+    spaces from every position in it."""
+    parts = MACRO.split(msg)
+    return "".join(p.rstrip() for p in parts[:-1]) + parts[-1]
+
+
 def convert(paths, id_base, include_widened, set_id, set_name, max_paranoia=1, score_scale=1, min_paranoia=1):
     rules, skipped, stats = [], [], Counter()
     seen_ids = set()
@@ -1019,7 +1032,7 @@ def convert(paths, id_base, include_widened, set_id, set_name, max_paranoia=1, s
                 # Without what ModSecurity puts in at logging time — the value
                 # that matched — which a rule's name cannot hold.
                 "id": new_id, "orig": rid,
-                "name": re.sub(r"\s*\(?%\{[^}]*\}\)?", "", msg).strip() or f"ModSecurity {rid}",
+                "name": without_macros(msg).strip() or f"ModSecurity {rid}",
                 "conds": conds, "score": score,
                 "severity": severity, "widened": widened,
                 "transforms": sorted({t for c in conds for t in c["transforms"]}),

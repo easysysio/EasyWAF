@@ -32,7 +32,7 @@
                     {% endif %}
                     {% if policies and show_picker %}
                     <form method="get" action="/iplists" style="margin:0">
-                        <select name="policy" class="form-control input-sm"
+                        <select name="policy" class="form-control input-sm" aria-label="Policy"
                                 onchange="this.form.submit()" style="width:auto;display:inline-block">
                             {% if everywhere %}
                             <option value="" selected>a policy…</option>
@@ -50,7 +50,7 @@
                     <form method="get" action="/iplists" style="margin:0;margin-left:auto">
                         <input type="hidden" name="policy" value="{{ sel_policy }}">
                         <input type="hidden" name="scope"  value="{{ scope }}">
-                        <input type="text" name="q" value="{{ search }}"
+                        <input type="text" name="q" value="{{ search }}" aria-label="Search address or reason"
                                class="form-control input-sm" placeholder="Search address or reason"
                                style="width:auto;display:inline-block">
                     </form>
@@ -110,14 +110,14 @@
                     <input type="hidden" name="policy" value="{{ sel_policy }}">
                     <input type="hidden" name="scope"  value="{{ scope }}">
                     <input type="hidden" name="back"   value="{{ back }}">
-                    <input type="text" name="ip" class="form-control" required
+                    <input type="text" name="ip" class="form-control" required aria-label="Address or range"
                            placeholder="203.0.113.9 or 203.0.113.0/24"
                            spellcheck="false" style="width:260px">
-                    <select name="list_type" class="form-control" style="width:auto">
+                    <select name="list_type" class="form-control" style="width:auto" aria-label="List">
                         <option value="block">Block</option>
                         <option value="allow">Allow</option>
                     </select>
-                    <input type="text" name="reason" class="form-control"
+                    <input type="text" name="reason" class="form-control" aria-label="Why"
                            placeholder="Why (optional)" style="width:280px">
                     <button type="submit" class="btn btn-default">
                         <i class="fa fa-plus"></i> Add
@@ -212,6 +212,9 @@
                 </p>
                 <div style="overflow-x:auto">
                 <table class="table table-condensed" style="font-size:12px">
+                    <thead class="sr-only">
+                        <tr><th>Address</th><th>List</th><th>Reason</th><th>Where from</th></tr>
+                    </thead>
                     <tbody>
                     {% for e in shared %}
                         <tr>
@@ -369,7 +372,7 @@
                                     <label class="checkbox-inline" style="margin:0">
                                         <input type="checkbox" name="enabled" value="1" {% if f.enabled %}checked{% endif %}> On
                                     </label>
-                                    <select name="response" class="form-control input-sm" style="width:auto">
+                                    <select name="response" class="form-control input-sm" style="width:auto" aria-label="Response">
                                         <option value="challenge" {% if f.response == "challenge" %}selected{% endif %}>Challenge</option>
                                         <option value="block" {% if f.response == "block" %}selected{% endif %}>Block</option>
                                     </select>

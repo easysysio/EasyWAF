@@ -255,12 +255,12 @@ pub async fn sync(db: &SqlitePool) -> Result<Fetched, String> {
     }
 
     let dir = held_dir();
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    std::fs::write(dir.join(local_name(&offered.id)), &body)
+    let _ = tokio::fs::remove_dir_all(&dir).await;
+    tokio::fs::create_dir_all(&dir).await.map_err(|e| format!("{}: {e}", dir.display()))?;
+    tokio::fs::write(dir.join(local_name(&offered.id)), &body).await
         .map_err(|e| format!("{}: {e}", offered.id))?;
-    std::fs::write(dir.join(MANIFEST), &manifest).map_err(|e| format!("{MANIFEST}: {e}"))?;
-    std::fs::write(dir.join(SIGNATURE), signature.as_bytes())
+    tokio::fs::write(dir.join(MANIFEST), &manifest).await.map_err(|e| format!("{MANIFEST}: {e}"))?;
+    tokio::fs::write(dir.join(SIGNATURE), signature.as_bytes()).await
         .map_err(|e| format!("{SIGNATURE}: {e}"))?;
 
     // Recorded as taken even though it is not in force. It is on disk and the

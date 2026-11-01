@@ -9,14 +9,14 @@
             renders the same markup with nothing in it.
 #}
                     <div class="form-group">
-                        <label>Site Name
+                        <label for="siteName">Site Name
                             <small class="text-muted">
                                 {% if site %}(friendly label — fixed once the site exists){% else %}(friendly label){% endif %}
                             </small></label>
                         {% if site %}
-                        <input type="text" class="form-control" value="{{ site.name }}" disabled>
+                        <input type="text" class="form-control" id="siteName" value="{{ site.name }}" disabled>
                         {% else %}
-                        <input type="text" class="form-control" name="name" placeholder="mysite" required>
+                        <input type="text" class="form-control" id="siteName" name="name" placeholder="mysite" required>
                         {% endif %}
                     </div>
 

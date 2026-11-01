@@ -12,7 +12,7 @@
                     <span><i class="fa fa-ban"></i> Rule Exclusions</span>
                     {% if show_picker %}
                     <form method="get" action="/exclusions" style="margin:0">
-                        <select name="policy" class="form-control input-sm"
+                        <select name="policy" class="form-control input-sm" aria-label="Policy"
                                 onchange="this.form.submit()" style="width:auto;display:inline-block">
                             <option value="">every policy</option>
                             {% for p in policies %}
@@ -141,9 +141,9 @@
                     <input type="hidden" name="back"   value="{{ back }}">
 
                     <div class="form-group">
-                        <label class="col-sm-2 control-label">Rule</label>
+                        <label class="col-sm-2 control-label" for="exRule">Rule</label>
                         <div class="col-sm-10">
-                            <select class="form-control" name="rule" required>
+                            <select class="form-control" id="exRule" name="rule" required>
                                 <option value="">— select a rule —</option>
                                 {% for c in candidates %}
                                 <option value="{{ c.value }}">{{ c.label }}{% if c.set %} [{{ c.set }}]{% endif %}</option>
@@ -158,9 +158,9 @@
                     </div>
 
                     <div class="form-group">
-                        <label class="col-sm-2 control-label">Path prefix</label>
+                        <label class="col-sm-2 control-label" for="exPath">Path prefix</label>
                         <div class="col-sm-10">
-                            <input type="text" class="form-control" name="path_prefix"
+                            <input type="text" class="form-control" id="exPath" name="path_prefix"
                                    placeholder="/remote.php/dav/">
                             <span class="help-block">
                                 Optional. The rule stops running only where the request path
@@ -173,9 +173,9 @@
                     </div>
 
                     <div class="form-group">
-                        <label class="col-sm-2 control-label">Clients</label>
+                        <label class="col-sm-2 control-label" for="exClients">Clients</label>
                         <div class="col-sm-10">
-                            <input type="text" class="form-control" name="client_cidr"
+                            <input type="text" class="form-control" id="exClients" name="client_cidr"
                                    placeholder="203.0.113.9 or 203.0.113.0/24">
                             <span class="help-block">
                                 Optional. The rule stops running only for these clients and
@@ -187,9 +187,9 @@
                     </div>
 
                     <div class="form-group">
-                        <label class="col-sm-2 control-label">Why</label>
+                        <label class="col-sm-2 control-label" for="exNote">Why</label>
                         <div class="col-sm-10">
-                            <input type="text" class="form-control" name="note"
+                            <input type="text" class="form-control" id="exNote" name="note"
                                    placeholder="Blocks the OAuth redirect_uri on every login">
                             <span class="help-block">
                                 Worth filling in. An exclusion outlives the incident that

@@ -530,8 +530,8 @@ async fn apply_from_cache(
     key: &str,
 ) -> Option<std::result::Result<String, String>> {
     let dir = cache_dir();
-    let manifest = std::fs::read(dir.join("sets.toml")).ok()?;
-    let signature = std::fs::read_to_string(dir.join("sets.toml.asc")).ok()?;
+    let manifest = tokio::fs::read(dir.join("sets.toml")).await.ok()?;
+    let signature = tokio::fs::read_to_string(dir.join("sets.toml.asc")).await.ok()?;
 
     let signer = match crate::pgp_verify::verify_detached(key, &manifest, &signature) {
         Ok(s)  => s,
@@ -544,7 +544,7 @@ async fn apply_from_cache(
     }
 
     let name = std::path::Path::new(&entry.file).file_name()?;
-    let body = std::fs::read(dir.join("sets").join(name)).ok()?;
+    let body = tokio::fs::read(dir.join("sets").join(name)).await.ok()?;
 
     let digest = crate::channel::sha256_hex(&body);
     if digest != entry.sha256 {
@@ -845,13 +845,14 @@ pub async fn url(db: &SqlitePool) -> String {
 
 /// What went wrong mirroring the channel to disk, if anything.
 pub async fn mirror_status(db: &SqlitePool) -> (usize, Option<String>) {
-    let sets = std::fs::read_dir(cache_dir().join("sets"))
-        .map(|d| {
-            d.flatten()
-                .filter(|e| e.file_name().to_string_lossy().ends_with(".rules.toml"))
-                .count()
-        })
-        .unwrap_or(0);
+    let mut sets = 0;
+    if let Ok(mut d) = tokio::fs::read_dir(cache_dir().join("sets")).await {
+        while let Ok(Some(e)) = d.next_entry().await {
+            if e.file_name().to_string_lossy().ends_with(".rules.toml") {
+                sets += 1;
+            }
+        }
+    }
     let error = crate::settings::get(db, KEY_MIRROR_ERROR).await.filter(|v| !v.trim().is_empty());
     (sets, error)
 }
