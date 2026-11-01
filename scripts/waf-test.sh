@@ -32,9 +32,9 @@ check() {
     code=$(curl -s -o /dev/null -w '%{http_code}' -H "Host: $HOST" "$@")
     body=$(curl -s -H "Host: $HOST" "$@" | head -c 72 | tr -d '\n')
 
-    if [ "$expect" = "403" ] && [ "$code" = "403" ]; then
+    if [[ "$expect" = "403" ]] && [[ "$code" = "403" ]]; then
         printf '  \033[32m✓\033[0m %-40s blocked — %s\n' "$label" "$body"; pass=$((pass+1))
-    elif [ "$expect" = "pass" ] && [ -n "$code" ] && [ "$code" != "000" ] && [ "$code" != "403" ]; then
+    elif [[ "$expect" = "pass" ]] && [[ -n "$code" ]] && [[ "$code" != "000" ]] && [[ "$code" != "403" ]]; then
         printf '  \033[32m✓\033[0m %-40s allowed (%s)\n' "$label" "$code"; pass=$((pass+1))
     else
         printf '  \033[31m✗\033[0m %-40s got %s, expected %s — %s\n' "$label" "$code" "$expect" "$body"; fail=$((fail+1))
@@ -100,6 +100,6 @@ for enc in '%20' '+' '%2520'; do
     code=$(curl -s -o /dev/null -w '%{http_code}' -H "Host: $HOST" \
            "$BASE/?q=DROP${enc}TABLE${enc}users")
     printf '  DROP%sTABLE%susers in query -> %s%s\n' "$enc" "$enc" "$code" \
-           "$([ "$code" = 403 ] && echo '' || echo '   ← NOT BLOCKED')"
+           "$([[ "$code" = 403 ]] && echo '' || echo '   ← NOT BLOCKED')"
 done
 echo

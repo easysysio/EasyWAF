@@ -27,8 +27,8 @@ set -u
 DB="${1:-}"
 
 # Fall back to .env, then to the conventional path.
-if [ -z "$DB" ]; then
-    if [ -f .env ]; then
+if [[ -z "$DB" ]]; then
+    if [[ -f .env ]]; then
         DB=$(grep -E '^DATABASE_URL=' .env | head -1 | sed 's|^DATABASE_URL=||; s|^sqlite://||')
     fi
     DB="${DB:-easywaf.db}"
@@ -43,21 +43,21 @@ fi
 # rather than counted, so a gap in the numbering cannot silently understate it.
 LATEST=$(ls migrations/*.sql 2>/dev/null | sed 's|.*/||; s|_.*||' | sed 's|^0*||' | sort -n | tail -1)
 
-if [ -z "$LATEST" ]; then
+if [[ -z "$LATEST" ]]; then
     echo "No migrations found in migrations/." >&2
     exit 1
 fi
 
 echo "Database: $DB"
 
-if [ -f "$DB" ]; then
+if [[ -f "$DB" ]]; then
     # PRAGMA user_version is SQLite's own per-database integer, unused by
     # EasyWAF itself — the binary decides what to apply by inspecting the
     # schema directly. Stamping it here lets this script skip the whole pass
     # on a database it has already brought up to date, which is the common
     # case: nothing to do, so nothing is touched.
     CURRENT=$(sqlite3 "$DB" "PRAGMA user_version;" 2>/dev/null || echo 0)
-    if [ "${CURRENT:-0}" -ge "$LATEST" ]; then
+    if [[ "${CURRENT:-0}" -ge "$LATEST" ]]; then
         echo "  already at migration $CURRENT — nothing to do"
         exit 0
     fi
@@ -81,7 +81,7 @@ for f in migrations/*.sql; do
     # (027) would drop a table after failing to fill its replacement.
     err=$(sqlite3 -bail "$DB" < "$f" 2>&1 >/dev/null)
 
-    if [ -z "$err" ]; then
+    if [[ -z "$err" ]]; then
         # No error. For an ALTER this means the column was genuinely added;
         # for a CREATE TABLE IF NOT EXISTS it may equally mean nothing
         # happened. SQLite does not distinguish the two here, so this counts
@@ -103,7 +103,7 @@ done
 echo
 echo "  $applied ran, $skipped already present, $failed failed"
 
-if [ "$failed" -gt 0 ]; then
+if [[ "$failed" -gt 0 ]]; then
     echo
     echo "Some migrations failed. The build will still not see the schema they" >&2
     echo "add — fix those before running cargo build." >&2

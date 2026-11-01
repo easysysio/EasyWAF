@@ -46,11 +46,11 @@ pub async fn get_backup(
 
     // The size of what a snapshot will be, near enough, so nobody is surprised
     // by a download that carries months of traffic history.
-    let db_bytes = std::fs::metadata(crate::backup::db_path()).map(|m| m.len()).unwrap_or(0);
+    let db_bytes = tokio::fs::metadata(crate::backup::db_path()).await.map(|m| m.len()).unwrap_or(0);
     ctx.insert("db_size", &human_size(db_bytes));
 
     // ── Scheduled snapshots ──
-    let stored = crate::backup::list();
+    let stored = crate::backup::list().await;
     let stored_total: u64 = stored.iter().map(|s| s.bytes).sum();
     let (last, error) = crate::backup::status(&state.db).await;
     ctx.insert("scheduled",     &crate::backup::scheduled(&state.db).await);
@@ -67,7 +67,7 @@ pub async fn get_backup(
     // A held upload is inspected again on every view rather than remembered:
     // it is cheap, and what the page describes is then what is on disk now.
     let candidate = crate::backup::candidate_path();
-    let (held, held_error) = if candidate.exists() {
+    let (held, held_error) = if crate::backup::exists(&candidate).await {
         match crate::backup::inspect(&candidate).await {
             Ok(c)  => (Some(c), None),
             Err(e) => (None, Some(e)),
@@ -77,21 +77,21 @@ pub async fn get_backup(
     };
     ctx.insert("held",        &held);
     ctx.insert("held_error",  &held_error.unwrap_or_default());
-    ctx.insert("held_size",   &human_size(std::fs::metadata(&candidate).map(|m| m.len()).unwrap_or(0)));
+    ctx.insert("held_size",   &human_size(tokio::fs::metadata(&candidate).await.map(|m| m.len()).unwrap_or(0)));
     for key in [crate::backup::KEY_RESTORE_OUTCOME, crate::backup::KEY_RESTORE_MESSAGE,
                 crate::backup::KEY_RESTORE_AT] {
         let v = crate::settings::get(&state.db, key).await.unwrap_or_default();
         ctx.insert(key, &v);
     }
     let before = crate::backup::before_path();
-    ctx.insert("before_size", &before.exists().then(||
-        human_size(std::fs::metadata(&before).map(|m| m.len()).unwrap_or(0))));
+    let before_size = tokio::fs::metadata(&before).await.ok().map(|m| human_size(m.len()));
+    ctx.insert("before_size", &before_size);
 
     // ── Import: a held file, and what applying it would do ──
     // Planned again on every view, like the held snapshot, so the preview is of
     // this installation as it is now rather than when the file arrived.
     let candidate = import_candidate();
-    if let Ok(text) = std::fs::read_to_string(&candidate) {
+    if let Ok(text) = tokio::fs::read_to_string(&candidate).await {
         match crate::import::parse(&text) {
             Ok(doc) => {
                 let plan = crate::import::plan(&state.db, &doc, &gui_ports(&state), &session.username).await;
@@ -120,7 +120,7 @@ pub async fn post_snapshot(
     // Taken into the backups directory under a dot-name, so a listing of
     // scheduled snapshots never shows a download that is half written.
     let tmp = crate::backup::dir().join(format!(".download-{name}"));
-    let _ = std::fs::remove_file(&tmp);
+    let _ = tokio::fs::remove_file(&tmp).await;
 
     let size = match crate::backup::take(&state.db, &tmp).await {
         Ok(n)  => n,
@@ -136,7 +136,7 @@ pub async fn post_snapshot(
     // download finishes — or is abandoned — with nothing left to clean up.
     // A downloaded snapshot is the browser's copy; keeping a second one here
     // is the scheduled snapshots' job, and only when somebody asked for them.
-    let _ = std::fs::remove_file(&tmp);
+    let _ = tokio::fs::remove_file(&tmp).await;
 
     tracing::info!(by = %session.username, bytes = size, file = %name, "Snapshot downloaded");
 
@@ -177,7 +177,7 @@ pub async fn post_schedule(
 
     // Lowering the number kept takes effect now, not at the next snapshot, so
     // the page afterwards shows what the setting says.
-    let removed = crate::backup::prune_in(&crate::backup::dir(), keep);
+    let removed = crate::backup::prune(keep).await;
 
     let msg = if on {
         format!("Saved. A snapshot is taken daily and the newest {keep} are kept{}",
@@ -259,9 +259,9 @@ pub async fn post_restore_upload(
 
     let candidate = crate::backup::candidate_path();
     if let Some(dir) = candidate.parent() {
-        let _ = std::fs::create_dir_all(dir);
+        let _ = tokio::fs::create_dir_all(dir).await;
     }
-    let _ = std::fs::remove_file(&candidate);
+    let _ = tokio::fs::remove_file(&candidate).await;
 
     // Streamed to disk a chunk at a time: a database with months of traffic
     // history in it does not belong in memory.
@@ -279,14 +279,14 @@ pub async fn post_restore_upload(
             match field.chunk().await {
                 Ok(Some(bytes)) => {
                     if let Err(e) = out.write_all(&bytes).await {
-                        let _ = std::fs::remove_file(&candidate);
+                        let _ = tokio::fs::remove_file(&candidate).await;
                         return flash_redirect("/backup", "failed",
                             &format!("The upload could not be written: {e}"));
                     }
                 }
                 Ok(None) => break,
                 Err(e) => {
-                    let _ = std::fs::remove_file(&candidate);
+                    let _ = tokio::fs::remove_file(&candidate).await;
                     return flash_redirect("/backup", "failed",
                         &format!("The upload did not arrive whole: {e}"));
                 }
@@ -308,7 +308,7 @@ pub async fn post_restore_upload(
                 "Checked and held. Nothing has been replaced — look at what it holds below, then restore it or discard it")
         }
         Err(e) => {
-            let _ = std::fs::remove_file(&candidate);
+            let _ = tokio::fs::remove_file(&candidate).await;
             flash_redirect("/backup", "failed", &format!("Not restorable: {e}"))
         }
     }
@@ -324,10 +324,10 @@ pub async fn post_restore_apply(
     // Checked again: the page that showed it may be an hour old, and the file
     // is what is about to become the database.
     if let Err(e) = crate::backup::inspect(&candidate).await {
-        let _ = std::fs::remove_file(&candidate);
+        let _ = tokio::fs::remove_file(&candidate).await;
         return flash_redirect("/backup", "failed", &format!("Not restorable: {e}"));
     }
-    if let Err(e) = crate::backup::stage(&candidate) {
+    if let Err(e) = crate::backup::stage(&candidate).await {
         return flash_redirect("/backup", "failed", &e);
     }
     tracing::warn!(by = %session.username, "Restore staged — restarting to apply it");
@@ -348,7 +348,7 @@ pub async fn post_restore_discard(
     _jar: SignedCookieJar,
     Admin(_session): Admin,
 ) -> Result<Response> {
-    let _ = std::fs::remove_file(crate::backup::candidate_path());
+    let _ = tokio::fs::remove_file(crate::backup::candidate_path()).await;
     flash_redirect("/backup", "success", "Discarded. Nothing was restored")
 }
 
@@ -466,8 +466,8 @@ pub async fn post_import_upload(
         return flash_redirect("/backup", "failed", &format!("Not importable: {e}"));
     }
     let candidate = import_candidate();
-    if let Some(dir) = candidate.parent() { let _ = std::fs::create_dir_all(dir); }
-    if let Err(e) = std::fs::write(&candidate, &text) {
+    if let Some(dir) = candidate.parent() { let _ = tokio::fs::create_dir_all(dir).await; }
+    if let Err(e) = tokio::fs::write(&candidate, &text).await {
         return flash_redirect("/backup", "failed", &format!("The file could not be held: {e}"));
     }
     tracing::info!(by = %session.username, "Configuration file uploaded and held for import");
@@ -482,7 +482,7 @@ pub async fn post_import_apply(
     Admin(session): Admin,
 ) -> Result<Response> {
     let candidate = import_candidate();
-    let Ok(text) = std::fs::read_to_string(&candidate) else {
+    let Ok(text) = tokio::fs::read_to_string(&candidate).await else {
         return flash_redirect("/backup", "failed", "There is no configuration file waiting to be imported");
     };
     let doc = match crate::import::parse(&text) {
@@ -501,7 +501,7 @@ pub async fn post_import_apply(
     // checked and swapped in by the restart.
     let work = crate::backup::dir().join(".import-work.db");
     for sfx in ["", "-wal", "-shm"] {
-        let _ = std::fs::remove_file(format!("{}{sfx}", work.display()));
+        let _ = tokio::fs::remove_file(format!("{}{sfx}", work.display())).await;
     }
     if let Err(e) = crate::backup::take(&state.db, &work).await {
         return flash_redirect("/backup", "failed", &format!("Not imported: {e}"));
@@ -515,10 +515,10 @@ pub async fn post_import_apply(
         applied
     }.await;
     for sfx in ["-wal", "-shm"] {
-        let _ = std::fs::remove_file(format!("{}{sfx}", work.display()));
+        let _ = tokio::fs::remove_file(format!("{}{sfx}", work.display())).await;
     }
     if let Err(e) = outcome {
-        let _ = std::fs::remove_file(&work);
+        let _ = tokio::fs::remove_file(&work).await;
         return flash_redirect("/backup", "failed",
             &format!("Not imported, and nothing was changed: {e}"));
     }
@@ -526,13 +526,15 @@ pub async fn post_import_apply(
     let success = format!(
         "Imported the configuration exported by EasyWAF {} on {} — {} change(s).",
         doc.easywaf.version, doc.easywaf.exported, plan.changes);
-    if let Err(e) = crate::backup::set_reason("The import", &success)
-        .and_then(|_| crate::backup::stage(&work))
-    {
-        let _ = std::fs::remove_file(&work);
+    let staged = match crate::backup::set_reason("The import", &success).await {
+        Ok(()) => crate::backup::stage(&work).await,
+        Err(e) => Err(e),
+    };
+    if let Err(e) = staged {
+        let _ = tokio::fs::remove_file(&work).await;
         return flash_redirect("/backup", "failed", &format!("Not imported: {e}"));
     }
-    let _ = std::fs::remove_file(&candidate);
+    let _ = tokio::fs::remove_file(&candidate).await;
     tracing::warn!(by = %session.username, changes = plan.changes,
                    "Configuration import staged — restarting to apply it");
 
@@ -553,7 +555,7 @@ pub async fn post_import_discard(
     _jar: SignedCookieJar,
     Admin(_session): Admin,
 ) -> Result<Response> {
-    let _ = std::fs::remove_file(import_candidate());
+    let _ = tokio::fs::remove_file(import_candidate()).await;
     flash_redirect("/backup", "success", "Discarded. Nothing was imported")
 }
 

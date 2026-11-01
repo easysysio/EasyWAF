@@ -27,7 +27,7 @@ BASE="${1:-${EASYWAF_RULES_URL:-https://repo.easysys.io/easywaf/rules}}"
 BASE="${BASE%/}"
 DEST="rules"
 
-[ -f Cargo.toml ] && [ -d rules ] || { echo "Run from the EasyWAF repository root." >&2; exit 1; }
+[[ -f Cargo.toml ]] && [[ -d rules ]] || { echo "Run from the EasyWAF repository root." >&2; exit 1; }
 command -v curl >/dev/null || { echo "curl is required." >&2; exit 1; }
 
 TMP=$(mktemp -d)
@@ -72,7 +72,7 @@ fi
 ALLOW_UNSIGNED="${EASYWAF_RULES_ALLOW_UNSIGNED:-0}"
 KEY="$DEST/key.gpg"
 
-if [ ! -f "$KEY" ]; then
+if [[ ! -f "$KEY" ]]; then
     # First run against a channel. Take the key, then say plainly that nothing
     # has been verified yet and a human has to vouch for it once.
     if get "key.gpg" "$TMP/key.gpg"; then
@@ -82,7 +82,7 @@ if [ ! -f "$KEY" ]; then
         echo "       published one, then commit $KEY. Every later run verifies"
         echo "       against it, so this is the one time it is taken on faith."
         gpg --show-keys --with-fingerprint "$KEY" 2>/dev/null | sed 's/^/       /' || true
-    elif [ "$ALLOW_UNSIGNED" != "1" ]; then
+    elif [[ "$ALLOW_UNSIGNED" != "1" ]]; then
         echo >&2
         echo "  No key at $BASE/key.gpg and none pinned at $KEY — refusing." >&2
         echo "  Publish with publish.sh, or set EASYWAF_RULES_ALLOW_UNSIGNED=1" >&2
@@ -93,7 +93,7 @@ fi
 
 if get "sets.toml.asc" "$TMP/sets.toml.asc"; then
     command -v gpg >/dev/null || { echo "  signature present but gpg is not installed — refusing" >&2; exit 1; }
-    [ -f "$KEY" ] || { echo "  signature present but no key at $KEY — refusing" >&2; exit 1; }
+    [[ -f "$KEY" ]] || { echo "  signature present but no key at $KEY — refusing" >&2; exit 1; }
     # A throwaway keyring holding nothing but the pinned key, so a signature by
     # any other key the builder happens to trust is still a failure.
     KR="$TMP/keyring"; mkdir -p "$KR"; chmod 700 "$KR"
@@ -110,7 +110,7 @@ if get "sets.toml.asc" "$TMP/sets.toml.asc"; then
         echo "    do not let this script do it for you." >&2
         exit 1
     fi
-elif [ "$ALLOW_UNSIGNED" = "1" ]; then
+elif [[ "$ALLOW_UNSIGNED" = "1" ]]; then
     echo "  signature: ABSENT, continuing because EASYWAF_RULES_ALLOW_UNSIGNED=1"
 else
     echo >&2
@@ -139,13 +139,13 @@ awk '
 ' "$TMP/sets.toml" > "$TMP/basic"
 
 COUNT=$(wc -l < "$TMP/basic" | tr -d ' ')
-[ "$COUNT" -gt 0 ] || { echo "sets.toml declares no basic sets." >&2; exit 1; }
+[[ "$COUNT" -gt 0 ]] || { echo "sets.toml declares no basic sets." >&2; exit 1; }
 
 # Everything is fetched before anything is replaced, so a channel that fails
 # halfway leaves the working copy alone rather than half-updated.
 mkdir -p "$TMP/new"
 while IFS= read -r f; do
-    [ -n "$f" ] || continue
+    [[ -n "$f" ]] || continue
     if ! get "$f" "$TMP/new/$(basename "$f")"; then
         echo "sets.toml names $f, which the channel does not serve." >&2
         exit 1

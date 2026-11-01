@@ -23,17 +23,17 @@ set -euo pipefail
 # The packages set WorkingDirectory=/opt/easywaf and the database is created
 # there on first run, so that is the default rather than a guess.
 DB="${1:-/opt/easywaf/easywaf.db}"
-[ -f "$DB" ] || { echo "No database at $DB"; echo "Usage: $0 [database] [rules-dir]"; exit 1; }
+[[ -f "$DB" ]] || { echo "No database at $DB"; echo "Usage: $0 [database] [rules-dir]"; exit 1; }
 
 # Where EasyWAF itself looks: the mirror beside the database, else the bundle.
 RULES="${2:-}"
-if [ -z "$RULES" ]; then
+if [[ -z "$RULES" ]]; then
     for cand in "$(dirname "$DB")/rules-cache/sets" "$(dirname "$DB")/rules" \
                 /usr/share/easywaf/rules ./rules; do
         if compgen -G "$cand/*.rules.toml" >/dev/null 2>&1; then RULES="$cand"; break; fi
     done
 fi
-[ -n "$RULES" ] && compgen -G "$RULES/*.rules.toml" >/dev/null 2>&1 || {
+[[ -n "$RULES" ]] && compgen -G "$RULES/*.rules.toml" >/dev/null 2>&1 || {
     echo "No rule files found. Pass the directory as the second argument:"
     echo "  $0 $DB /var/lib/easywaf/rules-cache/sets"
     exit 1
@@ -45,7 +45,7 @@ echo "Rule files: $RULES"
 # Every catalogue number the installed rule files currently publish.
 PUBLISHED=$(grep -ho '^[[:space:]]*id[[:space:]]*=[[:space:]]*[0-9]\+' "$RULES"/*.rules.toml \
             | grep -o '[0-9]\+' | sort -u | paste -sd, -)
-[ -n "$PUBLISHED" ] || { echo "Could not read any rule ids from $RULES"; exit 1; }
+[[ -n "$PUBLISHED" ]] || { echo "Could not read any rule ids from $RULES"; exit 1; }
 echo "Published:  $(echo "$PUBLISHED" | tr ',' '\n' | wc -l | tr -d ' ') rule numbers"
 
 # The debris, defined once. A temp view lives only as long as the connection
@@ -85,14 +85,14 @@ sqlite3 -header -column "$DB" "$SQL_VIEW
 COUNT=$(sqlite3 "$DB" "$SQL_VIEW SELECT COUNT(*) FROM debris;")
 echo
 echo "$COUNT rules match."
-[ "$COUNT" -eq 0 ] && { echo "Nothing to do."; exit 0; }
+[[ "$COUNT" -eq 0 ]] && { echo "Nothing to do."; exit 0; }
 
 echo
 echo "Read the list. A rule you wrote yourself should not be in it — if one is,"
 echo "stop and say so rather than deleting it."
 BACKUP="$DB.$(date +%Y%m%d-%H%M%S).bak"
 read -r -p "Back up to $BACKUP and delete these $COUNT rules? [yes/N] " ans
-[ "$ans" = "yes" ] || { echo "Nothing changed."; exit 0; }
+[[ "$ans" = "yes" ]] || { echo "Nothing changed."; exit 0; }
 
 sqlite3 "$DB" ".backup '$BACKUP'"
 echo "Backed up to $BACKUP"

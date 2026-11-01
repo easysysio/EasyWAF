@@ -19,4 +19,7 @@
 
 ALTER TABLE sites ADD COLUMN x_frame_value TEXT NOT NULL DEFAULT 'SAMEORIGIN';
 
-UPDATE sites SET x_frame_value = 'DENY';
+-- Every site that existed before this column, which the line above has just
+-- given the new default: all of them, said as a condition rather than left
+-- implicit.
+UPDATE sites SET x_frame_value = 'DENY' WHERE x_frame_value = 'SAMEORIGIN';

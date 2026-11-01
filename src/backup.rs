@@ -56,7 +56,7 @@ pub fn file_name(now: chrono::DateTime<chrono::Utc>) -> String {
 /// Take a snapshot into `dest`, which must not exist yet. Returns its size.
 pub async fn take(db: &SqlitePool, dest: &Path) -> Result<u64, String> {
     if let Some(parent) = dest.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+        tokio::fs::create_dir_all(parent).await.map_err(|e| format!("{}: {e}", parent.display()))?;
     }
     sqlx::query("VACUUM INTO ?")
         .bind(dest.to_string_lossy().to_string())
@@ -64,19 +64,19 @@ pub async fn take(db: &SqlitePool, dest: &Path) -> Result<u64, String> {
         .await
         .map_err(|e| format!("the snapshot could not be taken: {e}"))?;
 
-    owner_only(dest);
-    std::fs::metadata(dest)
+    owner_only(dest).await;
+    tokio::fs::metadata(dest).await
         .map(|m| m.len())
         .map_err(|e| format!("{}: {e}", dest.display()))
 }
 
 /// Readable and writable by the owner alone. Every private key the appliance
 /// serves with is in this file.
-fn owner_only(path: &Path) {
+async fn owner_only(path: &Path) {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+        let _ = tokio::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).await;
     }
     #[cfg(not(unix))]
     let _ = path;
@@ -156,8 +156,22 @@ pub fn list_in(dir: &Path) -> Vec<Stored> {
     out
 }
 
-pub fn list() -> Vec<Stored> {
-    list_in(&dir())
+/// The snapshots in the backups directory, read off the async runtime.
+pub async fn list() -> Vec<Stored> {
+    let d = dir();
+    tokio::task::spawn_blocking(move || list_in(&d)).await.unwrap_or_default()
+}
+
+/// [`prune_in`] on the backups directory, off the async runtime.
+pub async fn prune(keep: usize) -> usize {
+    let d = dir();
+    tokio::task::spawn_blocking(move || prune_in(&d, keep)).await.unwrap_or(0)
+}
+
+/// [`due_in`] on the backups directory, off the async runtime.
+async fn due(now: chrono::NaiveDateTime) -> bool {
+    let d = dir();
+    tokio::task::spawn_blocking(move || due_in(&d, now)).await.unwrap_or(false)
 }
 
 /// Delete all but the newest `keep` snapshots in `dir`. Returns how many went.
@@ -182,16 +196,16 @@ pub fn due_in(dir: &Path, now: chrono::NaiveDateTime) -> bool {
 /// Take a scheduled snapshot now, and prune to the number kept.
 pub async fn take_scheduled(db: &SqlitePool) -> Result<Stored, String> {
     let d = dir();
-    std::fs::create_dir_all(&d).map_err(|e| format!("{}: {e}", d.display()))?;
+    tokio::fs::create_dir_all(&d).await.map_err(|e| format!("{}: {e}", d.display()))?;
     // The directory as well as each file: a listing of it names what exists.
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&d, std::fs::Permissions::from_mode(0o700));
+        let _ = tokio::fs::set_permissions(&d, std::fs::Permissions::from_mode(0o700)).await;
     }
     let name = file_name(chrono::Utc::now());
     let bytes = take(db, &d.join(&name)).await?;
-    let removed = prune_in(&d, keep(db).await);
+    let removed = prune(keep(db).await).await;
     tracing::info!(file = %name, bytes, removed, "Scheduled snapshot taken");
     let taken = taken_from_name(&name)
         .map(|t| t.format("%Y-%m-%d %H:%M:%S").to_string())
@@ -222,7 +236,7 @@ pub async fn status(db: &SqlitePool) -> (Option<String>, Option<String>) {
 pub fn spawn_schedule(db: SqlitePool) {
     tokio::spawn(async move {
         loop {
-            if scheduled(&db).await && due_in(&dir(), chrono::Utc::now().naive_utc()) {
+            if scheduled(&db).await && due(chrono::Utc::now().naive_utc()).await {
                 match take_scheduled(&db).await {
                     Ok(s) => {
                         crate::settings::record(&db, KEY_LAST, &s.taken).await;
@@ -312,8 +326,8 @@ fn marker_path()  -> PathBuf { sibling(".restore-pending") }
 fn reason_path()  -> PathBuf { sibling(".restore-reason") }
 
 /// Say what a staged database is, for the messages after the restart.
-pub fn set_reason(subject: &str, success: &str) -> Result<(), String> {
-    std::fs::write(reason_path(), format!("{subject}\n{success}"))
+pub async fn set_reason(subject: &str, success: &str) -> Result<(), String> {
+    tokio::fs::write(reason_path(), format!("{subject}\n{success}")).await
         .map_err(|e| format!("the import could not be staged: {e}"))
 }
 fn outcome_path() -> PathBuf { sibling(".restore-outcome") }
@@ -352,9 +366,9 @@ pub async fn inspect(path: &Path) -> Result<Contents, String> {
     // than by whatever the driver makes of it.
     let mut head = [0u8; 16];
     {
-        use std::io::Read;
-        let mut f = std::fs::File::open(path).map_err(|e| format!("cannot read it: {e}"))?;
-        f.read_exact(&mut head).map_err(|_| "it is too short to be a database".to_string())?;
+        use tokio::io::AsyncReadExt;
+        let mut f = tokio::fs::File::open(path).await.map_err(|e| format!("cannot read it: {e}"))?;
+        f.read_exact(&mut head).await.map_err(|_| "it is too short to be a database".to_string())?;
     }
     if &head != b"SQLite format 3\0" {
         return Err("it is not a SQLite database — a snapshot is the .db file Download gives".into());
@@ -433,9 +447,14 @@ async fn inspect_open(db: &SqlitePool) -> Result<Contents, String> {
 }
 
 /// Move a checked candidate to where the next start will find it.
-pub fn stage(candidate: &Path) -> Result<(), String> {
-    std::fs::rename(candidate, staged_path())
+pub async fn stage(candidate: &Path) -> Result<(), String> {
+    tokio::fs::rename(candidate, staged_path()).await
         .map_err(|e| format!("the snapshot could not be staged: {e}"))
+}
+
+/// Whether something is at `path`. An error reading it counts as nothing.
+pub async fn exists(path: &Path) -> bool {
+    tokio::fs::try_exists(path).await.unwrap_or(false)
 }
 
 /// Called at startup, before the database is opened. Swaps a staged restore
@@ -458,60 +477,62 @@ async fn apply_staged_restore_at(db: &Path) {
 
     // A swap began and never finished starting: the restored database is the
     // one that failed. Put back what it replaced.
-    if marker.exists() && !staged.exists() {
-        if before.exists() {
-            let _ = std::fs::remove_file(&wal);
-            let _ = std::fs::remove_file(&shm);
-            match std::fs::rename(&before, db) {
+    if exists(&marker).await && !exists(&staged).await {
+        if exists(&before).await {
+            let _ = tokio::fs::remove_file(&wal).await;
+            let _ = tokio::fs::remove_file(&shm).await;
+            match tokio::fs::rename(&before, db).await {
                 Ok(()) => {
-                    let subject = std::fs::read_to_string(with(".restore-reason")).ok()
+                    let subject = tokio::fs::read_to_string(with(".restore-reason")).await.ok()
                         .and_then(|t| t.lines().next().map(str::to_string))
                         .unwrap_or_else(|| "The restored snapshot".to_string());
-                    let _ = std::fs::remove_file(with(".restore-reason"));
+                    let _ = tokio::fs::remove_file(with(".restore-reason")).await;
                     tracing::error!("{subject} did not start. The database it replaced has been put back");
-                    let _ = std::fs::write(&outcome, format!(
-                        "failed\n{subject} did not start — it would not open, or this version could not bring its schema up to date. The database it replaced has been put back, unchanged."));
+                    let _ = tokio::fs::write(&outcome, format!(
+                        "failed\n{subject} did not start — it would not open, or this version could not bring its schema up to date. The database it replaced has been put back, unchanged.")).await;
                 }
                 Err(e) => tracing::error!("The restored database did not start, and the one it replaced could not be put back: {e}"),
             }
         }
-        let _ = std::fs::remove_file(&marker);
+        let _ = tokio::fs::remove_file(&marker).await;
         return;
     }
 
-    if !staged.exists() {
+    if !exists(&staged).await {
         return;
     }
 
     // 1. The current database, copied whole to before-restore — unless an
     //    interrupted swap already did that, in which case the marker says so
     //    and the copy is the one to keep.
-    if !marker.exists() {
-        if db.exists() {
+    if !exists(&marker).await {
+        if exists(db).await {
             let tmp = with(".before-restore.tmp");
-            let _ = std::fs::remove_file(&tmp);
+            let _ = tokio::fs::remove_file(&tmp).await;
             let url = format!("sqlite://{}", db.display());
             match sqlx::SqlitePool::connect(&url).await {
                 Ok(current) => {
                     let taken = take(&current, &tmp).await;
                     current.close().await;
-                    if let Err(e) = taken.and_then(|_| std::fs::rename(&tmp, &before)
-                        .map_err(|e| e.to_string()))
-                    {
+                    let kept = match taken {
+                        Ok(_) => tokio::fs::rename(&tmp, &before).await.map_err(|e| e.to_string()),
+                        Err(e) => Err(e),
+                    };
+                    if let Err(e) = kept {
                         // Without a way back there is no restore. The staged
                         // file stays for another attempt; nothing else moves.
                         tracing::error!("Restore not applied: the current database could not be kept first ({e})");
-                        let _ = std::fs::write(&outcome, format!(
-                            "failed\nNot applied: the current database could not be kept first, so there would have been no way back ({e}). Nothing was changed."));
-                        let _ = std::fs::remove_file(&staged);
+                        let _ = tokio::fs::write(&outcome, format!(
+                            "failed\nNot applied: the current database could not be kept first, so there would have been no way back ({e}). Nothing was changed.")).await;
+                        let _ = tokio::fs::remove_file(&staged).await;
                         return;
                     }
                 }
                 Err(e) => {
                     tracing::error!("Restore not applied: the current database would not open ({e})");
-                    let _ = std::fs::write(&outcome, format!(
-                        "failed\nNot applied: the current database would not open to be kept first ({e}). Nothing was changed."));
-                    let _ = std::fs::remove_file(&staged);
+                    let _ = tokio::fs::write(&outcome, format!(
+                        "failed\nNot applied: the current database would not open to be kept first ({e}). Nothing was changed.")).await;
+                    let _ = tokio::fs::remove_file(&staged).await;
                     return;
                 }
             }
@@ -524,7 +545,7 @@ async fn apply_staged_restore_at(db: &Path) {
             Ok(c)  => c.written_by.unwrap_or_default(),
             Err(_) => String::new(),
         };
-        if std::fs::write(&marker, format!("swapping\n{from}\n")).is_err() {
+        if tokio::fs::write(&marker, format!("swapping\n{from}\n")).await.is_err() {
             tracing::error!("Restore not applied: its marker could not be written");
             return;
         }
@@ -532,15 +553,15 @@ async fn apply_staged_restore_at(db: &Path) {
 
     // 3. The log and shared memory belong to the database being replaced; the
     //    copy in step 1 read through them, so nothing in them is lost.
-    let _ = std::fs::remove_file(&wal);
-    let _ = std::fs::remove_file(&shm);
-    match std::fs::rename(&staged, db) {
+    let _ = tokio::fs::remove_file(&wal).await;
+    let _ = tokio::fs::remove_file(&shm).await;
+    match tokio::fs::rename(&staged, db).await {
         Ok(()) => tracing::info!("Restore swapped in; opening it"),
         Err(e) => {
             tracing::error!("Restore not applied: the snapshot could not be moved into place ({e})");
-            let _ = std::fs::write(&outcome, format!(
-                "failed\nNot applied: the snapshot could not be moved into place ({e}). The database was not changed."));
-            let _ = std::fs::remove_file(&marker);
+            let _ = tokio::fs::write(&outcome, format!(
+                "failed\nNot applied: the snapshot could not be moved into place ({e}). The database was not changed.")).await;
+            let _ = tokio::fs::remove_file(&marker).await;
         }
     }
 }
@@ -549,13 +570,13 @@ async fn apply_staged_restore_at(db: &Path) {
 /// means this start is the one that brought a restore up: it succeeded.
 pub async fn finish_restore(db: &SqlitePool) {
     let marker = marker_path();
-    if marker.exists() {
-        let from = std::fs::read_to_string(&marker).ok()
+    if exists(&marker).await {
+        let from = tokio::fs::read_to_string(&marker).await.ok()
             .and_then(|t| t.lines().nth(1).map(str::trim).map(str::to_string))
             .filter(|v| !v.is_empty());
-        let _ = std::fs::remove_file(&marker);
-        let reason = std::fs::read_to_string(reason_path()).ok();
-        let _ = std::fs::remove_file(reason_path());
+        let _ = tokio::fs::remove_file(&marker).await;
+        let reason = tokio::fs::read_to_string(reason_path()).await.ok();
+        let _ = tokio::fs::remove_file(reason_path()).await;
         let message = match reason.as_deref().and_then(|t| t.split_once('\n')) {
             Some((_, success)) => format!("{} The database it replaced is kept and can be downloaded below.",
                                           success.trim()),
@@ -563,17 +584,17 @@ pub async fn finish_restore(db: &SqlitePool) {
                 "Restored from a snapshot{}. The database it replaced is kept beside it and can be downloaded below.",
                 from.map(|v| format!(" last run by EasyWAF {v}")).unwrap_or_default()),
         };
-        let _ = std::fs::write(outcome_path(), format!("ok\n{message}"));
+        let _ = tokio::fs::write(outcome_path(), format!("ok\n{message}")).await;
         tracing::info!("Restore complete");
     }
     // Recorded into the (possibly new) database for the page, then removed:
     // the file is how one start tells the next what happened.
-    if let Ok(text) = std::fs::read_to_string(outcome_path()) {
+    if let Ok(text) = tokio::fs::read_to_string(outcome_path()).await {
         let (status, msg) = text.split_once('\n').unwrap_or((text.as_str(), ""));
         crate::settings::record(db, KEY_RESTORE_OUTCOME, status.trim()).await;
         crate::settings::record(db, KEY_RESTORE_MESSAGE, msg.trim()).await;
         crate::settings::record(db, KEY_RESTORE_AT, &chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string()).await;
-        let _ = std::fs::remove_file(outcome_path());
+        let _ = tokio::fs::remove_file(outcome_path()).await;
     }
 }
 
