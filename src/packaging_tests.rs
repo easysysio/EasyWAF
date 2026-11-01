@@ -34,7 +34,8 @@ fn fixtures() -> &'static Path {
         let stub = |name: &str, answer: &str| {
             let path = dir.join("bin").join(name);
             fs::write(&path, format!("#!/bin/sh\necho \"{name} $*\" >> \"$STUB_LOG\"\n{answer}\n")).unwrap();
-            fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+            // Run by the test's own user only.
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
         };
         stub("getent", "case \"$1\" in\n  group)  [ -n \"$HAS_GROUP\" ] ;;\n  passwd) [ -n \"$HAS_USER\" ] ;;\nesac");
         stub("groupadd", "exit 0");

@@ -55,8 +55,8 @@ import sys
 from collections import Counter
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from modsec2easywaf import (escape_literal_braces, matches_ordinary_traffic, portable,  # noqa: E402
-                            toml_names, toml_string, wide_classes)
+from modsec2easywaf import (escape_literal_braces, matches_ordinary_traffic, output_file,  # noqa: E402
+                            portable, rule_file, toml_names, toml_string, wide_classes)
 
 BSD_SIDS = range(2000000, 2800000)
 
@@ -587,7 +587,9 @@ def convert_rule(line):
 def convert(paths, since):
     rules, refused, stats = [], [], Counter()
     for path in paths:
-        for line in open(path, encoding="utf-8", errors="replace"):
+        with open(rule_file(path, ".rules"), encoding="utf-8", errors="replace") as fh:
+            lines = fh.readlines()
+        for line in lines:
             line = line.strip()
             if not line.startswith("alert http"):
                 continue
@@ -760,14 +762,17 @@ def main():
     args = ap.parse_args()
     if args.self_test:
         return self_test()
+    out = output_file(args.out, ".toml") if args.out else None
+    report_to = output_file(args.report, ".txt") if args.report else None
     rules, refused, stats = convert(args.files, args.since)
     text = write_set(rules, args.set_id, args.set_name)
-    if args.out:
-        open(args.out, "w", encoding="utf-8").write(text)
+    if out:
+        with open(out, "w", encoding="utf-8") as fh:
+            fh.write(text)
     else:
         print(text)
-    if args.report:
-        with open(args.report, "w", encoding="utf-8") as fh:
+    if report_to:
+        with open(report_to, "w", encoding="utf-8") as fh:
             fh.write("Rules refused, and why\n" + "=" * 60 + "\n\n")
             for sid, why, line in refused:
                 fh.write(f"  {sid}\n      {why}\n")

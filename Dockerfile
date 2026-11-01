@@ -28,10 +28,26 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 
+# The account EasyWAF runs as, as the packages do: not root. A fixed id, so a
+# volume or a host directory can be given to it by number.
+RUN groupadd --system --gid 10001 easywaf \
+ && useradd --system --uid 10001 --gid easywaf --home-dir /opt/easywaf \
+            --no-create-home --shell /usr/sbin/nologin easywaf
+
 # Set by buildx per platform — "amd64" or "arm64".
 ARG TARGETARCH
 COPY dist/easywaf-${TARGETARCH} /usr/bin/easywaf
-RUN chmod 755 /usr/bin/easywaf
+
+# Sites listen on ports below 1024 — 80 at least, which Let's Encrypt
+# validates on. Docker lets an unprivileged process bind them inside a
+# container already; the capability on the binary covers a runtime that does
+# not. setcap is installed for this and removed again.
+RUN chmod 755 /usr/bin/easywaf \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends libcap2-bin \
+ && setcap cap_net_bind_service=+ep /usr/bin/easywaf \
+ && apt-get purge -y libcap2-bin && apt-get autoremove -y \
+ && rm -rf /var/lib/apt/lists/*
 
 # Templates and static assets are compiled into the binary, so only the rule
 # sets and config.toml are read from the working directory. rules/ stays a
@@ -53,6 +69,12 @@ COPY docker/config.toml config.toml
 # is baked into the image, so a container that needs its database somewhere else
 # would otherwise have to replace a file to say so.
 ENV DATABASE_URL=sqlite:///data/easywaf.db
+
+# What EasyWAF writes: the database with its caches and backups beside it, and
+# the audit log. Owned by its account before the volume is declared, so a new
+# volume starts out owned by it too.
+RUN mkdir -p /data /var/log/easywaf \
+ && chown easywaf:easywaf /data /var/log/easywaf
 VOLUME ["/data"]
 
 # 8443 is the management GUI over TLS; 8080 redirects to it. Proxy listeners
@@ -60,4 +82,5 @@ VOLUME ["/data"]
 # you use — commonly 80.
 EXPOSE 8443 8080 80
 
+USER easywaf
 CMD ["/usr/bin/easywaf"]

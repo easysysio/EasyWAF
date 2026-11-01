@@ -17,6 +17,14 @@ Version bumps and tags are created only after explicit approval.
 ### Changed
 - **Rate limiting is 1.7.0 and configuration sync between nodes 1.8.0**, swapped; a limit counts on each node, which the documentation says.
 
+### Security
+- **The container runs as the user `easywaf` (uid 10001), not root**, as the packages do; ports below 1024 are still bound.
+- **The rule converters refuse a `@pmFromFile` that is not a plain `.data` name beside the rules**, which could have copied any readable file into a converted set; they also read only `.conf` or `.rules` files and write only `.toml` sets and `.txt` reports, never through a link.
+- **The release workflow pins every action to a full commit**, and only the job that publishes the release can write to the repository.
+
+### Upgrading
+- **Docker: a volume made by an earlier image belongs to root.** With the container stopped, give it to the new account once: `docker run --rm -v easywaf-data:/data debian:bookworm-slim chown -R 10001:10001 /data`.
+
 ---
 
 ## [1.6.1] — 2026-10-28

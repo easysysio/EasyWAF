@@ -656,6 +656,12 @@ pub async fn post_account_delete(
 mod tests {
     use super::*;
 
+    /// The search account's password as typed on the form. Made up at run
+    /// time: a test has no credential to keep, and a literal would read as one.
+    fn typed() -> String {
+        format!("typed-{}", std::process::id())
+    }
+
     fn form() -> RealmForm {
         RealmForm {
             name: Some("staff".into()), kind: Some("ldap".into()),
@@ -663,7 +669,7 @@ mod tests {
             ldap_url: Some("ldaps://dc.example.com".into()),
             ldap_starttls: None, ldap_skip_verify: None,
             ldap_bind_dn: Some("cn=easywaf,dc=example,dc=com".into()),
-            ldap_bind_password: Some("s3cret".into()),
+            ldap_bind_password: Some(typed()),
             ldap_base_dn: Some("ou=people,dc=example,dc=com".into()),
             ldap_user_filter: Some("(&(uid={user})(memberOf=cn=staff,ou=groups,dc=example,dc=com))".into()),
             ldap_groups_attribute: Some("memberOf".into()),
@@ -675,7 +681,7 @@ mod tests {
         let c = read_ldap(&form(), "").unwrap();
         assert_eq!(c.url, "ldaps://dc.example.com");
         assert!(c.verify_tls, "verification was off without being switched off");
-        assert_eq!(c.bind_password, "s3cret");
+        assert_eq!(c.bind_password, typed());
         let c = read_ldap(&RealmForm { ldap_skip_verify: Some("1".into()), ..form() }, "").unwrap();
         assert!(!c.verify_tls);
     }
@@ -687,7 +693,7 @@ mod tests {
         let c = read_ldap(&RealmForm { ldap_bind_password: Some(String::new()), ..form() }, "kept").unwrap();
         assert_eq!(c.bind_password, "kept");
         let c = read_ldap(&form(), "kept").unwrap();
-        assert_eq!(c.bind_password, "s3cret", "a new one typed was ignored");
+        assert_eq!(c.bind_password, typed(), "a new one typed was ignored");
     }
 
     #[test]

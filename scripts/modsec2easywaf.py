@@ -333,21 +333,73 @@ def classify_vars(variables):
     return "|".join(zones), widened, None
 
 
+# ─── Paths ───────────────────────────────────────────────
+#
+# What the converter reads and writes is named on its command line, which a
+# script or an assistant may be assembling. Each path is checked for being the
+# kind of file it is meant to be before it is opened, so a wrong argument is
+# refused rather than read from or written over.
+
+def rule_file(path, extension):
+    """A rule file to read: an existing regular file with its format's
+    extension, as a resolved path."""
+    real = os.path.realpath(path)
+    if not real.endswith(extension) or not os.path.isfile(real):
+        sys.exit(f"{path}: not a {extension} rule file")
+    return real
+
+
+def output_file(path, extension):
+    """A file to write: named with the extension of what goes in it, in a
+    directory that exists, and not already a directory or a symbolic link —
+    either would put the output somewhere other than where the name says.
+    Returned resolved."""
+    if not path.endswith(extension):
+        sys.exit(f"{path}: the file written here must end in {extension}")
+    if os.path.islink(path) or os.path.isdir(path):
+        sys.exit(f"{path}: is a link or a directory, not a file to write")
+    real = os.path.realpath(path)
+    if not os.path.isdir(os.path.dirname(real)):
+        sys.exit(f"{path}: there is no directory {os.path.dirname(real)}")
+    return real
+
+
+# A phrase file as CRS names one: a plain file name, no directory.
+PHRASE_FILE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\.data")
+
+
+def phrase_file(fname, base_dir):
+    """The phrase file `@pmFromFile` names, beside the rules or in CRS's own
+    layout, or None.
+
+    The name comes from the rule file, and the file's words go into a set that
+    is published, so it is taken only as a plain `.data` name, and only where
+    the file it resolves to is in the directory searched: a rule naming
+    `../../home/someone/.ssh/id_rsa` would otherwise copy that file into a
+    rule set."""
+    if not PHRASE_FILE.fullmatch(fname):
+        return None
+    for directory in (base_dir, os.path.join(base_dir, ".."), os.path.join(base_dir, "..", "rules")):
+        directory = os.path.realpath(directory)
+        cand = os.path.realpath(os.path.join(directory, fname))
+        if os.path.dirname(cand) == directory and os.path.isfile(cand):
+            return cand
+    return None
+
+
 def pm_to_regex(operator_arg, base_dir):
     """Turn @pm / @pmFromFile phrase lists into one alternation."""
     phrases = []
     if operator_arg.startswith("@pmFromFile"):
         fname = operator_arg.split(None, 1)[1].strip() if " " in operator_arg else ""
-        for cand in (os.path.join(base_dir, fname),
-                     os.path.join(base_dir, "..", fname),
-                     os.path.join(base_dir, "..", "rules", fname)):
-            if os.path.isfile(cand):
-                with open(cand, encoding="utf-8", errors="replace") as fh:
-                    phrases = [l.strip() for l in fh
-                               if l.strip() and not l.startswith("#")]
-                break
-        else:
-            return None, f"phrase file {fname or '?'} not found beside the rules"
+        if not PHRASE_FILE.fullmatch(fname):
+            return None, f"phrase file {fname or '?'} is not a plain .data file name"
+        cand = phrase_file(fname, base_dir)
+        if cand is None:
+            return None, f"phrase file {fname} not found beside the rules"
+        with open(cand, encoding="utf-8", errors="replace") as fh:
+            phrases = [l.strip() for l in fh
+                       if l.strip() and not l.startswith("#")]
     else:
         arg = operator_arg.split(None, 1)[1] if " " in operator_arg else ""
         phrases = [p for p in arg.split() if p]
@@ -815,7 +867,8 @@ def convert(paths, id_base, include_widened, set_id, set_name, max_paranoia=1, s
     seen_ids = set()
 
     for path in paths:
-        base_dir = os.path.dirname(os.path.abspath(path))
+        path = rule_file(path, ".conf")
+        base_dir = os.path.dirname(path)
         with open(path, encoding="utf-8", errors="replace") as fh:
             text = fh.read()
 
@@ -1229,6 +1282,33 @@ def self_test():
     finally:
         os.unlink(path)
 
+    # A phrase file is a plain name, read only from the rules' own directories.
+    with tempfile.TemporaryDirectory() as d:
+        rules = os.path.join(d, "rules")
+        os.mkdir(rules)
+        with open(os.path.join(rules, "words.data"), "w") as fh:
+            fh.write("alpha\nbeta\n")
+        with open(os.path.join(d, "outside.txt"), "w") as fh:
+            fh.write("SECRET\n")
+        os.symlink(os.path.join(d, "outside.txt"), os.path.join(rules, "linked.data"))
+        check(pm_to_regex("@pmFromFile words.data", rules)[0] == "(?i)(?:alpha|beta)",
+              "a phrase file beside the rules was not read")
+        for name in ("../outside.txt", "/etc/hosts", "linked.data", "../rules/words.data"):
+            check(pm_to_regex(f"@pmFromFile {name}", rules)[0] is None,
+                  f"@pmFromFile {name} was read")
+
+    # What is written goes where its name says, under the extension it has.
+    with tempfile.TemporaryDirectory() as d:
+        os.symlink(os.path.join(d, "elsewhere.toml"), os.path.join(d, "link.toml"))
+        for bad in ("set.txt", "", "missing/set.toml", "link.toml"):
+            try:
+                output_file(os.path.join(d, bad), ".toml")
+                check(False, f"{bad or 'a directory'} was accepted as the file to write")
+            except SystemExit:
+                pass
+        check(output_file(os.path.join(d, "set.toml"), ".toml").endswith("set.toml"),
+              "a plain .toml file to write was refused")
+
     for f in failures:
         print(f"FAIL: {f}", file=sys.stderr)
     print("self-test: " + ("FAILED" if failures else "passed"), file=sys.stderr)
@@ -1262,13 +1342,15 @@ def main():
     if args.self_test:
         return self_test()
     args = ap.parse_args()
+    out = output_file(args.out, ".toml") if args.out else None
+    report_to = output_file(args.report, ".txt") if args.report else None
 
     toml, skipped, stats = convert(args.files, args.id_base, args.include_widened,
                                    args.set_id, args.set_name, args.max_paranoia,
                                    args.score_scale, args.min_paranoia)
 
-    if args.out:
-        with open(args.out, "w", encoding="utf-8") as fh:
+    if out:
+        with open(out, "w", encoding="utf-8") as fh:
             fh.write(toml)
     else:
         print(toml)
@@ -1282,8 +1364,8 @@ def main():
     lines.append(f"  {len(skipped):5d}  refused in total")
     report = "\n".join(lines)
 
-    if args.report:
-        with open(args.report, "w", encoding="utf-8") as fh:
+    if report_to:
+        with open(report_to, "w", encoding="utf-8") as fh:
             fh.write(report)
 
     print(f"converted {stats['converted']}, refused {len(skipped)}", file=sys.stderr)
