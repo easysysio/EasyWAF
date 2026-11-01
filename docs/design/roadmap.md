@@ -43,9 +43,18 @@ next minor, so a release's notes stay about its feature.
 | 1.5.0 | Decodings a rule names — `cmdLine`, `replaceComments`, `base64Decode` and the rest — and the CRS and ET Open rules that need them — **released 2026-10-18** |
 | 1.6.0 | Lists a policy sets — allowed methods, content types, charsets and HTTP versions, restricted extensions and headers — and CRS's rules on them as an optional request policy set; and CRS's rules matched as ModSecurity matches them: from each value as parsed, zones with exceptions and names by pattern, the body ModSecurity holds; counts, numbers, a second look at a matched value and libinjection; and CRS's paranoia level 2 as optional sets — **released 2026-10-22** |
 | 1.6.1 | Rule set updates counted on Security Policy and the Policy Manager, and only those this version can apply; tokio updated for RUSTSEC-2026-0386 — **released 2026-10-28** |
-| 1.7.0 | Configuration sync between nodes — HA (see [ha-config-sync.md](ha-config-sync.md)) |
-| 1.8.0 | Per-site rate limiting (see [rate-limiting.md](rate-limiting.md)) |
+| 1.7.0 | Per-site rate limiting (see [rate-limiting.md](rate-limiting.md)) |
+| 1.8.0 | Configuration sync between nodes — HA (see [ha-config-sync.md](ha-config-sync.md)) |
 | 1.9.0 | Learning and hardening modes — URL allowlisting (see [url-learning.md](url-learning.md)) |
+
+## Rate limiting before HA (Yariv, 2026-11-01)
+
+Swapped at Yariv's request: rate limiting is 1.7.0 and HA 1.8.0. The HA note
+held sync first so that rate limiting would choose what a limit means across
+nodes; it chooses here, and the choice is the per-node one. Each node counts
+its own traffic, said on the page and in the limitations, because sharing
+counters needs a store between nodes and most balancers keep a client on one
+node anyway. HA inherits a decided semantic rather than an open question.
 
 ## Policy lists for CRS's configured values before HA (Yariv, 2026-10-18)
 

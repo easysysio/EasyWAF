@@ -277,11 +277,58 @@ pub struct Site {
     /// What the site asks of its visitors. Absent when it asks nobody.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sign_in: Option<SignIn>,
+    /// How fast one client may send requests. Absent while it is off with the
+    /// numbers a new site starts with.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rate_limit: Option<RateLimit>,
     #[serde(default, rename = "upstream", skip_serializing_if = "Vec::is_empty")]
     pub upstreams: Vec<Upstream>,
     /// Ports beyond listen_port and tls_port.
     #[serde(default, rename = "port", skip_serializing_if = "Vec::is_empty")]
     pub extra_ports: Vec<Port>,
+}
+
+/// A site's rate limit.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct RateLimit {
+    /// "Off", "DetectionOnly" or "On".
+    pub mode: String,
+    /// Requests one client may make within the window.
+    pub requests: i64,
+    /// The window, in seconds: 10, 60, 300 or 3600.
+    pub window: i64,
+    /// "block" or "challenge".
+    pub action: String,
+}
+
+impl RateLimit {
+    /// What a site has before anybody sets a limit on it.
+    pub fn new_site() -> Self {
+        RateLimit {
+            mode: "Off".to_string(),
+            requests: crate::rate_limit::DEFAULT_REQUESTS as i64,
+            window: crate::rate_limit::DEFAULT_WINDOW_SECS as i64,
+            action: crate::rate_limit::Action::Block.as_str().to_string(),
+        }
+    }
+
+    /// What is wrong with it, if the site form would refuse it.
+    pub fn problem(&self) -> Option<String> {
+        if !crate::rate_limit::MODES.contains(&self.mode.as_str()) {
+            return Some(format!("{:?} is not a rate limit mode", self.mode));
+        }
+        if !u64::try_from(self.requests).is_ok_and(|n| crate::rate_limit::REQUESTS_RANGE.contains(&n)) {
+            return Some(format!("a rate limit of {} requests is outside 1 to 1000000", self.requests));
+        }
+        if !u64::try_from(self.window).is_ok_and(|w| crate::rate_limit::WINDOWS.contains(&w)) {
+            return Some(format!("a rate limit window of {} seconds is not 10, 60, 300 or 3600", self.window));
+        }
+        if crate::rate_limit::Action::parse(&self.action).is_none() {
+            return Some(format!("{:?} is not something a rate limit does", self.action));
+        }
+        None
+    }
 }
 
 /// A site's sign-in settings.
@@ -725,7 +772,8 @@ pub async fn build(db: &SqlitePool, opts: Options) -> Result<Document, sqlx::Err
     for s in sqlx::query(
         "SELECT id, name, server_name, enabled, cert_id, acme_enabled, waf_policy_id, hsts,
                 x_frame, x_frame_value, x_content_type, xss_protection, listen_port, tls_port,
-                tls_redirect, affinity, backend_tls_insecure
+                tls_redirect, affinity, backend_tls_insecure,
+                rate_limit_mode, rate_limit_requests, rate_limit_window, rate_limit_action
            FROM sites ORDER BY name")
         .fetch_all(db).await?
     {
@@ -761,6 +809,14 @@ pub async fn build(db: &SqlitePool, opts: Options) -> Result<Document, sqlx::Err
                 groups_header: a.get("groups_header"),
             }));
 
+        let rate_limit = Some(RateLimit {
+            mode: s.get("rate_limit_mode"),
+            requests: s.get("rate_limit_requests"),
+            window: s.get("rate_limit_window"),
+            action: s.get("rate_limit_action"),
+        })
+        .filter(|r| *r != RateLimit::new_site());
+
         sites.push(Site {
             name: s.get("name"),
             host: s.get("server_name"),
@@ -780,6 +836,7 @@ pub async fn build(db: &SqlitePool, opts: Options) -> Result<Document, sqlx::Err
             x_content_type: flag("x_content_type"),
             xss_protection: flag("xss_protection"),
             sign_in,
+            rate_limit,
             upstreams,
             extra_ports,
         });
@@ -934,6 +991,8 @@ pub(crate) mod tests {
             INSERT INTO sites (name, server_name, enabled, cert_id, waf_policy_id, listen_port, tls_port, tls_redirect, hsts)
                  VALUES ('shop', 'shop.example.com', 1, 1, 1, 80, 443, 1, 1);
             INSERT INTO site_aliases (site_id, name) VALUES (1, 'www.shop.example.com');
+            UPDATE sites SET rate_limit_mode = 'DetectionOnly', rate_limit_requests = 1200,
+                             rate_limit_window = 300, rate_limit_action = 'challenge' WHERE name = 'shop';
             INSERT INTO upstreams (site_id, url, weight, enabled) VALUES (1, 'http://10.0.0.8:3000', 3, 1),
                                                                        (1, 'http://10.0.0.9:3000', 1, 0);
             INSERT INTO auth_realms (name, kind, session_minutes, idle_minutes) VALUES ('staff', 'local', 240, 30);
@@ -984,6 +1043,9 @@ pub(crate) mod tests {
                    "a site referred to its policy or certificate by something other than its name");
         assert_eq!(site.upstreams.len(), 2);
         assert!(!site.upstreams[1].enabled);
+        assert_eq!(site.rate_limit, Some(RateLimit {
+            mode: "DetectionOnly".into(), requests: 1200, window: 300, action: "challenge".into() }),
+            "the site's rate limit did not travel with it");
         assert_eq!(doc.everywhere.addresses[0].address, "198.51.100.0/24");
         assert_eq!(doc.settings.get("syslog_host").map(String::as_str), Some("logs.example.com"));
 

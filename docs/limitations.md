@@ -101,16 +101,17 @@ Current as of **1.6.1**.
   Validation always arrives on port 80, so the host must be reachable there from
   the internet.
 - **No high availability.** No configuration sync between nodes. Scheduled for
-  **1.7.0**.
+  **1.8.0**.
 - **No list of proxy, VPN or hosting addresses.** Every credible dataset is
   commercial, and the cloud providers' own address files may not be
   redistributed. The [published lists](ip-lists.md#published-lists) cover
   hijacked netblocks, compromised hosts and Tor exits only.
 - **No feed of your own.** A published list comes from the signed channel; there
   is no way yet to point EasyWAF at another list's URL.
-- **No rate limiting.** Scheduled for **1.8.0**. An address that attacks
-  repeatedly is handled by [Smart Protect](smart-protect.md), which counts
-  refusals, not requests.
+- **A rate limit is per site and per node.** One limit covers the whole site;
+  there is no separate limit for `/login`. Each node counts its own traffic, so
+  a client a load balancer spreads over two nodes can make twice the limit, and
+  a restart starts every count afresh. See [Rate limiting](rate-limiting.md#how-it-counts).
 - **Smart Protect blocks are per node and do not survive a restart.** They are
   held in memory, and a repeat offender is blocked for the same length each
   time rather than longer.

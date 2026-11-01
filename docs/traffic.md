@@ -37,9 +37,9 @@ journal says how many (see [Troubleshooting](troubleshooting.md#nothing-appears-
 | `PASSED` | Nothing matched, or nothing that scored |
 | `SCORED` | Something matched but stayed under both thresholds. Forwarded |
 | `CHALLENGED` | Sent a CAPTCHA |
-| `BLOCKED` | Refused with 403 |
-| `WOULD BLOCK` | The policy is in DetectionOnly; this would have been blocked |
-| `WOULD CHALLENGE` | The policy is in DetectionOnly; this would have been challenged |
+| `BLOCKED` | Refused: 403, or 429 when the site's [rate limit](rate-limiting.md) held it back |
+| `WOULD BLOCK` | The policy, or the site's rate limit, is in DetectionOnly; this would have been blocked |
+| `WOULD CHALLENGE` | The policy, or the site's rate limit, is in DetectionOnly; this would have been challenged |
 | `SIGN-IN` | The site asks for a [sign-in](sign-in.md) and the request had none: it was sent to the sign-in page |
 
 A signed-in visitor's name is shown under the client address.

@@ -37,6 +37,7 @@ mod routes;
 mod rules_update;
 mod settings;
 mod slow_clients;
+mod rate_limit;
 mod smart_protect;
 mod tls;
 mod upstream;
@@ -262,6 +263,7 @@ async fn main() {
         .route("/sites/{name}/edit",     get(routes::sites::get_site_edit))
         .route("/sites/{name}/update",   post(routes::sites::post_site_update))
         .route("/sites/{name}/acme",     post(routes::sites::post_site_acme))
+        .route("/sites/{name}/rate-preview", get(routes::sites::get_rate_preview))
         .route("/sites/{name}/toggle",   post(routes::sites::post_site_toggle))
         .route("/sites/{name}/delete",   post(routes::sites::post_site_delete))
         // The per-site exclusions page, which older bookmarks point to,

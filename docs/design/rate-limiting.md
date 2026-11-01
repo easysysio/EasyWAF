@@ -1,7 +1,7 @@
 # Design note — per-site rate limiting
 
-Status: planned for **1.8.0** — see [roadmap.md](roadmap.md), after IP
-allow/block lists (0.10.0).
+Status: built in **1.7.0** — see [roadmap.md](roadmap.md) and *As built* at
+the end.
 
 The two were originally scheduled adjacent, being both identity/volume signals
 rather than payload inspection and sharing a pipeline position. IP lists were
@@ -92,3 +92,42 @@ Solving it should **not** reset the request counter — it grants clearance to
 proceed while still being counted, so an attacker cannot simply keep solving
 CAPTCHAs to sustain a flood. Only the "am I currently blocked" decision is
 affected by clearance; the counter itself keeps ticking.
+
+## As built (1.7.0)
+
+* **Columns on `sites`** (migration 044): mode, requests, window in seconds,
+  action. The form offers windows of 10 seconds, a minute, 5 minutes and an
+  hour: traffic history is recorded to the second, so a shorter window could
+  not be previewed faithfully.
+* **No `governor`.** Its GCRA admits bursts in a way an operator does not
+  reason about as "N requests a minute", and the preview has to replay
+  history through exactly what the live path does. `rate_limit.rs` keeps two
+  fixed windows per client and estimates the sliding one from them: a few
+  bytes per client whatever the limit, which `SlidingCounter` (a timestamp per
+  event, written for Smart Protect's handful) is not at a limit in the
+  thousands. Sixteen shards, 8,192 clients each, emptied of stale clients and
+  then of the least recently seen half when full.
+* **Every request counts, refused ones included,** so a client that keeps
+  sending stays over and one that stops is back within about a window.
+  `Retry-After` is the exact wait until one more request fits, if nothing is
+  sent meanwhile; a test checks it to the millisecond across shapes of count.
+* **Where it runs:** after the IP lists and Smart Protect. A limit that
+  refuses answers there, before the body is read. A limit that challenges
+  waits until the clearance is known, after the CAPTCHA answer is handled —
+  otherwise posting the answer would itself be over the limit and challenged.
+* **The challenge, narrowed.** Only a page load (`Sec-Fetch-Mode: navigate`,
+  or a GET asking for HTML from a browser too old to say) is shown the CAPTCHA;
+  anything else over the limit gets 429, since nobody sees a CAPTCHA served to
+  an image. A client past twice the limit gets 429 too: drawing a CAPTCHA per
+  request is expensive, and no person waiting at one sends that many.
+* **DetectionOnly** marks the row `would_block` or `would_challenge` beside
+  whatever the rules found, the way lists and Smart Protect do.
+* **Exempt:** the policy's allow list (when the policy is not Off, since its
+  lists are not read then) and trusted proxies.
+* **A preview** on the site's page replays the site's history through the
+  numbers typed, leaving out what the live path never counts: trusted
+  proxies, allow-listed addresses, and requests a list or Smart Protect
+  refused first. It lists the busiest addresses by their most requests within
+  a window, which is the number a limit has to sit above.
+* **Carried by export and import** as `[site.rate_limit]`, written only when it
+  differs from a new site's.

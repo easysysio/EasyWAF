@@ -112,6 +112,12 @@
                                 <i class="fa fa-id-badge"></i> Sign-in: {{ asking[site.name] }}
                             </span>
                             {% endif %}
+                            {% if site.name in limiting %}
+                            <br><span class="label label-default" style="margin-top:3px;display:inline-block"
+                                      title="One client may make {{ limiting[site.name] }}">
+                                <i class="fa fa-tachometer"></i> Rate limit: {{ limiting[site.name] }}
+                            </span>
+                            {% endif %}
                         </td>
                         <td>
                             <form class="admin-only" method="post" action="/sites/{{ site.name }}/toggle"

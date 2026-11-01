@@ -6,6 +6,19 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
+## [Unreleased]
+
+### Added
+- **Rate limiting, per site:** how many requests one client may make within 10 seconds, a minute, 5 minutes or an hour, set on the site's page with a mode like a policy's — off until switched on, and in DetectionOnly marked `WOULD BLOCK` in Traffic Monitor rather than refused.
+- **A client over the limit is refused with 429 and a `Retry-After`**, or shown the CAPTCHA when the site asks for that: a page load only, and not past twice the limit. Every request counts, refused ones too; an IPv6 client counts by its /64; allow-listed addresses and trusted proxies are never counted.
+- **A preview of a limit against the site's recorded traffic**, beside the fields: how many requests would have been over it, how many of those were served, and the busiest addresses' most requests within a window.
+- **The sites list says which sites limit their clients**, and export and import carry a site's limit.
+
+### Changed
+- **Rate limiting is 1.7.0 and configuration sync between nodes 1.8.0**, swapped; a limit counts on each node, which the documentation says.
+
+---
+
 ## [1.6.1] — 2026-10-28
 
 ### Security

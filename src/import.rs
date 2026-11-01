@@ -449,6 +449,9 @@ async fn check(db: &SqlitePool, doc: &Document, gui_ports: &[u16], p: &mut Plan)
                 }
             }
         }
+        if let Some(e) = s.rate_limit.as_ref().and_then(|r| r.problem()) {
+            b.push(format!("{who}: {e}"));
+        }
         for u in &s.upstreams {
             let ok = reqwest::Url::parse(&u.url)
                 .is_ok_and(|x| (x.scheme() == "http" || x.scheme() == "https") && x.host().is_some());
@@ -624,6 +627,12 @@ fn diff_sites(current: &Document, doc: &Document) -> Vec<Item> {
         let headers = |s: &export::Site| s.sign_in.as_ref()
             .map(|x| format!("{} / {}", x.user_header, x.groups_header)).unwrap_or_default();
         field(&mut d, "sign-in headers", headers(a).as_str(), headers(b).as_str());
+        let limits = |s: &export::Site| {
+            let r = s.rate_limit.clone().unwrap_or_else(export::RateLimit::new_site);
+            format!("{}, {}, then {}", r.mode,
+                    crate::rate_limit::describe(r.requests.max(0) as u64, r.window.max(0) as u64), r.action)
+        };
+        field(&mut d, "rate limit", limits(a).as_str(), limits(b).as_str());
         let ups = |s: &export::Site| s.upstreams.iter()
             .map(|u| format!("{} weight {}{}", u.url, u.weight, if u.enabled { "" } else { " (off)" }))
             .collect::<Vec<_>>();
@@ -903,11 +912,13 @@ pub async fn apply(work: &SqlitePool, doc: &Document, importer: &str) -> Result<
         let host = crate::routes::sites::normalize_server_name(&s.host);
         let policy = s.policy.as_ref().and_then(|p| policy_ids.get(p)).copied();
         let cert = s.certificate.as_ref().and_then(|c| cert_ids.get(c)).copied();
+        let limit = s.rate_limit.clone().unwrap_or_else(export::RateLimit::new_site);
         sqlx::query(
             "INSERT INTO sites (name, server_name, enabled, cert_id, acme_enabled, waf_policy_id, hsts,
                                 x_frame, x_frame_value, x_content_type, xss_protection, listen_port,
-                                tls_port, tls_redirect, affinity, backend_tls_insecure)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                tls_port, tls_redirect, affinity, backend_tls_insecure,
+                                rate_limit_mode, rate_limit_requests, rate_limit_window, rate_limit_action)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(name) DO UPDATE SET server_name = excluded.server_name, enabled = excluded.enabled,
                  cert_id = excluded.cert_id, acme_enabled = excluded.acme_enabled,
                  waf_policy_id = excluded.waf_policy_id, hsts = excluded.hsts, x_frame = excluded.x_frame,
@@ -915,11 +926,14 @@ pub async fn apply(work: &SqlitePool, doc: &Document, importer: &str) -> Result<
                  xss_protection = excluded.xss_protection, listen_port = excluded.listen_port,
                  tls_port = excluded.tls_port, tls_redirect = excluded.tls_redirect,
                  affinity = excluded.affinity, backend_tls_insecure = excluded.backend_tls_insecure,
+                 rate_limit_mode = excluded.rate_limit_mode, rate_limit_requests = excluded.rate_limit_requests,
+                 rate_limit_window = excluded.rate_limit_window, rate_limit_action = excluded.rate_limit_action,
                  updated_at = datetime('now')")
             .bind(&s.name).bind(&host).bind(s.enabled).bind(cert).bind(s.acme).bind(policy)
             .bind(s.hsts).bind(s.x_frame).bind(&s.x_frame_value).bind(s.x_content_type)
             .bind(s.xss_protection).bind(s.listen_port).bind(s.tls_port).bind(s.tls_redirect)
             .bind(s.affinity).bind(s.backend_certificate_unverified)
+            .bind(&limit.mode).bind(limit.requests).bind(limit.window).bind(&limit.action)
             .execute(work).await.map_err(err)?;
         let id: i64 = sqlx::query_scalar("SELECT id FROM sites WHERE name = ?")
             .bind(&s.name).fetch_one(work).await.map_err(err)?;
@@ -1216,6 +1230,12 @@ listen_port = 8081
 [[site.upstream]]
 url = "http://10.0.0.1"
 enabled = false
+
+[site.rate_limit]
+mode = "On"
+requests = 600
+window = 45
+action = "block"
 "#;
         let doc = parse(text).expect("parse");
         let p = plan(&db, &doc, GUI, "someone").await;
@@ -1229,6 +1249,7 @@ enabled = false
             ("management interface", "a site on the management port was accepted"),
             ("ftp://nope",           "an upstream that is not http was accepted"),
             ("nothing to forward",   "a site with no upstream switched on was accepted"),
+            ("window of 45 seconds", "a rate limit the site form would refuse was accepted"),
         ] {
             assert!(all.contains(needle), "{why}. Blockers were:\n{all}");
         }

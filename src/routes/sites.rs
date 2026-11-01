@@ -95,7 +95,7 @@ pub struct Policy {
 
 // ─── Forms ───────────────────────────────────────────────
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 pub struct SiteForm {
     pub name:           Option<String>,
     pub server_name:    String,
@@ -134,6 +134,123 @@ pub struct SiteForm {
     pub auth_captcha:   Option<String>,
     pub auth_user_header:   Option<String>,
     pub auth_groups_header: Option<String>,
+    /// The rate limit: its mode, how many requests within how many seconds,
+    /// and what happens to the ones over it.
+    pub rate_mode:      Option<String>,
+    pub rate_requests:  Option<String>,
+    pub rate_window:    Option<String>,
+    pub rate_action:    Option<String>,
+}
+
+// ─── Rate limit ──────────────────────────────────────────
+
+/// A site's rate limit, as its page shows and edits it.
+#[derive(Debug, Serialize, Clone, PartialEq)]
+pub struct RateLimit {
+    /// "Off", "DetectionOnly" or "On".
+    pub mode:     String,
+    pub requests: i64,
+    /// Seconds: one of `rate_limit::WINDOWS`.
+    pub window:   i64,
+    /// "block" or "challenge".
+    pub action:   String,
+}
+
+impl Default for RateLimit {
+    fn default() -> Self {
+        RateLimit {
+            mode:     "Off".to_string(),
+            requests: crate::rate_limit::DEFAULT_REQUESTS as i64,
+            window:   crate::rate_limit::DEFAULT_WINDOW_SECS as i64,
+            action:   crate::rate_limit::Action::Block.as_str().to_string(),
+        }
+    }
+}
+
+/// The rate limit typed on a site's form, checked. A form without the fields
+/// sets none.
+///
+/// The numbers are checked even while the limit is Off, so what is saved is
+/// always a limit that could be switched on as it stands.
+fn read_rate_limit(form: &SiteForm) -> std::result::Result<RateLimit, String> {
+    let text = |v: &Option<String>| v.as_deref().unwrap_or("").trim().to_string();
+    let defaults = RateLimit::default();
+
+    let mode = match text(&form.rate_mode) {
+        m if m.is_empty() => defaults.mode,
+        m if crate::rate_limit::MODES.contains(&m.as_str()) => m,
+        m => return Err(format!("{m} is not a rate limit mode: Off, DetectionOnly or On.")),
+    };
+    let requests = match text(&form.rate_requests).replace([',', '_'], "") {
+        n if n.is_empty() => defaults.requests,
+        n => match n.parse::<u64>() {
+            Ok(v) if crate::rate_limit::REQUESTS_RANGE.contains(&v) => v as i64,
+            _ => return Err(format!(
+                "A rate limit is a number of requests from {} to {}, not {n}.",
+                crate::rate_limit::REQUESTS_RANGE.start(), crate::rate_limit::REQUESTS_RANGE.end())),
+        },
+    };
+    let window = match text(&form.rate_window) {
+        w if w.is_empty() => defaults.window,
+        w => match w.parse::<u64>() {
+            Ok(v) if crate::rate_limit::WINDOWS.contains(&v) => v as i64,
+            _ => return Err("A rate limit counts over 10 seconds, a minute, 5 minutes or an hour.".to_string()),
+        },
+    };
+    let action = match text(&form.rate_action) {
+        a if a.is_empty() => defaults.action,
+        a => match crate::rate_limit::Action::parse(&a) {
+            Some(act) => act.as_str().to_string(),
+            None => return Err(format!("{a} is not something a rate limit does: block or challenge.")),
+        },
+    };
+    Ok(RateLimit { mode, requests, window, action })
+}
+
+/// Store a site's rate limit.
+async fn save_rate_limit(db: &SqlitePool, site_id: i64, r: &RateLimit) -> Result<()> {
+    sqlx::query!(
+        "UPDATE sites SET rate_limit_mode = ?, rate_limit_requests = ?, rate_limit_window = ?,
+                          rate_limit_action = ?
+         WHERE id = ?",
+        r.mode, r.requests, r.window, r.action, site_id
+    )
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+/// A site's rate limit now, for its form.
+async fn fetch_rate_limit(db: &SqlitePool, site_id: i64) -> Result<RateLimit> {
+    let r = sqlx::query!(
+        r#"SELECT rate_limit_mode as "mode!", rate_limit_requests as "requests!: i64",
+                  rate_limit_window as "window!: i64", rate_limit_action as "action!"
+           FROM sites WHERE id = ?"#,
+        site_id
+    )
+    .fetch_one(db)
+    .await?;
+    Ok(RateLimit { mode: r.mode, requests: r.requests, window: r.window, action: r.action })
+}
+
+/// The sites that limit their clients, by name, with the limit as a sentence
+/// — for the badge on the sites list.
+async fn fetch_limiting(db: &SqlitePool) -> Result<std::collections::HashMap<String, String>> {
+    let rows = sqlx::query!(
+        r#"SELECT name as "name!", rate_limit_mode as "mode!", rate_limit_requests as "requests!: i64",
+                  rate_limit_window as "window!: i64"
+           FROM sites WHERE rate_limit_mode <> 'Off'"#
+    )
+    .fetch_all(db)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| {
+            let said = crate::rate_limit::describe(r.requests.max(0) as u64, r.window.max(0) as u64);
+            let watching = if r.mode == "DetectionOnly" { ", watching only" } else { "" };
+            (r.name, format!("{said}{watching}"))
+        })
+        .collect())
 }
 
 // ─── Sign-in ─────────────────────────────────────────────
@@ -332,6 +449,7 @@ pub async fn get_sites(
     .map(|r| (r.site, r.realm))
     .collect();
     ctx.insert("asking",    &asking);
+    ctx.insert("limiting",  &fetch_limiting(&state.db).await?);
     ctx.insert("policies",  &policies);
     ctx.insert("certs",     &fetch_certs(&state).await?);
     ctx.insert("result",    &flash.result.unwrap_or_default());
@@ -362,6 +480,7 @@ pub async fn get_site_new(
     // missing instead.
     ctx.insert("acme_configured", &crate::acme::config(&state.db).await?.is_some());
     ctx.insert("realms",    &fetch_realms(&state.db).await?);
+    ctx.insert("rate_limit", &RateLimit::default());
 
     Ok((jar, Html(state.tera.render("site_create.html", &ctx)?)).into_response())
 }
@@ -453,9 +572,13 @@ pub async fn post_site_create(
                               "A site needs somewhere to forward requests to");
     }
 
-    // And the sign-in settings, for the same reason.
+    // And the sign-in settings and the rate limit, for the same reason.
     let sign_in = match read_sign_in(&form) {
         Ok(s)  => s,
+        Err(e) => return flash_redirect(&back, "failed", &e),
+    };
+    let rate_limit = match read_rate_limit(&form) {
+        Ok(r)  => r,
         Err(e) => return flash_redirect(&back, "failed", &e),
     };
     if let Some(s) = &sign_in
@@ -488,6 +611,7 @@ pub async fn post_site_create(
 
     save_extra_ports(&state.db, site_id, &extra_http, &extra_https).await?;
     save_aliases(&state.db, site_id, &aliases).await?;
+    save_rate_limit(&state.db, site_id, &rate_limit).await?;
     // What the administrator should know about the sign-in they just asked
     // for, added to whichever message this ends with.
     let noted = match save_sign_in(&state.db, site_id, sign_in.as_ref()).await? {
@@ -591,6 +715,7 @@ pub async fn get_site_edit(
     ctx.insert("certs",     &fetch_certs(&state).await?);
     ctx.insert("realms",    &fetch_realms(&state.db).await?);
     ctx.insert("sign_in",   &fetch_sign_in(&state.db, site.id).await?);
+    ctx.insert("rate_limit", &fetch_rate_limit(&state.db, site.id).await?);
     // The request button is offered only when there is a contact address to
     // request with, the same as on the create form.
     ctx.insert("acme_configured", &crate::acme::config(&state.db).await?.is_some());
@@ -684,6 +809,10 @@ pub async fn post_site_update(
         Ok(s)  => s,
         Err(e) => return flash_redirect("/sites", "failed", &e),
     };
+    let rate_limit = match read_rate_limit(&form) {
+        Ok(r)  => r,
+        Err(e) => return flash_redirect("/sites", "failed", &e),
+    };
     if let Some(s) = &sign_in
         && !fetch_realms(&state.db).await?.contains(&s.realm)
     {
@@ -739,6 +868,7 @@ pub async fn post_site_update(
 
     save_extra_ports(&state.db, site_id, &extra_http, &extra_https).await?;
     save_aliases(&state.db, site_id, &aliases).await?;
+    save_rate_limit(&state.db, site_id, &rate_limit).await?;
 
     // Reloads the certificate map, which is what puts a new alias into SNI.
     announce_site(&state, listen_port, tls_port, &extra_http, &extra_https).await;
@@ -783,6 +913,77 @@ pub async fn post_site_update(
         msg.push_str(&format!(" Backends: {}.", pool_said.join("; ")));
     }
     flash_redirect("/sites", "success", &msg)
+}
+
+// ─── get_rate_preview ────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct RatePreviewQuery {
+    pub requests: Option<String>,
+    pub window:   Option<String>,
+    /// How far back to look, in hours.
+    pub hours:    Option<i64>,
+}
+
+/// How far back a preview may be asked to look, in hours: thirty days, which
+/// is as long as traffic is kept by default.
+const RATE_PREVIEW_MAX_HOURS: i64 = 24 * 30;
+
+/// GET /sites/{name}/rate-preview — what a limit would have done to this
+/// site's recorded traffic, as JSON for the site's page.
+///
+/// It takes the numbers typed on the form rather than the saved ones, so they
+/// can be tried before they are saved, and it changes nothing.
+pub async fn get_rate_preview(
+    State(state): State<AppState>,
+    Viewer(_session): Viewer,
+    Path(name): Path<String>,
+    Query(q): Query<RatePreviewQuery>,
+) -> Result<Response> {
+    let answer = |v: serde_json::Value| Ok(axum::Json(v).into_response());
+
+    let Some(site_id) = sqlx::query_scalar!(r#"SELECT id as "id!" FROM sites WHERE name = ?"#, name)
+        .fetch_optional(&state.db)
+        .await?
+    else {
+        return answer(serde_json::json!({ "error": format!("There is no site called {name}.") }));
+    };
+    // Checked the way saving checks them, so the preview never runs a limit
+    // the form would refuse.
+    let probe = SiteForm::for_rate(q.requests, q.window);
+    let limit = match read_rate_limit(&probe) {
+        Ok(l)  => l,
+        Err(e) => return answer(serde_json::json!({ "error": e })),
+    };
+    let hours = q.hours.unwrap_or(24).clamp(1, RATE_PREVIEW_MAX_HOURS);
+
+    let started = std::time::Instant::now();
+    let preview = crate::rate_limit::preview(
+        &state.db, site_id, hours, limit.requests as u64,
+        std::time::Duration::from_secs(limit.window as u64)).await?;
+    tracing::debug!(site = %name, hours, requests = preview.requests,
+                    ms = started.elapsed().as_millis() as u64, "Rate limit preview");
+
+    let period = match hours {
+        24  => "the last 24 hours".to_string(),
+        168 => "the last 7 days".to_string(),
+        h if h % 24 == 0 => format!("the last {} days", h / 24),
+        h   => format!("the last {h} hours"),
+    };
+    answer(serde_json::json!({
+        "limit":   crate::rate_limit::describe(limit.requests as u64, limit.window as u64),
+        "window":  crate::rate_limit::window_text(limit.window as u64),
+        "period":  period,
+        "preview": preview,
+    }))
+}
+
+impl SiteForm {
+    /// A form holding nothing but a rate limit's numbers, so a preview is
+    /// checked by the same code that checks a save.
+    fn for_rate(requests: Option<String>, window: Option<String>) -> SiteForm {
+        SiteForm { rate_requests: requests, rate_window: window, ..SiteForm::default() }
+    }
 }
 
 // ─── post_site_toggle ────────────────────────────────────
@@ -1880,13 +2081,43 @@ mod tests {
     /// A site form holding only what a test sets about signing in.
     fn asking(realm: &str, paths: &str, bypass: &str) -> SiteForm {
         SiteForm {
-            name: None, server_name: "shop.example.com".into(), aliases: None,
-            target: "http://127.0.0.1:3000".into(), listen_port: None, tls_port: None, cert_id: None,
-            tls_redirect: None, waf_policy_id: None, hsts: None, x_frame: None, x_frame_value: None,
-            x_content_type: None, xss_protection: None, affinity: None, backend_tls_insecure: None,
-            acme: None, back: None,
+            server_name: "shop.example.com".into(),
+            target: "http://127.0.0.1:3000".into(),
             auth_realm: Some(realm.into()), auth_paths: Some(paths.into()), auth_bypass: Some(bypass.into()),
-            auth_basic: None, auth_captcha: None, auth_user_header: None, auth_groups_header: None,
+            ..SiteForm::default()
+        }
+    }
+
+    /// A site form holding only a rate limit.
+    fn limiting(mode: &str, requests: &str, window: &str, action: &str) -> SiteForm {
+        SiteForm {
+            rate_mode: Some(mode.into()), rate_requests: Some(requests.into()),
+            rate_window: Some(window.into()), rate_action: Some(action.into()),
+            ..SiteForm::default()
+        }
+    }
+
+    #[test]
+    fn a_rate_limit_is_read_as_typed() {
+        assert_eq!(read_rate_limit(&limiting("On", "1,200", "60", "challenge")), Ok(RateLimit {
+            mode: "On".into(), requests: 1200, window: 60, action: "challenge".into(),
+        }));
+        // A form without the fields — the tutorial's — sets no limit.
+        assert_eq!(read_rate_limit(&SiteForm::default()), Ok(RateLimit::default()));
+        assert_eq!(RateLimit::default().mode, "Off");
+    }
+
+    #[test]
+    fn a_rate_limit_the_form_never_offers_is_refused_and_named() {
+        for (form, said) in [
+            (limiting("Enforce", "600", "60", "block"), "Enforce"),
+            (limiting("On", "0", "60", "block"), "not 0"),
+            (limiting("On", "lots", "60", "block"), "not lots"),
+            (limiting("On", "600", "45", "block"), "a minute"),
+            (limiting("On", "600", "60", "tarpit"), "tarpit"),
+        ] {
+            let e = read_rate_limit(&form).expect_err(said);
+            assert!(e.contains(said), "{e:?} does not name {said:?}");
         }
     }
 

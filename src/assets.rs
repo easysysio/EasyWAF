@@ -395,6 +395,8 @@ mod tests {
         sctx.insert("policies", &Vec::<String>::new());
         sctx.insert("certs",    &Vec::<String>::new());
         sctx.insert("exclusion_count", &0);
+        sctx.insert("rate_limit", &serde_json::json!({
+            "mode": "DetectionOnly", "requests": 1200, "window": 300, "action": "challenge" }));
         let site = |pid: Option<i64>| serde_json::json!({
             "id": 1, "name": "s", "server_name": "s.example", "aliases": "",
             "target": "http://a",
@@ -409,6 +411,18 @@ mod tests {
         sctx.insert("site", &site(None));
         let none = tera.render("site_settings.html", &sctx).expect("site settings render");
         assert!(none.contains("This site is not inspected"), "no warning without a policy");
+
+        // The rate limit shows what is saved, and the page offers to preview it.
+        for (what, why) in [
+            (r#"value="DetectionOnly" selected"#, "the limit's mode is not the one saved"),
+            (r#"value="1200""#,                   "the limit's number is not the one saved"),
+            (r#"value="300" selected"#,           "the limit's window is not the one saved"),
+            (r#"value="challenge" selected"#,     "the limit's action is not the one saved"),
+            (r#"id="rate-preview""#,              "the settings page offers no preview"),
+            ("/sites/s/rate-preview",             "the preview asks for another site's traffic"),
+        ] {
+            assert!(none.contains(what), "{why}");
+        }
 
         // ── The pool, and the states a backend can be in ──
         //
@@ -468,6 +482,8 @@ mod tests {
         }
         fresh.insert("policies", &Vec::<String>::new());
         fresh.insert("certs",    &Vec::<String>::new());
+        fresh.insert("rate_limit", &serde_json::json!({
+            "mode": "Off", "requests": 600, "window": 60, "action": "block" }));
         let create = tera.render("site_create.html", &fresh)
             .unwrap_or_else(|e| panic!("site_create.html failed to render: {e:#?}"));
         for (what, why) in [
@@ -475,9 +491,12 @@ mod tests {
             (r#"name="affinity""#, "session affinity cannot be set when creating a site"),
             (r#"name="aliases""#,  "no aliases field when creating a site"),
             ("weight",             "the create page does not mention weights"),
+            (r#"value="Off" selected"#, "a new site's rate limit is not off"),
         ] {
             assert!(create.contains(what), "{why}");
         }
+        assert!(!create.contains(r#"id="rate-preview""#),
+                "a site that does not exist yet is offered a preview of its traffic");
         assert!(!create.contains("IN ROTATION"),
                 "a site that does not exist yet is reporting rotation state");
 
@@ -1039,6 +1058,8 @@ mod tests {
             ctx.insert("policies", &Vec::<serde_json::Value>::new());
             ctx.insert("certs",    &Vec::<serde_json::Value>::new());
             ctx.insert("asking",   &std::collections::HashMap::<String, String>::new());
+            ctx.insert("limiting", &std::collections::HashMap::from([
+                ("demo".to_string(), "600 requests a minute, watching only".to_string())]));
             ctx.insert("sites", &vec![serde_json::json!({
                 "id": 1, "name": "demo", "server_name": "demo.test", "aliases": "",
                 "target": "http://10.0.0.8", "upstreams": [], "affinity": false,
@@ -1055,6 +1076,8 @@ mod tests {
         // how many rules stand behind the claim.
         let good = render(Some(1), "On", 74);
         assert!(good.contains("Protected"), "an enforcing policy with rules is not reported");
+        assert!(good.contains("Rate limit: 600 requests a minute, watching only"),
+                "a site that limits its clients does not say so in the list");
         assert!(good.contains("74"), "the claim does not say how many rules back it");
 
         // A policy switched off inspects nothing at all.

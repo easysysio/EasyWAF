@@ -39,6 +39,7 @@ nav:
           - Policies and rules: policies.md
           - IP lists: ip-lists.md
           - Smart Protect: smart-protect.md
+          - Rate limiting: rate-limiting.md
           - Sign-in: sign-in.md
           - Updates: updates.md
           - Backup and restore: backup.md

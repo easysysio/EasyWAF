@@ -249,6 +249,8 @@ struct SiteRow {
     backend_tls_insecure: bool,
     /// What the site asks of its visitors, when it asks them to sign in.
     auth:           Option<crate::gateway::SiteAuth>,
+    /// How fast one client may send requests, when the site limits it.
+    rate_limit:     Option<crate::rate_limit::Limit>,
 }
 
 // ─── start ───────────────────────────────────────────────
@@ -909,9 +911,11 @@ impl Visit {
 ///   4. `https_redirect`   — the redirect to HTTPS, when the site asks for one.
 ///   5. `Incoming::take`   — the request taken apart, and who the client is.
 ///   6. `refused_by_lists` — the site's IP lists, then
-///      `refused_by_smart_protect` — an address its rules keep refusing.
+///      `refused_by_smart_protect` — an address its rules keep refusing, then
+///      `rate_limited`     — a client over the site's limit, when it blocks.
 ///   7. `read_body_start`  — as much of the body as the rules inspect.
-///   8. `handle_verify`    — a CAPTCHA answer, handled before the rules.
+///   8. `handle_verify`    — a CAPTCHA answer, handled before the rules, then
+///      `rate_limited`     — a client over the site's limit, when it challenges.
 ///   9. `judge`            — the module pipeline, and what the lists add to it.
 ///  10. `challenge`        — a CAPTCHA, unless the visitor has answered one.
 ///  11. `forward`          — the upstream, and its response streamed back.
@@ -976,6 +980,14 @@ async fn serve_site(
         return refusal;
     }
 
+    // Counted whatever happens to the request next. A limit that blocks
+    // refuses here, before the body is read; one that challenges waits until
+    // it is known whether the visitor has already answered a challenge.
+    let rate = RateCheck::of(site, &lists, &incoming);
+    if let Some(refusal) = rate_limited(state, &visit, &incoming, &rate, None) {
+        return refusal;
+    }
+
     let body = match read_body_start(body).await {
         Ok(body)  => body,
         Err(resp) => return resp,
@@ -1000,6 +1012,10 @@ async fn serve_site(
     let cleared = session.is_some()
         || clearance_ok(state, &incoming.headers, &incoming.client_ip.to_string());
 
+    if let Some(answer) = rate_limited(state, &visit, &incoming, &rate, Some(cleared)) {
+        return answer;
+    }
+
     // A sign-in is posted as a password, and a password is exactly what an
     // injection rule matches: quotes, semicolons, backslashes. A false positive
     // there would not block a request, it would lock every user out — and the
@@ -1010,7 +1026,7 @@ async fn serve_site(
         && incoming.path == crate::gateway::LOGIN_PATH;
     let inspected = if signing_in { bytes::Bytes::new() } else { body.inspected.clone() };
 
-    let verdict = judge(state, site, &incoming, inspected, &lists, &watch, cleared).await;
+    let verdict = judge(state, site, &incoming, inspected, &lists, &watch, &rate, cleared).await;
 
     let findings = match verdict {
         PipelineVerdict::Block { reason, status, findings } => {
@@ -1397,6 +1413,138 @@ fn refused_by_smart_protect(state: &ProxyState, visit: &Visit, watch: &Watch) ->
     Some(blocked_response(StatusCode::FORBIDDEN, &visit.client_ip, Refusal::Repeated))
 }
 
+// ─── The rate limit ──────────────────────────────────────
+
+/// What the site's rate limit makes of this request.
+struct RateCheck {
+    /// The limit, when the site has one that applies to this client.
+    limit:     Option<crate::rate_limit::Limit>,
+    /// The client's count with this request in it, when there is a limit.
+    count:     Option<crate::rate_limit::Count>,
+    /// Whether the request is a page being loaded, which can be shown a
+    /// CAPTCHA, rather than something a page fetches.
+    page_load: bool,
+}
+
+/// What enforcing a limit does with a request over it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OverLimit {
+    Refuse,
+    Challenge,
+}
+
+impl RateCheck {
+    /// Count this request against the site's limit, when it has one.
+    ///
+    /// Two clients are never counted, for the reasons Smart Protect gives:
+    /// an address on the policy's allow list, and a trusted proxy, which
+    /// would stand for every client behind it if forwarded headers were
+    /// misconfigured.
+    fn of(site: &SiteRow, lists: &ListCheck, incoming: &Incoming) -> Self {
+        let limit = site.rate_limit.filter(|_| {
+            lists.listed != Some(crate::iplist::Listed::Allowed)
+                && !crate::forwarded::is_trusted_proxy(incoming.client_ip)
+        });
+        let header = |name: &str| incoming.headers.get(name).and_then(|v| v.to_str().ok());
+        RateCheck {
+            count: limit.map(|l| crate::rate_limit::count(site.id, incoming.client_ip, &l)),
+            limit,
+            page_load: crate::rate_limit::is_page_load(
+                incoming.method.as_str(), header("sec-fetch-mode"), header("accept")),
+        }
+    }
+
+    /// What enforcing the limit does with this request, if it is over.
+    ///
+    /// A limit that challenges lets a visitor who has answered a challenge
+    /// through, still counted, so answering CAPTCHAs cannot sustain a flood
+    /// beyond what the clearance allows. Only a page load is challenged: a
+    /// CAPTCHA served to an image or a script is seen by nobody. Nor is a
+    /// client past twice the limit, which is no person waiting at a CAPTCHA,
+    /// and drawing one per request would be the flood's work done for it.
+    fn decision(&self, cleared: bool) -> Option<OverLimit> {
+        let (limit, count) = (self.limit?, self.count?);
+        if !count.over(limit.requests) {
+            return None;
+        }
+        match limit.action {
+            crate::rate_limit::Action::Block => Some(OverLimit::Refuse),
+            crate::rate_limit::Action::Challenge if cleared => None,
+            crate::rate_limit::Action::Challenge
+                if self.page_load && !count.over(limit.requests.saturating_mul(2)) =>
+            {
+                Some(OverLimit::Challenge)
+            }
+            crate::rate_limit::Action::Challenge => Some(OverLimit::Refuse),
+        }
+    }
+
+    /// Why the request is over the limit, for the traffic row.
+    fn reason(&self) -> String {
+        match (self.limit, self.count) {
+            (Some(l), Some(c)) => format!(
+                "Rate limit: {} requests within {}, over this site's limit of {}",
+                c.requests,
+                crate::rate_limit::window_text(l.window.as_secs()),
+                l.describe(),
+            ),
+            _ => "Rate limit".to_string(),
+        }
+    }
+
+    /// What a limit the site is only watching would have done, for the row.
+    fn would(&self, cleared: bool) -> Option<(String, crate::modules::Detection)> {
+        if !self.limit?.detection_only {
+            return None;
+        }
+        let would = match self.decision(cleared)? {
+            OverLimit::Refuse    => crate::modules::Detection::WouldBlock,
+            OverLimit::Challenge => crate::modules::Detection::WouldChallenge,
+        };
+        Some((self.reason(), would))
+    }
+}
+
+/// The answer, when the site's limit holds this request back and enforces.
+///
+/// Called twice. Before the body is read, `cleared` is `None` and only a limit
+/// that blocks answers, so a refused request costs no reads. Once the
+/// visitor's clearance is known, only a limit that challenges does.
+fn rate_limited(
+    state:    &ProxyState,
+    visit:    &Visit,
+    incoming: &Incoming,
+    rate:     &RateCheck,
+    cleared:  Option<bool>,
+) -> Option<Response<Body>> {
+    use crate::rate_limit::Action;
+    let limit = rate.limit.filter(|l| !l.detection_only)?;
+    let cleared = match (limit.action, cleared) {
+        (Action::Block, None)             => false,
+        (Action::Challenge, Some(cleared)) => cleared,
+        _ => return None,
+    };
+    match rate.decision(cleared)? {
+        OverLimit::Challenge => Some(challenge(
+            state, visit, incoming, &rate.reason(), &crate::modules::Findings::default())),
+        OverLimit::Refuse => {
+            visit.record(&state.traffic, Outcome {
+                status:  429,
+                blocked: true,
+                reason:  Some(rate.reason()),
+                ..Outcome::default()
+            });
+            let mut response = blocked_response(StatusCode::TOO_MANY_REQUESTS, &visit.client_ip, Refusal::TooFast);
+            if let Some(wait) = rate.count.map(|c| c.retry_after(limit.requests))
+                && let Ok(v) = HeaderValue::from_str(&wait.as_secs().to_string())
+            {
+                response.headers_mut().insert(axum::http::header::RETRY_AFTER, v);
+            }
+            Some(response)
+        }
+    }
+}
+
 // ─── Step 7: the start of the body ───────────────────────
 
 /// The start of the body, and the part of it the rules see.
@@ -1439,7 +1587,9 @@ async fn read_body_start(body: BodyStream) -> Result<BodyStart, Response<Body>> 
 
 // ─── Steps 9 and 10: the verdict ─────────────────────────
 
-/// Step 9. What the modules decide, and what the IP lists add to it.
+/// Step 9. What the modules decide, and what the IP lists, Smart Protect and
+/// the rate limit add to it.
+#[allow(clippy::too_many_arguments)]
 async fn judge(
     state:     &ProxyState,
     site:      &SiteRow,
@@ -1447,6 +1597,7 @@ async fn judge(
     inspected: bytes::Bytes,
     lists:     &ListCheck,
     watch:     &Watch,
+    rate:      &RateCheck,
     cleared:   bool,
 ) -> PipelineVerdict {
     // An allowed address skips the pipeline rather than being waved through
@@ -1507,10 +1658,20 @@ async fn judge(
 
     // The same for a Smart Protect block the policy is only watching: the
     // request is served, and its row says it would have been refused.
-    match (verdict, watch.would_refuse()) {
+    let verdict = match (verdict, watch.would_refuse()) {
         (PipelineVerdict::Allow { mut alerts, mut findings }, Some(why)) => {
             findings.detection =
                 Some(stronger(findings.detection, crate::modules::Detection::WouldBlock));
+            alerts.push(crate::modules::Alert { reason: why });
+            PipelineVerdict::Allow { alerts, findings }
+        }
+        (verdict, _) => verdict,
+    };
+
+    // And for a limit the site is only watching.
+    match (verdict, rate.would(cleared)) {
+        (PipelineVerdict::Allow { mut alerts, mut findings }, Some((why, would))) => {
+            findings.detection = Some(stronger(findings.detection, would));
             alerts.push(crate::modules::Alert { reason: why });
             PipelineVerdict::Allow { alerts, findings }
         }
@@ -2348,7 +2509,11 @@ async fn load_sites(db: &SqlitePool, generation: u64) -> Result<SiteTable, sqlx:
                                as \"rule_engine?: String\",
                 (SELECT smart_protect FROM policies p WHERE p.id = sites.waf_policy_id)
                                as \"smart_protect?: bool\",
-                backend_tls_insecure as \"backend_tls_insecure!: bool\"
+                backend_tls_insecure as \"backend_tls_insecure!: bool\",
+                rate_limit_mode     as \"rate_limit_mode!\",
+                rate_limit_requests as \"rate_limit_requests!: i64\",
+                rate_limit_window   as \"rate_limit_window!: i64\",
+                rate_limit_action   as \"rate_limit_action!\"
          FROM sites
          ORDER BY id"
     )
@@ -2392,6 +2557,8 @@ async fn load_sites(db: &SqlitePool, generation: u64) -> Result<SiteTable, sqlx:
             smart_protect:  r.smart_protect.unwrap_or(false),
             backend_tls_insecure: r.backend_tls_insecure,
             auth:           asks.remove(&r.id),
+            rate_limit:     crate::rate_limit::Limit::of(
+                &r.rate_limit_mode, r.rate_limit_requests, r.rate_limit_window, &r.rate_limit_action),
         });
         // The oldest site keeps a name two of them claim. The forms refuse
         // that, so it is a tiebreak for a database edited by hand.
@@ -2616,6 +2783,8 @@ enum Refusal {
     Rules,
     /// Smart Protect has the address blocked for a while.
     Repeated,
+    /// The client is sending requests faster than the site's limit.
+    TooFast,
 }
 
 /// The page a refused request is answered with.
@@ -2637,6 +2806,11 @@ fn blocked_response(status: StatusCode, client_ip: &str, refusal: Refusal) -> Re
             "Temporarily blocked",
             "Too many of your recent requests were blocked, so requests from your \
              address are being refused for a while. Try again later.",
+        ),
+        Refusal::TooFast => (
+            "Too many requests",
+            "Requests from your address are arriving faster than this site allows. \
+             Wait a moment and try again.",
         ),
     };
     let when = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC");

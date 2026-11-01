@@ -180,6 +180,12 @@ Toggled per site, applied to every response EasyWAF forwards:
 | `X-Content-Type-Options` | `nosniff` |
 | `X-XSS-Protection` | Legacy; modern browsers ignore it |
 
+## Rate limit
+
+How many requests one client may make to the site within a window, and whether
+those over it are refused or shown a CAPTCHA. Off until it is switched on, and
+previewed against the site's own traffic. See [Rate limiting](rate-limiting.md).
+
 ## What is sent upstream
 
 EasyWAF adds the headers an application needs to know what the client actually

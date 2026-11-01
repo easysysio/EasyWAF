@@ -1,8 +1,8 @@
 # Design note — configuration sync between EasyWAF nodes
 
-Status: planned for **1.7.0** — see [roadmap.md](roadmap.md), after flow logs
-(0.9.0) and backup/export (0.14.0), and deliberately *before* rate limiting and
-learning mode.
+Status: planned for **1.8.0** — see [roadmap.md](roadmap.md), after flow logs
+(0.9.0), backup/export (0.14.0) and rate limiting (1.7.0), and before learning
+mode.
 
 ## What this is, and what it is not
 
@@ -70,12 +70,11 @@ out whether it was right.
 ## The interactions that actually matter
 
 **Rate limiting counts per node, so limits multiply.** With two nodes and a
-limit of 100 requests a minute, a client spread across both gets 200. This is
-not a bug to fix later; it is a semantic that has to be chosen when rate
-limiting is designed — document the per-node meaning, divide the configured
-limit by node count, or share counters through a store, which is a much larger
-feature. **This is the main reason sync is scheduled before rate limiting
-rather than after.**
+limit of 100 requests a minute, a client spread across both gets 200. Rate
+limiting (1.7.0) chose the per-node meaning and documents it: a limit is what
+one node allows. Sync carries a site's limit like any other site setting; the
+counts stay on each node. Dividing by node count, or sharing counters through a
+store, remains possible later and is not part of this.
 
 **Learning mode on split traffic learns a partial set.** Each node sees roughly
 half the requests, so each learns roughly half the URLs. Switching to hardening

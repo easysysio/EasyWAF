@@ -245,3 +245,156 @@
                         <a href="/realms">Settings → Sign-in Realms</a>, and it is offered here.
                     </p>
                     {% endif %}
+
+                    {# Rate limit. A site's own, not its policy's: what is
+                       normal traffic differs too much between sites to share
+                       one number.
+
+                         rate_limit   the limit now, or the defaults while a
+                                      site is being created
+                         site         defined on the edit page only, which is
+                                      where the preview is offered: a site
+                                      being created has no traffic to replay #}
+                    <hr>
+                    <h4 style="margin-top:0" id="rate-limit"><i class="fa fa-tachometer"></i> Rate limit</h4>
+                    <p class="help-block" style="margin-top:0">
+                        How many requests one client may make to this site, counted per address
+                        (an IPv6 client by its /64). Addresses on the policy's allow list and
+                        trusted proxies are never counted.
+                    </p>
+                    <div class="row">
+                        <div class="col-sm-3">
+                            <div class="form-group">
+                                <label>Mode</label>
+                                <select class="form-control" name="rate_mode" id="rate-mode">
+                                    <option value="Off" {% if rate_limit.mode == "Off" %}selected{% endif %}>Off</option>
+                                    <option value="DetectionOnly" {% if rate_limit.mode == "DetectionOnly" %}selected{% endif %}>DetectionOnly</option>
+                                    <option value="On" {% if rate_limit.mode == "On" %}selected{% endif %}>On</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="col-sm-3">
+                            <div class="form-group">
+                                <label>Requests</label>
+                                <input type="number" class="form-control" name="rate_requests" id="rate-requests"
+                                       min="1" max="1000000" value="{{ rate_limit.requests }}">
+                            </div>
+                        </div>
+                        <div class="col-sm-3">
+                            <div class="form-group">
+                                <label>Within</label>
+                                <select class="form-control" name="rate_window" id="rate-window">
+                                    <option value="10" {% if rate_limit.window == 10 %}selected{% endif %}>10 seconds</option>
+                                    <option value="60" {% if rate_limit.window == 60 %}selected{% endif %}>a minute</option>
+                                    <option value="300" {% if rate_limit.window == 300 %}selected{% endif %}>5 minutes</option>
+                                    <option value="3600" {% if rate_limit.window == 3600 %}selected{% endif %}>an hour</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="col-sm-3">
+                            <div class="form-group">
+                                <label>Then</label>
+                                <select class="form-control" name="rate_action">
+                                    <option value="block" {% if rate_limit.action == "block" %}selected{% endif %}>Refuse (429)</option>
+                                    <option value="challenge" {% if rate_limit.action == "challenge" %}selected{% endif %}>Show a CAPTCHA</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                    <p class="help-block" style="margin-top:-6px">
+                        <strong>DetectionOnly</strong> refuses nothing: requests over the limit are
+                        served and marked <em>would block</em> in Traffic Monitor, so a limit can be
+                        watched before it enforces. <strong>Refuse</strong> answers
+                        <em>429 Too Many Requests</em> with a <code>Retry-After</code> saying when the
+                        client may send again. <strong>Show a CAPTCHA</strong> lets a person who
+                        answers it carry on; only a page load is shown one, and a client past twice
+                        the limit is refused instead. Every request counts, refused ones too, so a
+                        client that keeps sending stays over.
+                        <br>
+                        A browser loading one page can make dozens of requests for its images and
+                        scripts, and a sync or mobile client far more — Nextcloud and Immich clients
+                        among them. Set the limit from what the site's clients really send:
+                        {% if site %}<strong>Preview</strong> shows it.{% else %}once the site has
+                        traffic, its page previews any limit against it.{% endif %}
+                    </p>
+
+                    {% if site %}
+                    <div class="form-inline" style="margin-bottom:10px">
+                        <select class="form-control input-sm" id="rate-hours">
+                            <option value="24">over the last 24 hours</option>
+                            <option value="168">over the last 7 days</option>
+                        </select>
+                        <button type="button" class="btn btn-default btn-sm" id="rate-preview">
+                            <i class="fa fa-play"></i> Preview
+                        </button>
+                        <span class="text-muted" style="margin-left:6px">uses the numbers above, saved or not; changes nothing</span>
+                    </div>
+                    <div id="rate-preview-result"></div>
+                    <script>
+                    (function () {
+                        var button = document.getElementById('rate-preview');
+                        var out = document.getElementById('rate-preview-result');
+                        function esc(s) {
+                            return String(s).replace(/[&<>"']/g, function (c) {
+                                return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c];
+                            });
+                        }
+                        function show(d) {
+                            if (d.error) {
+                                out.innerHTML = '<div class="alert alert-danger">' + esc(d.error) + '</div>';
+                                return;
+                            }
+                            var p = d.preview;
+                            if (p.requests === 0) {
+                                out.innerHTML = '<p class="text-muted">No traffic is recorded for this site over ' +
+                                    esc(d.period) + ', so there is nothing to preview.</p>';
+                                return;
+                            }
+                            var html = '<p>Over ' + esc(d.period) + ', ' + p.requests + ' requests from ' +
+                                p.clients + ' address' + (p.clients === 1 ? '' : 'es') + '. With <strong>' +
+                                esc(d.limit) + '</strong>, ';
+                            if (p.addresses === 0) {
+                                html += 'none would have been over the limit.</p>';
+                            } else {
+                                html += '<strong>' + p.over + '</strong> request' + (p.over === 1 ? '' : 's') +
+                                    ' from <strong>' + p.addresses + '</strong> address' +
+                                    (p.addresses === 1 ? '' : 'es') + ' would have been over it.</p>';
+                            }
+                            if (p.served_over > 0) {
+                                html += '<div class="alert alert-warning" style="margin-bottom:10px">' +
+                                    '<i class="fa fa-exclamation-triangle"></i> <strong>' + p.served_over +
+                                    ' of them ' + (p.served_over === 1 ? 'was' : 'were') +
+                                    ' served successfully</strong>: requests the site answered, which this limit ' +
+                                    'would have refused or challenged. Check the addresses below before enforcing it.</div>';
+                            }
+                            html += '<table class="table table-condensed table-striped" style="max-width:560px">' +
+                                '<thead><tr><th>Busiest addresses</th><th class="text-right">Most within ' +
+                                esc(d.window) + '</th><th class="text-right">Over</th>' +
+                                '<th class="text-right">Of those, served</th></tr></thead><tbody>';
+                            p.top.forEach(function (a) {
+                                html += '<tr><td><code>' + esc(a.unit) + '</code></td><td class="text-right">' +
+                                    a.peak + '</td><td class="text-right">' + a.over + '</td><td class="text-right">' +
+                                    a.served_over + '</td></tr>';
+                            });
+                            html += '</tbody></table>';
+                            out.innerHTML = html;
+                        }
+                        button.addEventListener('click', function () {
+                            var q = new URLSearchParams({
+                                requests: document.getElementById('rate-requests').value,
+                                window: document.getElementById('rate-window').value,
+                                hours: document.getElementById('rate-hours').value
+                            });
+                            button.disabled = true;
+                            out.innerHTML = '<p class="text-muted"><i class="fa fa-spinner fa-spin"></i> Replaying the traffic…</p>';
+                            fetch('/sites/{{ site.name | urlencode }}/rate-preview?' + q.toString(), {credentials: 'same-origin'})
+                                .then(function (r) { return r.json(); })
+                                .then(show)
+                                .catch(function () {
+                                    out.innerHTML = '<div class="alert alert-danger">The preview could not be fetched.</div>';
+                                })
+                                .then(function () { button.disabled = false; });
+                        });
+                    })();
+                    </script>
+                    {% endif %}

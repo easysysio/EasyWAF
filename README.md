@@ -34,14 +34,13 @@ mkdocs serve          # http://127.0.0.1:8000
 ## Status
 
 Working today: reverse proxying with load balancing, the rule engine with signed rule
-updates, IP lists and country rules, the CAPTCHA challenge, Smart Protect, HTTPS with
+updates, IP lists and country rules, the CAPTCHA challenge, Smart Protect, rate limiting, HTTPS with
 Let's Encrypt, a sign-in in front of a site, traffic history, accounts with an audit log,
 flow logs over syslog, backup, restore and configuration export, and rules that read one
 header, argument or cookie.
 
-Still to come, in this order: rules with several conditions and the ET Open rules they
-allow (1.3.0), configuration sync
-between nodes (1.7.0), rate limiting (1.8.0) and URL allowlisting (1.9.0). Read
+Still to come, in this order: configuration sync between nodes (1.8.0) and URL
+allowlisting (1.9.0). Read
 [What EasyWAF does not do](#what-easywaf-does-not-do) before deploying — it is short, and it
 is the honest half of this page.
 
@@ -106,6 +105,9 @@ and the per-site security headers still apply, but nothing is inspected.
   while: three refusals within a minute block it for ten minutes by default. The page that
   holds the numbers lists every address blocked right now, and previews what other numbers
   would have done to your own recorded traffic.
+* **Rate limiting** — how many requests one client may make to a site within a window,
+  set per site: those over it are refused with 429 and a `Retry-After`, or shown the
+  CAPTCHA. Watched in DetectionOnly first, and previewed against the site's own traffic.
 * **CAPTCHA challenge** — a middle ground between allow and block: suspicious-but-plausible
   traffic gets a self-hosted image CAPTCHA. Solving it sets a short-lived, IP-bound,
   HMAC-signed clearance cookie. No third-party service.
@@ -414,9 +416,9 @@ each release. The ones most likely to matter:
   traces, SQL errors, card numbers. Not scheduled.
 * **A sign-in is a name and a password** — local accounts or LDAP. No OIDC, SAML or second
   factor. Not scheduled.
-* **No high availability.** No configuration sync between nodes. Scheduled for **1.7.0**.
-* **No rate limiting.** Scheduled for **1.8.0**. An address that attacks repeatedly is
-  handled by Smart Protect, which counts refusals, not requests.
+* **No high availability.** No configuration sync between nodes. Scheduled for **1.8.0**.
+* **A rate limit is per site and per node.** No separate limit per path, and each node
+  counts its own traffic, so a client spread over two nodes can make twice the limit.
 * **No HTTP/2 to clients**, and routing is by `Host:` only — no path prefixes, no wildcard
   hostnames. Not scheduled.
 * **A WebSocket tunnel is not inspected** once it is upgraded; the handshake is.
