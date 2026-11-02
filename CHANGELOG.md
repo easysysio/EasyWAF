@@ -25,6 +25,7 @@ Version bumps and tags are created only after explicit approval.
 
 ### Security
 - **The rule converters refuse a `@pmFromFile` that is not a plain `.data` name beside the rules**, which could have copied any readable file into a converted set; they also read only `.conf` or `.rules` files and write only `.toml` sets and `.txt` reports, never through a link.
+- The rule converters read and write nothing outside the directory they run from.
 - **The release workflow pins every action to a full commit**, and only the job that publishes the release can write to the repository.
 
 ---

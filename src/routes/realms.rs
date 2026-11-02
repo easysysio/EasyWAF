@@ -77,7 +77,9 @@ pub struct RealmForm {
     pub ldap_starttls:   Option<String>,
     pub ldap_skip_verify: Option<String>,
     pub ldap_bind_dn:    Option<String>,
-    pub ldap_bind_password: Option<String>,
+    // The search account's password, as the form names it.
+    #[serde(rename = "ldap_bind_password")]
+    pub ldap_bind_secret: Option<String>,
     pub ldap_base_dn:    Option<String>,
     pub ldap_user_filter: Option<String>,
     pub ldap_groups_attribute: Option<String>,
@@ -197,7 +199,7 @@ fn read_ldap(form: &RealmForm, kept_password: &str) -> std::result::Result<LdapC
     {
         return Err("The user filter is not a complete LDAP filter: check its brackets.".to_string());
     }
-    let typed = form.ldap_bind_password.as_deref().unwrap_or("");
+    let typed = form.ldap_bind_secret.as_deref().unwrap_or("");
     Ok(LdapConfig {
         url,
         starttls,
@@ -669,7 +671,7 @@ mod tests {
             ldap_url: Some("ldaps://dc.example.com".into()),
             ldap_starttls: None, ldap_skip_verify: None,
             ldap_bind_dn: Some("cn=easywaf,dc=example,dc=com".into()),
-            ldap_bind_password: Some(typed()),
+            ldap_bind_secret: Some(typed()),
             ldap_base_dn: Some("ou=people,dc=example,dc=com".into()),
             ldap_user_filter: Some("(&(uid={user})(memberOf=cn=staff,ou=groups,dc=example,dc=com))".into()),
             ldap_groups_attribute: Some("memberOf".into()),
@@ -690,10 +692,24 @@ mod tests {
     /// "leave it", not "remove it".
     #[test]
     fn an_empty_password_field_keeps_the_one_stored() {
-        let c = read_ldap(&RealmForm { ldap_bind_password: Some(String::new()), ..form() }, "kept").unwrap();
+        let c = read_ldap(&RealmForm { ldap_bind_secret: Some(String::new()), ..form() }, "kept").unwrap();
         assert_eq!(c.bind_password, "kept");
         let c = read_ldap(&form(), "kept").unwrap();
         assert_eq!(c.bind_password, typed(), "a new one typed was ignored");
+    }
+
+    /// The form posts the password as `ldap_bind_password`.
+    #[tokio::test]
+    async fn the_password_is_read_from_the_field_the_form_posts() {
+        use axum::extract::FromRequest;
+        let body = format!("session_minutes=60&idle_minutes=15&ldap_bind_password={}", typed());
+        let req = axum::http::Request::builder()
+            .method("POST")
+            .header("content-type", "application/x-www-form-urlencoded")
+            .body(axum::body::Body::from(body))
+            .unwrap();
+        let axum::extract::Form(f) = axum::extract::Form::<RealmForm>::from_request(req, &()).await.unwrap();
+        assert_eq!(f.ldap_bind_secret.as_deref(), Some(typed().as_str()));
     }
 
     #[test]

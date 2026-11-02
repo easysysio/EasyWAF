@@ -4,6 +4,9 @@
     suricata2easywaf.py emerging-web_server.rules [...] -o set.rules.toml \\
         --report refused.txt --set-id et-web-server --set-name "..." --since 2015
 
+Run from the directory holding the rules: like modsec2easywaf.py, it reads and
+writes nothing outside the directory it runs from.
+
 As with modsec2easywaf.py, the point is to be exact about what converts. A
 rule that cannot be represented faithfully is refused and listed, never
 approximated into one that looks present and is not.
@@ -664,6 +667,8 @@ alert http any any -> $HOME_NET any (msg:"ET lowered"; flow:to_server; http.uri;
 def self_test():
     import tempfile
     fails = []
+    # Run from the temporary directory, where the rule file below is made.
+    os.chdir(tempfile.gettempdir())
     def check(c, what):
         if not c:
             fails.append(what)

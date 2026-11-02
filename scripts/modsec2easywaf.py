@@ -7,6 +7,9 @@ is missing: the missing rule is visible in a coverage report, the bypassable
 one is visible only to whoever finds the bypass. So a rule that cannot be
 represented faithfully is refused and listed, never approximated into silence.
 
+Every file it reads or writes must be inside the directory it runs from, so
+run it from the one holding the rules.
+
 What converts
     @rx, @pm and @pmFromFile rules, and the operators that are a pattern in
     other words (@streq, @beginsWith, @within…), in the request phases, whose
@@ -340,10 +343,21 @@ def classify_vars(variables):
 # kind of file it is meant to be before it is opened, so a wrong argument is
 # refused rather than read from or written over.
 
+def within_cwd(path):
+    """`path` resolved, if it is inside the directory this runs from. A file
+    to read or write anywhere else is refused: the sync jobs run this in a
+    working directory that holds everything it needs."""
+    here = os.path.realpath(os.getcwd())
+    real = os.path.realpath(path)
+    if os.path.commonpath([here, real]) != here:
+        sys.exit(f"{path}: outside {here}, the directory this runs from")
+    return real
+
+
 def rule_file(path, extension):
     """A rule file to read: an existing regular file with its format's
-    extension, as a resolved path."""
-    real = os.path.realpath(path)
+    extension, inside the directory this runs from, as a resolved path."""
+    real = within_cwd(path)
     if not real.endswith(extension) or not os.path.isfile(real):
         sys.exit(f"{path}: not a {extension} rule file")
     return real
@@ -351,14 +365,14 @@ def rule_file(path, extension):
 
 def output_file(path, extension):
     """A file to write: named with the extension of what goes in it, in a
-    directory that exists, and not already a directory or a symbolic link —
-    either would put the output somewhere other than where the name says.
-    Returned resolved."""
+    directory that exists inside the one this runs from, and not already a
+    directory or a symbolic link — either would put the output somewhere
+    other than where the name says. Returned resolved."""
     if not path.endswith(extension):
         sys.exit(f"{path}: the file written here must end in {extension}")
     if os.path.islink(path) or os.path.isdir(path):
         sys.exit(f"{path}: is a link or a directory, not a file to write")
-    real = os.path.realpath(path)
+    real = within_cwd(path)
     if not os.path.isdir(os.path.dirname(real)):
         sys.exit(f"{path}: there is no directory {os.path.dirname(real)}")
     return real
@@ -1210,6 +1224,8 @@ def self_test():
     """Check the refusals and the two documented rewrites still hold."""
     import tempfile
     failures = []
+    # Run from the temporary directory, where every file below is made.
+    os.chdir(tempfile.gettempdir())
 
     def check(cond, what):
         if not cond:
@@ -1321,6 +1337,20 @@ def self_test():
                 pass
         check(output_file(os.path.join(d, "set.toml"), ".toml").endswith("set.toml"),
               "a plain .toml file to write was refused")
+
+    # Nothing outside the directory this runs from is read or written.
+    with tempfile.TemporaryDirectory() as d:
+        with open(os.path.join(d, "in.conf"), "w") as fh:
+            fh.write(SELF_TEST_CONF)
+        os.mkdir(os.path.join(d, "here"))
+        os.chdir(os.path.join(d, "here"))
+        for name, ext in (("../in.conf", ".conf"), ("../out.toml", ".toml"), ("/etc/x.toml", ".toml")):
+            try:
+                (rule_file if ext == ".conf" else output_file)(name, ext)
+                check(False, f"{name}, outside the working directory, was accepted")
+            except SystemExit:
+                pass
+        os.chdir(tempfile.gettempdir())
 
     for f in failures:
         print(f"FAIL: {f}", file=sys.stderr)
