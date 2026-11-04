@@ -6,7 +6,7 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
-## [Unreleased]
+## [1.7.0] — 2026-11-04
 
 ### Added
 - **Rate limiting, per site:** how many requests one client may make within 10 seconds, a minute, 5 minutes or an hour, set on the site's page with a mode like a policy's — off until switched on, and in DetectionOnly marked `WOULD BLOCK` in Traffic Monitor rather than refused.
