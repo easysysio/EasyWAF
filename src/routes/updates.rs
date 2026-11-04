@@ -151,7 +151,13 @@ pub async fn get_updates(
     ctx.insert("rules_default",crate::rules_update::DEFAULT_URL);
     ctx.insert("rules_checked",&checked.map(|t| crate::routes::settings::format_utc(&t)).unwrap_or_default());
     ctx.insert("rules_error",  &check_error.unwrap_or_default());
-    ctx.insert("offered_sets", &crate::rules_update::offered(&state.db).await);
+    let offered = crate::rules_update::with_rule_counts(crate::rules_update::offered(&state.db).await).await;
+    let signatures: usize = offered.iter().filter_map(|s| s.rules).sum();
+    ctx.insert("offered_sets", &offered);
+    ctx.insert("signatures",   &signatures);
+    // Sets the manifest lists whose file the mirror does not hold, so the
+    // total is not read as complete when it is not.
+    ctx.insert("uncounted",    &offered.iter().filter(|s| s.rules.is_none()).count());
     // What is waiting for somebody: a set is only reported for a policy that
     // holds it, since an update to a set nobody installed is not news.
     ctx.insert("behind",       &crate::rules_update::available(&state.db).await?);

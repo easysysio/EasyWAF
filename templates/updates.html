@@ -189,16 +189,22 @@
                 {% endif %}
 
                 {% if offered_sets %}
-                <p class="help-block" style="margin-bottom:4px"><strong>In the mirror</strong></p>
+                <p class="help-block" style="margin-bottom:4px">
+                    <strong>In the mirror</strong> —
+                    <strong>{{ signatures }}</strong> signature{{ signatures | pluralize }} in
+                    {{ offered_sets | length }} set{{ offered_sets | length | pluralize }}{% if uncounted > 0 %},
+                    not counting {{ uncounted }} whose file the mirror does not hold{% endif %}
+                </p>
                 <div style="overflow-x:auto">
                 <table class="table table-condensed" style="font-size:12px">
-                    <thead><tr><th>Set</th><th>Version</th><th>Tier</th><th>Covers</th></tr></thead>
+                    <thead><tr><th>Set</th><th>Version</th><th>Tier</th><th class="text-right">Signatures</th><th>Covers</th></tr></thead>
                     <tbody>
                     {% for s in offered_sets %}
                         <tr>
                             <td><code>{{ s.id }}</code></td>
                             <td>v{{ s.version }}</td>
                             <td>{% if s.tier %}<span class="label label-default">{{ s.tier }}</span>{% endif %}</td>
+                            <td class="text-right">{% if s.rules is number %}{{ s.rules }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
                             <td>{{ s.name }}{% if s.description %} — {{ s.description }}{% endif %}</td>
                         </tr>
                     {% endfor %}

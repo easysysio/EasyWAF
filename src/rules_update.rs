@@ -48,6 +48,11 @@ pub struct OfferedSet {
     pub description: String,
     /// The oldest EasyWAF this version of the set is written for, or empty.
     pub requires:    String,
+    /// The set's file in the channel, as the manifest names it.
+    pub file:        String,
+    /// How many rules the mirrored copy of the file holds. `None` until
+    /// `with_rule_counts` reads it, and when the mirror has no readable copy.
+    pub rules:       Option<usize>,
 }
 
 /// Whether a set's `requires` is newer than this EasyWAF. One that cannot be
@@ -90,6 +95,8 @@ pub fn parse_manifest(text: &str) -> Vec<OfferedSet> {
             tier:        value("tier").unwrap_or_else(|| "basic".into()),
             description: value("description").unwrap_or_default(),
             requires:    value("requires").unwrap_or_default(),
+            file:        value("file").unwrap_or_default(),
+            rules:       None,
             id,
             version,
         });
@@ -876,6 +883,37 @@ pub async fn offered(db: &SqlitePool) -> Vec<OfferedSet> {
     }
 }
 
+/// The same sets, each with how many rules its mirrored file holds.
+///
+/// Read from the mirror on disk, which is what a policy installs from, so the
+/// numbers are the rules an installation would get rather than a figure the
+/// manifest claims. A set whose file is missing or unreadable keeps `None`.
+pub async fn with_rule_counts(mut sets: Vec<OfferedSet>) -> Vec<OfferedSet> {
+    let dir = cache_dir().join("sets");
+    tokio::task::spawn_blocking(move || {
+        for set in &mut sets {
+            if set.file.is_empty() {
+                continue;
+            }
+            set.rules = std::fs::read_to_string(dir.join(basename(&set.file)))
+                .ok()
+                .and_then(|text| count_rules(&text));
+        }
+        sets
+    })
+    .await
+    .unwrap_or_default()
+}
+
+/// How many `[[rules]]` a set file holds, or `None` if it is not TOML.
+///
+/// Counted from the parsed document rather than the rule format, so a set
+/// written for a newer EasyWAF is still counted.
+fn count_rules(text: &str) -> Option<usize> {
+    let doc: toml::Table = toml::from_str(text).ok()?;
+    Some(doc.get("rules").and_then(|r| r.as_array()).map_or(0, |r| r.len()))
+}
+
 async fn cached_manifest(db: &SqlitePool) -> Option<String> {
     crate::settings::get(db, KEY_MANIFEST).await.filter(|v| !v.trim().is_empty())
 }
@@ -923,6 +961,14 @@ tier    = "optional"
 "#;
 
     #[test]
+    fn a_set_file_is_counted_by_its_rules() {
+        let text = "[set]\nid = \"a\"\nversion = 1\n\n[[rules]]\nid = 1\n# [[rules]] in a comment\n\n[[rules]]\nid = 2\nfuture_key = \"x\"\n";
+        assert_eq!(count_rules(text), Some(2));
+        assert_eq!(count_rules("[set]\nid = \"a\"\n"), Some(0));
+        assert_eq!(count_rules("not [ toml"), None);
+    }
+
+    #[test]
     fn reads_ids_and_versions() {
         let sets = parse_manifest(MANIFEST);
         assert_eq!(sets.len(), 2);
@@ -930,6 +976,7 @@ tier    = "optional"
         assert_eq!(sets[0].version, 3);
         assert_eq!(sets[0].tier, "basic");
         assert_eq!(sets[1].tier, "optional");
+        assert_eq!(sets[0].file, "sets/942-sqli.rules.toml");
     }
 
     #[test]

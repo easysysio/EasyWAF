@@ -6,6 +6,11 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
+## [Unreleased]
+
+### Added
+- **The Updates page counts the signatures in the rule set mirror:** each set's number beside its version, and the total across every set.
+
 ## [1.7.0] — 2026-11-04
 
 ### Added

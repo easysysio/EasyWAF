@@ -105,6 +105,8 @@ what it covers, where it came from, and whether that path was verified. A
 database named by `geoip_db` in `config.toml` is always the one used — a
 deliberate local choice is not overridden from a web page.
 
-Rule sets show what the mirror offers and what each policy holds; lists show
+Rule sets show what the mirror offers — each set's version and how many
+signatures its mirrored file holds, with the total across every set — and what
+each policy holds; lists show
 the publisher's version and entry count, the ranges actually in force after
 merging, any lines that could not be read, and how many policies use each one.

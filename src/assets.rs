@@ -915,7 +915,9 @@ mod tests {
         }
         ctx.insert("offered_sets", &vec![serde_json::json!({
             "id": "owasp-rfi", "name": "Remote file inclusion", "version": 2,
-            "tier": "basic", "description": "Remote file inclusion." })]);
+            "tier": "basic", "description": "Remote file inclusion.", "rules": 12 })]);
+        ctx.insert("signatures", &12);
+        ctx.insert("uncounted", &0);
         ctx.insert("behind", &vec![
             serde_json::json!({
                 "policy_id": 1, "policy_name": "websites", "set_id": "owasp-rfi",
@@ -971,6 +973,7 @@ mod tests {
             ("1342 ranges",        "a list does not say what is in force"),
             ("2 policies",         "a list does not say who uses it"),
             ("v1",                 "a policy behind does not say what it holds"),
+            ("<strong>12</strong> signatures in", "the mirror does not total its signatures"),
             ("v2",                 "a policy behind does not say what is offered"),
             // And the two stages, named where somebody acts on them.
             ("Update now",         "nothing can be fetched by hand"),
