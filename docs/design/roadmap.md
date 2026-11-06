@@ -45,6 +45,7 @@ next minor, so a release's notes stay about its feature.
 | 1.6.1 | Rule set updates counted on Security Policy and the Policy Manager, and only those this version can apply; tokio updated for RUSTSEC-2026-0386 — **released 2026-10-28** |
 | 1.7.0 | Per-site rate limiting (see [rate-limiting.md](rate-limiting.md)) — **released 2026-11-04** |
 | 1.7.1 | The signatures in the rule set mirror counted on the Updates page, per set and in total — **released 2026-11-04** |
+| 1.7.2 | DShield's recommended block list on the published list channel, and the record of why CINS Army cannot be — **released 2026-11-06** |
 | 1.8.0 | Configuration sync between nodes — HA (see [ha-config-sync.md](ha-config-sync.md)) |
 | 1.9.0 | Learning and hardening modes — URL allowlisting (see [url-learning.md](url-learning.md)) |
 

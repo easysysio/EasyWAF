@@ -6,7 +6,7 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
-## [Unreleased]
+## [1.7.2] — 2026-11-06
 
 ### Added
 - **DShield's recommended block list on the published list channel:** the 20 networks its sensors saw scanning the most over three days, refreshed daily, with a challenge suggested.
