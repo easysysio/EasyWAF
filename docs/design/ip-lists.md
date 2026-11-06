@@ -252,13 +252,24 @@ Checked on 2026-09-12. Recorded here so nobody researches it twice.
 * **ET `compromised-ips`** — GPL-2.0, per Emerging Threats' own answer that the
   list is third-party sourced and "free to download and use via GPL 2.0".
 * **Tor exit list** — CC0; the Tor Project has waived its rights in the data.
+* **DShield recommended block list** (checked 2026-11-06) — ISC's feed page
+  permits use with attribution to the SANS Technology Institute, Internet Storm
+  Center, and says "Do not resell the data. Other commercial uses are allowed",
+  asking for no more than one download an hour. The file itself carries CC
+  BY-NC-SA 2.5, so it is published with that header kept and as a file of its
+  own. Its data lines are tab-separated start, end and prefix columns, which the
+  publisher rewrites as `start/prefix`; the other columns stay as a comment.
 
 **Not mirrorable:**
 
 * **AWS `ip-ranges.json`** (and, until shown otherwise, Azure and GCP) — the
   licence is explicitly "non-sublicensable, non-transferrable... solely in
   connection with your permitted use of the Services".
-* **CINS Army** — download now requires registration and a token, behind a EULA.
+* **CINS Army** — the threat intelligence download requires registration and a
+  token, behind a EULA. The plain `ci-badguys.txt` still downloads without
+  either, but the EULA (rechecked 2026-11-06) allows copies only within the
+  licensee's organisation, and forbids distributing them with other products,
+  commercial or otherwise, without written permission.
 * **blocklist.de** — "these files are as they are"; no grant to republish.
 * **Team Cymru bogons** — no terms published at all. Silence is not permission;
   it is a question to ask them, and bogons can otherwise be derived from the

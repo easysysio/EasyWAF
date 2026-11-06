@@ -105,7 +105,8 @@ Current as of **1.7.1**.
 - **No list of proxy, VPN or hosting addresses.** Every credible dataset is
   commercial, and the cloud providers' own address files may not be
   redistributed. The [published lists](ip-lists.md#published-lists) cover
-  hijacked netblocks, compromised hosts and Tor exits only.
+  hijacked netblocks, compromised hosts, the networks scanning the most, and
+  Tor exits only.
 - **No feed of your own.** A published list comes from the signed channel; there
   is no way yet to point EasyWAF at another list's URL.
 - **A rate limit is per site and per node.** One limit covers the whole site;

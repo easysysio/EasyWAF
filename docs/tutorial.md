@@ -227,6 +227,7 @@ daily. For the `websites` policy:
 |---|---|
 | Hijacked netblocks | Block |
 | Compromised hosts | Challenge |
+| Networks scanning the most | Challenge |
 | Tor exit nodes | Off, unless you have a reason |
 
 *Challenge* shows a CAPTCHA, so a wrongly listed address is slowed down rather

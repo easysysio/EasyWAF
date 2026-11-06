@@ -105,8 +105,8 @@ gets rebuilt, or the address is reassigned to somebody else entirely.
 
 ## Published lists
 
-Addresses you have not seen yet: hijacked netblocks, compromised hosts, Tor exit
-nodes. Each is a separate list on **Security Policy → IP Lists**, with its
+Addresses you have not seen yet: hijacked netblocks, compromised hosts, the
+networks scanning the most, Tor exit nodes. Each is a separate list on **Security Policy → IP Lists**, with its
 source, licence and size beside it.
 
 A list can be switched on for one policy or, under **All policies**, for every
@@ -119,6 +119,7 @@ row, drops the policy's own answer and lets it follow again.
 |---|---|---|
 | Hijacked netblocks | Spamhaus DROP | Block |
 | Compromised hosts | Emerging Threats | Challenge |
+| The 20 networks scanning the most | DShield (SANS Internet Storm Center) | Challenge |
 | Tor exit nodes | The Tor Project | Off — using Tor is not an attack |
 
 **The data updates itself; what it does does not.** Every list is fetched and
