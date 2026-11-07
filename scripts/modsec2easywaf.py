@@ -348,9 +348,9 @@ def within_cwd(path):
     to read or write anywhere else is refused: the sync jobs run this in a
     working directory that holds everything it needs."""
     here = os.path.realpath(os.getcwd())
-    real = os.path.realpath(path)
-    if os.path.commonpath([here, real]) != here:
-        sys.exit(f"{path}: outside {here}, the directory this runs from")
+    real = os.path.realpath(os.path.join(here, path))
+    if os.path.commonpath((here, real)) != here:
+        raise SystemExit(f"{path}: outside {here}, the directory this runs from")
     return real
 
 
@@ -359,7 +359,7 @@ def rule_file(path, extension):
     extension, inside the directory this runs from, as a resolved path."""
     real = within_cwd(path)
     if not real.endswith(extension) or not os.path.isfile(real):
-        sys.exit(f"{path}: not a {extension} rule file")
+        raise SystemExit(f"{path}: not a {extension} rule file")
     return real
 
 
@@ -369,12 +369,12 @@ def output_file(path, extension):
     directory or a symbolic link — either would put the output somewhere
     other than where the name says. Returned resolved."""
     if not path.endswith(extension):
-        sys.exit(f"{path}: the file written here must end in {extension}")
+        raise SystemExit(f"{path}: the file written here must end in {extension}")
     if os.path.islink(path) or os.path.isdir(path):
-        sys.exit(f"{path}: is a link or a directory, not a file to write")
+        raise SystemExit(f"{path}: is a link or a directory, not a file to write")
     real = within_cwd(path)
     if not os.path.isdir(os.path.dirname(real)):
-        sys.exit(f"{path}: there is no directory {os.path.dirname(real)}")
+        raise SystemExit(f"{path}: there is no directory {os.path.dirname(real)}")
     return real
 
 

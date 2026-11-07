@@ -10,6 +10,7 @@ Version bumps and tags are created only after explicit approval.
 
 ### Fixed
 - The About box and the Docker README link to the documentation at `easywaf.easysys.io`.
+- The rule converters stop on a path outside their working directory with a `raise`, a form SonarCloud recognises as ending the path check.
 
 ## [1.7.3] — 2026-11-07
 
