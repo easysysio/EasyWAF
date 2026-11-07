@@ -681,14 +681,25 @@ async fn request_cert_for_new_site(
         .await
         .map_err(|e| e.to_string())?;
 
+    assign_issued_cert(&state.db, site_id, cert_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Point a site at the certificate just issued for it, and start serving it.
+///
+/// The certificate map is rebuilt here, after the site points at the
+/// certificate. `issue_and_store` rebuilds it too, but before this, when the
+/// site has no certificate yet — so without a second rebuild the site refuses
+/// every handshake until something else rebuilds the map.
+pub(crate) async fn assign_issued_cert(db: &SqlitePool, site_id: i64, cert_id: i64) -> Result<()> {
     sqlx::query!(
         "UPDATE sites SET cert_id = ?, acme_enabled = 1 WHERE id = ?",
         cert_id, site_id
     )
-    .execute(&state.db)
-    .await
-    .map_err(|e| e.to_string())?;
-
+    .execute(db)
+    .await?;
+    crate::tls::reload(db).await?;
     Ok(())
 }
 
@@ -1479,12 +1490,7 @@ pub async fn post_site_acme(
         Err(e) => return flash_redirect(&back, "failed", &format!("{e}")),
     };
 
-    sqlx::query!(
-        "UPDATE sites SET cert_id = ?, acme_enabled = 1 WHERE id = ?",
-        cert_id, site.id
-    )
-    .execute(&state.db)
-    .await?;
+    assign_issued_cert(&state.db, site.id, cert_id).await?;
 
     flash_redirect(
         &back,
@@ -2020,6 +2026,37 @@ mod upstream_field_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn a_certificate_issued_for_a_new_site_is_served_straight_away() {
+        let path = std::env::temp_dir().join(format!("easywaf-assign-{}.db", std::process::id()));
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+        let db = crate::db::init(&format!("sqlite://{}", path.display())).await;
+        let name = "assign-test.example";
+
+        let site_id = sqlx::query(
+            "INSERT INTO sites (name, server_name, tls_port, enabled) VALUES ('assign', ?, 443, 1)",
+        )
+        .bind(name)
+        .execute(&db).await.unwrap().last_insert_rowid();
+        let cert_id = sqlx::query(
+            "INSERT INTO certs (name, domain, cert_pem, key_pem) VALUES ('assign', ?, ?, ?)",
+        )
+        .bind(name)
+        .bind(include_str!("../../tests/fixtures/ec-named.crt"))
+        .bind(include_str!("../../tests/fixtures/ec-named.key"))
+        .execute(&db).await.unwrap().last_insert_rowid();
+
+        // What issuing does: the map is rebuilt while the site has no
+        // certificate, so the name is not served yet.
+        crate::tls::reload(&db).await.unwrap();
+        assert!(!crate::tls::serves(name));
+
+        assign_issued_cert(&db, site_id, cert_id).await.unwrap();
+        assert!(crate::tls::serves(name), "the site was given its certificate but does not present it");
+    }
 
     #[test]
     fn aliases_are_taken_however_they_were_typed() {

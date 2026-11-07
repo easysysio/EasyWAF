@@ -194,6 +194,12 @@ impl ResolvesServerCert for SniResolver {
     }
 }
 
+/// Whether a handshake for this server name would be given a certificate.
+#[cfg(test)]
+pub(crate) fn serves(name: &str) -> bool {
+    certs().read().is_ok_and(|m| m.contains_key(&name.to_lowercase()))
+}
+
 // ─── server_config ───────────────────────────────────────
 
 /// Build the TLS configuration a listener is bound with.
