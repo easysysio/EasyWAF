@@ -6,7 +6,7 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
-## [Unreleased]
+## [1.7.3] — 2026-11-07
 
 ### Fixed
 - **A certificate issued while creating a site is served at once:** the site refused every HTTPS connection (`ERR_SSL_PROTOCOL_ERROR`) until it was saved again or EasyWAF restarted; the same for *Request certificate* on a site that already had an HTTPS port.
