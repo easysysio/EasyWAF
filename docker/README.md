@@ -9,7 +9,7 @@ managed from a web GUI — there is no configuration language to learn and no fi
 add a site.
 
 * [Source and full documentation](https://github.com/easysysio/EasyWAF)
-* [Docs site](https://easysys.io/easywaf/)
+* [Docs site](https://easywaf.easysys.io/)
 
 ---
 
