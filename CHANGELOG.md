@@ -8,6 +8,9 @@ Version bumps and tags are created only after explicit approval.
 
 ## [Unreleased]
 
+### Security
+- `cargo audit` passes again: `quinn-udp` moves to 0.5.16 for RUSTSEC-2026-0538 (never compiled into EasyWAF), and RUSTSEC-2026-0459 in bundled SQLite is recorded with why EasyWAF cannot be reached by it, since no sqlx release takes the fixed `libsqlite3-sys` yet.
+
 ### Fixed
 - The dashboard and a filtered Traffic Monitor no longer slow down as traffic history grows: a site's or a verdict's requests are indexed by time, so a view reads only its window (dashboard on three million logged requests: about 3 s before, 0.06 s now). The first start after upgrading builds the new indexes, which takes a few seconds per million logged requests.
 

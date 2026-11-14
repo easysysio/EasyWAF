@@ -29,4 +29,22 @@
 # observer nothing they could not compute.
 #
 # Re-check when `pgp` moves to crypto-bigint 0.7, or if EasyWAF ever signs.
-ignore = ["RUSTSEC-2023-0071", "RUSTSEC-2026-0387"]
+#
+# RUSTSEC-2026-0459 — SQLite before 3.54.0, bundled by `libsqlite3-sys` before
+# 0.39, can return uninitialised page-cache memory when it opens a database
+# together with a `-wal` file of a different page size.
+#
+# No release of sqlx takes the fix yet: 0.8.6 requires libsqlite3-sys ^0.30.1
+# and 0.9.0 caps it below 0.38, so this cannot be resolved by upgrading.
+#
+# The attack needs a database and a `-wal` beside it that a less trusted party
+# wrote, and EasyWAF never opens such a pair. Its own database lives in its
+# data directory, which only root and the service write. An uploaded snapshot
+# is inspected with `immutable=1` (src/backup.rs), which reads no `-wal` at
+# all, and a restore deletes the replaced database's `-wal` and `-shm` before
+# the snapshot is moved into place, so the restored file is never opened with
+# a log it did not write. Anyone able to plant a `-wal` in the data directory
+# can already replace the database itself.
+#
+# Re-check when sqlx accepts libsqlite3-sys 0.39.
+ignore = ["RUSTSEC-2023-0071", "RUSTSEC-2026-0387", "RUSTSEC-2026-0459"]
