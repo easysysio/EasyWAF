@@ -1057,7 +1057,7 @@ struct RuleFileSet {
 }
 
 /// A single rule definition inside a TOML file.
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 struct RuleFileDef {
     id:          i64,
     name:        String,
@@ -1245,6 +1245,63 @@ fn category_title(file_stem: &str) -> (String, String) {
     (code, title.to_string())
 }
 
+// ─── Parsed rule files ────────────────────────────────────
+
+/// A rule file as last parsed, with the modification time and length the file
+/// had when it was read.
+struct ParsedFile {
+    modified: Option<std::time::SystemTime>,
+    len:      u64,
+    file:     std::sync::Arc<RuleFile>,
+}
+
+/// Every rule file the catalogue has parsed, by path.
+///
+/// The catalogue is read on every view of the pages that offer rules, and the
+/// published sets run to more than a megabyte of TOML; parsing all of it each
+/// time was most of what those pages cost the server. A file is parsed again
+/// when its time or length changes, which is what a channel download or a
+/// replaced file does to it.
+static PARSED: std::sync::OnceLock<std::sync::Mutex<HashMap<std::path::PathBuf, ParsedFile>>> =
+    std::sync::OnceLock::new();
+
+/// The rule file at `path`, parsed — from memory unless the file has changed
+/// since it was last read. The error says why the file could not be read or
+/// parsed.
+fn parsed_rule_file(path: &std::path::Path) -> std::result::Result<std::sync::Arc<RuleFile>, String> {
+    let meta = std::fs::metadata(path).map_err(|e| e.to_string())?;
+    let modified = meta.modified().ok();
+    let len = meta.len();
+    let cache = PARSED.get_or_init(|| std::sync::Mutex::new(HashMap::new()));
+
+    {
+        let held = match cache.lock() {
+            Ok(h)  => h,
+            Err(p) => p.into_inner(),
+        };
+        if let Some(seen) = held.get(path)
+            && seen.modified.is_some()
+            && seen.modified == modified
+            && seen.len == len
+        {
+            return Ok(seen.file.clone());
+        }
+    }
+
+    // Read and parsed without the lock, so one slow file does not hold up a
+    // page reading another.
+    let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+    let file: RuleFile = toml::from_str(&text).map_err(|e| e.to_string())?;
+    let file = std::sync::Arc::new(file);
+
+    let mut held = match cache.lock() {
+        Ok(h)  => h,
+        Err(p) => p.into_inner(),
+    };
+    held.insert(path.to_path_buf(), ParsedFile { modified, len, file: file.clone() });
+    Ok(file)
+}
+
 /// Read all rule definitions from the rules/ directory into a flat map
 /// keyed by external_id. Used by the catalog POST handler for additions.
 /// Which set each catalogue rule belongs to, by its number — the one thing
@@ -1271,14 +1328,7 @@ fn read_rule_defs() -> HashMap<i64, (RuleFileDef, Option<String>)> {
             if !is_rule_file(&path) {
                 continue;
             }
-            let content = match std::fs::read_to_string(&path) {
-                Ok(s)  => s,
-                Err(_) => continue,
-            };
-            let parsed: RuleFile = match toml::from_str(&content) {
-                Ok(f)  => f,
-                Err(_) => continue,
-            };
+            let Ok(parsed) = parsed_rule_file(&path) else { continue };
             // The set is carried alongside each rule so a rule taken singly
             // from the library still records where it came from. Without it
             // those rows have an external_id and no set, which is the exact
@@ -1287,8 +1337,8 @@ fn read_rule_defs() -> HashMap<i64, (RuleFileDef, Option<String>)> {
             let set_id = parsed.set.as_ref().map(|s| s.id.clone());
             // A rule in a zone this version does not read is not offered: it
             // would be added and never run.
-            for rule in parsed.rules.into_iter().filter(RuleFileDef::readable) {
-                map.insert(rule.id, (rule, set_id.clone()));
+            for rule in parsed.rules.iter().filter(|r| r.readable()) {
+                map.insert(rule.id, (rule.clone(), set_id.clone()));
             }
         }
     }
@@ -1332,14 +1382,10 @@ pub fn read_catalog_categories(held: &Held) -> Result<Vec<CatalogCategory>> {
         // would make the category read "sqli.rules" instead of "SQL Injection".
         let stem = rule_set_stem(&path);
 
-        let content = match std::fs::read_to_string(&path) {
-            Ok(s)  => s,
-            Err(_) => continue,
-        };
-        let parsed: RuleFile = match toml::from_str(&content) {
+        let parsed = match parsed_rule_file(&path) {
             Ok(f)  => f,
             Err(e) => {
-                tracing::warn!(file = %path.display(), "Cannot parse rule file: {}", e);
+                tracing::warn!(file = %path.display(), "Cannot read rule file: {}", e);
                 continue;
             }
         };
@@ -1352,7 +1398,7 @@ pub fn read_catalog_categories(held: &Held) -> Result<Vec<CatalogCategory>> {
 
         let mut rules = Vec::new();
         let mut added_count = 0;
-        for r in parsed.rules.into_iter().filter(RuleFileDef::readable) {
+        for r in parsed.rules.iter().filter(|r| r.readable()) {
             // Present and off is not the same as present: the tick means the
             // rule applies here, and one switched off applies to nothing. It
             // is shown unticked, with a label saying it is still in the policy.
@@ -1364,12 +1410,12 @@ pub fn read_catalog_categories(held: &Held) -> Result<Vec<CatalogCategory>> {
             rules.push(CatalogRule {
                 off,
                 external_id: r.id,
-                name:        r.name,
-                description: r.description.unwrap_or_default(),
-                zone:        r.zone,
-                pattern:     r.pattern,
+                name:        r.name.clone(),
+                description: r.description.clone().unwrap_or_default(),
+                zone:        r.zone.clone(),
+                pattern:     r.pattern.clone(),
                 score:       r.score,
-                action:      r.action,
+                action:      r.action.clone(),
                 added,
             });
         }

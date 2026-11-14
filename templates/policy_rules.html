@@ -115,6 +115,10 @@
 </div>
 
 <!-- ── Bulk-action form wraps the table ───────────────────── -->
+{# The form every row's Pause and Delete submit, each with its own address.
+   Outside the bulk form: a form cannot hold another. #}
+<form class="admin-only" id="ruleAction" method="post" style="display:none"></form>
+
 <form class="admin-only" method="post" action="/policy/{{ policy.name }}/rules/bulk" id="bulkForm">
     <!-- Single comma-separated IDs field populated by JS before submit.
          We use one field (not repeated checkbox fields) because
@@ -164,66 +168,22 @@
                     </tr>
                 </thead>
                 <tbody>
-                {% for r in rules %}
-                    <tr {% if not r.enabled %}class="text-muted"{% endif %}>
-                        <td class="text-center">
-                            <!-- data-id used by JS to build the ids field; no name= so it
-                                 is not submitted as a form field -->
-                            <input aria-label="Select rule {{ r.id }}" type="checkbox" class="rule-chk" data-id="{{ r.id }}">
-                        </td>
-                        <td class="text-muted">{{ r.id }}</td>
-                        <td>
-                            <strong>{{ r.name }}</strong>
-                            {% if r.description %}
-                            <br><small class="text-muted">{{ r.description }}</small>
-                            {% endif %}
-                        </td>
-                        <td><span class="label label-default">{{ r.zone }}</span></td>
-                        <td><code style="font-size:11px;word-break:break-all">{{ r.pattern }}</code></td>
-                        <td class="text-center">
-                            {% if r.action == "block" %}
-                                <span class="label label-danger">BLOCK</span>
-                            {% elif r.action == "challenge" %}
-                                <span class="label label-info">CAPTCHA</span>
-                            {% else %}
-                                <span class="label label-warning">+{{ r.score }}</span>
-                            {% endif %}
-                        </td>
-                        <td class="text-center">
-                            {% if r.enabled %}
-                                <span class="label label-success">enabled</span>
-                            {% else %}
-                                <span class="label label-default">disabled</span>
-                            {% endif %}
-                        </td>
-                        <td class="text-center" style="white-space:nowrap">
-                            <!-- Per-row toggle -->
-                            <a href="/policy/{{ policy.name }}/rules/{{ r.id }}/toggle"
-                               class="btn btn-xs btn-default"
-                               title="{% if r.enabled %}Disable{% else %}Enable{% endif %}"
-                               onclick="event.preventDefault(); document.getElementById('toggleForm{{ r.id }}').submit();">
-                                {% if r.enabled %}
-                                    <i class="fa fa-pause"></i>
-                                {% else %}
-                                    <i class="fa fa-play"></i>
-                                {% endif %}
-                            </a>
-                            <form class="admin-only" id="toggleForm{{ r.id }}" method="post"
-                                  action="/policy/{{ policy.name }}/rules/{{ r.id }}/toggle"
-                                  style="display:none"></form>
-                            <!-- Per-row delete -->
-                            <a href="#" class="btn btn-xs btn-danger" title="Delete"
-                               onclick="event.preventDefault();
-                                        if(confirm('Delete rule {{ r.name }}?'))
-                                          document.getElementById('delForm{{ r.id }}').submit();">
-                                <i class="fa fa-trash"></i>
-                            </a>
-                            <form class="admin-only" id="delForm{{ r.id }}" method="post"
-                                  action="/policy/{{ policy.name }}/rules/{{ r.id }}/delete"
-                                  style="display:none"></form>
-                        </td>
-                    </tr>
-                {% endfor %}
+                {#- One row per rule, kept compact: a policy holding every set has
+                    thousands. The checkbox's data-id builds the bulk form's ids
+                    field and has no name, so it is not submitted itself. Pause and
+                    Delete submit the form declared above the bulk form, which a
+                    form inside this one could not be. -#}
+                {%- for r in rules %}
+                    <tr{% if not r.enabled %} class="text-muted"{% endif %}>
+<td class="text-center"><input aria-label="Select rule {{ r.id }}" type="checkbox" class="rule-chk" data-id="{{ r.id }}"></td>
+<td class="text-muted">{{ r.id }}</td>
+<td><strong>{{ r.name }}</strong>{% if r.description %}<br><small class="text-muted">{{ r.description }}</small>{% endif %}</td>
+<td><span class="label label-default">{{ r.zone }}</span></td><td><code class="rule-pat">{{ r.pattern }}</code></td>
+<td class="text-center">{% if r.action == "block" %}<span class="label label-danger">BLOCK</span>{% elif r.action == "challenge" %}<span class="label label-info">CAPTCHA</span>{% else %}<span class="label label-warning">+{{ r.score }}</span>{% endif %}</td>
+<td class="text-center">{% if r.enabled %}<span class="label label-success">enabled</span>{% else %}<span class="label label-default">disabled</span>{% endif %}</td>
+<td class="rule-acts"><button type="submit" form="ruleAction" formaction="/policy/{{ policy.name }}/rules/{{ r.id }}/toggle" class="btn btn-xs btn-default" title="{% if r.enabled %}Disable{% else %}Enable{% endif %}">{% if r.enabled %}<i class="fa fa-pause"></i>{% else %}<i class="fa fa-play"></i>{% endif %}</button>
+<button type="submit" form="ruleAction" formaction="/policy/{{ policy.name }}/rules/{{ r.id }}/delete" class="btn btn-xs btn-danger" title="Delete" data-confirm="Delete rule {{ r.name }}?"><i class="fa fa-trash"></i></button></td></tr>
+                {%- endfor %}
                 </tbody>
             </table>
         </div>
@@ -308,6 +268,14 @@ $(document).ready(function () {
         document.getElementById('bulkForm').submit();
     };
 
+});
+
+// ── Delete asks first ─────────────────────────────────────
+// Every row's Pause and Delete submit the one form; Delete carries the
+// question to ask. One listener for the page rather than one per row.
+document.addEventListener('click', function (e) {
+    var button = e.target.closest('[data-confirm]');
+    if (button && !window.confirm(button.dataset.confirm)) { e.preventDefault(); }
 });
 
 // Comma-separated into one field: a repeated form field collapses to its last

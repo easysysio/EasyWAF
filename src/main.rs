@@ -306,9 +306,9 @@ async fn main() {
         .route("/certs/{name}",          get(routes::certs::get_cert_detail))
         .route("/certs/{name}/delete",   post(routes::certs::post_cert_delete))
         .route("/policy",                get(routes::policy::get_policies))
-        .route("/policy/new",            get(routes::policy::get_policy_new))
+        .route("/policy/new",            get(routes::policy::get_policy_new).layer(rule_page()))
         .route("/policy/create",         post(routes::policy::post_policy_create))
-        .route("/policy/{name}/edit",    get(routes::policy::get_policy_edit))
+        .route("/policy/{name}/edit",    get(routes::policy::get_policy_edit).layer(rule_page()))
         .route("/policy/{name}/update",  post(routes::policy::post_policy_update))
         // Rule sets and rules added from the policy's own page, the same
         // choice the create page offers.
@@ -318,18 +318,18 @@ async fn main() {
                post(routes::policy::post_apply_rule_update))
         .route("/policy/{name}/rules/revert/{set_id}",
                post(routes::policy::post_revert_rule_set))
-        .route("/policy/{name}/rules",                get(routes::rules::get_rules))
+        .route("/policy/{name}/rules",                get(routes::rules::get_rules).layer(rule_page()))
         .route("/policy/{name}/rules/new",            get(routes::rules::get_rule_new))
         .route("/policy/{name}/rules/create",         post(routes::rules::post_rule_create))
         .route("/policy/{name}/rules/bulk",           post(routes::rules::post_bulk_rules))
         .route("/policy/{name}/rules/sets",           get(routes::policy::get_rule_sets))
         .route("/policy/{name}/rules/remove/{set_id}", post(routes::policy::post_remove_rule_set))
-        .route("/policy/{name}/rules/catalog",        get(routes::rules::get_rules_catalog)
+        .route("/policy/{name}/rules/catalog",        get(routes::rules::get_rules_catalog).layer(rule_page())
                                                          .post(routes::rules::post_rules_catalog))
         .route("/policy/{name}/rules/{id}/toggle",    post(routes::rules::post_rule_toggle))
         .route("/policy/{name}/rules/{id}/delete",    post(routes::rules::post_rule_delete))
         .route("/policy/{name}/rules/state",          post(routes::rules::post_rule_state))
-        .route("/rules",                 get(routes::rules::get_all_rules))
+        .route("/rules",                 get(routes::rules::get_all_rules).layer(rule_page()))
         .route("/rules/new",             get(routes::rules::get_custom_rule_new))
         .route("/rules/create",          post(routes::rules::post_custom_rule_create))
         .route("/rules/{id}/edit",       get(routes::rules::get_rule_edit_global))
@@ -509,6 +509,20 @@ async fn main() {
     }
 
     close_database(&db).await;
+}
+
+// ─── rule_page ───────────────────────────────────────────
+
+/// Gzip for the pages that list rules, which run to megabytes of HTML once a
+/// few policies hold every set: the rule library, a policy's rules and its
+/// settings, the create page and All Rules.
+///
+/// Only those. Compressing a page that carries a secret beside text a request
+/// can choose lets the compressed length give the secret away (BREACH), and a
+/// rule list carries none — the rest of the interface has little to gain and
+/// is left as it is.
+fn rule_page() -> tower_http::compression::CompressionLayer {
+    tower_http::compression::CompressionLayer::new()
 }
 
 // ─── Stopping ────────────────────────────────────────────

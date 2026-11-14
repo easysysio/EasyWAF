@@ -72,7 +72,7 @@ bcrypt = "0.17.0"
 maxminddb = "0.30"
 
 # Static file serving (set-header lets us send Cache-Control on /static)
-tower-http = { version = "0.6", features = ["fs", "trace", "set-header"] }
+tower-http = { version = "0.6", features = ["fs", "trace", "set-header", "compression-gzip"] }
 tower = "0.5"
 
 # Error handling

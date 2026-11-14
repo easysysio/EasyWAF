@@ -127,57 +127,27 @@
                 </tr>
             </thead>
             <tbody>
-            {% for r in g.rules %}
-                <tr class="rule-row {% if not r.enabled %}text-muted{% endif %}"
-                    id="rule-{{ r.id }}" data-rule-id="{{ r.id }}"
-                    data-text="{{ r.name | lower }} {{ r.pattern | lower }} {{ r.zone | lower }} {{ r.policy_name | lower }}">
-                    <td class="text-muted">{{ r.id }}</td>
-                    <td><span class="label label-primary">{{ r.policy_name }}</span></td>
-                    <td><strong>{{ r.name }}</strong></td>
-                    <td><span class="label label-default">{{ r.zone }}</span></td>
-                    <td><code style="font-size:11px;word-break:break-all">{{ r.pattern }}</code></td>
-                    <td class="text-center">
-                        {% if r.action == "block" %}
-                            <span class="label label-danger">BLOCK</span>
-                        {% elif r.action == "challenge" %}
-                            <span class="label label-info">CAPTCHA</span>
-                        {% else %}
-                            <span class="label label-warning">+{{ r.score }}</span>
-                        {% endif %}
-                    </td>
-                    <td class="text-center">
-                        {% if r.enabled %}
-                            <span class="label label-success">enabled</span>
-                        {% else %}
-                            <span class="label label-default">disabled</span>
-                        {% endif %}
-                    </td>
-                    <td class="text-center" style="white-space:nowrap">
-                        <a href="/rules/{{ r.id }}/edit" class="btn btn-xs btn-primary" title="Edit">
-                            <i class="fa fa-pencil"></i>
-                        </a>
-                        <a href="#" class="btn btn-xs btn-default" title="Toggle enable/disable"
-                           onclick="event.preventDefault(); document.getElementById('tg{{ r.id }}').submit();">
-                            {% if r.enabled %}<i class="fa fa-pause"></i>{% else %}<i class="fa fa-play"></i>{% endif %}
-                        </a>
-                        <form class="admin-only" id="tg{{ r.id }}" method="post"
-                              action="/rules/{{ r.id }}/toggle" style="display:none"></form>
-                        <a href="#" class="btn btn-xs btn-danger" title="Delete"
-                           onclick="event.preventDefault();
-                                    if(confirm('Delete rule {{ r.name }}?'))
-                                      document.getElementById('dl{{ r.id }}').submit();">
-                            <i class="fa fa-trash"></i>
-                        </a>
-                        <form class="admin-only" id="dl{{ r.id }}" method="post"
-                              action="/rules/{{ r.id }}/delete" style="display:none"></form>
-                    </td>
-                </tr>
-            {% endfor %}
+            {#- One row per rule, kept compact: the page holds every rule of every
+                policy, so whitespace and repeated markup here are paid thousands
+                of times. Pause and Delete submit the one form below the table
+                with this row's address; the search reads the row's own cells. -#}
+            {%- for r in g.rules %}
+                <tr class="rule-row{% if not r.enabled %} text-muted{% endif %}" id="rule-{{ r.id }}" data-rule-id="{{ r.id }}">
+<td class="text-muted">{{ r.id }}</td><td><span class="label label-primary">{{ r.policy_name }}</span></td><td><strong>{{ r.name }}</strong></td><td><span class="label label-default">{{ r.zone }}</span></td><td><code class="rule-pat">{{ r.pattern }}</code></td>
+<td class="text-center">{% if r.action == "block" %}<span class="label label-danger">BLOCK</span>{% elif r.action == "challenge" %}<span class="label label-info">CAPTCHA</span>{% else %}<span class="label label-warning">+{{ r.score }}</span>{% endif %}</td>
+<td class="text-center">{% if r.enabled %}<span class="label label-success">enabled</span>{% else %}<span class="label label-default">disabled</span>{% endif %}</td>
+<td class="rule-acts"><a href="/rules/{{ r.id }}/edit" class="btn btn-xs btn-primary" title="Edit"><i class="fa fa-pencil"></i></a>
+<button type="submit" form="ruleAction" formaction="/rules/{{ r.id }}/toggle" class="btn btn-xs btn-default" title="Toggle enable/disable">{% if r.enabled %}<i class="fa fa-pause"></i>{% else %}<i class="fa fa-play"></i>{% endif %}</button>
+<button type="submit" form="ruleAction" formaction="/rules/{{ r.id }}/delete" class="btn btn-xs btn-danger" title="Delete" data-confirm="Delete rule {{ r.name }}?"><i class="fa fa-trash"></i></button></td></tr>
+            {%- endfor %}
             </tbody>
         </table>
     </div>
 </div>
 {% endfor %}
+
+{# The form every row's Pause and Delete submit, each with its own address. #}
+<form class="admin-only" id="ruleAction" method="post" style="display:none"></form>
 
 {% endblock %}
 
@@ -204,16 +174,52 @@ function expandAll(open) {
     document.querySelectorAll('.cat-toggle').forEach(function (t) { setCatOpen(t, open); });
 }
 
-// ── Search — filters rows and auto-expands while searching ──
-function filterRules() {
-    var q = document.getElementById('ruleSearch').value.toLowerCase();
-    document.querySelectorAll('.rule-row').forEach(function (row) {
-        row.style.display = row.dataset.text.indexOf(q) !== -1 ? '' : 'none';
-    });
-    document.querySelectorAll('.cat-toggle').forEach(function (t) {
-        setCatOpen(t, q.length > 0);
+// ── Search — filters rows and opens the categories with a match ──
+//
+// The page can hold thousands of rows, so the search waits until typing
+// pauses, and each row's text — its policy, name, zone and pattern — is read
+// from its cells once, on the first search, rather than carried in the page a
+// second time.
+var searchIndex = null;
+var searchTimer = null;
+
+function buildSearchIndex() {
+    searchIndex = Array.prototype.map.call(document.querySelectorAll('.rule-row'), function (row) {
+        var c = row.cells;
+        var text = [c[2].textContent, c[4].textContent, c[3].textContent, c[1].textContent].join(' ');
+        return { row: row, body: row.closest('.cat-body'), text: text.toLowerCase() };
     });
 }
+
+function filterRules() {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(applyFilter, 200);
+}
+
+function applyFilter() {
+    var q = document.getElementById('ruleSearch').value.toLowerCase();
+    if (searchIndex === null) { buildSearchIndex(); }
+
+    var matched = new Set();
+    searchIndex.forEach(function (entry) {
+        var hit = entry.text.indexOf(q) !== -1;
+        entry.row.style.display = hit ? '' : 'none';
+        if (hit) { matched.add(entry.body); }
+    });
+    // While searching, a category is open when something in it matches;
+    // cleared, they all close again.
+    document.querySelectorAll('.cat-toggle').forEach(function (t) {
+        setCatOpen(t, q.length > 0 && matched.has(t.nextElementSibling));
+    });
+}
+
+// ── Delete asks first ─────────────────────────────────────
+// Every row's Pause and Delete submit the one form; Delete carries the
+// question to ask. One listener for the page rather than one per row.
+document.addEventListener('click', function (e) {
+    var button = e.target.closest('[data-confirm]');
+    if (button && !window.confirm(button.dataset.confirm)) { e.preventDefault(); }
+});
 
 // ── Open the page on a rule you just saved ─────────────────
 // Every group is collapsed by default, and a clone is bucketed by external_id

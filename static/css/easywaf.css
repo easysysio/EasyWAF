@@ -598,3 +598,9 @@ html[data-theme="dark"] .alert-warning { color: #fbbf24 !important; }
 /* The first panel in a pane sits directly under the tab strip; without this it
    touches the border and reads as part of it. */
 .tab-content.settings-tabs { padding-top: 18px; }
+
+/* Rule tables. The rule pages list thousands of rows, so what each cell needs
+   is a class rather than the same style attribute repeated on every row. */
+.rule-pat { font-size: 11px; word-break: break-all; }
+.rule-acts { white-space: nowrap; text-align: center; }
+.rule-mid { vertical-align: middle !important; }

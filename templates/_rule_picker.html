@@ -128,67 +128,37 @@
                     <tr><th>Selected</th><th>Rule</th><th>Zone</th><th>Action</th><th>Pattern</th></tr>
                 </thead>
                 <tbody>
-                {% for r in cat.rules %}
-                    <tr class="rule-row"
-                        data-text="{{ r.name | lower }} {{ r.description | lower }} {{ r.zone | lower }}">
-                        <td style="width:34px;text-align:center;vertical-align:middle">
-                            {# The tick means "this rule applies here". A rule the
-                               policy holds is ticked and can be unticked, which
-                               switches it off; one already off is unticked
-                               and ticking it switches it back on. Held rules
-                               carry their own class so the counts can tell a
-                               selection from what is already true. #}
-                            <input type="checkbox" aria-label="{{ r.name }}"
-                                   class="{% if r.added %}cat-held{% else %}cat-chk{% endif %}"
-                                   data-cat="{{ cat.code }}" data-id="{{ r.external_id }}"
-                                   {% if r.added %}checked
-                                   title="In this policy — untick to switch it off"
-                                   {% elif r.off %}data-off="1"
-                                   title="In this policy, switched off — tick to switch it back on"
-                                   {% endif %}>
-                        </td>
-                        <td>
-                            <strong>{{ r.name }}</strong>
-                            {% if r.added or r.off %}
-                                {% if r.off %}
-                                <span class="label label-warning" style="font-weight:normal">in this policy, off</span>
-                                {% else %}
-                                <span class="label label-default" style="font-weight:normal">in this policy</span>
-                                {% endif %}
-                                {# Unticking switches a rule off and it stays in
-                                   the policy, which is what survives the next
-                                   update of its set. Deleting it outright is a
-                                   different thing and is asked for separately.
-                                   A button, not a form: this is inside the
-                                   selection form, which a form cannot nest in,
-                                   so it submits the empty form declared beside
-                                   it by id. #}
-                                {% if policy %}
-                                <button type="submit" form="ruleStateForm"
-                                        class="btn btn-xs btn-link admin-only" style="padding:0 4px"
-                                        name="do" value="remove:{{ r.external_id }}"
-                                        title="Delete this rule from the policy. Installing or updating its set adds it back — unticking it instead keeps it out.">delete</button>
-                                {% endif %}
-                            {% endif %}
-                            {% if r.description %}
-                            <br><small class="text-muted">{{ r.description }}</small>
-                            {% endif %}
-                        </td>
-                        <td style="width:80px;vertical-align:middle">
-                            <span class="label label-default">{{ r.zone }}</span>
-                        </td>
-                        <td style="width:90px;vertical-align:middle;text-align:center">
-                            {% if r.action == "block" %}
-                                <span class="label label-danger">BLOCK</span>
-                            {% else %}
-                                <span class="label label-warning">+{{ r.score }}</span>
-                            {% endif %}
-                        </td>
-                        <td style="vertical-align:middle">
-                            <code style="font-size:11px;word-break:break-all">{{ r.pattern }}</code>
-                        </td>
-                    </tr>
-                {% endfor %}
+                {#- One row per rule, kept compact: the catalogue holds every
+                    published rule, so whitespace and repeated markup here are paid
+                    thousands of times.
+
+                    The tick means "this rule applies here". A rule the policy holds
+                    is ticked and can be unticked, which switches it off; one
+                    already off is unticked and ticking it switches it back on. Held
+                    rules carry their own class so the counts can tell a selection
+                    from what is already true.
+
+                    Unticking switches a rule off and it stays in the policy, which
+                    is what survives the next update of its set. Deleting it
+                    outright is a different thing and is asked for separately. A
+                    button, not a form: this is inside the selection form, which a
+                    form cannot nest in, so it submits the empty form declared
+                    beside it by id. -#}
+                {%- for r in cat.rules %}
+                    <tr class="rule-row" data-text="{{ r.name | lower }} {{ r.description | lower }} {{ r.zone | lower }}">
+<td class="rule-mid" style="width:34px;text-align:center"><input type="checkbox" aria-label="{{ r.name }}" class="{% if r.added %}cat-held{% else %}cat-chk{% endif %}" data-cat="{{ cat.code }}" data-id="{{ r.external_id }}"{% if r.added %} checked title="In this policy — untick to switch it off"{% elif r.off %} data-off="1" title="In this policy, switched off — tick to switch it back on"{% endif %}></td>
+<td><strong>{{ r.name }}</strong>
+{%- if r.added or r.off %}
+{% if r.off %}<span class="label label-warning" style="font-weight:normal">in this policy, off</span>{% else %}<span class="label label-default" style="font-weight:normal">in this policy</span>{% endif %}
+{%- if policy %}
+<button type="submit" form="ruleStateForm" class="btn btn-xs btn-link admin-only" style="padding:0 4px" name="do" value="remove:{{ r.external_id }}" title="Delete this rule from the policy. Installing or updating its set adds it back — unticking it instead keeps it out.">delete</button>
+{%- endif %}
+{%- endif %}
+{%- if r.description %}<br><small class="text-muted">{{ r.description }}</small>{% endif %}</td>
+<td class="rule-mid" style="width:80px"><span class="label label-default">{{ r.zone }}</span></td>
+<td class="rule-mid" style="width:90px;text-align:center">{% if r.action == "block" %}<span class="label label-danger">BLOCK</span>{% else %}<span class="label label-warning">+{{ r.score }}</span>{% endif %}</td>
+<td class="rule-mid"><code class="rule-pat">{{ r.pattern }}</code></td></tr>
+                {%- endfor %}
                 </tbody>
             </table>
         </div>
@@ -214,20 +184,22 @@ function rulesIn(cat) {
 // unticked as soon as one is taken out. A set with a rule missing from it is
 // not the set, and a heading that went on claiming it would be the one part of
 // this page that lied.
+//
+// Each category is counted within its own panel: the page holds thousands of
+// rules, and searching the whole page for every category's boxes on every
+// tick is what made a tick slow.
 function updateCounts() {
     var total = 0, offTotal = 0;
 
     document.querySelectorAll('.cat-body').forEach(function (body) {
-        var cat     = body.dataset.cat;
-        var master  = document.querySelector('.cat-master[data-cat="' + cat + '"]');
-        var all     = rulesIn(cat);
-        var ticked  = body.parentNode.querySelectorAll(
-                          '.cat-chk[data-cat="' + cat + '"]:checked, ' +
-                          '.cat-held[data-cat="' + cat + '"]:checked');
+        var panel   = body.parentNode;
+        var master  = panel.querySelector('.cat-master');
+        var all     = body.querySelectorAll('.cat-chk, .cat-held');
+        var ticked  = body.querySelectorAll('.cat-chk:checked, .cat-held:checked');
         // What applying would do: add or switch on the ticked ones that are not
         // applying yet, and switch off the held ones that have been unticked.
-        var adding  = document.querySelectorAll('.cat-chk[data-cat="' + cat + '"]:checked');
-        var dropped = document.querySelectorAll('.cat-held[data-cat="' + cat + '"]:not(:checked)');
+        var adding  = body.querySelectorAll('.cat-chk:checked');
+        var dropped = body.querySelectorAll('.cat-held:not(:checked)');
 
         if (master) {
             master.checked = all.length > 0 && ticked.length === all.length;
@@ -238,17 +210,17 @@ function updateCounts() {
         total    += adding.length;
         offTotal += dropped.length;
 
-        var count = document.querySelector('.cat-count[data-cat="' + cat + '"]');
+        var count = panel.querySelector('.cat-count');
         if (count) { count.textContent = adding.length; }
-        var some = document.querySelector('.cat-some[data-cat="' + cat + '"]');
-        var each = document.querySelector('.cat-whole[data-cat="' + cat + '"]');
+        var some = panel.querySelector('.cat-some');
+        var each = panel.querySelector('.cat-whole');
         if (some) { some.style.display = whole ? 'none' : ''; }
         if (each) { each.style.display = whole ? '' : 'none'; }
 
         // Rules on their way off are not a selection and are not counted as
         // one, but they are a pending change, and saying so is the difference
         // between unticking something and wondering whether it took.
-        var going = document.querySelector('.cat-off[data-cat="' + cat + '"]');
+        var going = panel.querySelector('.cat-off');
         if (going) {
             going.textContent = dropped.length ? ' · ' + dropped.length + ' switching off' : '';
             going.style.display = dropped.length ? '' : 'none';
@@ -340,18 +312,31 @@ document.querySelectorAll('.cat-toggle').forEach(function (toggle) {
     });
 });
 
-// ── Search filter — auto-expands categories while searching ──
+// ── Search filter — opens the categories with a match ─────
+//
+// The catalogue holds thousands of rules, so the search waits until typing
+// pauses rather than redrawing every row on every key.
+var searchTimer = null;
+
 function filterRules() {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(applyFilter, 200);
+}
+
+function applyFilter() {
     var q = document.getElementById('ruleSearch').value.toLowerCase();
+    var matched = new Set();
 
     document.querySelectorAll('.rule-row').forEach(function (row) {
-        row.style.display = row.dataset.text.indexOf(q) !== -1 ? '' : 'none';
+        var hit = row.dataset.text.indexOf(q) !== -1;
+        row.style.display = hit ? '' : 'none';
+        if (hit) { matched.add(row.closest('.cat-body')); }
     });
 
-    // While a query is active, open every panel so matches are visible.
-    // When the box is cleared, collapse them all again.
+    // While a query is active, a panel is open when something in it matches.
+    // When the box is cleared, they all collapse again.
     document.querySelectorAll('.cat-toggle').forEach(function (toggle) {
-        setCatOpen(toggle, q.length > 0);
+        setCatOpen(toggle, q.length > 0 && matched.has(toggle.nextElementSibling));
     });
 }
 

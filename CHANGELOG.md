@@ -8,7 +8,13 @@ Version bumps and tags are created only after explicit approval.
 
 ## [Unreleased]
 
+### Changed
+- The rule pages are much lighter with many rules installed: sent gzipped, with less markup per row, and the rule sets parsed once rather than on every view (All Rules with three full policies: 19.9 MB sent before, 0.6 MB now).
+- Searching a rule list waits until typing pauses and opens only the categories with a match, and ticking a rule in the picker counts each category within its own panel instead of searching the whole page for it.
+
 ### Fixed
+- The first rule's pause button on a policy's Rules page works; its form sat inside the bulk-action form, where a browser drops it.
+- Deleting a rule whose name holds an apostrophe asks before deleting instead of doing nothing.
 - The About box and the Docker README link to the documentation at `easywaf.easysys.io`.
 - The rule converters stop on a path outside their working directory with a `raise`, a form SonarCloud recognises as ending the path check.
 
