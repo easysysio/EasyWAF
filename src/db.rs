@@ -93,6 +93,7 @@ pub async fn init(database_url: &str) -> SqlitePool {
     run_migration_042(&pool).await;
     run_migration_043(&pool).await;
     run_migration_044(&pool).await;
+    run_migration_045(&pool).await;
 
     // After the migrations, so the version recorded is the one whose schema
     // this now is. A snapshot carries it, and a restore reads it.
@@ -100,6 +101,45 @@ pub async fn init(database_url: &str) -> SqlitePool {
 
     info!("Database ready: {}", database_url);
     pool
+}
+
+// ─── run_migration_045 ───────────────────────────────────
+
+/// Traffic indexed by site and by verdict, each with the timestamp second.
+/// Applied while either index is missing.
+///
+/// Building them reads all of `traffic_events`, which on a long history takes
+/// long enough that the proxy visibly is not yet listening, so the start and
+/// the time it took are both logged.
+async fn run_migration_045(pool: &SqlitePool) {
+    let present: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index'
+         AND name IN ('idx_traffic_site_ts', 'idx_traffic_blocked_ts')",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0);
+    if present == 2 {
+        return;
+    }
+
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM traffic_events")
+        .fetch_one(pool)
+        .await
+        .unwrap_or(0);
+    info!("Migration 045: indexing {rows} traffic events by site and by verdict — on a long history this takes a while");
+    let started = std::time::Instant::now();
+
+    let sql = include_str!("../migrations/045_traffic_window_indexes.sql");
+    sqlx::raw_sql(sql)
+        .execute(pool)
+        .await
+        .unwrap_or_else(|e| panic!("Migration 045 failed: {}", e));
+
+    info!(
+        "Migration 045 applied in {:.1}s: the dashboard and Traffic Monitor read a site's or a verdict's requests by time",
+        started.elapsed().as_secs_f64()
+    );
 }
 
 // ─── run_migration_044 ───────────────────────────────────

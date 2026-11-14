@@ -72,9 +72,9 @@ CREATE TABLE IF NOT EXISTS traffic_events (
     country      TEXT        -- ISO 3166-1 alpha-2, populated by GeoIP module
 );
 
-CREATE INDEX IF NOT EXISTS idx_traffic_site    ON traffic_events(site_id);
 CREATE INDEX IF NOT EXISTS idx_traffic_ts      ON traffic_events(timestamp);
-CREATE INDEX IF NOT EXISTS idx_traffic_blocked ON traffic_events(blocked);
+-- The indexes by site and by verdict are migration 045's, which builds them
+-- with the timestamp as their second column.
 
 -- ── GeoIP Rules ──────────────────────────────────────────
 -- Per-site list of countries to block or allow.

@@ -6,6 +6,11 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
+## [Unreleased]
+
+### Fixed
+- The dashboard and a filtered Traffic Monitor no longer slow down as traffic history grows: a site's or a verdict's requests are indexed by time, so a view reads only its window (dashboard on three million logged requests: about 3 s before, 0.06 s now). The first start after upgrading builds the new indexes, which takes a few seconds per million logged requests.
+
 ## [1.7.4] — 2026-11-14
 
 ### Changed

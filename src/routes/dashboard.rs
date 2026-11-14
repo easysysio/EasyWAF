@@ -178,7 +178,9 @@ pub async fn get_dashboard(
 ///
 /// A LEFT JOIN keeps sites with no traffic in the result, and the time window
 /// sits in the JOIN rather than a WHERE clause so an idle site still reports a
-/// zero row instead of dropping out.
+/// zero row instead of dropping out. The site and the window together are what
+/// the `(site_id, timestamp)` index answers, so each site's count reads only
+/// that site's requests in the window rather than everything it ever logged.
 ///
 /// Challenges are logged with `blocked = 0` and a `challenge:` reason, so they
 /// are counted separately here and excluded from `passed` — a visitor shown a
