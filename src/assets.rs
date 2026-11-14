@@ -1137,6 +1137,110 @@ mod tests {
                 "a page that omits is_admin renders as an administrator");
     }
 
+    /// Whether the element whose opening tag holds `marker` sits inside, or
+    /// is itself, an element marked admin-only, which the layout hides from
+    /// a viewer. Walks the tags before the marker keeping a stack of the open
+    /// ones; comments, void elements and the bodies of scripts and styles
+    /// open nothing.
+    fn hidden_from_a_viewer(html: &str, marker: &str) -> bool {
+        const VOID: [&str; 8] = ["input", "br", "meta", "link", "img", "hr", "source", "wbr"];
+        let end = html.find(marker).unwrap_or_else(|| panic!("{marker} is not on the page"));
+        let mut rest = &html[..end];
+        let mut open: Vec<(String, bool)> = Vec::new();
+
+        while let Some(lt) = rest.find('<') {
+            rest = &rest[lt..];
+            if rest.starts_with("<!--") {
+                match rest.find("-->") {
+                    Some(e) => { rest = &rest[e + 3..]; continue; }
+                    None => break,
+                }
+            }
+            // No closing '>' before the marker: this is the marker's own tag.
+            let Some(gt) = rest.find('>') else { break };
+            let tag = &rest[1..gt];
+            rest = &rest[gt + 1..];
+
+            if let Some(closing) = tag.strip_prefix('/') {
+                let name = closing.trim().to_ascii_lowercase();
+                // Pops anything left unclosed inside it, as a browser does.
+                if let Some(at) = open.iter().rposition(|(n, _)| *n == name) {
+                    open.truncate(at);
+                }
+                continue;
+            }
+            if tag.starts_with('!') || tag.ends_with('/') {
+                continue;
+            }
+            let name = tag.split_whitespace().next().unwrap_or("").to_ascii_lowercase();
+            if VOID.contains(&name.as_str()) {
+                continue;
+            }
+            if name == "script" || name == "style" {
+                let close = format!("</{name}>");
+                match rest.find(&close) {
+                    Some(e) => { rest = &rest[e + close.len()..]; continue; }
+                    None => break,
+                }
+            }
+            open.push((name, tag.contains("admin-only")));
+        }
+
+        // The marker's own tag, read whole: its class may come after it.
+        let own_start = end - rest.len();
+        let own_end = end + html[end..].find('>').unwrap_or(html.len() - end);
+        let own_tag_hidden = rest.starts_with('<') && html[own_start..own_end].contains("admin-only");
+        own_tag_hidden || open.iter().any(|(_, hidden)| *hidden)
+    }
+
+    /// A viewer reads a policy's rules; only the controls that change them
+    /// are an administrator's. The bulk form is hidden from a viewer, so it
+    /// must not hold the table: hiding it would hide every rule with it.
+    #[test]
+    fn a_viewer_reads_a_policys_rules_without_its_controls() {
+        let tera = tera().expect("templates should build");
+
+        let render = |is_admin: bool| {
+            let mut ctx = tera::Context::new();
+            for (k, v) in [("username", "t"), ("title", "WAF Rules"), ("url", "/policy"),
+                           ("result", ""), ("msg", "")] {
+                ctx.insert(k, v);
+            }
+            ctx.insert("is_admin", &is_admin);
+            ctx.insert("policy", &serde_json::json!({
+                "id": 1, "name": "websites", "rule_engine": "On", "score_threshold": 10 }));
+            ctx.insert("rules", &vec![serde_json::json!({
+                "id": 42, "name": "Union select probe", "description": "",
+                "zone": "ARGS", "pattern": "union", "score": 5, "action": "score",
+                "enabled": true })]);
+            ctx.insert("total_rules", &1);
+            ctx.insert("enabled_rules", &1);
+            ctx.insert("custom_count", &0);
+            ctx.insert("other_policies", &Vec::<serde_json::Value>::new());
+            tera.render("policy_rules.html", &ctx)
+                .unwrap_or_else(|e| panic!("policy_rules.html failed to render: {e:#?}"))
+        };
+
+        let viewer = render(false);
+        assert!(viewer.contains("Union select probe"), "the rule is not rendered");
+        assert!(!hidden_from_a_viewer(&viewer, r#"id="rulesTable""#),
+                "a viewer cannot see the rules table");
+
+        // The controls stay an administrator's. The bar is checked too so
+        // the walk above is shown to find something when there is one.
+        for control in [r#"id="bulkForm""#, r#"id="bulkBar""#, r#"id="chkAll""#,
+                        r#"data-id="42""#, r#"formaction="/policy/websites/rules/42/toggle""#,
+                        r#"formaction="/policy/websites/rules/42/delete""#] {
+            assert!(hidden_from_a_viewer(&viewer, control),
+                    "a viewer is offered {control}, which will refuse them");
+        }
+
+        let admin = render(true);
+        assert!(admin.contains(r#"action="/policy/websites/rules/bulk""#),
+                "an administrator has no bulk form to submit");
+        assert!(admin.contains(r#"data-id="42""#), "an administrator has no row to select");
+    }
+
     /// An installation that applies the country database by hand must be able
     /// to see what is waiting and put it in force — and must not be told that
     /// what is waiting is what its lookups are using.
