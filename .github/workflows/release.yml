@@ -23,53 +23,12 @@ permissions:
 
 jobs:
   # ─── Lint and audit, before anything is built ───────────────
-  # Clippy with warnings as errors, and cargo audit against the RustSec
-  # database. The build needs this job, so a tag whose code fails either
-  # publishes nothing: no packages, no image, no release.
-  #
-  # cargo audit reads .cargo/audit.toml, where each advisory it is told to
-  # ignore says why it cannot reach the binary. A new advisory fails the run
-  # until it is fixed or recorded there with its reason.
+  # The same checks every push runs (checks.yml). The build needs this job,
+  # so a tag whose code fails either publishes nothing: no packages, no
+  # image, no release.
   checks:
-    name: Clippy and audit
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
-        with:
-          toolchain: stable
-          components: clippy
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with:
-          key: checks
-
-      - name: Install cargo-audit
-        uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2.88.1
-        with:
-          tool: cargo-audit
-
-      - name: Prepare sqlx database
-        # Clippy compiles the query! macros too, and they check every query
-        # against a real schema, built the same way as for the release build.
-        run: |
-          sudo apt-get update && sudo apt-get install -y sqlite3
-          rm -f easywaf.db
-          for f in migrations/*.sql; do
-            sqlite3 easywaf.db < "$f"
-          done
-
-      - name: Clippy
-        run: cargo clippy --locked --all-targets -- -D warnings
-        env:
-          DATABASE_URL: sqlite://easywaf.db
-
-      - name: Audit dependencies
-        run: cargo audit
+    name: Checks
+    uses: ./.github/workflows/checks.yml
 
   # ─── Build .deb and .rpm for each architecture ──────────────
   build:
