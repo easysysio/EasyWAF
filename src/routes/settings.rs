@@ -67,7 +67,10 @@ pub const KEY_SYSLOG_PORT: &str = "syslog_port";
 /// Offered when nothing has been stored — the syslog port.
 pub const DEFAULT_SYSLOG_PORT: u16 = 514;
 
-/// Used when the row is missing or cannot be parsed.
+/// Used when the row is missing or cannot be parsed: keep everything. A new
+/// installation stores 30 days (migration 006); this is only the answer for a
+/// setting that cannot be read, and deleting history is never the right
+/// outcome of a broken setting.
 const DEFAULT_RETENTION_DAYS: i64 = 0;
 
 /// Upper bound offered in the GUI — ten years, enough for any sane policy

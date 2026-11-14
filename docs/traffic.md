@@ -68,8 +68,10 @@ the easiest to reach by accident — blocking asks for confirmation.
 
 ## Retention
 
-Traffic history is kept forever by default. Set a window under **Settings →
-General** and older events are pruned at startup and hourly.
+A new installation keeps 30 days of traffic history. Change the window under
+**Settings → General**, where 0 keeps everything; older events are pruned at
+startup and hourly. An upgrade keeps whatever an installation already had set,
+so one that was keeping everything goes on doing so until the window is changed.
 
 The Settings page shows how many events are stored, so the setting's effect is
 concrete rather than theoretical.

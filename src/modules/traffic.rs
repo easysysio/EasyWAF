@@ -290,9 +290,8 @@ const PRUNE_INTERVAL: Duration = Duration::from_secs(3600);
 
 /// Delete traffic events older than `days`. Returns the number of rows removed.
 ///
-/// `days <= 0` means "keep everything" and deletes nothing — that is the
-/// default, so an installation that never visits Settings behaves exactly as
-/// it did before retention existed.
+/// `days <= 0` means "keep everything" and deletes nothing. A new
+/// installation starts at 30 days; one that already stored a value keeps it.
 ///
 /// Rows are aged by their own `timestamp` column, which is written by SQLite
 /// at insert time, so a clock change does not strand old rows.
@@ -399,6 +398,35 @@ mod writer_tests {
         hostile.user = Some("x verdict=blocked".into());
         let line = flow_line(&hostile);
         assert!(line.ends_with(r#" user="x verdict=blocked""#), "the name was not quoted whole: {line}");
+    }
+
+    #[tokio::test]
+    async fn a_new_installation_keeps_thirty_days_of_traffic() {
+        let path = std::env::temp_dir()
+            .join(format!("easywaf-retention-{}.db", std::process::id()));
+        for sfx in ["", "-wal", "-shm"] { let _ = std::fs::remove_file(format!("{}{sfx}", path.display())); }
+        let db = crate::db::init(&format!("sqlite://{}", path.display())).await;
+        assert_eq!(crate::routes::settings::get_retention_days(&db).await, 30);
+        db.close().await;
+        for sfx in ["", "-wal", "-shm"] { let _ = std::fs::remove_file(format!("{}{sfx}", path.display())); }
+    }
+
+    #[tokio::test]
+    async fn an_existing_installation_keeps_the_retention_it_stored() {
+        let path = std::env::temp_dir()
+            .join(format!("easywaf-retention-kept-{}.db", std::process::id()));
+        for sfx in ["", "-wal", "-shm"] { let _ = std::fs::remove_file(format!("{}{sfx}", path.display())); }
+        let url = format!("sqlite://{}", path.display());
+        let db = crate::db::init(&url).await;
+        sqlx::raw_sql("UPDATE settings SET value = '0' WHERE key = 'traffic_retention_days'")
+            .execute(&db).await.unwrap();
+        db.close().await;
+
+        // Started again, as an upgrade would.
+        let db = crate::db::init(&url).await;
+        assert_eq!(crate::routes::settings::get_retention_days(&db).await, 0);
+        db.close().await;
+        for sfx in ["", "-wal", "-shm"] { let _ = std::fs::remove_file(format!("{}{sfx}", path.display())); }
     }
 
     #[tokio::test]

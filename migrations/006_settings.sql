@@ -14,4 +14,8 @@ CREATE TABLE IF NOT EXISTS settings (
 );
 
 -- Delete traffic_events older than this many days. 0 keeps everything.
-INSERT OR IGNORE INTO settings (key, value) VALUES ('traffic_retention_days', '0');
+-- A new installation keeps 30 days: every proxied request is a row, and a
+-- table that grows for as long as the proxy runs slows every page that reads
+-- it. This file runs only when the settings table is created, so a database
+-- that already holds a value keeps it.
+INSERT OR IGNORE INTO settings (key, value) VALUES ('traffic_retention_days', '30');

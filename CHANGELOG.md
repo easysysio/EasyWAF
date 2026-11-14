@@ -6,6 +6,11 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
+## [Unreleased]
+
+### Changed
+- A new installation keeps 30 days of traffic history instead of everything; an existing one keeps the retention it already has, so upgrading deletes nothing.
+
 ## [1.7.5] — 2026-11-14
 
 ### Security
