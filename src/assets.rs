@@ -1241,6 +1241,51 @@ mod tests {
         assert!(admin.contains(r#"data-id="42""#), "an administrator has no row to select");
     }
 
+    /// The Rule Editor lists every policy's rules. A viewer reads them and may
+    /// open a rule, whose page a viewer can read, but is not offered Pause or
+    /// Delete, which would refuse them.
+    #[test]
+    fn a_viewer_reads_every_rule_without_pause_or_delete() {
+        let tera = tera().expect("templates should build");
+
+        let render = |is_admin: bool| {
+            let mut ctx = tera::Context::new();
+            for (k, v) in [("username", "t"), ("title", "Rule Editor"), ("url", "/rules"),
+                           ("result", ""), ("msg", "")] {
+                ctx.insert(k, v);
+            }
+            ctx.insert("is_admin", &is_admin);
+            ctx.insert("groups", &vec![serde_json::json!({
+                "title": "SQL Injection", "code": "942", "enabled": 1, "total": 1,
+                "policies": 1,
+                "rules": [{"id": 42, "policy_name": "websites", "name": "Union select probe",
+                           "zone": "ARGS", "pattern": "union", "score": 5,
+                           "action": "score", "enabled": true}] })]);
+            ctx.insert("total_rules", &1);
+            ctx.insert("enabled_rules", &1);
+            ctx.insert("focus", &0);
+            ctx.insert("duplicates", &Vec::<serde_json::Value>::new());
+            tera.render("rules_all.html", &ctx)
+                .unwrap_or_else(|e| panic!("rules_all.html failed to render: {e:#?}"))
+        };
+
+        let viewer = render(false);
+        assert!(!hidden_from_a_viewer(&viewer, r#"id="rule-42""#),
+                "a viewer cannot see the rule");
+        assert!(!hidden_from_a_viewer(&viewer, r#"href="/rules/42/edit""#),
+                "a viewer cannot open the rule to read it");
+        for control in [r#"formaction="/rules/42/toggle""#, r#"formaction="/rules/42/delete""#] {
+            assert!(hidden_from_a_viewer(&viewer, control),
+                    "a viewer is offered {control}, which will refuse them");
+        }
+
+        let admin = render(true);
+        assert!(admin.contains(r#"formaction="/rules/42/toggle""#),
+                "an administrator cannot pause a rule");
+        assert!(admin.contains(r#"formaction="/rules/42/delete""#),
+                "an administrator cannot delete a rule");
+    }
+
     /// An installation that applies the country database by hand must be able
     /// to see what is waiting and put it in force — and must not be told that
     /// what is waiting is what its lookups are using.

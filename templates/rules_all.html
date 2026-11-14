@@ -130,15 +130,17 @@
             {#- One row per rule, kept compact: the page holds every rule of every
                 policy, so whitespace and repeated markup here are paid thousands
                 of times. Pause and Delete submit the one form below the table
-                with this row's address; the search reads the row's own cells. -#}
+                with this row's address, and are admin-only; Edit stays, since a
+                viewer opens the same page to read the rule. The search reads the
+                row's own cells. -#}
             {%- for r in g.rules %}
                 <tr class="rule-row{% if not r.enabled %} text-muted{% endif %}" id="rule-{{ r.id }}" data-rule-id="{{ r.id }}">
 <td class="text-muted">{{ r.id }}</td><td><span class="label label-primary">{{ r.policy_name }}</span></td><td><strong>{{ r.name }}</strong></td><td><span class="label label-default">{{ r.zone }}</span></td><td><code class="rule-pat">{{ r.pattern }}</code></td>
 <td class="text-center">{% if r.action == "block" %}<span class="label label-danger">BLOCK</span>{% elif r.action == "challenge" %}<span class="label label-info">CAPTCHA</span>{% else %}<span class="label label-warning">+{{ r.score }}</span>{% endif %}</td>
 <td class="text-center">{% if r.enabled %}<span class="label label-success">enabled</span>{% else %}<span class="label label-default">disabled</span>{% endif %}</td>
 <td class="rule-acts"><a href="/rules/{{ r.id }}/edit" class="btn btn-xs btn-primary" title="Edit"><i class="fa fa-pencil"></i></a>
-<button type="submit" form="ruleAction" formaction="/rules/{{ r.id }}/toggle" class="btn btn-xs btn-default" title="Toggle enable/disable">{% if r.enabled %}<i class="fa fa-pause"></i>{% else %}<i class="fa fa-play"></i>{% endif %}</button>
-<button type="submit" form="ruleAction" formaction="/rules/{{ r.id }}/delete" class="btn btn-xs btn-danger" title="Delete" data-confirm="Delete rule {{ r.name }}?"><i class="fa fa-trash"></i></button></td></tr>
+<button type="submit" form="ruleAction" formaction="/rules/{{ r.id }}/toggle" class="btn btn-xs btn-default admin-only" title="Toggle enable/disable">{% if r.enabled %}<i class="fa fa-pause"></i>{% else %}<i class="fa fa-play"></i>{% endif %}</button>
+<button type="submit" form="ruleAction" formaction="/rules/{{ r.id }}/delete" class="btn btn-xs btn-danger admin-only" title="Delete" data-confirm="Delete rule {{ r.name }}?"><i class="fa fa-trash"></i></button></td></tr>
             {%- endfor %}
             </tbody>
         </table>
