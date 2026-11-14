@@ -47,6 +47,7 @@ next minor, so a release's notes stay about its feature.
 | 1.7.1 | The signatures in the rule set mirror counted on the Updates page, per set and in total — **released 2026-11-04** |
 | 1.7.2 | DShield's recommended block list on the published list channel, and the record of why CINS Army cannot be — **released 2026-11-06** |
 | 1.7.3 | A certificate issued while creating a site is served at once, rather than refused until the site was saved again — **released 2026-11-07** |
+| 1.7.4 | Rule pages light enough for several full policies, and a viewer can read a policy's rules — **released 2026-11-14** |
 | 1.8.0 | Configuration sync between nodes — HA (see [ha-config-sync.md](ha-config-sync.md)) |
 | 1.9.0 | Learning and hardening modes — URL allowlisting (see [url-learning.md](url-learning.md)) |
 

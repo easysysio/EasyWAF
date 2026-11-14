@@ -6,7 +6,7 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
-## [Unreleased]
+## [1.7.4] — 2026-11-14
 
 ### Changed
 - The rule pages are much lighter with many rules installed: sent gzipped, with less markup per row, and the rule sets parsed once rather than on every view (All Rules with three full policies: 19.9 MB sent before, 0.6 MB now).
