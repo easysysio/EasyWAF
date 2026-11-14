@@ -6,7 +6,7 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
-## [Unreleased]
+## [1.7.5] — 2026-11-14
 
 ### Security
 - `cargo audit` passes again: `quinn-udp` moves to 0.5.16 for RUSTSEC-2026-0538 (never compiled into EasyWAF), and RUSTSEC-2026-0459 in bundled SQLite is recorded with why EasyWAF cannot be reached by it, since no sqlx release takes the fixed `libsqlite3-sys` yet.
