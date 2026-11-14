@@ -10,6 +10,7 @@ Version bumps and tags are created only after explicit approval.
 
 ### Changed
 - A new installation keeps 30 days of traffic history instead of everything; an existing one keeps the retention it already has, so upgrading deletes nothing.
+- The release workflow runs clippy, with warnings as errors, and `cargo audit` before building, and a tag that fails either publishes nothing.
 
 ## [1.7.5] — 2026-11-14
 
