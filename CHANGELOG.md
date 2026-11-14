@@ -11,6 +11,7 @@ Version bumps and tags are created only after explicit approval.
 ### Changed
 - A new installation keeps 30 days of traffic history instead of everything; an existing one keeps the retention it already has, so upgrading deletes nothing.
 - Clippy, with warnings as errors, and `cargo audit` run on every push and pull request, and before a release builds: a tag that fails either publishes nothing.
+- The packages' homepage is the documentation site, and the unused `anyhow` dependency is gone.
 
 ## [1.7.5] — 2026-11-14
 

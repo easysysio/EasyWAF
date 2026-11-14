@@ -937,7 +937,7 @@ async fn handle_request(
     }
     let site = match find_site(&state, &host).await {
         Ok(site)  => site,
-        Err(page) => return page,
+        Err(page) => return *page,
     };
 
     // Everything from here is this site's response, whichever step produces it
@@ -990,7 +990,7 @@ async fn serve_site(
 
     let body = match read_body_start(body).await {
         Ok(body)  => body,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
 
     // A CAPTCHA answer. Always a tiny form this server rendered, so it is
@@ -1139,13 +1139,14 @@ fn acme_answer(state: &ProxyState, host: &str, req: &axum::extract::Request) -> 
 }
 
 /// Step 3. The enabled site this hostname belongs to, or the page to answer
-/// with instead.
+/// with instead. The page is boxed: a response is large, and the Ok side is
+/// the one every request takes.
 ///
 /// A site that exists but is switched off is a different situation from a
 /// hostname nobody configured: the first is the operator taking it down on
 /// purpose, and its visitors deserve to be told that rather than being shown a
 /// 404 that reads like a mistake.
-async fn find_site(state: &ProxyState, host: &str) -> Result<Arc<SiteRow>, Response<Body>> {
+async fn find_site(state: &ProxyState, host: &str) -> Result<Arc<SiteRow>, Box<Response<Body>>> {
     let table = site_table(&state.db).await;
     if let Some(site) = table.enabled.get(host) {
         return Ok(site.clone());
@@ -1153,10 +1154,10 @@ async fn find_site(state: &ProxyState, host: &str) -> Result<Arc<SiteRow>, Respo
     if table.disabled.contains(host) {
         let message = crate::routes::settings::get_maintenance_message(&state.db).await;
         tracing::debug!(host = %host, "site is disabled — serving maintenance page");
-        return Err(maintenance_response(&message));
+        return Err(Box::new(maintenance_response(&message)));
     }
     tracing::debug!(host = %host, "no site matched");
-    Err(error_response(StatusCode::NOT_FOUND, "No site configured for this host"))
+    Err(Box::new(error_response(StatusCode::NOT_FOUND, "No site configured for this host")))
 }
 
 /// Step 4. The redirect to HTTPS, when the site asks for one and it can work.
@@ -1568,14 +1569,14 @@ struct BodyStart {
 /// trade-off is
 /// stated in Settings, where the limit is set: bytes past it are forwarded
 /// uninspected, so a payload padded past it is not seen.
-async fn read_body_start(body: BodyStream) -> Result<BodyStart, Response<Body>> {
+async fn read_body_start(body: BodyStream) -> Result<BodyStart, Box<Response<Body>>> {
     let limit = inspection_limit();
     let start = match read_prefix(body, limit, BODY_STALL_TIMEOUT).await {
         Ok(start) => start,
         Err(PrefixError::Read(_)) =>
-            return Err(error_response(StatusCode::BAD_REQUEST, "Failed to read request body")),
+            return Err(Box::new(error_response(StatusCode::BAD_REQUEST, "Failed to read request body"))),
         Err(PrefixError::Stalled) =>
-            return Err(error_response(StatusCode::REQUEST_TIMEOUT, "The request body stopped arriving")),
+            return Err(Box::new(error_response(StatusCode::REQUEST_TIMEOUT, "The request body stopped arriving"))),
     };
     let inspected = if start.head.len() > limit {
         start.head.slice(..limit)

@@ -6,7 +6,7 @@ authors = ["Yariv Hakim"]
 description = "EasyWAF - Self-contained Web Application Firewall and Reverse Proxy"
 license = "GPL-3.0-or-later"
 repository = "https://github.com/easysysio/EasyWAF"
-homepage = "https://github.com/easysysio/EasyWAF"
+homepage = "https://easywaf.easysys.io/"
 
 [[bin]]
 name = "easywaf"
@@ -76,7 +76,6 @@ tower-http = { version = "0.6", features = ["fs", "trace", "set-header", "compre
 tower = "0.5"
 
 # Error handling
-anyhow = "1.0"
 thiserror = "1.0"
 
 # Tracing
