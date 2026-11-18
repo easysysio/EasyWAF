@@ -116,7 +116,7 @@ pub async fn post_snapshot(
     _jar: SignedCookieJar,
     Admin(session): Admin,
 ) -> Result<Response> {
-    let name = crate::backup::file_name(chrono::Utc::now());
+    let name = crate::backup::file_name(crate::clock::now());
     // Taken into the backups directory under a dot-name, so a listing of
     // scheduled snapshots never shows a download that is half written.
     let tmp = crate::backup::dir().join(format!(".download-{name}"));
@@ -414,7 +414,7 @@ pub async fn post_export(
         tracing::info!(by = %session.username, "Configuration exported");
     }
 
-    let name = format!("easywaf-config-{}.toml", chrono::Utc::now().format("%Y%m%d-%H%M%S"));
+    let name = format!("easywaf-config-{}.toml", crate::backup::file_stamp(crate::clock::now()));
     Ok((
         [
             (header::CONTENT_TYPE, "application/toml; charset=utf-8".to_string()),

@@ -451,9 +451,9 @@ pub(crate) fn channel_url(raw: Option<&str>, what: &str) -> std::result::Result<
 }
 
 pub(crate) fn format_utc(raw: &str) -> String {
-    match chrono::DateTime::parse_from_rfc3339(raw) {
-        Ok(t)  => t.naive_utc().format("%Y-%m-%d %H:%M:%S").to_string(),
-        Err(_) => raw.to_string(),
+    match crate::clock::parse_rfc3339(raw) {
+        Some(t) => crate::clock::format(t, crate::clock::SQL),
+        None    => raw.to_string(),
     }
 }
 

@@ -114,31 +114,26 @@ impl tera::Filter for UtcTime {
 /// `YYYY-MM-DD HH:MM:SS`, the hour keys `YYYY-MM-DD HH:MM`, and RFC 3339.
 /// Seconds are shown only when the value had them, so an hour stays an hour.
 pub(crate) fn time_element(raw: &str) -> String {
-    use chrono::{DateTime, NaiveDateTime};
+    use crate::clock::{self, SQL, SQL_MINUTE};
 
     let raw = raw.trim();
     if raw.is_empty() {
         return String::new();
     }
-    let parsed = DateTime::parse_from_rfc3339(raw)
-        .map(|t| (t.naive_utc(), true))
-        .ok()
-        .or_else(|| NaiveDateTime::parse_from_str(raw, "%Y-%m-%d %H:%M:%S").ok().map(|t| (t, true)))
-        .or_else(|| NaiveDateTime::parse_from_str(raw, "%Y-%m-%d %H:%M").ok().map(|t| (t, false)));
+    let parsed = clock::parse_rfc3339(raw)
+        .map(|t| (t, true))
+        .or_else(|| clock::parse_utc(raw, SQL).map(|t| (t, true)))
+        .or_else(|| clock::parse_utc(raw, SQL_MINUTE).map(|t| (t, false)));
 
     let Some((t, seconds)) = parsed else {
         // Not a time this knows. Shown as it was, escaped, rather than dropped:
         // a value nobody can read is better than one that silently vanished.
         return tera::escape_html(raw);
     };
-    let shown = if seconds {
-        t.format("%Y-%m-%d %H:%M:%S").to_string()
-    } else {
-        t.format("%Y-%m-%d %H:%M").to_string()
-    };
+    let shown = clock::format(t, if seconds { SQL } else { SQL_MINUTE });
     format!(
-        r#"<time class="ts" datetime="{}Z"{} title="{shown} UTC">{shown} UTC</time>"#,
-        t.format("%Y-%m-%dT%H:%M:%S"),
+        r#"<time class="ts" datetime="{}"{} title="{shown} UTC">{shown} UTC</time>"#,
+        clock::format(t, clock::ISO),
         if seconds { r#" data-s="1""# } else { "" },
     )
 }

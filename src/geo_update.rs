@@ -244,7 +244,7 @@ pub async fn sync(db: &SqlitePool) -> Result<Fetched, String> {
     let body = fetch(format!("{base}/{}", offered.file)).await?;
     check_hash(&body, &offered)?;
 
-    crate::settings::record(db, KEY_FETCHED, &chrono::Utc::now().to_rfc3339()).await;
+    crate::settings::record(db, KEY_FETCHED, &crate::clock::rfc3339(crate::clock::now())).await;
 
     if crate::routes::updates::auto(db, crate::routes::updates::KEY_AUTO_GEO).await {
         let status = crate::geo::install(&body, crate::geo::Source::Channel)?;

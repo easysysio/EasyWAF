@@ -1737,7 +1737,7 @@ fn signed_in(
         return None;
     }
     let cookie = cookie_value(&incoming.headers, crate::gateway::SESSION_COOKIE)?;
-    crate::gateway::read(&state.secret, site.id, &ask.realm, &cookie, chrono::Utc::now().timestamp())
+    crate::gateway::read(&state.secret, site.id, &ask.realm, &cookie, crate::clock::unix_now())
 }
 
 /// What the gateway did with a request.
@@ -1808,7 +1808,7 @@ async fn gate(
         ask.announce(&mut incoming.headers, &s.who);
         visit.user = Some(s.who.subject.clone());
         let renewed = s.refresh.then(|| {
-            let now = chrono::Utc::now().timestamp();
+            let now = crate::clock::unix_now();
             gateway::set_cookie(
                 &gateway::mint(&state.secret, site.id, &ask.realm, &s.who, s.user_epoch, s.issued, now),
                 &ask.realm,
@@ -1966,7 +1966,7 @@ async fn sign_in(
         });
     }
 
-    let now = chrono::Utc::now().timestamp();
+    let now = crate::clock::unix_now();
     let cookie = gateway::set_cookie(
         &gateway::mint(&state.secret, site.id, &ask.realm, &who, user_epoch, now, now),
         &ask.realm,
@@ -2063,7 +2063,7 @@ fn gateway_audit(
     use crate::logging::{clip, field};
     state.logger.audit(format!(
         "ts={} event=site-sign-in site={} realm={} user={} client={} result={}",
-        chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ"),
+        crate::clock::format(crate::clock::now(), crate::clock::ISO),
         field(&site.name),
         field(&ask.realm.name),
         field(&clip(user, 128)),
@@ -2814,7 +2814,7 @@ fn blocked_response(status: StatusCode, client_ip: &str, refusal: Refusal) -> Re
              Wait a moment and try again.",
         ),
     };
-    let when = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC");
+    let when = format!("{} UTC", crate::clock::format(crate::clock::now(), crate::clock::SQL));
     let html = format!(
         r#"<!DOCTYPE html>
 <html lang="en">

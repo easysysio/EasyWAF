@@ -11,7 +11,7 @@ use axum::{
     response::{Html, IntoResponse, Response},
 };
 use axum_extra::extract::cookie::SignedCookieJar;
-use chrono::{DateTime, Duration, Timelike, Utc};
+use crate::clock::{self, Duration, Utc};
 use serde::Serialize;
 use std::collections::HashMap;
 use tera::Context;
@@ -265,10 +265,10 @@ async fn fetch_hourly_traffic(state: &AppState, window_start: &str) -> Result<Ve
     let mut out = Vec::with_capacity(24);
     for i in 0..24 {
         let slot = start + Duration::hours(i);
-        let key  = slot.format("%Y-%m-%d %H:00").to_string();
+        let key  = clock::format(slot, time::macros::format_description!("[year]-[month]-[day] [hour]:00"));
         let (total, challenged, blocked) = counts.get(&key).copied().unwrap_or((0, 0, 0));
         out.push(HourBucket {
-            hour:       slot.format("%H:00").to_string(),
+            hour:       clock::format(slot, time::macros::format_description!("[hour]:00")),
             key:        key.clone(),
             passed:     total - blocked - challenged,
             challenged,
@@ -283,20 +283,15 @@ async fn fetch_hourly_traffic(state: &AppState, window_start: &str) -> Result<Ve
 /// Start of the oldest hour the dashboard reports on: 23 hours back, truncated
 /// to the top of that hour, which together with the current partial hour makes
 /// 24 buckets.
-fn window_hour_start() -> DateTime<Utc> {
-    let approx = Utc::now() - Duration::hours(23);
-    approx
-        .with_minute(0)
-        .and_then(|t| t.with_second(0))
-        .and_then(|t| t.with_nanosecond(0))
-        // with_* only fail on out-of-range values, which these are not.
-        .unwrap_or(approx)
+fn window_hour_start() -> Utc {
+    let approx = clock::now() - Duration::hours(23);
+    approx.replace_time(time::Time::MIDNIGHT + Duration::hours(approx.hour().into()))
 }
 
 /// The same instant as a SQLite datetime string, for comparing against the
 /// `timestamp` column.
 fn window_start() -> String {
-    window_hour_start().format("%Y-%m-%d %H:%M:%S").to_string()
+    clock::format(window_hour_start(), clock::SQL)
 }
 
 // ─── percent_of ──────────────────────────────────────────
@@ -308,4 +303,19 @@ fn percent_of(part: i64, total: i64) -> i64 {
         return 0;
     }
     (part * 100) / total
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_window_starts_on_the_hour_twenty_three_hours_back() {
+        let start = window_hour_start();
+        assert_eq!((start.minute(), start.second(), start.nanosecond()), (0, 0, 0));
+        let back = clock::now() - start;
+        assert!(back >= Duration::hours(23) && back < Duration::hours(24), "{back} back");
+        // The form SQLite's own timestamps take, so the comparison is as text.
+        assert!(window_start().ends_with(":00:00") && window_start().len() == 19);
+    }
 }

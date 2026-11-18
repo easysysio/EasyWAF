@@ -183,7 +183,7 @@ pub async fn authenticate(db: &SqlitePool, jar: &SignedCookieJar) -> Option<Sess
     if row.enabled == 0 || row.session_epoch != cookie.epoch {
         return None;
     }
-    if !within_lifetime(cookie.issued, chrono::Utc::now().timestamp()) {
+    if !within_lifetime(cookie.issued, crate::clock::unix_now()) {
         return None;
     }
 
@@ -364,7 +364,7 @@ mod tests {
             username: "yariv".into(),
             role: role.into(),
             epoch,
-            issued: chrono::Utc::now().timestamp(),
+            issued: crate::clock::unix_now(),
         }
     }
 

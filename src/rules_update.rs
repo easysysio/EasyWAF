@@ -307,7 +307,7 @@ pub async fn check(db: &SqlitePool) {
                 }
                 let previous = cached_manifest(db).await.unwrap_or_default();
                 crate::settings::record(db, KEY_MANIFEST, &body).await;
-                crate::settings::record(db, KEY_FETCHED, &chrono::Utc::now().to_rfc3339()).await;
+                crate::settings::record(db, KEY_FETCHED, &crate::clock::rfc3339(crate::clock::now())).await;
                 crate::settings::record(db, KEY_ERROR, "").await;
 
                 // Logged only when it changes, so a working installation is

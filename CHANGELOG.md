@@ -6,6 +6,11 @@ Version bumps and tags are created only after explicit approval.
 
 ---
 
+## [Unreleased]
+
+### Changed
+- EasyWAF no longer depends on the unmaintained `chrono`, `chrono-tz` and `chrono-tz-build` (RUSTSEC-2026-0543, -0555, -0559): times are handled with `time`, which it already used, and Tera is built with only the `urlencode` filter its templates use.
+
 ## [1.7.6] — 2026-11-15
 
 ### Changed

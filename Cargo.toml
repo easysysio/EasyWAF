@@ -42,7 +42,7 @@ tokio-util = { version = "0.7", features = ["io"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
 
 # Database
-sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio-rustls", "macros", "chrono"] }
+sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio-rustls", "macros"] }
 
 # Serialisation
 serde = { version = "1.0", features = ["derive"] }
@@ -56,14 +56,14 @@ roxmltree = "0.21"
 barbacane-libinjection = "0.1.1"
 
 # Templates
-tera = "1.20"
+# Only `urlencode` of the optional filters is used; the rest pull in chrono.
+tera = { version = "1.20", default-features = false, features = ["urlencode"] }
 
 # Configuration
 toml = "0.8.0"
 
 # Time
-chrono = { version = "0.4", features = ["serde"] }
-time = { version = "0.3", features = ["serde"] }
+time = { version = "0.3", features = ["formatting", "parsing", "macros", "serde"] }
 
 # Auth
 bcrypt = "0.17.0"

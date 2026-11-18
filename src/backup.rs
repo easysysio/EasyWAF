@@ -22,6 +22,7 @@
 // its owner only, and the page that offers it says so.
 // =========================================================
 
+use crate::clock::{self, Utc};
 use sqlx::SqlitePool;
 use std::path::{Path, PathBuf};
 
@@ -49,8 +50,17 @@ pub fn dir() -> PathBuf {
 
 /// A snapshot's file name: when it was taken, in UTC, so a directory listing
 /// sorts in the order they were taken.
-pub fn file_name(now: chrono::DateTime<chrono::Utc>) -> String {
-    format!("easywaf-{}.db", now.format("%Y%m%d-%H%M%S"))
+pub fn file_name(now: Utc) -> String {
+    format!("easywaf-{}.db", file_stamp(now))
+}
+
+/// `YYYYMMDD-HHMMSS`, the time part of a file name.
+const STAMP: &[time::format_description::BorrowedFormatItem<'static>] =
+    time::macros::format_description!("[year][month][day]-[hour][minute][second]");
+
+/// A time as file names carry it.
+pub fn file_stamp(t: Utc) -> String {
+    clock::format(t, STAMP)
 }
 
 /// Take a snapshot into `dest`, which must not exist yet. Returns its size.
@@ -103,7 +113,7 @@ const KEY_ERROR: &str = "backup_error";
 /// old — rather than sleeping a day between them, which every restart would
 /// reset. An appliance restarted daily would otherwise never take one.
 const CHECK_EVERY: std::time::Duration = std::time::Duration::from_secs(3600);
-const EVERY: chrono::Duration = chrono::Duration::hours(24);
+const EVERY: clock::Duration = clock::Duration::hours(24);
 
 /// One snapshot on disk, as the page lists it.
 #[derive(Debug, Clone, serde::Serialize, PartialEq)]
@@ -129,8 +139,8 @@ pub fn is_snapshot_name(name: &str) -> bool {
         && name[17..23].bytes().all(|b| b.is_ascii_digit())
 }
 
-fn taken_from_name(name: &str) -> Option<chrono::NaiveDateTime> {
-    chrono::NaiveDateTime::parse_from_str(&name[8..23], "%Y%m%d-%H%M%S").ok()
+fn taken_from_name(name: &str) -> Option<Utc> {
+    clock::parse_utc(&name[8..23], STAMP)
 }
 
 /// The snapshots in `dir`, newest first.
@@ -147,7 +157,7 @@ pub fn list_in(dir: &Path) -> Vec<Stored> {
             let taken = taken_from_name(&name)?;
             Some(Stored {
                 bytes: e.metadata().map(|m| m.len()).unwrap_or(0),
-                taken: taken.format("%Y-%m-%d %H:%M:%S").to_string(),
+                taken: clock::format(taken, clock::SQL),
                 name,
             })
         })
@@ -169,7 +179,7 @@ pub async fn prune(keep: usize) -> usize {
 }
 
 /// [`due_in`] on the backups directory, off the async runtime.
-async fn due(now: chrono::NaiveDateTime) -> bool {
+async fn due(now: Utc) -> bool {
     let d = dir();
     tokio::task::spawn_blocking(move || due_in(&d, now)).await.unwrap_or(false)
 }
@@ -186,7 +196,7 @@ pub fn prune_in(dir: &Path, keep: usize) -> usize {
 }
 
 /// Whether a snapshot is due: none yet, or the newest older than a day.
-pub fn due_in(dir: &Path, now: chrono::NaiveDateTime) -> bool {
+pub fn due_in(dir: &Path, now: Utc) -> bool {
     match list_in(dir).first().and_then(|s| taken_from_name(&s.name)) {
         Some(newest) => now - newest >= EVERY,
         None => true,
@@ -203,12 +213,12 @@ pub async fn take_scheduled(db: &SqlitePool) -> Result<Stored, String> {
         use std::os::unix::fs::PermissionsExt;
         let _ = tokio::fs::set_permissions(&d, std::fs::Permissions::from_mode(0o700)).await;
     }
-    let name = file_name(chrono::Utc::now());
+    let name = file_name(clock::now());
     let bytes = take(db, &d.join(&name)).await?;
     let removed = prune(keep(db).await).await;
     tracing::info!(file = %name, bytes, removed, "Scheduled snapshot taken");
     let taken = taken_from_name(&name)
-        .map(|t| t.format("%Y-%m-%d %H:%M:%S").to_string())
+        .map(|t| clock::format(t, clock::SQL))
         .unwrap_or_default();
     Ok(Stored { name, bytes, taken })
 }
@@ -236,7 +246,7 @@ pub async fn status(db: &SqlitePool) -> (Option<String>, Option<String>) {
 pub fn spawn_schedule(db: SqlitePool) {
     tokio::spawn(async move {
         loop {
-            if scheduled(&db).await && due(chrono::Utc::now().naive_utc()).await {
+            if scheduled(&db).await && due(clock::now()).await {
                 match take_scheduled(&db).await {
                     Ok(s) => {
                         crate::settings::record(&db, KEY_LAST, &s.taken).await;
@@ -593,7 +603,7 @@ pub async fn finish_restore(db: &SqlitePool) {
         let (status, msg) = text.split_once('\n').unwrap_or((text.as_str(), ""));
         crate::settings::record(db, KEY_RESTORE_OUTCOME, status.trim()).await;
         crate::settings::record(db, KEY_RESTORE_MESSAGE, msg.trim()).await;
-        crate::settings::record(db, KEY_RESTORE_AT, &chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string()).await;
+        crate::settings::record(db, KEY_RESTORE_AT, &clock::format(clock::now(), clock::SQL)).await;
         let _ = tokio::fs::remove_file(outcome_path()).await;
     }
 }
@@ -606,9 +616,7 @@ mod tests {
 
     #[test]
     fn a_snapshot_is_named_for_when_it_was_taken() {
-        let t = chrono::DateTime::parse_from_rfc3339("2026-09-27T08:05:09Z")
-            .unwrap()
-            .with_timezone(&chrono::Utc);
+        let t = clock::parse_rfc3339("2026-09-27T08:05:09Z").unwrap();
         assert_eq!(file_name(t), "easywaf-20260927-080509.db");
     }
 
@@ -648,7 +656,7 @@ mod tests {
         let d = std::env::temp_dir().join(format!("easywaf-due-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
-        let at = |s: &str| chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M").unwrap();
+        let at = |s: &str| clock::parse_utc(s, clock::SQL_MINUTE).unwrap();
 
         assert!(due_in(&d, at("2026-09-27 03:00")), "nothing taken yet, and nothing due");
         std::fs::write(d.join("easywaf-20260927-030000.db"), b"x").unwrap();

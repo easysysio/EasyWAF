@@ -859,7 +859,7 @@ pub async fn build(db: &SqlitePool, opts: Options) -> Result<Document, sqlx::Err
         easywaf: Header {
             format: FORMAT,
             version: env!("CARGO_PKG_VERSION").to_string(),
-            exported: chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+            exported: crate::clock::format(crate::clock::now(), crate::clock::ISO),
             contains,
         },
         settings,

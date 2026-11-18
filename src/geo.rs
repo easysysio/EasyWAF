@@ -143,14 +143,14 @@ pub fn status() -> Option<Status> {
 /// whichever one happens to be loaded — which depends on what is on disk.
 fn describe(reader: &Reader<Vec<u8>>, source: Source) -> Status {
     let m = reader.metadata();
-    let built = chrono::DateTime::from_timestamp(m.build_epoch as i64, 0);
+    let built = time::OffsetDateTime::from_unix_timestamp(m.build_epoch as i64).ok();
 
     Status {
         source,
         verified:      source.verified(),
         database_type: m.database_type.clone(),
-        built:         built.map(|t| t.format("%Y-%m-%d").to_string()),
-        age_days:      built.map(|t| (chrono::Utc::now() - t).num_days()),
+        built:         built.map(|t| crate::clock::format(t, crate::clock::DAY)),
+        age_days:      built.map(|t| (crate::clock::now() - t).whole_days()),
         ip_version:    m.ip_version,
         nodes:         m.node_count,
     }

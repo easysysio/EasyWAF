@@ -129,7 +129,7 @@ pub async fn get_smart_protect(
             unit_raw:    b.unit.to_string(),
             address:     b.address.to_string(),
             reason:      b.reason.clone(),
-            since:       b.since.format("%Y-%m-%d %H:%M:%S").to_string(),
+            since:       crate::clock::format(b.since, crate::clock::SQL),
             remaining:   smart_protect::span(b.remaining()),
         })
         .collect();

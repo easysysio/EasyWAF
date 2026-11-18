@@ -12,7 +12,6 @@ use axum::{
     response::{Html, IntoResponse, Response},
 };
 use axum_extra::extract::cookie::SignedCookieJar;
-use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sqlx::QueryBuilder;
 use tera::Context;
@@ -159,9 +158,8 @@ pub async fn get_traffic(
 ) -> Result<Response> {
 
     let hours  = filter.hours.unwrap_or(24).clamp(1, 720);
-    let cutoff = (Utc::now() - chrono::Duration::hours(hours))
-        .format("%Y-%m-%d %H:%M:%S")
-        .to_string();
+    let cutoff = crate::clock::format(crate::clock::now() - crate::clock::Duration::hours(hours),
+                                     crate::clock::SQL);
 
     let site_sel    = filter.site.as_deref().unwrap_or("").trim().to_string();
     let blocked_sel = filter.blocked.as_deref().unwrap_or("").trim().to_string();

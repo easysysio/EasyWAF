@@ -18,6 +18,7 @@ mod challenge;
 mod crs_tests;
 mod set_check;
 mod channel;
+mod clock;
 mod config;
 mod db;
 mod error;

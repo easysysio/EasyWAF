@@ -469,7 +469,7 @@ pub async fn check_now(db: &SqlitePool) -> Result<usize, String> {
     let result = sync(db).await;
     match &result {
         Ok(_) => {
-            crate::settings::record(db, KEY_FETCHED, &chrono::Utc::now().to_rfc3339()).await;
+            crate::settings::record(db, KEY_FETCHED, &crate::clock::rfc3339(crate::clock::now())).await;
             crate::settings::record(db, KEY_ERROR, "").await;
         }
         // Stored rather than logged, like the rule channel: an appliance with

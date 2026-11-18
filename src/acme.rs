@@ -12,6 +12,7 @@
 // provider credentials and an abstraction behind them.
 // =========================================================
 
+use crate::clock;
 use crate::error::{AppError, Result};
 use instant_acme::{
     Account, AccountCredentials, ChallengeType, Identifier, NewAccount, NewOrder, RetryPolicy,
@@ -509,7 +510,7 @@ const SWEEP_INTERVAL: std::time::Duration = std::time::Duration::from_secs(3600)
 /// validations per hostname per hour, so even the first interval is well
 /// clear of it, and a domain that is simply misconfigured settles into one
 /// attempt a day rather than filling the log.
-fn backoff(failures: i64) -> chrono::Duration {
+fn backoff(failures: i64) -> clock::Duration {
     let hours = match failures {
         ..=1 => 1,
         2    => 2,
@@ -518,7 +519,7 @@ fn backoff(failures: i64) -> chrono::Duration {
         5    => 12,
         _    => 24,
     };
-    chrono::Duration::hours(hours)
+    clock::Duration::hours(hours)
 }
 
 /// One certificate's renewal state, as the sweep sees it.
@@ -534,13 +535,13 @@ struct Renewable {
 ///
 /// Separated from the sweep so the decision is testable without a database or
 /// a CA: it is the part with the reasoning in it.
-fn is_due(r: &Renewable, now: chrono::DateTime<chrono::Utc>) -> bool {
+fn is_due(r: &Renewable, now: clock::Utc) -> bool {
     // Backoff first: a certificate inside its backoff window is not attempted
     // however close to expiry it is. Retrying sooner would not fix whatever is
     // wrong and would spend the CA's patience getting there.
     if let Some(next) = r.next_attempt.as_deref()
-        && let Ok(t) = chrono::DateTime::parse_from_rfc3339(next)
-        && now < t.with_timezone(&chrono::Utc)
+        && let Some(t) = clock::parse_rfc3339(next)
+        && now < t
     {
         return false;
     }
@@ -552,23 +553,26 @@ fn is_due(r: &Renewable, now: chrono::DateTime<chrono::Utc>) -> bool {
     };
 
     match parse_not_after(raw) {
-        Some(exp) => (exp - now).num_days() <= RENEW_AT_DAYS,
+        Some(exp) => (exp - now).whole_days() <= RENEW_AT_DAYS,
         None      => true,
     }
 }
 
 /// Parse the `not_after` string as written by the certificate inspector.
-fn parse_not_after(raw: &str) -> Option<chrono::DateTime<chrono::Utc>> {
-    // x509-parser renders ASN.1 time like "Oct 10 06:49:20 2027 +00:00".
+fn parse_not_after(raw: &str) -> Option<clock::Utc> {
+    use time::macros::format_description;
+    // x509-parser renders ASN.1 time like "Oct 10 06:49:20 2027 +00:00", the
+    // day padded with a space; a zero-padded day is read too.
     let raw = raw.trim();
-    for fmt in ["%b %e %H:%M:%S %Y %:z", "%b %d %H:%M:%S %Y %:z"] {
-        if let Ok(t) = chrono::DateTime::parse_from_str(raw, fmt) {
-            return Some(t.with_timezone(&chrono::Utc));
+    for form in [
+        format_description!("[month repr:short] [day padding:space] [hour]:[minute]:[second] [year padding:none] [offset_hour sign:mandatory]:[offset_minute]"),
+        format_description!("[month repr:short] [day] [hour]:[minute]:[second] [year padding:none] [offset_hour sign:mandatory]:[offset_minute]"),
+    ] {
+        if let Ok(t) = time::OffsetDateTime::parse(raw, form) {
+            return Some(t.to_offset(time::UtcOffset::UTC));
         }
     }
-    chrono::DateTime::parse_from_rfc3339(raw)
-        .ok()
-        .map(|t| t.with_timezone(&chrono::Utc))
+    clock::parse_rfc3339(raw)
 }
 
 /// Attempt renewal for every ACME certificate that is due.
@@ -590,7 +594,7 @@ pub async fn renew_due(db: &SqlitePool) {
     .await;
 
     let Ok(rows) = rows else { return };
-    let now = chrono::Utc::now();
+    let now = clock::now();
 
     for row in rows {
         let r = Renewable {
@@ -606,7 +610,7 @@ pub async fn renew_due(db: &SqlitePool) {
         }
 
         tracing::info!(domain = %r.domain, "Renewing certificate");
-        let stamp = now.to_rfc3339();
+        let stamp = clock::rfc3339(now);
 
         // Split back into the names it was issued for. A single-name
         // certificate stored before 0.9.1 has no spaces in it and comes back
@@ -627,7 +631,7 @@ pub async fn renew_due(db: &SqlitePool) {
             }
             Err(e) => {
                 let failures = r.failures + 1;
-                let next = (now + backoff(failures)).to_rfc3339();
+                let next = clock::rfc3339(now + backoff(failures));
                 let msg = e.to_string();
                 let _ = sqlx::query!(
                     "UPDATE certs SET acme_last_attempt = ?, acme_last_error = ?,
@@ -718,14 +722,14 @@ pub async fn set_config(db: &SqlitePool, email: &str, directory: &str) -> Result
 mod tests {
     use super::*;
 
-    use chrono::{Duration, Utc};
+    use crate::clock::Duration;
 
     fn cert(not_after_days: i64, next_attempt: Option<i64>, failures: i64) -> Renewable {
         Renewable {
             name:      "c".into(),
             domain:    "example.com".into(),
-            not_after: Some((Utc::now() + Duration::days(not_after_days)).to_rfc3339()),
-            next_attempt: next_attempt.map(|h| (Utc::now() + Duration::hours(h)).to_rfc3339()),
+            not_after: Some(clock::rfc3339(clock::now() + Duration::days(not_after_days))),
+            next_attempt: next_attempt.map(|h| clock::rfc3339(clock::now() + Duration::hours(h))),
             failures,
         }
     }
@@ -790,7 +794,7 @@ mod tests {
 
     #[test]
     fn renews_only_inside_the_window() {
-        let now = Utc::now();
+        let now = clock::now();
         assert!(!is_due(&cert(60, None, 0), now), "60 days left is not due");
         assert!(!is_due(&cert(31, None, 0), now), "31 days left is not due");
         assert!(is_due(&cert(30, None, 0), now), "30 days left is due");
@@ -800,7 +804,7 @@ mod tests {
 
     #[test]
     fn backoff_is_respected_even_close_to_expiry() {
-        let now = Utc::now();
+        let now = clock::now();
         // The point of persisting this: retrying sooner would not fix whatever
         // is wrong, and would spend the CA's patience getting there.
         assert!(!is_due(&cert(2, Some(3), 4), now), "inside the backoff window");
@@ -809,19 +813,19 @@ mod tests {
 
     #[test]
     fn backoff_grows_then_caps() {
-        assert_eq!(backoff(1).num_hours(), 1);
-        assert_eq!(backoff(2).num_hours(), 2);
-        assert_eq!(backoff(3).num_hours(), 4);
-        assert_eq!(backoff(6).num_hours(), 24);
-        assert_eq!(backoff(50).num_hours(), 24, "caps rather than growing forever");
+        assert_eq!(backoff(1).whole_hours(), 1);
+        assert_eq!(backoff(2).whole_hours(), 2);
+        assert_eq!(backoff(3).whole_hours(), 4);
+        assert_eq!(backoff(6).whole_hours(), 24);
+        assert_eq!(backoff(50).whole_hours(), 24, "caps rather than growing forever");
         // Five failed validations per hostname per hour is the CA's limit, so
         // even the first interval must clear it comfortably.
-        assert!(backoff(1).num_minutes() >= 60);
+        assert!(backoff(1).whole_minutes() >= 60);
     }
 
     #[test]
     fn an_unknown_expiry_is_attempted_rather_than_ignored() {
-        let now = Utc::now();
+        let now = clock::now();
         let r = Renewable {
             name: "c".into(), domain: "example.com".into(),
             not_after: None, next_attempt: None, failures: 0,
@@ -840,7 +844,10 @@ mod tests {
     fn parses_the_inspector_s_date_format() {
         // What the certificate detail page shows, which is what gets stored.
         let t = parse_not_after("Oct 10 06:49:20 2027 +00:00").expect("x509-parser format");
-        assert_eq!(t.format("%Y-%m-%d").to_string(), "2027-10-10");
+        assert_eq!(clock::format(t, clock::DAY), "2027-10-10");
+        let early = parse_not_after("Oct  6 06:49:20 2027 +00:00").expect("a space-padded day");
+        assert_eq!(clock::format(early, clock::DAY), "2027-10-06");
+        assert!(parse_not_after("Oct 06 06:49:20 2027 +00:00").is_some(), "a zero-padded day");
         assert!(parse_not_after("2027-10-10T06:49:20Z").is_some(), "rfc3339 too");
         assert!(parse_not_after("nonsense").is_none());
     }

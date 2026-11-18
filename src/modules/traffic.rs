@@ -103,7 +103,7 @@ fn flow_line(r: &TrafficRecord) -> String {
 
     let mut out = format!(
         "ts={} site={} host={} client={} method={} path={} status={} ms={} verdict={}",
-        chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ"),
+        crate::clock::format(crate::clock::now(), crate::clock::ISO),
         field(&r.site_name),
         field(&r.host),
         field(&r.client_ip),

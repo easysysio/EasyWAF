@@ -24,7 +24,7 @@
 // =========================================================
 
 use crate::config::LoggingConfig;
-use chrono::{DateTime, Utc};
+use crate::clock;
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -241,7 +241,8 @@ async fn send_syslog(sock: &tokio::net::UdpSocket, collector: &str, text: &str) 
     // for an appliance, and the severity of a thing that merely happened.
     const PRI: u8 = 16 * 8 + 6;
     let host = hostname();
-    let stamp = Utc::now().format("%b %e %H:%M:%S");
+    let stamp = clock::format(clock::now(), time::macros::format_description!(
+        "[month repr:short] [day padding:space] [hour]:[minute]:[second]"));
     let datagram = format!("<{PRI}>{stamp} {host} easywaf: {text}");
     let _ = sock.send_to(datagram.as_bytes(), collector).await;
 }
@@ -281,7 +282,7 @@ impl DailyFile {
     }
 
     fn write(&mut self, line: &str) {
-        let day = Utc::now().format("%Y-%m-%d").to_string();
+        let day = clock::format(clock::now(), clock::DAY);
         if day != self.today || self.handle.is_none() {
             self.open(&day);
             self.today = day;
@@ -328,7 +329,7 @@ impl DailyFile {
         if self.keep_days == 0 {
             return;
         }
-        let cutoff = Utc::now() - chrono::Duration::days(self.keep_days as i64);
+        let cutoff = clock::now() - clock::Duration::days(self.keep_days as i64);
         let Ok(entries) = std::fs::read_dir(&self.dir) else { return };
         for entry in entries.filter_map(|e| e.ok()) {
             let name = entry.file_name().to_string_lossy().to_string();
@@ -336,9 +337,8 @@ impl DailyFile {
                 .strip_prefix(&format!("{}-", self.stem))
                 .and_then(|r| r.strip_suffix(".log"))
             else { continue };
-            if let Ok(d) = DateTime::parse_from_str(&format!("{day} 00:00:00 +0000"),
-                                                    "%Y-%m-%d %H:%M:%S %z")
-                && d.with_timezone(&Utc) < cutoff
+            if let Some(d) = clock::parse_utc(&format!("{day} 00:00:00"), clock::SQL)
+                && d < cutoff
             {
                 let _ = std::fs::remove_file(entry.path());
             }

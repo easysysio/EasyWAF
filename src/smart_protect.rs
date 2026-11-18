@@ -259,7 +259,7 @@ pub struct Block {
     pub refusals: usize,
     pub window:   Duration,
     /// When it was blocked, for the page.
-    pub since:    chrono::DateTime<chrono::Utc>,
+    pub since:    crate::clock::Utc,
     /// When the block ends.
     pub until:    Instant,
 }
@@ -358,7 +358,7 @@ fn offence_at(policy: i64, ip: IpAddr, reason: &str, now: Instant, n: Numbers) -
         reason: reason.to_string(),
         refusals: n.refusals,
         window: n.window,
-        since: chrono::Utc::now(),
+        since: crate::clock::now(),
         until: now + n.block,
     };
     s.blocks.insert(key, block.clone());

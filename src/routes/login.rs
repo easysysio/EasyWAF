@@ -203,7 +203,7 @@ async fn verify_credentials(
         username: username.to_string(),
         role:     row.role,
         epoch:    row.session_epoch,
-        issued:   chrono::Utc::now().timestamp(),
+        issued:   crate::clock::unix_now(),
     })
 }
 

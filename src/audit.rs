@@ -28,7 +28,6 @@ use axum::{
     response::Response,
 };
 use axum_extra::extract::cookie::SignedCookieJar;
-use chrono::Utc;
 use std::net::SocketAddr;
 use std::time::Instant;
 
@@ -155,7 +154,7 @@ struct Event<'a> {
 fn line(e: &Event) -> String {
     let mut out = format!(
         "ts={} user={} role={} client={} method={} path={} status={} result={} ms={}",
-        Utc::now().format("%Y-%m-%dT%H:%M:%SZ"),
+        crate::clock::format(crate::clock::now(), crate::clock::ISO),
         logging::field(e.user),
         logging::field(e.role),
         logging::field(&e.client),
